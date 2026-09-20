@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
+import { CredentialRequestBroker } from './credential-request-broker'
 import { McpClientManager, McpToolCallError } from './mcp-client-manager'
 import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
@@ -12,6 +13,78 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonRes({ status: 'ok', message: { DOI: '10.1038/nature12968', 'updated-by': [] } })
+      )
+    const settings = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const requestCredential = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined,
+      requestCredential
+    })
+    await expect(
+      svc.call('literature', 'crossref_get_updates', { doi: '10.1038/nature12968' }, internal)
+    ).resolves.toMatchObject({ updated_by: [] })
+    expect(requestCredential).not.toHaveBeenCalled()
+    settings.blockedToolIds.push('literature/crossref_get_updates')
+    await expect(
+      svc.call('literature', 'crossref_get_updates', { doi: '10.1038/nature12968' }, internal)
+    ).rejects.toThrow('tool blocked by policy: literature/crossref_get_updates')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns credential errors for all declined queued calls without aborting the session', async () => {
+    let sequence = 0
+    const broadcast = vi.fn()
+    const broker = new CredentialRequestBroker({
+      generateId: () => `credential-${++sequence}`,
+      broadcast
+    })
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
+      resolveApiKey: () => undefined,
+      requestCredential: (info, signal) => broker.request(info, signal)
+    })
+    const controller = new AbortController()
+    const calls = ['CRISPR', 'genomics'].map((query) =>
+      svc
+        .call(
+          'literature',
+          'openalex_search_works',
+          { query, max_records: 1 },
+          { ...internal, sessionId: 'session-1' },
+          controller.signal
+        )
+        .catch((error: unknown) => error)
+    )
+    try {
+      await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(2))
+      broker.respond('credential-1', false)
+      expect(broker.getPending('credential-2')).toBeNull()
+      for (const error of await Promise.all(calls)) {
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toContain('credential_required')
+        expect((error as Error).message).toContain('Do not retry until the user adds it')
+      }
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(controller.signal.aborted).toBe(false)
+    } finally {
+      broker.cancelAll()
+      await Promise.all(calls)
+    }
+  })
+
   it('parks an OpenAlex call for credential recovery and resumes the exact call after save', async () => {
     let connectors = {
       enabledIds: [] as string[],
@@ -1683,6 +1756,109 @@ describe('ConnectorService', () => {
       expect(onCustomServerAvailabilityChanged).toHaveBeenCalledWith('oauth-1', 'unauthenticated')
     })
 
+    it.each([
+      { transport: 'stdio' as const, command: '' },
+      { transport: 'stdio' as const, command: '  ' },
+      { transport: 'streamable_http' as const, url: '' }
+    ])('explains incomplete configuration before external discovery: %j', async (endpoint) => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call, ['lookup'])
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'incomplete',
+              name: 'incomplete',
+              displayName: 'Incomplete',
+              enabled: true,
+              ...endpoint
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      await expect(svc.call('incomplete', 'lookup', {}, internal)).rejects.toThrow(
+        'set the command or URL'
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('preserves identifiers and tail outcomes while redacting credentials and marking truncation', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValue(
+          new McpToolCallError(
+            `Job 123 submitted. RAW_ENV_SECRET RAW_HEADER_SECRET ${'detail '.repeat(500)}Job 123 outcome unconfirmed; do not resubmit.`
+          )
+        )
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'bounded',
+              name: 'bounded',
+              displayName: 'Bounded',
+              transport: 'stdio',
+              command: 'example-mcp',
+              enabled: true,
+              env: { DEBUG: '1', API_KEY: 'RAW_ENV_SECRET' },
+              headers: { 'X-API-Key': 'RAW_HEADER_SECRET', 'X-Version': '2' }
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      const error = await svc.call('bounded', 'lookup', {}, internal).catch((error) => error)
+      if (!(error instanceof Error)) throw new Error('Expected a Connector failure')
+      expect(error.message).toContain('Job 123 submitted')
+      expect(error.message).toContain('Job 123 outcome unconfirmed; do not resubmit')
+      expect(error.message).toContain('[diagnostic truncated]')
+      expect(error.message).not.toContain('RAW_ENV_SECRET')
+      expect(error.message).not.toContain('RAW_HEADER_SECRET')
+      expect(error.message.length).toBeLessThan(2200)
+    })
+
+    it('retains a business diagnosis without declaring authentication failure or a disconnect', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new McpToolCallError('403 Forbidden: resource outside allowed collection.')
+        )
+        .mockResolvedValueOnce({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'business',
+              name: 'business',
+              displayName: 'Business',
+              transport: 'stdio',
+              command: 'business-mcp',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+      const error = await svc.call('business', 'lookup', {}, internal).catch((error) => error)
+      if (!(error instanceof Error)) throw new Error('Expected Connector tool failure')
+      expect(error.message).toContain('connector_tool_error')
+      expect(error.message).toContain('resource outside allowed collection')
+      expect(error.message).not.toContain('connector_unauthenticated')
+      expect(error.message).not.toContain('unavailable')
+      await expect(svc.call('business', 'lookup', {}, internal)).resolves.toEqual({ ok: true })
+    })
+
     it('keeps a connector-managed authentication tool reachable after a sign-in error', async () => {
       const call = vi
         .fn()
@@ -1708,7 +1884,7 @@ describe('ConnectorService', () => {
       })
 
       await expect(svc.call('content-service', 'status', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'this Connector’s loaded Skill'
       )
       await expect(svc.call('content-service', 'login', {}, internal)).resolves.toEqual({
         authenticated: true
@@ -2489,7 +2665,7 @@ describe('ConnectorService specialist capability gate', () => {
       'connector call rejected: specialist_unavailable. The current Specialist is unavailable. Do not retry from this Specialist. Ask the user to switch to Main Agent or an available Specialist, then retry the same call.'
     )
     await expect(svc.call('custom-server', 'lookup', {}, internal)).rejects.toThrow(
-      'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.'
+      'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open-Science before retrying.'
     )
   })
 })

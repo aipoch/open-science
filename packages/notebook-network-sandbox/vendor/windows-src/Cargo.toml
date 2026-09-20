@@ -3,7 +3,7 @@ name = "notebook-appcontainer-host"
 version = "0.0.1"
 edition = "2024"
 publish = false
-description = "Open Science Windows Notebook AppContainer host"
+description = "Open-Science Windows Notebook AppContainer host"
 
 [[bin]]
 name = "notebook-appcontainer-host"
@@ -23,11 +23,14 @@ windows = { version = "0.62.2", features = [
   "Win32_Security",
   "Win32_Security_Authorization",
   "Win32_Security_Isolation",
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_Diagnostics",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_JobObjects",
   "Win32_System_Memory",
+  "Win32_System_Pipes",
+  "Win32_System_IO",
   "Win32_System_Rpc",
   "Win32_System_Threading",
   "Win32_System_SystemServices"

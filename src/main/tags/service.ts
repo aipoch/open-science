@@ -36,6 +36,16 @@ class TagService {
     return result
   }
 
+  // Catalog transactions own their relationship writes; join the same publication queue after commit.
+  notifyAssignmentsChanged(): Promise<void> {
+    const result = this.mutationQueue.then(() => {
+      this.revision += 1
+      this.events.publish('tags:changed', { revision: this.revision })
+    })
+    this.mutationQueue = result.catch(() => undefined)
+    return result
+  }
+
   snapshot(): Promise<TagSnapshot> {
     const result = this.mutationQueue.then(async () => {
       const pending = [...this.pendingResourceDeletions.values()]

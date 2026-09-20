@@ -13,6 +13,7 @@ export type SpecialistPackageSkillSnapshot = {
 // The Skill Module owns its files. Package transactions can only stage an immutable plan, promote it,
 // or deterministically settle/undo one transaction during normal completion and restart recovery.
 export interface SpecialistPackageSkillPort {
+  runMutationExclusive?<T>(operation: () => Promise<T>): Promise<T>
   snapshot(): Promise<
     ReadonlyArray<{
       id: string

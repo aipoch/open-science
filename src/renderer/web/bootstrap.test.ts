@@ -27,7 +27,7 @@ vi.mock('../../main/remote-access/openscience-logo.svg?raw', () => ({
 }))
 
 type SocketEventName = 'open' | 'message' | 'close'
-type SocketEvent = { data?: unknown }
+type SocketEvent = { data?: unknown; code?: number }
 type SocketListener = (event: SocketEvent) => void
 
 class FakeWebSocket {
@@ -57,6 +57,16 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  storage: Window['api']['storage']
+  uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
+  specialist: Record<
+    | 'beginPackageUpload'
+    | 'previewPackageUpload'
+    | 'abortPackageUpload'
+    | 'installPackage'
+    | 'cancelPackage',
+    (request: unknown) => Promise<unknown>
+  >
   settings: Record<
     'installClaude' | 'installCodeBuddy' | 'installCodex' | 'installOpencode',
     (request: unknown) => Promise<unknown>
@@ -70,6 +80,71 @@ type WebApi = {
   }
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<{ saved: boolean }>
 }
+
+const chunkOperations = [
+  {
+    channel: 'uploads:append-transfer',
+    invoke: (api: WebApi) =>
+      api.uploads.appendTransfer({
+        transferId: 'transfer-1',
+        offset: 0,
+        chunk: new Uint8Array([1])
+      })
+  },
+  {
+    channel: 'uploads:transfer-status',
+    invoke: (api: WebApi) => api.uploads.getTransferStatus({ transferId: 'transfer-1' })
+  }
+]
+
+// Exercise the installed public API: only HTTP completion and event liveness are controlled.
+const longRunningOperations = [
+  {
+    channel: 'storage:migrate',
+    result: { ok: true, cleanupPending: false },
+    invoke: (api: WebApi) => api.storage.migrate('migration-target')
+  },
+  {
+    channel: 'notebook:execute',
+    result: { runId: 'run-1', status: 'completed' },
+    invoke: (api: WebApi) =>
+      api.notebook.execute({
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'long_running_analysis()'
+      })
+  },
+  {
+    channel: 'specialist:package-upload-begin',
+    result: { transferId: 'transfer-1', name: 'expert.zip', receivedBytes: 0, totalBytes: 1024 },
+    invoke: (api: WebApi) =>
+      api.specialist.beginPackageUpload({
+        transferId: 'transfer-1',
+        name: 'expert.zip',
+        size: 1024
+      })
+  },
+  {
+    channel: 'specialist:package-upload-preview',
+    result: { candidateToken: 'candidate-1', diagnostics: [], installable: false },
+    invoke: (api: WebApi) => api.specialist.previewPackageUpload({ transferId: 'transfer-1' })
+  },
+  {
+    channel: 'specialist:package-upload-abort',
+    result: null,
+    invoke: (api: WebApi) => api.specialist.abortPackageUpload({ transferId: 'transfer-1' })
+  },
+  {
+    channel: 'specialist:package-install',
+    result: { status: 'failed', code: 'candidate-expired' },
+    invoke: (api: WebApi) => api.specialist.installPackage({ candidateToken: 'candidate-1' })
+  },
+  {
+    channel: 'specialist:package-cancel',
+    result: null,
+    invoke: (api: WebApi) => api.specialist.cancelPackage({ candidateToken: 'candidate-1' })
+  }
+]
 
 const bootstrapPayload = {
   eventStream: {
@@ -262,12 +337,19 @@ describe('Web bootstrap event connection', () => {
       'alert'
     )
     expect(document.getElementById('open-science-connection-message')?.textContent).toBe(
-      '访问授权已失效。请从主机上的 Open Science 重新打开 Web 链接，或返回远程访问入口页面重新配对。'
+      '访问授权已失效。请从主机上的 Open-Science 重新打开 Web 链接，或返回远程访问入口页面重新配对。'
     )
     expect(document.querySelector('button')?.textContent).toBe('重试')
   })
 
-  it('reconstructs Application Command errors returned by Web RPC', async () => {
+  it.each([
+    { code: 'invalid-command-arguments', message: 'Invalid project request.' },
+    {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro',
+      parameters: { macro: 'author-原名' }
+    }
+  ])('reconstructs Application Command errors returned by Web RPC: $code', async (error) => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -282,10 +364,7 @@ describe('Web bootstrap event connection', () => {
             JSON.stringify({
               protocolVersion: WEB_RPC_PROTOCOL_VERSION,
               ok: false,
-              error: {
-                code: 'invalid-command-arguments',
-                message: 'Invalid project request.'
-              }
+              error
             }),
             { status: 400, headers: { 'content-type': 'application/json' } }
           )
@@ -297,25 +376,30 @@ describe('Web bootstrap event connection', () => {
     const api = await loadBootstrap()
     await expect(api.projects.create({ name: 42 })).rejects.toMatchObject({
       name: 'ApplicationCommandError',
-      code: 'invalid-command-arguments',
-      message: 'Invalid project request.'
+      ...error
     })
   })
 
-  it('settles a Web RPC when the remote response stops making progress', async () => {
+  it.each([
+    {
+      channel: 'projects:create',
+      invoke: (api: WebApi) => api.projects.create({ name: 'Never finishes' })
+    },
+    ...chunkOperations
+  ])('times out $channel after 30 seconds while connected', async ({ channel, invoke }) => {
     let rpcSignal: AbortSignal | undefined
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input) === '/api/bootstrap') {
           return Promise.resolve(
-            new Response(
-              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
-              { status: 200, headers: { 'content-type': 'application/json' } }
-            )
+            new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: [channel] }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' }
+            })
           )
         }
-        if (String(input) === '/rpc/projects%3Acreate') {
+        if (String(input) === `/rpc/${encodeURIComponent(channel)}`) {
           rpcSignal = init?.signal ?? undefined
           return new Promise<Response>((_resolve, reject) => {
             rpcSignal?.addEventListener(
@@ -330,7 +414,10 @@ describe('Web bootstrap event connection', () => {
     )
 
     const api = await loadBootstrap()
-    const request = api.projects.create({ name: 'Never finishes' })
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = invoke(api)
     const outcome = Promise.race([
       request.then(
         () => 'resolved' as const,
@@ -341,7 +428,9 @@ describe('Web bootstrap event connection', () => {
       )
     ])
 
-    await vi.advanceTimersByTimeAsync(30_001)
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(10_001)
 
     await expect(outcome).resolves.toBe('rejected')
     expect(rpcSignal?.aborted).toBe(true)
@@ -351,133 +440,132 @@ describe('Web bootstrap event connection', () => {
     })
   })
 
-  it('lets a long Notebook execution finish under its own deadline', async () => {
-    let rpcSignal: AbortSignal | undefined
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input) === '/api/bootstrap') {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
-              { status: 200, headers: { 'content-type': 'application/json' } }
+  it.each(longRunningOperations)(
+    'lets $channel finish after 30 seconds while connected',
+    async ({ channel, invoke, result }) => {
+      let rpcSignal: AbortSignal | undefined
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === '/api/bootstrap') {
+            return Promise.resolve(
+              new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: [channel] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' }
+              })
             )
-          )
+          }
+          if (String(input) === `/rpc/${encodeURIComponent(channel)}`) {
+            rpcSignal = init?.signal ?? undefined
+            return new Promise<Response>((resolve, reject) => {
+              const timeout = window.setTimeout(
+                () =>
+                  resolve(
+                    new Response(
+                      JSON.stringify({
+                        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                        ok: true,
+                        result
+                      }),
+                      { status: 200, headers: { 'content-type': 'application/json' } }
+                    )
+                  ),
+                60_000
+              )
+              rpcSignal?.addEventListener(
+                'abort',
+                () => {
+                  window.clearTimeout(timeout)
+                  reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError'))
+                },
+                { once: true }
+              )
+            })
+          }
+          throw new Error(`Unexpected fetch: ${String(input)}`)
+        })
+      )
+
+      const api = await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', { data: readyFrame(0) })
+      const request = invoke(api)
+      let outcome: unknown = 'still-pending'
+      void request.then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
         }
-        if (String(input) === '/rpc/notebook%3Aexecute') {
-          rpcSignal = init?.signal ?? undefined
-          return new Promise<Response>((resolve, reject) => {
-            const timeout = window.setTimeout(
-              () =>
-                resolve(
-                  new Response(
-                    JSON.stringify({
-                      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-                      ok: true,
-                      result: { runId: 'run-1', status: 'completed' }
-                    }),
-                    { status: 200, headers: { 'content-type': 'application/json' } }
-                  )
-                ),
-              60_000
+      )
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      socket.emit('message', { data: heartbeatFrame(0) })
+      await vi.advanceTimersByTimeAsync(10_001)
+
+      expect(outcome).toBe('still-pending')
+      expect(rpcSignal?.aborted ?? false).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(9_999)
+      socket.emit('message', { data: heartbeatFrame(0) })
+      await vi.advanceTimersByTimeAsync(20_000)
+
+      await expect(request).resolves.toEqual(result)
+    }
+  )
+
+  it.each([...longRunningOperations, ...chunkOperations])(
+    'aborts $channel when its event connection disconnects',
+    async ({ channel, invoke }) => {
+      let rpcSignal: AbortSignal | undefined
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === '/api/bootstrap') {
+            return Promise.resolve(
+              new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: [channel] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' }
+              })
             )
-            rpcSignal?.addEventListener(
-              'abort',
-              () => {
-                window.clearTimeout(timeout)
-                reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError'))
-              },
-              { once: true }
-            )
-          })
+          }
+          if (String(input) === `/rpc/${encodeURIComponent(channel)}`) {
+            rpcSignal = init?.signal ?? undefined
+            return new Promise<Response>((_resolve, reject) => {
+              rpcSignal?.addEventListener(
+                'abort',
+                () =>
+                  reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+                { once: true }
+              )
+            })
+          }
+          throw new Error(`Unexpected fetch: ${String(input)}`)
+        })
+      )
+
+      const api = await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', { data: readyFrame(0) })
+      const request = invoke(api)
+      let outcome: unknown = 'still-pending'
+      void request.then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
         }
-        throw new Error(`Unexpected fetch: ${String(input)}`)
-      })
-    )
+      )
 
-    const api = await loadBootstrap()
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-    socket.emit('message', { data: readyFrame(0) })
-    const request = api.notebook.execute({
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace',
-      code: 'long_running_analysis()'
-    })
-    let settled = false
-    void request.then(
-      () => {
-        settled = true
-      },
-      () => {
-        settled = true
-      }
-    )
-
-    await vi.advanceTimersByTimeAsync(20_000)
-    socket.emit('message', { data: heartbeatFrame(0) })
-    await vi.advanceTimersByTimeAsync(10_001)
-
-    expect(settled).toBe(false)
-    expect(rpcSignal?.aborted ?? false).toBe(false)
-
-    await vi.advanceTimersByTimeAsync(9_999)
-    socket.emit('message', { data: heartbeatFrame(0) })
-    await vi.advanceTimersByTimeAsync(20_000)
-
-    await expect(request).resolves.toEqual({ runId: 'run-1', status: 'completed' })
-  })
-
-  it('aborts a long Notebook request when its event connection disconnects', async () => {
-    let rpcSignal: AbortSignal | undefined
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input) === '/api/bootstrap') {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
-              { status: 200, headers: { 'content-type': 'application/json' } }
-            )
-          )
-        }
-        if (String(input) === '/rpc/notebook%3Aexecute') {
-          rpcSignal = init?.signal ?? undefined
-          return new Promise<Response>((_resolve, reject) => {
-            rpcSignal?.addEventListener(
-              'abort',
-              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
-              { once: true }
-            )
-          })
-        }
-        throw new Error(`Unexpected fetch: ${String(input)}`)
-      })
-    )
-
-    const api = await loadBootstrap()
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-    socket.emit('message', { data: readyFrame(0) })
-    const request = api.notebook.execute({
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace',
-      code: 'long_running_analysis()'
-    })
-    let outcome: unknown = 'still-pending'
-    void request.then(
-      () => {
-        outcome = 'resolved'
-      },
-      (error: unknown) => {
-        outcome = error
-      }
-    )
-
-    socket.emit('close')
-    expect(rpcSignal?.aborted).toBe(true)
-    await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
-  })
+      socket.emit('close')
+      expect(rpcSignal?.aborted).toBe(true)
+      await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
+    }
+  )
 
   it('does not abort an ordinary mutation when its event connection disconnects', async () => {
     let rpcSignal: AbortSignal | undefined
@@ -811,6 +899,134 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(FakeWebSocket.instances).toHaveLength(3)
+  })
+
+  it('requires pairing immediately after authorization is revoked and ignores later frames', async () => {
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    try {
+      const api = await loadBootstrap()
+      const listener = vi.fn()
+      api.projects.onCreated(listener)
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('close', { code: 1008 })
+      socket.emit('message', { data: eventFrame(1, 'project:created', { id: 'late' }) })
+      socket.emit('message', { data: readyFrame(1) })
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(phases.at(-1)).toBe('authorization-required')
+      expect(FakeWebSocket.instances).toHaveLength(1)
+      expect(listener).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    }
+  })
+
+  it('ignores old socket callbacks after a replacement connects', async () => {
+    const api = await loadBootstrap()
+    const listener = vi.fn()
+    api.projects.onCreated(listener)
+    const old = FakeWebSocket.instances[0]
+    old.emit('close')
+    await vi.advanceTimersByTimeAsync(1_000)
+    const current = FakeWebSocket.instances[1]
+    old.emit('open')
+    old.emit('message', { data: eventFrame(1, 'project:created', { id: 'old' }) })
+    old.emit('close', { code: 1008 })
+    current.emit('message', { data: eventFrame(1, 'project:created', { id: 'current' }) })
+    current.emit('message', { data: readyFrame(1) })
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(listener.mock.calls).toEqual([[{ id: 'current' }]])
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    expect(current.closed).toBe(false)
+  })
+
+  it('does not apply any more frames after a stream gap requires reload', async () => {
+    const api = await loadBootstrap()
+    const listener = vi.fn()
+    api.projects.onCreated(listener)
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('message', { data: eventFrame(2, 'project:created', {}) })
+    socket.emit('message', { data: eventFrame(1, 'project:created', { id: 'late' }) })
+    socket.emit('message', { data: readyFrame(1) })
+    expect(socket.closed).toBe(true)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['malformed JSON', '{'],
+    ['invalid schema', '{}'],
+    ['sequence gap', eventFrame(2, 'project:created', {})],
+    ['duplicate sequence', eventFrame(0, 'project:created', {})],
+    ['changed stream', readyFrame(0).replace('stream-1', 'stream-2')],
+    ['heartbeat mismatch', heartbeatFrame(1)],
+    ['ready mismatch', readyFrame(1)]
+  ])('keeps the recovery gate closed after %s', async (_label, frame) => {
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    try {
+      await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('message', { data: frame })
+      socket.emit('message', { data: readyFrame(0) })
+      expect(phases.at(-1)).toBe('reload-required')
+      expect(phases).not.toContain('live')
+      expect(socket.closed).toBe(true)
+    } finally {
+      window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    }
+  })
+
+  it('does not resume after an event consumer throws', async () => {
+    const api = await loadBootstrap()
+    const listener = vi.fn(() => {
+      throw new Error('consumer failed')
+    })
+    api.projects.onCreated(listener)
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('message', { data: eventFrame(1, 'project:created', {}) })
+      socket.emit('message', { data: eventFrame(1, 'project:created', {}) })
+      expect(socket.closed).toBe(true)
+      expect(listener).toHaveBeenCalledOnce()
+    } finally {
+      errorLog.mockRestore()
+    }
+  })
+
+  it('stops a live connection when an RPC reports expired authorization', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input) === '/api/bootstrap'
+          ? new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }))
+          : new Response('Expired', { status: 401 })
+      )
+    )
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    try {
+      const api = await loadBootstrap()
+      FakeWebSocket.instances[0].emit('message', { data: readyFrame(0) })
+      await expect(api.projects.create({ name: 'Test' })).rejects.toThrow(
+        'Access authorization has expired'
+      )
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(phases.at(-1)).toBe('authorization-required')
+      expect(FakeWebSocket.instances).toHaveLength(1)
+      expect(FakeWebSocket.instances[0].closed).toBe(true)
+    } finally {
+      window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    }
   })
 
   it('closes a ready event socket that stops receiving liveness frames', async () => {

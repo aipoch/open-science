@@ -231,6 +231,24 @@ describe('runEnvironmentCheck', () => {
     expect(result.ready).toBe(true)
   })
 
+  it('describes file storage without telling users to unlock a keyring', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'claude-code',
+      frameworks: [
+        { id: 'claude-code', label: 'Claude', runtime: { found: true, path: '/bin/claude' } }
+      ],
+      encryptionAvailable: false,
+      credentialStore: 'file',
+      deps: baseDeps()
+    })
+    expect(result.checks.find((check) => check.id === 'secure-storage')).toMatchObject({
+      status: 'warning',
+      presentation: { kind: 'file-credential-storage' }
+    })
+    expect(result.ready).toBe(true)
+  })
+
   it('warns without blocking keyless setup when secure credential storage is unavailable', async () => {
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
@@ -327,7 +345,7 @@ describe('runEnvironmentCheck', () => {
 
   it('uses diagnostic message when runtime detection provides one', async () => {
     const diagnosticMessage =
-      'Native Codex 0.144.2 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open Science is missing.'
+      'Native Codex 0.144.2 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
 
     const result = await runEnvironmentCheck({
       storageRoot: '/data',

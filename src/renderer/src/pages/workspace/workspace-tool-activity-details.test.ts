@@ -552,7 +552,7 @@ describe('workspace tool activity details', () => {
     expect(JSON.stringify(details)).not.toContain('Reference one')
   })
 
-  it('summarizes Library Inbox saves from the small presentation block', () => {
+  it('keeps historical save presentations neutral without original receipts', () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-library__save_to_inbox',
       rawInput: {
@@ -592,12 +592,12 @@ describe('workspace tool activity details', () => {
           summary: {
             action: 'save',
             itemTitles: ['Paper A'],
-            itemCount: 1,
-            savedCount: 1
+            itemCount: 1
           }
         }
       ]
     })
+    expect(JSON.stringify(details)).not.toContain('savedCount')
     expect(JSON.stringify(details)).not.toContain('rawMetadata')
   })
 
@@ -1758,4 +1758,25 @@ describe('workspace tool activity details', () => {
     expect(section?.kind === 'code' && section.truncated).toBe(true)
     expect(section?.kind === 'code' && section.text.length).toBeLessThan(25000)
   })
+})
+
+it.each([
+  { status: 'not-found', notices: ['No public PDF is available.'] },
+  { status: 'already-reviewed', candidateId: 'reviewed-1', notices: ['Already processed.'] },
+  { status: 'pending-review' },
+  { isError: true, message: 'Download failed: upstream unavailable' }
+])('preserves acquisition output without a usable pending receipt: %j', (result) => {
+  const text = JSON.stringify(result)
+  const details = buildToolActivityDetails(
+    createActivity({
+      providerToolName: 'mcp__open-science-library__acquire_pdf',
+      status: 'isError' in result ? 'failed' : 'completed',
+      rawOutput: { content: [{ type: 'text', text }] },
+      toolContent: [{ type: 'content', content: { type: 'text', text } }]
+    })
+  )
+  expect(details?.sections.some((section) => section.kind === 'literature')).toBe(false)
+  const serialized = JSON.stringify(details)
+  expect(serialized).toContain(result.status ?? result.message)
+  if (result.notices?.length) expect(serialized).toContain(result.notices[0])
 })

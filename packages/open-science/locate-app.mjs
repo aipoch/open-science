@@ -2,7 +2,7 @@
 
 import { access, readFile, realpath } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const cliDir = dirname(fileURLToPath(import.meta.url))
@@ -27,31 +27,20 @@ const isCurrentCli = async (candidate) => {
   }
 }
 
-const executableOnPath = async (name, env = process.env) => {
-  const suffixes = process.platform === 'win32' ? ['', '.exe', '.cmd'] : ['']
-  for (const directory of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
-    for (const suffix of suffixes) {
-      const candidate = join(directory, `${name}${suffix}`)
-      if (await exists(candidate)) return candidate
-    }
-  }
-  return undefined
-}
-
+// Standalone discovery follows current packaging defaults. Legacy/custom/mixed layouts require
+// an explicit binding; public Linux commands may be CLI wrappers and are never desktop candidates.
 const defaultInstalledCandidates = (env = process.env) => {
   if (process.platform === 'win32') {
-    return [
-      env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs', 'Open Science', 'Open Science.exe'),
-      env.PROGRAMFILES && join(env.PROGRAMFILES, 'Open Science', 'Open Science.exe')
-    ].filter(Boolean)
+    return [env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'Programs'), env.PROGRAMFILES]
+      .filter(Boolean)
+      .map((root) => join(root, 'Open-Science', 'open-science.exe'))
   }
   if (process.platform === 'darwin') {
-    const app = 'Open Science.app/Contents/MacOS/Open Science'
-    return [join('/Applications', app), env.HOME && join(env.HOME, 'Applications', app)].filter(
-      Boolean
-    )
+    return ['/Applications', env.HOME && join(env.HOME, 'Applications')]
+      .filter(Boolean)
+      .map((root) => join(root, 'Open-Science.app', 'Contents', 'MacOS', 'Open-Science'))
   }
-  return ['/usr/bin/open-science', '/usr/local/bin/open-science']
+  return ['/opt/Open-Science/open-science']
 }
 
 const locateDevelopmentApp = async () => {
@@ -75,7 +64,7 @@ export const locateApp = async ({ appPath, env = process.env } = {}) => {
   const explicit = appPath ?? env.OPEN_SCIENCE_APP_PATH
   if (explicit) {
     const command = resolve(explicit)
-    if (!(await exists(command))) throw new Error(`Open Science executable not found: ${command}`)
+    if (!(await exists(command))) throw new Error(`Open-Science executable not found: ${command}`)
     return { command, args: [], packaged: true, repositoryRoot }
   }
 
@@ -88,16 +77,9 @@ export const locateApp = async ({ appPath, env = process.env } = {}) => {
     }
   }
 
-  if (process.platform === 'linux') {
-    const command = await executableOnPath('open-science', env)
-    if (command && !(await isCurrentCli(command))) {
-      return { command, args: [], packaged: true, repositoryRoot }
-    }
-  }
-
   // When run from a packaged build's resources dir there is no package.json next to the CLI, so fall
   // back to the product name rather than letting the read mask the real "could not locate" message.
-  let productName = 'Open Science'
+  let productName = 'Open-Science'
   try {
     productName =
       JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')).productName ??
@@ -106,7 +88,7 @@ export const locateApp = async ({ appPath, env = process.env } = {}) => {
     // No package.json alongside the CLI (packaged): keep the default product name.
   }
   throw new Error(
-    `Could not locate ${productName}. Run "npm run build" in the repository, install the app, or pass --app-path.`
+    `Could not locate ${productName}. Run "npm run build" in the repository, install the app, or pass --app-path / set OPEN_SCIENCE_APP_PATH to its executable.`
   )
 }
 

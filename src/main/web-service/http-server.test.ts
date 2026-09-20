@@ -1,5 +1,12 @@
+// @ts-expect-error The published ESM entry uses a sibling index.d.ts.
+import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
+import { createHash } from 'node:crypto'
+import { RemoteSessionPairingManager } from '../remote-access/pairing'
+import { RemoteAccessRepository } from '../remote-access/repository'
+import { requirePairingManager } from '../remote-access/ipc'
+import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest, type IncomingMessage, ServerResponse } from 'node:http'
+import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,7 +42,7 @@ import {
   type ExternalWebAccessAuthorization,
   type RunningWebServer
 } from './http-server'
-import { TaskApiError } from './task-api'
+import { HeadlessTaskApi, TaskApiError } from './task-api'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -130,7 +137,7 @@ const startBudgetTestServer = async (
       authorizeWebSocket: async () => undefined
     },
     bootstrap: {
-      appName: 'Open Science',
+      appName: 'Open-Science',
       appVersion: '0.0.0',
       configRoot: '/fake/root',
       platform: 'test',
@@ -140,6 +147,39 @@ const startBudgetTestServer = async (
   servers.push(server)
   return server
 }
+it('does not expose unexpected RPC body stream errors', async () => {
+  const original = IncomingMessage.prototype[Symbol.asyncIterator]
+  const iterator = vi
+    .spyOn(IncomingMessage.prototype, Symbol.asyncIterator)
+    .mockImplementation(function (this: IncomingMessage) {
+      if (this.url?.startsWith('/rpc/')) {
+        return (async function* () {
+          yield Buffer.from('{')
+          throw new Error('private-stream-path/secret')
+        })()
+      }
+      return original.call(this)
+    })
+  try {
+    const server = await startBudgetTestServer({
+      perRequestBytes: 1024,
+      perClientInFlightBytes: 2048,
+      serverInFlightBytes: 4096
+    })
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_request', message: 'Failed to read request body.' }
+    })
+  } finally {
+    iterator.mockRestore()
+  }
+})
+
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
@@ -161,6 +201,103 @@ afterEach(async () => {
 })
 
 describe('startWebHttpServer', () => {
+  it.each([0, 1, 2])(
+    'finishes one remote revocation request even when its caller is batch item %s',
+    async (callerIndex) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-web-revoke-'))
+      roots.push(root)
+      await writeFile(join(root, 'index.html'), '<!doctype html>')
+      const repository = new RemoteAccessRepository(root)
+      const now = Date.now()
+      const browserIds = ['first', 'second', 'third']
+      await repository.save({
+        version: 5,
+        mode: 'remoteit-public',
+        trustedBrowsers: browserIds.map((id) => ({
+          id,
+          browser: 'Chrome',
+          platform: 'macOS',
+          tokenHash: createHash('sha256').update(`${id}-secret`).digest('hex'),
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: now + 60_000
+        }))
+      })
+      const manager = await RemoteSessionPairingManager.create({
+        repository,
+        now: () => now,
+        isEnabled: () => true,
+        isAllowedRemoteHost: (hostname) => hostname === 'home.example.ts.net',
+        onChanged: vi.fn()
+      })
+      const save = vi.spyOn(repository, 'save')
+      const channel = 'remote-access:revoke-browsers'
+      const invoke = vi.fn(async (_channel: string, caller: CallerContext, args: unknown[]) => {
+        requirePairingManager(caller)
+        const [payload] = remoteAccessApplicationCommandContracts.revokeBrowsers.args.parse(args)
+        await manager.revokeBrowsers(payload.browserIds)
+        return { trustedBrowsers: manager.trustedViews() }
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'local-token',
+        staticRoot: root,
+        rpc: { channels: () => [channel], invoke },
+        externalAccess: manager.webAccess,
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: root,
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      try {
+        const callerId = browserIds[callerIndex]
+        const headers = {
+          host: 'home.example.ts.net',
+          origin: 'https://home.example.ts.net',
+          cookie: `open_science_remote_session=${callerId}.${callerId}-secret`,
+          'content-type': 'application/json',
+          'x-open-science-client': 'batch-caller'
+        }
+        const revoke = (): Promise<number | undefined> =>
+          new Promise((resolve, reject) => {
+            const request = httpRequest(
+              {
+                host: '127.0.0.1',
+                port: server.port,
+                path: `/rpc/${encodeURIComponent(channel)}`,
+                method: 'POST',
+                headers
+              },
+              (response) => {
+                response.resume()
+                response.on('end', () => resolve(response.statusCode))
+              }
+            )
+            request.on('error', reject)
+            request.end(
+              JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [{ browserIds }] })
+            )
+          })
+        const status = await revoke()
+        // Self-revocation must still withhold the response from an expired authorization.
+        expect(status).toBe(401)
+        expect(invoke).toHaveBeenCalledOnce()
+        expect(save).toHaveBeenCalledOnce()
+        expect(manager.trustedViews()).toEqual([])
+        expect((await repository.load()).trustedBrowsers).toEqual([])
+        expect(await revoke()).toBe(401)
+        expect(invoke).toHaveBeenCalledOnce()
+      } finally {
+        manager.dispose()
+      }
+    }
+  )
+
   it('tracks only interactive internal Web event clients as approval-capable', async () => {
     const permissionApprovalPresence = new PermissionApprovalPresence()
     const server = await startTestWebHttpServer({
@@ -171,7 +308,7 @@ describe('startWebHttpServer', () => {
       permissionApprovalPresence,
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -212,7 +349,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -262,7 +399,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -301,7 +438,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -359,7 +496,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -411,7 +548,7 @@ describe('startWebHttpServer', () => {
         getRun: vi.fn()
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -721,7 +858,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -776,7 +913,7 @@ describe('startWebHttpServer', () => {
         }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -847,9 +984,16 @@ describe('startWebHttpServer', () => {
     for (const [code, expectedStatus] of [
       ['command-unavailable', 404],
       ['session-details-conflict', 409],
-      ['session-revision-conflict', 409]
+      ['session-revision-conflict', 409],
+      ['csl-undefined-macro', 400]
     ] as const) {
-      directInvoke.mockRejectedValueOnce(new ApplicationCommandError(code, `Rejected: ${code}`))
+      directInvoke.mockRejectedValueOnce(
+        new ApplicationCommandError(
+          code,
+          `Rejected: ${code}`,
+          code === 'csl-undefined-macro' ? { macro: 'author-原名' } : undefined
+        )
+      )
       const rejectedResponse = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
         method: 'POST',
         headers: {
@@ -862,7 +1006,10 @@ describe('startWebHttpServer', () => {
       expect(rejectedResponse.status).toBe(expectedStatus)
       expect(await rejectedResponse.json()).toMatchObject({
         ok: false,
-        error: { code }
+        error: {
+          code,
+          ...(code === 'csl-undefined-macro' ? { parameters: { macro: 'author-原名' } } : {})
+        }
       })
     }
 
@@ -915,7 +1062,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => ['projects:list'], invoke },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -986,7 +1133,7 @@ describe('startWebHttpServer', () => {
         releaseArtifact: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1060,7 +1207,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1120,7 +1267,7 @@ describe('startWebHttpServer', () => {
             : undefined
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1141,7 +1288,7 @@ describe('startWebHttpServer', () => {
     const bootstrap = await fetch(`${base}/api/bootstrap`, { headers: { cookie } })
     expect(Number(bootstrap.headers.get('content-length'))).toBeGreaterThan(0)
     expect(await bootstrap.json()).toMatchObject({
-      appName: 'Open Science',
+      appName: 'Open-Science',
       configRoot: '/fake/root',
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
       rpcCapabilities: WEB_RPC_CAPABILITIES,
@@ -1350,7 +1497,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1431,7 +1578,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1493,7 +1640,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1638,7 +1785,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: async (request) => authorizationFor(request)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1774,7 +1921,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: async (request) => authorizationFor(request)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1862,7 +2009,7 @@ describe('startWebHttpServer', () => {
             : undefined
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -1958,7 +2105,7 @@ describe('startWebHttpServer', () => {
         dispose: vi.fn()
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2022,7 +2169,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2055,7 +2202,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2092,7 +2239,7 @@ describe('startWebHttpServer', () => {
         invoke: vi.fn().mockResolvedValue('x'.repeat(16 * 1024 * 1024))
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2135,7 +2282,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2202,7 +2349,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2266,7 +2413,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2303,7 +2450,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => ['projects:list'], invoke },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2354,7 +2501,7 @@ describe('startWebHttpServer', () => {
       staticRoot: '/unused',
       rpc: { channels: () => [], invoke: vi.fn() },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2397,7 +2544,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2426,60 +2573,84 @@ describe('startWebHttpServer', () => {
     ).toHaveLength(1)
   })
 
-  it('releases an HTTP-only caller when its connection closes during command execution', async () => {
-    let markInvocationStarted: (() => void) | undefined
-    const invocationStarted = new Promise<void>((resolve) => {
-      markInvocationStarted = resolve
-    })
-    let finishInvocation: (() => void) | undefined
-    const invocationGate = new Promise<void>((resolve) => {
-      finishInvocation = resolve
-    })
-    let callerSignal: AbortSignal | undefined
-    const directInvoke = vi.fn(async (_channel, invocation) => {
-      callerSignal = invocation.callerLease.signal
-      markInvocationStarted?.()
-      await invocationGate
-      return []
-    })
-    const server = await startTestWebHttpServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: 'test-token',
-      staticRoot: '/unused',
-      rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
-      applicationCommands: {
-        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
-        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
-      },
-      bootstrap: {
-        appName: 'Open Science',
-        appVersion: '0.0.0',
-        configRoot: '/fake/root',
-        platform: 'test',
-        versions: { electron: '1', chrome: '1', node: '1' }
+  it.each([false, true])(
+    'releases a caller when its pending HTTP request closes (event socket: %s)',
+    async (withEventSocket) => {
+      let markInvocationStarted: (() => void) | undefined
+      const invocationStarted = new Promise<void>((resolve) => {
+        markInvocationStarted = resolve
+      })
+      let finishInvocation: (() => void) | undefined
+      const invocationGate = new Promise<void>((resolve) => {
+        finishInvocation = resolve
+      })
+      let callerSignal: AbortSignal | undefined
+      const directInvoke = vi.fn(async (_channel, invocation) => {
+        callerSignal = invocation.callerLease.signal
+        markInvocationStarted?.()
+        await invocationGate
+        return []
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
+        applicationCommands: {
+          localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+          remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+        },
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      let socket: WebSocket | undefined
+      if (withEventSocket) {
+        socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=http-only-client`, {
+          headers: { authorization: 'Bearer test-token' }
+        })
+        await new Promise<void>((resolve, reject) => {
+          socket!.once('open', () => resolve())
+          socket!.once('error', reject)
+        })
       }
-    })
-    servers.push(server)
-    const request = httpRequest({
-      host: '127.0.0.1',
-      port: server.port,
-      path: '/rpc/projects%3Alist',
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer test-token',
-        'content-type': 'application/json',
-        'x-open-science-client': 'http-only-client'
-      }
-    })
-    request.once('error', () => undefined)
-    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
-    await invocationStarted
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: '/rpc/projects%3Alist',
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'http-only-client'
+        }
+      })
+      request.once('error', () => undefined)
+      request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+      await invocationStarted
 
-    request.destroy()
-    await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
-    finishInvocation?.()
-  })
+      try {
+        if (socket) {
+          const closed = new Promise<void>((resolve) => socket!.once('close', () => resolve()))
+          socket.close()
+          await closed
+          expect(callerSignal?.aborted).toBe(false)
+        }
+        request.destroy()
+        await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
+      } finally {
+        socket?.close()
+        request.destroy()
+        finishInvocation?.()
+      }
+    }
+  )
 
   it('releases an HTTP-only caller after its idle retention window', async () => {
     let callerSignal: AbortSignal | undefined
@@ -2499,7 +2670,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2557,7 +2728,7 @@ describe('startWebHttpServer', () => {
         remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2622,7 +2793,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2712,7 +2883,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2799,7 +2970,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -2869,6 +3040,118 @@ describe('startWebHttpServer', () => {
     expect(taskContext?.isAuthorizationCurrent()).toBe(false)
   })
 
+  it.each(['success', 'error'] as const)(
+    'TB-05 suppresses a delayed remote %s after revocation',
+    async (outcome) => {
+      let current = true
+      let started!: () => void
+      const entered = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      let finish!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const invoke = vi.fn(async () => {
+        started()
+        await pending
+        if (outcome === 'error')
+          throw new ApplicationCommandError('command-failed', 'private-result-marker')
+        return { content: 'private-result-marker' }
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'local-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['projects:list'], invoke },
+        externalAccess: {
+          authorizeHttp: async () => ({
+            kind: 'authorized',
+            principalId: 'paired-browser',
+            isCurrent: () => current
+          }),
+          authorizeWebSocket: async () => undefined
+        },
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      const responsePromise = fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+      })
+      await entered
+      current = false
+      finish()
+      const response = await responsePromise
+      expect.soft(response.status).toBe(401)
+      expect(await response.text()).not.toContain('private-result-marker')
+      expect(invoke).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('rejects a delayed doctor result after remote authorization is revoked', async () => {
+    let current = true
+    let markDoctorStarted!: () => void
+    const doctorStarted = new Promise<void>((resolve) => {
+      markDoctorStarted = resolve
+    })
+    let finishDoctor!: () => void
+    const doctorPending = new Promise<void>((resolve) => {
+      finishDoctor = resolve
+    })
+    const doctor = vi.fn(async () => {
+      markDoctorStarted()
+      await doctorPending
+      return { ready: true, checks: {}, next: [], private: 'private-result-marker' }
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot: '/unused',
+      rpc: { channels: () => [], invoke: vi.fn() },
+      tasks: {
+        runWithCallerContext: (_context: CallerContext, operation: () => unknown) => operation(),
+        subscribeProgress: () => () => undefined,
+        doctor
+      } as never,
+      externalAccess: {
+        authorizeHttp: async () => ({
+          kind: 'authorized' as const,
+          principalId: 'paired-browser',
+          isCurrent: () => current
+        }),
+        authorizeWebSocket: async () => undefined
+      },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+
+    const responsePromise = fetch(`http://127.0.0.1:${server.port}/api/v1/doctor`)
+    await doctorStarted
+    current = false
+    finishDoctor()
+
+    const response = await responsePromise
+    expect(response.status).toBe(401)
+    expect(await response.text()).not.toContain('private-result-marker')
+    expect(doctor).toHaveBeenCalledOnce()
+  })
+
   it('keeps host-management RPC local while preserving the local Web client', async () => {
     const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
     roots.push(staticRoot)
@@ -2907,7 +3190,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3018,8 +3301,11 @@ describe('startWebHttpServer', () => {
       'notebook:abort-code-cell',
       'notebook:append-code-cell',
       'notebook:begin-code-cell',
+      'notebook:cancel-background-run',
       'notebook:execute',
       'notebook:finish-code-cell',
+      'notebook:background-run',
+      'notebook:project-activity',
       'notebook:reference',
       'notebook:inspect-namespace',
       'notebook:read-input-preview',
@@ -3042,6 +3328,7 @@ describe('startWebHttpServer', () => {
       'runtime:set-agent-environment-creation-enabled',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
+      'runtime:set-sandbox-access',
       'runtime:unregister-interpreter'
     ])
     expect(
@@ -3097,14 +3384,26 @@ describe('startWebHttpServer', () => {
       'compute:scratch:set',
       'compute:ssh-config-aliases'
     ]
+    const specialistChannels = [
+      'specialist:list',
+      'specialist:update',
+      'specialist:set-enabled',
+      'specialist:package-upload-begin',
+      'specialist:package-upload-preview',
+      'specialist:package-upload-abort',
+      'specialist:package-install',
+      'specialist:package-cancel'
+    ]
     const remoteDeniedComputeChannels = ['compute:download', 'compute:reveal-in-folder']
     const remoteAllowedChannels = [
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels.filter((channel) => !remoteDeniedComputeChannels.includes(channel))
     ]
     const rpcChannels = [
-      'specialist:list',
+      'specialist:package-select',
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
@@ -3129,7 +3428,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3180,14 +3479,15 @@ describe('startWebHttpServer', () => {
     }
     expect(localBootstrapBody.webCallerLocation).toBe('local')
     expect(localBootstrapBody.rpcChannels).toEqual([
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
     ])
     expect(localBootstrapBody.restrictedRpcChannels).toEqual([])
 
-    expect((await invoke('specialist:list')).status).toBe(404)
-    expect((await invoke('specialist:list', true)).status).toBe(404)
+    expect((await invoke('specialist:package-select')).status).toBe(404)
+    expect((await invoke('specialist:package-select', true)).status).toBe(404)
     expect(rpc.invoke.mock.calls.map(([channel]) => channel)).toEqual([
       ...remoteAllowedChannels,
       ...remoteDeniedComputeChannels
@@ -3217,7 +3517,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3289,7 +3589,7 @@ describe('startWebHttpServer', () => {
         )
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3344,7 +3644,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3382,7 +3682,7 @@ describe('startWebHttpServer', () => {
       },
       onShutdownRequest,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3425,7 +3725,7 @@ describe('startWebHttpServer', () => {
       },
       onShutdownRequest,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3484,7 +3784,7 @@ describe('startWebHttpServer', () => {
       },
       onShutdownRequest,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3501,109 +3801,128 @@ describe('startWebHttpServer', () => {
     expect(onShutdownRequest).not.toHaveBeenCalled()
   })
 
-  it('replays project and run POST responses for repeated idempotency keys', async () => {
-    const createProject = vi.fn().mockResolvedValue({ id: 'project-1', name: 'Created' })
-    let releaseStartRun: (() => void) | undefined
-    const startRunGate = new Promise<void>((resolve) => {
-      releaseStartRun = resolve
-    })
-    const startRun = vi.fn(async () => {
-      await startRunGate
-      return {
-        id: 'run-1',
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        cwd: '/workspace/research',
-        status: 'running' as const,
-        startedAt: 1,
-        artifacts: [],
-        preferredComputeHostIds: []
+  it.each([false, true])(
+    'replays project and run POST responses after response loss=%s',
+    async (loseResponse) => {
+      const createProject = vi.fn().mockResolvedValue({ id: 'project-1', name: 'Created' })
+      let releaseStartRun: (() => void) | undefined
+      const startRunGate = new Promise<void>((resolve) => {
+        releaseStartRun = resolve
+      })
+      const startRun = vi.fn(async () => {
+        await startRunGate
+        return {
+          id: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          cwd: '/workspace/research',
+          status: 'running' as const,
+          startedAt: 1,
+          artifacts: [],
+          preferredComputeHostIds: []
+        }
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => [], invoke: vi.fn() },
+        tasks: {
+          runWithCallerContext,
+          subscribeProgress: vi.fn(() => vi.fn()),
+          listProjects: vi.fn(),
+          createProject,
+          updateProject: vi.fn(),
+          listSessions: vi.fn(),
+          getSession: vi.fn(),
+          startRun,
+          getRun: vi.fn(),
+          cancelRun: vi.fn(),
+          listArtifacts: vi.fn(),
+          acquireArtifact: vi.fn(),
+          releaseArtifact: vi.fn()
+        },
+        bootstrap: {
+          appName: 'Open-Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      const base = `http://127.0.0.1:${server.port}`
+      const post = async (
+        path: string,
+        key: string,
+        body: unknown,
+        signal?: AbortSignal
+      ): Promise<unknown> => {
+        const response = await fetch(`${base}${path}`, {
+          method: 'POST',
+          signal,
+          headers: {
+            authorization: 'Bearer test-token',
+            'content-type': 'application/json',
+            'idempotency-key': key
+          },
+          body: JSON.stringify(body)
+        })
+        return response.json()
       }
-    })
-    const server = await startTestWebHttpServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: 'test-token',
-      staticRoot: '/unused',
-      rpc: { channels: () => [], invoke: vi.fn() },
-      tasks: {
-        runWithCallerContext,
-        subscribeProgress: vi.fn(() => vi.fn()),
-        listProjects: vi.fn(),
-        createProject,
-        updateProject: vi.fn(),
-        listSessions: vi.fn(),
-        getSession: vi.fn(),
-        startRun,
-        getRun: vi.fn(),
-        cancelRun: vi.fn(),
-        listArtifacts: vi.fn(),
-        acquireArtifact: vi.fn(),
-        releaseArtifact: vi.fn()
-      },
-      bootstrap: {
-        appName: 'Open Science',
-        appVersion: '0.0.0',
-        configRoot: '/fake/root',
-        platform: 'test',
-        versions: { electron: '1', chrome: '1', node: '1' }
+      const postTwice = async (path: string, key: string, body: unknown): Promise<unknown[]> => {
+        const responses: unknown[] = []
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          responses.push(await post(path, key, body))
+        }
+        return responses
       }
-    })
-    servers.push(server)
-    const base = `http://127.0.0.1:${server.port}`
-    const post = async (path: string, key: string, body: unknown): Promise<unknown> => {
-      const response = await fetch(`${base}${path}`, {
+
+      const projectResponses = await postTwice('/api/v1/projects', 'create-project-1', {
+        name: 'Created'
+      })
+      const conflictingProject = await fetch(`${base}/api/v1/projects`, {
         method: 'POST',
         headers: {
           authorization: 'Bearer test-token',
           'content-type': 'application/json',
-          'idempotency-key': key
+          'idempotency-key': 'create-project-1'
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ name: 'Different project' })
       })
-      return response.json()
-    }
-    const postTwice = async (path: string, key: string, body: unknown): Promise<unknown[]> => {
-      const responses: unknown[] = []
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        responses.push(await post(path, key, body))
+      const runBody = {
+        project: 'project-1',
+        prompt: 'Research this.'
       }
-      return responses
-    }
+      const lostResponse = new AbortController()
+      const firstRunResponse = post(
+        '/api/v1/runs',
+        'start-run-1',
+        runBody,
+        lostResponse.signal
+      ).catch((error: unknown) => error)
+      await vi.waitFor(() => expect(startRun).toHaveBeenCalledOnce())
+      if (loseResponse) lostResponse.abort()
+      const secondRunResponse = post('/api/v1/runs', 'start-run-1', runBody)
+      releaseStartRun?.()
+      const runResponses = await Promise.all([firstRunResponse, secondRunResponse])
 
-    const projectResponses = await postTwice('/api/v1/projects', 'create-project-1', {
-      name: 'Created'
-    })
-    const conflictingProject = await fetch(`${base}/api/v1/projects`, {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer test-token',
-        'content-type': 'application/json',
-        'idempotency-key': 'create-project-1'
-      },
-      body: JSON.stringify({ name: 'Different project' })
-    })
-    const runBody = {
-      project: 'project-1',
-      prompt: 'Research this.'
+      expect(projectResponses[1]).toEqual(projectResponses[0])
+      expect(conflictingProject.status).toBe(409)
+      expect(await conflictingProject.json()).toEqual({
+        error: {
+          code: 'idempotency_conflict',
+          message: 'Idempotency-Key was already used with a different request body.'
+        }
+      })
+      if (loseResponse) {
+        expect(runResponses[0]).toMatchObject({ name: 'AbortError' })
+        expect(runResponses[1]).toMatchObject({ data: { id: 'run-1' } })
+      } else expect(runResponses[1]).toEqual(runResponses[0])
+      expect([createProject.mock.calls.length, startRun.mock.calls.length]).toEqual([1, 1])
     }
-    const firstRunResponse = post('/api/v1/runs', 'start-run-1', runBody)
-    await vi.waitFor(() => expect(startRun).toHaveBeenCalledOnce())
-    const secondRunResponse = post('/api/v1/runs', 'start-run-1', runBody)
-    releaseStartRun?.()
-    const runResponses = await Promise.all([firstRunResponse, secondRunResponse])
-
-    expect(projectResponses[1]).toEqual(projectResponses[0])
-    expect(conflictingProject.status).toBe(409)
-    expect(await conflictingProject.json()).toEqual({
-      error: {
-        code: 'idempotency_conflict',
-        message: 'Idempotency-Key was already used with a different request body.'
-      }
-    })
-    expect(runResponses[1]).toEqual(runResponses[0])
-    expect([createProject.mock.calls.length, startRun.mock.calls.length]).toEqual([1, 1])
-  })
+  )
 
   it('keeps remote browser idempotency keys in separate authorized caller scopes', async () => {
     const createProject = vi
@@ -3638,7 +3957,7 @@ describe('startWebHttpServer', () => {
         })
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3697,7 +4016,7 @@ describe('startWebHttpServer', () => {
         authorizeWebSocket: vi.fn().mockResolvedValue(undefined)
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3765,7 +4084,7 @@ describe('startWebHttpServer', () => {
         getRun
       } as never,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3812,6 +4131,20 @@ describe('startWebHttpServer', () => {
       ((event: import('../../shared/task-api').TaskRunProgressEvent) => void) | undefined
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      bootstrap: vi.fn().mockResolvedValue({ ok: true }),
+      installCli: vi
+        .fn()
+        .mockResolvedValue({ installed: true, onPath: true, target: '/fixture/bin/open-science' }),
+      doctor: vi.fn().mockResolvedValue({
+        ready: false,
+        checks: {
+          daemon: { status: 'ready' },
+          runtime: { status: 'missing', framework: 'codex' },
+          provider: { status: 'ready' },
+          skills: { status: 'ready', enabled: ['literature-review'] }
+        },
+        next: [{ code: 'runtime_missing' }]
+      }),
       subscribeProgress: vi.fn((listener) => {
         publishProgress = listener
         return () => {
@@ -3911,7 +4244,7 @@ describe('startWebHttpServer', () => {
       },
       tasks,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -3921,6 +4254,32 @@ describe('startWebHttpServer', () => {
     servers.push(server)
     const base = `http://127.0.0.1:${server.port}`
     const headers = { authorization: 'Bearer test-token' }
+
+    const sdk = new OpenScienceClient({ baseUrl: base, token: 'test-token' })
+    expect(await sdk.bootstrap({ action: 'runtime' })).toEqual({ ok: true })
+    expect(tasks.bootstrap).toHaveBeenCalledWith({ action: 'runtime' })
+    expect(await sdk.installCli()).toMatchObject({ installed: true })
+    const unauthorizedBootstrap = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      body: '{}'
+    })
+    expect(unauthorizedBootstrap.status).toBe(401)
+    expect(tasks.bootstrap).toHaveBeenCalledOnce()
+
+    const doctor = await fetch(`${base}/api/v1/doctor`, { headers })
+    expect(doctor.status).toBe(200)
+    expect(await doctor.json()).toEqual({
+      data: {
+        ready: false,
+        checks: {
+          daemon: { status: 'ready' },
+          runtime: { status: 'missing', framework: 'codex' },
+          provider: { status: 'ready' },
+          skills: { status: 'ready', enabled: ['literature-review'] }
+        },
+        next: [{ code: 'runtime_missing' }]
+      }
+    })
 
     const progressSocket = new WebSocket(
       `${base.replace('http:', 'ws:')}/api/v1/events?token=test-token`
@@ -4299,7 +4658,7 @@ describe('startWebHttpServer', () => {
       },
       tasks,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4368,7 +4727,7 @@ describe('startWebHttpServer', () => {
       },
       tasks,
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: '/fake/root',
         platform: 'test',
@@ -4429,7 +4788,7 @@ describe('Web preview reconnect owner contract', () => {
         remoteWeb: { ...dispatcher, rejectedCommandNames: () => [] }
       },
       bootstrap: {
-        appName: 'Open Science',
+        appName: 'Open-Science',
         appVersion: '0.0.0',
         configRoot: staticRoot,
         platform: 'test',
@@ -4488,5 +4847,136 @@ describe('Web preview reconnect owner contract', () => {
     } finally {
       for (const socket of sockets) socket.close()
     }
+  })
+})
+
+describe('Connector Task HTTP routes', () => {
+  it('routes authenticated SDK reads and writes to the same Settings snapshot', async () => {
+    const snapshot = {
+      connectors: [],
+      customServers: [
+        {
+          id: 'sample',
+          name: 'sample',
+          displayName: 'Sample',
+          transport: 'stdio',
+          command: 'node',
+          enabled: false
+        }
+      ],
+      ncbi: { hasApiKey: false }
+    }
+    const invoke = vi.fn(async (channel: string, invocation: { args: readonly unknown[] }) => {
+      if (channel === 'settings:set-custom-server-enabled')
+        snapshot.customServers[0].enabled = (invocation.args[0] as { enabled: boolean }).enabled
+      return snapshot
+    })
+    const tasks = new HeadlessTaskApi({
+      commands: { commandNames: () => [], invoke },
+      agent: {} as never
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: 'test',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const baseUrl = `http://127.0.0.1:${server.port}`
+    expect((await fetch(`${baseUrl}/api/v1/connectors`)).status).toBe(401)
+    const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+    expect((await client.listConnectors()).customServers[0].enabled).toBe(false)
+    await client.setConnectorEnabled('sample', true)
+    expect((await client.getConnector('sample')).enabled).toBe(true)
+    expect(invoke).toHaveBeenCalledWith(
+      'settings:set-custom-server-enabled',
+      expect.objectContaining({
+        args: [{ id: 'sample', enabled: true }],
+        callerContext: expect.objectContaining({ surface: 'task', location: 'local' })
+      })
+    )
+    await tasks.dispose()
+  })
+})
+
+describe('Agent runtime Task HTTP routes', () => {
+  it('serves the runtime list locally without exposing executable paths', async () => {
+    const settings = {
+      claude: { resolvedPath: '/private/claude', version: '2.1.0' },
+      opencode: {},
+      codebuddy: {},
+      codex: {},
+      claudeManaged: true,
+      opencodeManaged: false,
+      codebuddyManaged: false,
+      codexManaged: false,
+      providers: [],
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code' },
+        { id: 'opencode', displayName: 'OpenCode' },
+        { id: 'codex', displayName: 'Codex' },
+        { id: 'codebuddy', displayName: 'CodeBuddy' }
+      ]
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: true,
+          activeProviderReady: true,
+          runtimeReadiness: { status: 'ready' },
+          providerReadiness: { status: 'ready' }
+        }
+      }
+      if (channel === 'settings:get-settings') return settings
+      throw new Error(`Unexpected command: ${channel}`)
+    })
+    const tasks = new HeadlessTaskApi({
+      commands: { commandNames: () => [], invoke },
+      agent: {} as never
+    })
+    const serverOptions = {
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: 'test',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    }
+    const localServer = await startTestWebHttpServer(serverOptions)
+    servers.push(localServer)
+    const client = new OpenScienceClient({
+      baseUrl: `http://127.0.0.1:${localServer.port}`,
+      token: 'test-token'
+    })
+
+    await expect(client.listRuntimes()).resolves.toEqual([
+      { framework: 'claude-code', status: 'ready', version: '2.1.0', source: 'managed' },
+      { framework: 'opencode', status: 'missing' },
+      { framework: 'codex', status: 'missing' },
+      { framework: 'codebuddy', status: 'missing' }
+    ])
+    await tasks.dispose()
   })
 })

@@ -9,6 +9,9 @@ import type {
 } from '../../shared/notebook'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import { reportNotebookEvidence } from './evidence-diagnostics'
+
+vi.mock('./evidence-diagnostics', () => ({ reportNotebookEvidence: vi.fn() }))
 
 const session = {
   projectId: 'project-1',
@@ -39,6 +42,13 @@ const runningRun = (
     workingFiles: [],
     inputFiles: []
   }) satisfies NotebookRunRecord
+
+const queuedRun = (runId: string): NotebookRunRecord => ({
+  ...runningRun(runId),
+  submissionIdentity: `submission-${runId}`,
+  submissionFingerprint: 'a'.repeat(64),
+  status: 'queued'
+})
 
 const documentWith = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   version: 1,
@@ -74,6 +84,68 @@ const completedResult = (
   outputs: [{ type: 'stream' as const, name: 'stdout' as const, text: 'hello\n' }]
 })
 
+describe('inputs reused across messages', () => {
+  it.each(['python', 'r'] as const)(
+    'captures only the prior %s input actually read in a later message',
+    async (language) => {
+      const harness = createHarness()
+      const attached = {
+        ...runningRun('first', language),
+        inputFiles: ['groups', 'unrelated'].map((name) => ({
+          inputFileVersionId: name,
+          sourceKind: 'upload-version' as const,
+          sourceFileId: name,
+          sourceProjectId: session.projectId,
+          sourceSessionId: session.sessionId,
+          filename: name + '.csv',
+          checksum: 'a'.repeat(64),
+          sizeBytes: 42,
+          storageKey: 'uploads/' + name,
+          association: 'turn-attached' as const
+        }))
+      }
+      await harness.owner.run({
+        session,
+        runningRun: attached,
+        invoke: async () => completedResult()
+      })
+      const reused = runningRun('second', language)
+      const result = await harness.owner.run({
+        session,
+        runningRun: reused,
+        invoke: async () => {
+          expect(reused.inputFiles).toHaveLength(2)
+          return {
+            ...completedResult(),
+            confirmedReadPaths: ['data/inputs/groups-aaaaaaaaaaaa.csv']
+          }
+        }
+      })
+      expect(result.run.inputFiles).toEqual([
+        expect.objectContaining({ inputFileVersionId: 'groups', accessEvidence: 'file-evidence' })
+      ])
+      const failed = await harness.owner.run({
+        session,
+        runningRun: runningRun('third', language),
+        invoke: async () => ({
+          ...completedResult('failed'),
+          confirmedReadPaths: ['data/inputs/groups-aaaaaaaaaaaa.csv']
+        })
+      })
+      expect(failed.run.inputFiles).toEqual([])
+      const otherBranch = { ...runningRun('other-branch', language), messageBranchId: 'other' }
+      await harness.owner.run({
+        session,
+        runningRun: otherBranch,
+        invoke: async () => {
+          expect(otherBranch.inputFiles).toEqual([])
+          return completedResult()
+        }
+      })
+    }
+  )
+})
+
 const environmentManifest: NotebookEnvironmentManifest = {
   schemaVersion: 1,
   captureKind: 'completed-run',
@@ -94,10 +166,13 @@ const environmentManifest: NotebookEnvironmentManifest = {
 
 const createHarness = (
   options: {
+    afterCommit?: () => Promise<void>
     now?: () => number
     appendFailure?: Error
     updateFailure?: Error
     updateFailureCount?: number
+    terminalFailure?: Error
+    terminalFailureCount?: number
     omitUpdatedRun?: boolean
   } = {}
 ): {
@@ -108,8 +183,61 @@ const createHarness = (
   const events: string[] = []
   let document = documentWith([])
   let updateFailuresRemaining = options.updateFailureCount ?? Number.POSITIVE_INFINITY
+  let terminalFailuresRemaining = options.terminalFailureCount ?? Number.POSITIVE_INFINITY
   const owner = new NotebookRunTerminalizationOwner({
     repository: {
+      appendOrGetRun: async ({ run }) => {
+        events.push(`admit:${run.status}`)
+        const existing = document.runs.find(
+          (candidate) => candidate.submissionIdentity === run.submissionIdentity
+        )
+        if (existing) return { document, run: existing, admitted: false }
+        document = documentWith([...document.runs, run])
+        return { document, run, admitted: true }
+      },
+      findRunBySubmission: async (_projectId, _sessionId, _lane, submissionIdentity) =>
+        document.runs.find((run) => run.submissionIdentity === submissionIdentity),
+      transitionRun: async ({ run, expectedStatus }) => {
+        events.push(`transition:${expectedStatus}->${run.status}`)
+        const existing = document.runs.find((candidate) => candidate.runId === run.runId)
+        if (!existing) throw new Error(`Notebook run not found: ${run.runId}`)
+        if (existing.status !== expectedStatus) {
+          return { document, run: existing, transitioned: false }
+        }
+        document = documentWith(
+          document.runs.map((candidate) => (candidate.runId === run.runId ? run : candidate))
+        )
+        return { document, run, transitioned: true }
+      },
+      requestRunCancellation: async ({ run, requestedAt, reason }) => {
+        const requested = {
+          ...run,
+          cancellationRequestedAt: requestedAt,
+          cancellationReason: reason
+        }
+        document = documentWith(
+          document.runs.map((candidate) =>
+            candidate.runId === requested.runId ? requested : candidate
+          )
+        )
+        return requested
+      },
+      commitTerminalRun: async ({ run, expectedStatus }) => {
+        events.push(`terminal:${expectedStatus}->${run.status}`)
+        if (options.terminalFailure && terminalFailuresRemaining > 0) {
+          terminalFailuresRemaining -= 1
+          throw options.terminalFailure
+        }
+        const existing = document.runs.find((candidate) => candidate.runId === run.runId)
+        if (!existing) throw new Error(`Notebook run not found: ${run.runId}`)
+        if (existing.status !== expectedStatus) {
+          return { document, run: existing, transitioned: false }
+        }
+        document = documentWith(
+          document.runs.map((candidate) => (candidate.runId === run.runId ? run : candidate))
+        )
+        return { document, run, transitioned: true }
+      },
       appendRun: async ({ run }) => {
         events.push(`append:${run.status}`)
         if (options.appendFailure) throw options.appendFailure
@@ -128,6 +256,7 @@ const createHarness = (
         return options.omitUpdatedRun ? documentWith([]) : document
       }
     },
+    afterCommit: options.afterCommit,
     notifyChanged: () => events.push(`notify:${document.runs[0]?.status}`),
     now: options.now ?? (() => 200)
   })
@@ -135,9 +264,68 @@ const createHarness = (
 }
 
 describe('NotebookRunTerminalizationOwner', () => {
+  it('persists failure-time recovery facts for replay and background queries', async () => {
+    const harness = createHarness()
+    const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' } as const
+    const terminalized = await harness.owner.run({
+      session,
+      runningRun: runningRun('shell-recovery', 'bash'),
+      invoke: async () => ({
+        ...completedResult('failed'),
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete' as const,
+        recovery
+      })
+    })
+    expect(terminalized.result.recovery).toEqual(recovery)
+    expect(harness.document().runs[0].recovery).toEqual(recovery)
+    expect(terminalized.run.recovery).toEqual(recovery)
+  })
+  it('reports prepared evidence once even when terminal persistence must be retried', async () => {
+    vi.mocked(reportNotebookEvidence).mockClear()
+    const harness = createHarness({
+      updateFailure: new Error('retry write'),
+      updateFailureCount: 1
+    })
+    await expect(
+      harness.owner.run({
+        session,
+        runningRun: runningRun('run-diagnostics'),
+        invoke: async () => ({
+          ...completedResult(),
+          environmentLock: { state: 'unavailable', reason: 'environment-lock-capture-failed' }
+        })
+      })
+    ).rejects.toThrow('retry write')
+    await harness.owner.reconcilePending(session)
+    expect(reportNotebookEvidence).toHaveBeenCalledTimes(1)
+    expect(reportNotebookEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-diagnostics',
+        status: 'completed',
+        environmentLock: { state: 'unavailable', reason: 'environment-lock-capture-failed' }
+      })
+    )
+  })
+
   it('allocates distinct run identities while preserving the shared sequence value', () => {
     const owner = new NotebookRunTerminalizationOwner({
       repository: {
+        appendOrGetRun: async () => {
+          throw new Error('not used')
+        },
+        findRunBySubmission: async () => {
+          throw new Error('not used')
+        },
+        transitionRun: async () => {
+          throw new Error('not used')
+        },
+        requestRunCancellation: async () => {
+          throw new Error('not used')
+        },
+        commitTerminalRun: async () => {
+          throw new Error('not used')
+        },
         appendRun: async () => {
           throw new Error('not used')
         },
@@ -234,6 +422,75 @@ describe('NotebookRunTerminalizationOwner', () => {
     ])
   })
 
+  it('admits queued durably, claims running at dispatch, then commits one terminal winner', async () => {
+    const harness = createHarness()
+    const queued = queuedRun('run-durable')
+
+    const admission = await harness.owner.admit({ session, queuedRun: queued })
+    const terminalized = await harness.owner.runAdmitted({
+      session,
+      queuedRun: admission.run,
+      invoke: async () => {
+        harness.events.push('invoke')
+        return completedResult()
+      }
+    })
+
+    expect(admission.admitted).toBe(true)
+    expect(terminalized).toMatchObject({ dispatched: true, run: { status: 'completed' } })
+    expect(harness.events).toEqual([
+      'admit:queued',
+      'notify:queued',
+      'transition:queued->running',
+      'notify:running',
+      'invoke',
+      'terminal:running->completed',
+      'notify:completed'
+    ])
+  })
+
+  it('returns the same canonical Run when durable admission is repeated', async () => {
+    const harness = createHarness()
+    const first = await harness.owner.admit({ session, queuedRun: queuedRun('run-1') })
+    const repeated = await harness.owner.admit({
+      session,
+      queuedRun: {
+        ...queuedRun('run-2'),
+        submissionIdentity: first.run.submissionIdentity
+      }
+    })
+
+    expect(repeated).toMatchObject({ admitted: false, run: { runId: 'run-1' } })
+    expect(harness.events).toEqual(['admit:queued', 'notify:queued', 'admit:queued'])
+  })
+
+  it('does not expose a durable terminal result until its persistence retry succeeds', async () => {
+    const harness = createHarness({
+      terminalFailure: new Error('terminal persistence failed'),
+      terminalFailureCount: 1
+    })
+    const admission = await harness.owner.admit({
+      session,
+      queuedRun: queuedRun('run-terminal-retry')
+    })
+
+    await expect(
+      harness.owner.runAdmitted({
+        session,
+        queuedRun: admission.run,
+        invoke: async () => completedResult(),
+        settleLive: (result) => harness.events.push(`settle-live:${result.status}`)
+      })
+    ).rejects.toThrow('terminal persistence failed')
+    expect(harness.document().runs[0]).toMatchObject({ status: 'running' })
+    expect(harness.events).not.toContain('settle-live:completed')
+
+    await harness.owner.reconcilePending(session)
+
+    expect(harness.document().runs[0]).toMatchObject({ status: 'completed' })
+    expect(harness.events).toContain('settle-live:completed')
+  })
+
   it('persists the observer evidence summary on the terminal Run', async () => {
     const harness = createHarness()
     const fileEvidence = {
@@ -263,6 +520,90 @@ describe('NotebookRunTerminalizationOwner', () => {
     })
 
     expect(harness.document().runs[0]?.fileEvidence).toEqual(fileEvidence)
+  })
+
+  it('marks only exact inputs read by a completed run as accessed', async () => {
+    const harness = createHarness()
+    const checksum = 'a'.repeat(64)
+    const running = {
+      ...runningRun('run-input-access'),
+      inputFiles: [
+        {
+          inputFileVersionId: 'input-used',
+          sourceKind: 'upload-version' as const,
+          sourceFileId: 'upload-used',
+          sourceProjectId: 'project-1',
+          sourceSessionId: 'source-session',
+          filename: 'groups.csv',
+          sizeBytes: 42,
+          checksum,
+          storageKey: 'uploads/groups.csv',
+          association: 'turn-attached' as const
+        },
+        {
+          inputFileVersionId: 'input-unused',
+          sourceKind: 'upload-version' as const,
+          sourceFileId: 'upload-unused',
+          sourceProjectId: 'project-1',
+          sourceSessionId: 'source-session',
+          filename: 'notes.csv',
+          sizeBytes: 12,
+          checksum: 'b'.repeat(64),
+          storageKey: 'uploads/notes.csv',
+          association: 'turn-attached' as const
+        }
+      ]
+    }
+
+    await harness.owner.run({
+      session,
+      runningRun: running,
+      invoke: async () => ({
+        ...completedResult(),
+        confirmedReadPaths: ['data/inputs/groups-aaaaaaaaaaaa.csv']
+      })
+    })
+
+    expect(harness.document().runs[0]?.inputFiles).toMatchObject([
+      {
+        inputFileVersionId: 'input-used',
+        association: 'turn-attached',
+        accessEvidence: 'file-evidence'
+      },
+      { inputFileVersionId: 'input-unused', association: 'turn-attached' }
+    ])
+  })
+
+  it('does not infer an input access when a run failed before the parsed read', async () => {
+    const harness = createHarness()
+    const running = {
+      ...runningRun('run-failed-input'),
+      inputFiles: [
+        {
+          inputFileVersionId: 'input-1',
+          sourceKind: 'upload-version' as const,
+          sourceFileId: 'upload-1',
+          sourceProjectId: 'project-1',
+          sourceSessionId: 'source-session',
+          filename: 'groups.csv',
+          sizeBytes: 42,
+          checksum: 'a'.repeat(64),
+          storageKey: 'uploads/groups.csv',
+          association: 'turn-attached' as const
+        }
+      ]
+    }
+
+    await harness.owner.run({
+      session,
+      runningRun: running,
+      invoke: async () => ({
+        ...completedResult('failed'),
+        confirmedReadPaths: ['data/inputs/groups-aaaaaaaaaaaa.csv']
+      })
+    })
+
+    expect(harness.document().runs[0]?.inputFiles?.[0]?.association).toBe('turn-attached')
   })
 
   it('keeps an admitted Run running across hours without an elapsed-time transition', async () => {
@@ -341,13 +682,23 @@ describe('NotebookRunTerminalizationOwner', () => {
         ...completedResult(),
         environmentCapture: { state: 'available' as const, manifestChecksum: 'checksum-1' },
         environmentManifest,
-        environmentManifestChecksum: 'checksum-1'
+        environmentManifestChecksum: 'checksum-1',
+        environmentLock: {
+          state: 'available' as const,
+          format: 'environment-lock-bundle' as const,
+          lockChecksum: 'a'.repeat(64)
+        }
       })
     })
     expect(available.document().runs[0]).toMatchObject({
       environmentCapture: { state: 'available', manifestChecksum: 'checksum-1' },
       environmentManifest,
-      environmentManifestChecksum: 'checksum-1'
+      environmentManifestChecksum: 'checksum-1',
+      environmentLock: {
+        state: 'available',
+        format: 'environment-lock-bundle',
+        lockChecksum: 'a'.repeat(64)
+      }
     })
 
     const unavailable = createHarness()
@@ -530,4 +881,45 @@ describe('NotebookRunTerminalizationOwner', () => {
       'notify:completed'
     ])
   })
+})
+
+it('keeps execution completed when a post-commit projection fails and retries without execution', async () => {
+  let projectionAttempts = 0
+  let executions = 0
+  const harness = createHarness({
+    afterCommit: async () => {
+      if (++projectionAttempts === 1) throw new Error('projection failed')
+    }
+  })
+  const admission = await harness.owner.admit({ session, queuedRun: queuedRun('projection-retry') })
+  await expect(
+    harness.owner.runAdmitted({
+      session,
+      queuedRun: admission.run,
+      invoke: async () => {
+        executions += 1
+        return completedResult()
+      }
+    })
+  ).rejects.toThrow('projection failed')
+  expect(harness.document().runs[0]).toMatchObject({
+    status: 'completed',
+    text: { stdout: 'hello\n' }
+  })
+  await harness.owner.reconcilePending(session)
+  expect(projectionAttempts).toBe(2)
+  expect(executions).toBe(1)
+  expect(harness.document().runs[0].status).toBe('completed')
+})
+
+it('AUDIT: persists the actual process cwd instead of the submitted directory', async () => {
+  const harness = createHarness()
+  const actual = `${session.dataRoot}/analysis`
+  const run = runningRun('actual-cwd')
+  const result = await harness.owner.run({
+    session,
+    runningRun: run,
+    invoke: async () => ({ ...completedResult(), cwdBefore: actual, cwdAfter: actual })
+  })
+  expect(result.run.cwdBefore).toBe(actual)
 })

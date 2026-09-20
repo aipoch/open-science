@@ -133,7 +133,7 @@ test('reports accessibility violations in startup and home surfaces', async ({ a
   await expect(locationStep).toBeVisible()
   await expectKeyboardOutcome(app.page, 'Onboarding step focus', async () => {
     await expect(
-      app.page.getByRole('heading', { name: 'Where should Open Science store your data?' })
+      app.page.getByRole('heading', { name: 'Where should Open-Science store your data?' })
     ).toBeFocused()
   })
   await scanAccessibility(app.page, 'Onboarding step focus')

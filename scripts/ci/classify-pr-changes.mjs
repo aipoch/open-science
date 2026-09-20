@@ -5,6 +5,8 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+const workflowContractTest = 'scripts/ci/pr-gate-workflow.test.ts'
+
 const defaultManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )
@@ -107,6 +109,13 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
 
     for (const path of paths) {
+      // This Vitest contract verifies the workflow; it is not an executable CI input.
+      if (path === workflowContractTest) {
+        roots.add('ci_workflow_contract_test')
+        reasonChains.add(`${path} -> workflow contract -> direct portable test`)
+        for (const lane of ['format', 'lint', 'typecheck_node', 'unit_macos']) lanes.add(lane)
+        continue
+      }
       const rules = manifest.rules.filter((rule) =>
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
@@ -201,13 +210,112 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
+// Apply platform policy after dependency/consumer expansion, using trusted base code.
+export function platformExecutionPlan(plan, changes, event) {
+  if (!['pull_request', 'merge_group'].includes(event)) return plan
+  const paths = changes.flatMap(({ path, previousPath }) =>
+    [path, previousPath].filter((value) => value && value !== workflowContractTest)
+  )
+  const criticalDesktopPaths = defaultManifest.rules.find(
+    ({ id }) => id === 'critical_desktop_runtime'
+  ).paths
+  const nativeMainPaths = [
+    'src/main/*shell*.ts',
+    'src/main/*process*.ts',
+    'src/main/menu*.ts',
+    'src/main/shortcut*.ts',
+    'src/main/native*.ts',
+    'src/main/protocol*.ts',
+    'src/main/file-save*.ts',
+    'src/main/net/**',
+    'src/main/platform/**',
+    'src/main/startup/**',
+    'src/main/app*.ts'
+  ]
+  const sensitive =
+    paths.some((path) =>
+      [...criticalDesktopPaths, ...nativeMainPaths].some((pattern) => matchesPath(path, pattern))
+    ) ||
+    (plan.mode === 'full' && paths.some((path) => path.startsWith('src/main/'))) ||
+    paths.some((path) =>
+      /^(src\/preload\/|src\/shared\/(ipc|notebook|shell|runtime|window|keyboard|shortcut|sandbox|native)|packages\/(notebook-network-sandbox|process-tree-native|safe-file-publisher-native)\/|patches\/|resources\/|build\/|scripts\/|e2e\/|package(?:-lock)?\.json$|electron|playwright|tsconfig|vitest|vite\.|\.nvmrc$|\.github\/)/.test(
+        path
+      )
+    ) ||
+    changes.some(({ status }) =>
+      ['deleted', 'renamed', 'type-changed', 'unmerged', 'unknown'].includes(status)
+    ) ||
+    plan.roots.some((root) => /unknown|unowned|unmatched|bootstrap/.test(root))
+  const lanes = new Set(plan.lanes)
+  const hasDesktop = plan.bundles.includes('macos_e2e')
+  if (hasDesktop && event === 'pull_request') {
+    lanes.add('e2e_functional_windows')
+    lanes.add('e2e_workspace_windows')
+    lanes.add('e2e_browser_windows')
+  }
+  for (const lane of lanes) {
+    if (
+      defaultManifest.laneBundles[lane] === 'macos_e2e' ||
+      (event === 'merge_group' && defaultManifest.laneBundles[lane] === 'windows_e2e')
+    ) {
+      lanes.delete(lane)
+    }
+  }
+  if (event === 'merge_group' && hasDesktop) {
+    lanes.add('build')
+    lanes.add('e2e_smoke_macos')
+  }
+  const selectedLanes = defaultManifest.laneOrder.filter((lane) => lanes.has(lane))
+  const bundles = new Set(selectedLanes.map((lane) => defaultManifest.laneBundles[lane]))
+  return {
+    ...plan,
+    lanes: selectedLanes,
+    bundles: defaultManifest.bundleOrder.filter((bundle) => bundles.has(bundle)),
+    macosProfile: sensitive ? 'expanded' : 'smoke',
+    reasonChains: [
+      ...plan.reasonChains,
+      event === 'pull_request'
+        ? 'pull_request: portable tests and Windows business E2E; Mac validation deferred to merge queue'
+        : `merge_group: one Mac core job${sensitive ? ' with native checks' : ''}; complete Mac regression scheduled twice daily`
+    ]
+  }
+}
+
+// Derive groups after module/consumer expansion and event-specific execution selection.
+export function macosGroupsForPlan(plan) {
+  if (!plan.bundles?.includes('macos_e2e')) return []
+  if (
+    plan.macosProfile === 'smoke' ||
+    (plan.lanes.includes('e2e_smoke_macos') &&
+      plan.lanes.every(
+        (lane) =>
+          defaultManifest.laneBundles[lane] !== 'macos_e2e' ||
+          ['build', 'e2e_smoke_macos'].includes(lane)
+      ))
+  ) {
+    return ['journeys']
+  }
+  if (plan.mode === 'full') return ['journeys', 'presentation', 'regressions', 'delegation']
+  const groups = {
+    journeys: ['e2e_smoke_macos', 'build', 'e2e_functional_macos', 'e2e_workspace_macos'],
+    presentation: ['e2e_accessibility_macos', 'e2e_visual_macos'],
+    regressions: ['e2e_regressions_macos'],
+    delegation: ['e2e_delegation_macos']
+  }
+  return Object.entries(groups)
+    .filter(([, lanes]) => lanes.some((lane) => plan.lanes.includes(lane)))
+    .map(([group]) => group)
+}
+
 export function toGitHubOutputPlan(plan) {
   const output = {
     schemaVersion: plan.schemaVersion,
     mode: plan.mode,
     roots: [...plan.roots],
-    lanes: [...plan.lanes]
+    lanes: [...plan.lanes],
+    macosGroups: macosGroupsForPlan(plan)
   }
+  if (plan.macosProfile) output.macosProfile = plan.macosProfile
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output
 }

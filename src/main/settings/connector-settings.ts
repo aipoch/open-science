@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 
 import type {
   AddCustomServerRequest,
@@ -47,6 +48,7 @@ import {
 import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
+import { getCredentialStore } from './credential-store-mode'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type {
   StoredConnectors,
@@ -285,7 +287,11 @@ class ConnectorSettingsModule {
     for (const stored of connectors.customMcpServers) {
       let secured = stored
       // Migrate pre-encryption settings on first read. The renderer never receives resolved secrets.
-      if ((stored.env || stored.headers) && isEncryptionAvailable()) {
+      if (
+        (stored.env || stored.headers) &&
+        getCredentialStore() === 'os' &&
+        isEncryptionAvailable()
+      ) {
         secured = {
           ...stored,
           ...(stored.env ? { envRefs: this.encryptSecretRecord(stored.env) } : {}),
@@ -586,6 +592,15 @@ class ConnectorSettingsModule {
     const apiKey = request.apiKey.trim()
     await this.repository.setOpenAlexCredential(apiKey ? encryptKey(apiKey) : undefined)
     return this.connectorsSnapshot()
+  }
+
+  async bootstrapOpenAlex(key: string): Promise<void> {
+    const existing = (await this.repository.getSettings()).connectors
+    const ref = existing?.openAlexApiKeyRef
+    if (ref && tryDecryptKey(ref) !== key) throw new BootstrapError('configuration_conflict')
+    const result = await this.validateOpenAlexCredential({ apiKey: key })
+    if (!result.valid) throw new BootstrapError('credential_invalid')
+    await this.repository.publishBootstrapOpenAlex(existing, ref ?? encryptKey(key))
   }
 
   async validateOpenAlexCredential(

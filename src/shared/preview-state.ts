@@ -174,13 +174,12 @@ const sanitizeSubagentsPreviewItem = (
 export const normalizePersistedPreviewState = (value: unknown): PersistedPreviewState => {
   if (!isRecord(value)) return createEmptyPersistedPreviewState()
 
-  const serializedItems = Array.isArray(value.items)
-    ? value.items.slice(-MAX_PERSISTED_PREVIEW_ITEMS)
-    : []
+  const serializedItems = Array.isArray(value.items) ? value.items : []
   const items = serializedItems.length
     ? serializedItems
         .map(sanitizePreviewFileItem)
         .filter((item): item is PersistedPreviewFileItem => !!item)
+        .slice(-MAX_PERSISTED_PREVIEW_ITEMS)
     : []
   const subagents =
     sanitizeSubagentsPreviewItem(value.subagents) ??

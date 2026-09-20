@@ -2,7 +2,7 @@ import type { AcpCreateSessionResponse } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
 import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import { saveSessionFieldsInOrder } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
 import { acquireWorkspacePromptPreparation } from './workspace-prompt-preparation-lock'
 
@@ -37,7 +37,7 @@ const replaceWorkspaceProviderIdentity = (
 const persistWorkspaceSession = async (sessionId: string): Promise<void> => {
   const session = workspaceSession(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
-  await saveSessionInOrder(toPersistedSession(session))
+  await saveSessionFieldsInOrder(toPersistedSession(session), ['memoryEnabled'])
 }
 
 const reconfigureWorkspaceMemory = async (

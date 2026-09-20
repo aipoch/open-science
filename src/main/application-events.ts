@@ -1,3 +1,4 @@
+import type { LiteratureChangedEvent } from '../shared/literature'
 import type {
   AcpAgentRuntimeUpdate,
   AcpPermissionRequest,
@@ -17,6 +18,7 @@ import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/not
 import type { ProvisionProgress } from '../shared/notebook-env'
 import type { NotificationInboxChanged } from '../shared/notifications'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
+import type { ProjectBackgroundActivityChangedEvent } from '../shared/background-result-delivery'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
 import type {
   ReviewSessionRequest,
@@ -37,6 +39,8 @@ import type { UpdateStatus } from '../shared/update'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { MemoryChangedEvent } from '../shared/memory'
+import type { WslSetupStatus } from '../shared/wsl-setup'
+import type { PackageOperationSnapshot } from '../shared/session-package'
 import type {
   SessionPersistenceFlushAbortedEvent,
   SessionPersistenceFlushRequest
@@ -49,6 +53,7 @@ const log = createLogger('application-events')
 // signals and generated Web-only channels stay on their existing transports until their owner moves
 // them deliberately.
 export type ApplicationEventMap = {
+  'sessions:package-operation-changed': PackageOperationSnapshot
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate
@@ -58,7 +63,9 @@ export type ApplicationEventMap = {
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
   'notebook-env:progress': ProvisionProgress
+  'runtime:policy-changed': undefined
   'notifications:changed': NotificationInboxChanged
+  'background-result-delivery:changed': ProjectBackgroundActivityChangedEvent
   'project:created': Project
   'project:updated': Project
   'project:deleted': ProjectDeletedEvent
@@ -70,6 +77,7 @@ export type ApplicationEventMap = {
   'sessions:flush-request': SessionPersistenceFlushRequest
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
+  'literature:changed': LiteratureChangedEvent
   'tags:changed': TagsChangedEvent
   'memory:changed': MemoryChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest
@@ -89,6 +97,7 @@ export type ApplicationEventMap = {
   'settings:connector-runtime-changed': undefined
   'settings:install-log': ClaudeInstallEvent
   'settings:changed': SettingsSnapshot
+  'settings:wsl-setup-changed': WslSetupStatus
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent
   'reviewer:suppress-next-auto-review': ReviewSuppressionEvent

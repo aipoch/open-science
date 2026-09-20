@@ -8,7 +8,9 @@ const PERMISSION_PROMPT = 'Request fixture permission.'
 // The fake agent replies with this fixed text regardless of the prompt.
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
-test('anchors a newly sent user message near the top of the viewport', async ({ app }) => {
+test('anchors a newly sent user message near the top of the viewport', async ({
+  app
+}, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
@@ -46,11 +48,12 @@ test('anchors a newly sent user message near the top of the viewport', async ({ 
   const offsetFromViewportTop = userRowBox!.y - viewportBox!.y
   // Anchored near the top: allow the 64px previous-item peek plus paddings.
   expect(offsetFromViewportTop).toBeLessThan(160)
+  await page.screenshot({ path: testInfo.outputPath('prompt-anchor.png') })
 })
 
 test('keeps the prompt fixed while a blocking panel covers and leaves the transcript', async ({
   app
-}) => {
+}, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
@@ -96,4 +99,5 @@ test('keeps the prompt fixed while a blocking panel covers and leaves the transc
 
   const offsetAfterApproval = await readPromptOffset()
   expect(Math.abs(offsetAfterApproval - offsetWhileBlocked)).toBeLessThanOrEqual(2)
+  await page.screenshot({ path: testInfo.outputPath('prompt-after-approval.png') })
 })

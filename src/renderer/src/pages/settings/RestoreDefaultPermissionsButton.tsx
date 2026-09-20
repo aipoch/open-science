@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: restore-default-permissions button · genre: modern-minimal
- * theme: Open Science Settings
+ * theme: Open-Science Settings
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (40–41) · icons: pass (30) · tokens: pass (48) · responsive: pass (49)
  */
@@ -44,6 +44,8 @@ const RestoreDefaultPermissionsButton = ({
 
   return (
     <Button
+      aria-live="polite"
+      aria-atomic="true"
       type="button"
       variant={error ? 'destructive' : 'outline'}
       disabled={isDisabled}
@@ -59,11 +61,13 @@ const RestoreDefaultPermissionsButton = ({
       )}
       onClick={onRestore}
     >
-      <Icon
-        className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')}
-        aria-hidden="true"
-      />
-      <span aria-live="polite">{label}</span>
+      <span key={String(visualState)} className="button-feedback">
+        <Icon
+          className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')}
+          aria-hidden="true"
+        />
+        <span>{label}</span>
+      </span>
     </Button>
   )
 }

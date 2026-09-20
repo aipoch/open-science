@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
 import { ChevronDown, LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
@@ -5,7 +6,6 @@ import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ActionToast } from '@/components/ActionToast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -127,15 +127,12 @@ const PageLoadError = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div
-      role="alert"
-      aria-atomic="true"
-      className="flex items-start justify-between gap-3 px-4 py-3 text-[11px] text-danger-000"
-    >
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
-      <Button type="button" variant="outline" className="h-7 shrink-0 px-2.5" onClick={onRetry}>
-        {t('Retry')}
-      </Button>
+    <div className="px-4 py-3">
+      <ErrorNotice
+        role="alert"
+        description={message}
+        primaryButton={{ label: t('Retry'), onClick: onRetry }}
+      />
     </div>
   )
 }
@@ -340,8 +337,9 @@ const ProjectFilesViewContent = ({
   // One-shot navigation request for the local browser, set when a granted folder is picked in the
   // filter menu. The nonce makes repeated picks of the same folder observable.
   const [localRequestedPath, setLocalRequestedPath] = useState<
-    { path: string; nonce: number } | undefined
+    { path?: string; nonce: number } | undefined
   >(undefined)
+  const localNavigationNonce = useRef(0)
   // Granted folder the local browser is scoped to; undefined means the machine itself.
   const [selectedLocalRootId, setSelectedLocalRootId] = useState<string | undefined>(undefined)
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
@@ -380,7 +378,7 @@ const ProjectFilesViewContent = ({
         const root = roots.find((candidate) => candidate.id === persisted.localRootId)
         if (!root) return
         setSelectedLocalRootId(root.id)
-        setLocalRequestedPath({ path: root.path, nonce: 1 })
+        setLocalRequestedPath({ path: root.path, nonce: ++localNavigationNonce.current })
       })
       .catch(() => undefined)
   }, [])
@@ -396,7 +394,7 @@ const ProjectFilesViewContent = ({
     (root: GrantedLocalRoot): void => {
       setSourceMode('local')
       setSelectedLocalRootId(root.id)
-      setLocalRequestedPath((previous) => ({ path: root.path, nonce: (previous?.nonce ?? 0) + 1 }))
+      setLocalRequestedPath({ path: root.path, nonce: ++localNavigationNonce.current })
       persistFilter({ sourceMode: 'local', localRootId: root.id })
     },
     [persistFilter]
@@ -407,7 +405,7 @@ const ProjectFilesViewContent = ({
   const handleBrowseLocal = useCallback((): void => {
     setSourceMode('local')
     setSelectedLocalRootId(undefined)
-    setLocalRequestedPath(undefined)
+    setLocalRequestedPath({ nonce: ++localNavigationNonce.current })
     persistFilter({ sourceMode: 'local' })
   }, [persistFilter])
 
@@ -523,6 +521,30 @@ const ProjectFilesViewContent = ({
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
+      {grantedRootMutationError ? (
+        <div
+          className="m-2 shrink-0 max-h-[40%] overflow-y-auto"
+          data-testid="granted-root-error-toast"
+        >
+          <ErrorNotice
+            role="alert"
+            title={grantedRootMutationErrorTitle!}
+            description={grantedRootMutationError.detail}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () =>
+                void runGrantedRootMutation(
+                  grantedRootMutationError.kind,
+                  grantedRootMutationError.retry
+                )
+            }}
+            dismissButton={{
+              label: t('Close'),
+              onClick: () => setGrantedRootMutationError(undefined)
+            }}
+          />
+        </div>
+      ) : null}
       <div
         className={cn(
           'flex shrink-0 items-center justify-between gap-3 px-4 pb-2',
@@ -681,7 +703,7 @@ const ProjectFilesViewContent = ({
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {!catalogIndex.overview.isIndexComplete ? (
-            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-warning-000 px-3 py-2 text-[11px] text-text-200">
+            <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 px-3 py-2 text-[11px] text-text-200">
               <span className="min-w-0 flex-1">
                 {catalogIndex.repairError ?? t('Some files could not be indexed yet.')}
               </span>
@@ -847,22 +869,6 @@ const ProjectFilesViewContent = ({
         onOpenChange={setGrantDialogOpen}
         onGranted={handleSelectGrantedRoot}
       />
-      {grantedRootMutationError ? (
-        <ActionToast
-          title={grantedRootMutationErrorTitle!}
-          detail={grantedRootMutationError.detail}
-          actionLabel={t('Retry')}
-          dismissLabel={t('Close')}
-          onAction={() =>
-            void runGrantedRootMutation(
-              grantedRootMutationError.kind,
-              grantedRootMutationError.retry
-            )
-          }
-          onDismiss={() => setGrantedRootMutationError(undefined)}
-          testId="granted-root-error-toast"
-        />
-      ) : null}
     </div>
   )
 }

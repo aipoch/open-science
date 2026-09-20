@@ -1,11 +1,35 @@
+import { createRequire } from 'node:module'
 import { resolve } from 'path'
+import { nativeLocaleAssets } from './scripts/native-locale-assets'
 import { defineConfig } from 'electron-vite'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-export default defineConfig({
+// Supported packages are built on native runners because they carry platform-native dependencies,
+// so the build host is also the package target. Keep non-Windows bundles disabled independently of
+// renderer visibility and the main-process runtime gate.
+export const resolveWsl2BashPreviewBuildEnabled = (
+  platform: NodeJS.Platform,
+  rollbackValue: string | undefined
+): boolean => platform === 'win32' && rollbackValue !== '0'
+
+export default defineConfig(({ command }) => ({
   main: {
+    plugins: [nativeLocaleAssets()],
+    define: {
+      __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
+      __OPEN_SCIENCE_WSL2_BASH_PREVIEW__: resolveWsl2BashPreviewBuildEnabled(
+        process.platform,
+        process.env.OPEN_SCIENCE_BUILD_WSL2_BASH_PREVIEW
+      )
+        ? 'true'
+        : 'false',
+      __OPEN_SCIENCE_WSL2_BASH_DEVELOPMENT_PREVIEW__:
+        command === 'serve' && process.env.OPEN_SCIENCE_DEV_WSL2_BASH_PREVIEW === '1'
+          ? 'true'
+          : 'false'
+    },
     build: {
       // This workspace package is TypeScript source, not a separately built runtime dependency.
       // Bundle it into the Electron main process so development and packaged builds never ask
@@ -18,7 +42,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
-          'find-overlay': resolve('src/preload/find-overlay.ts')
+          'find-overlay': resolve('src/preload/find-overlay.ts'),
+          'installation-assistant': resolve('src/preload/installation-assistant.ts')
         }
       }
     }
@@ -28,6 +53,10 @@ export default defineConfig({
     optimizeDeps: { force: true },
     resolve: {
       alias: {
+        // The decoder's browser entry requires document; its default/worker entry is DOM-free.
+        'decode-named-character-reference': createRequire(import.meta.url).resolve(
+          'decode-named-character-reference'
+        ),
         '@': resolve('src/renderer/src'),
         '@renderer': resolve('src/renderer/src')
       }
@@ -51,10 +80,11 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
+          'installation-assistant': resolve('src/renderer/installation-assistant.html'),
           'office-preview': resolve('src/renderer/office-preview.html'),
           'reviewer-paged-preview': resolve('src/renderer/reviewer-paged-preview.html')
         }
       }
     }
   }
-})
+}))

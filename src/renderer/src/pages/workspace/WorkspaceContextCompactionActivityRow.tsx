@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
- * component: system milestone · genre: modern-minimal · theme: Open Science
+ * component: system milestone · genre: modern-minimal · theme: Open-Science
  * states: completed · in-progress · failed · cancelled
  * contrast: pass (40–41)
  */

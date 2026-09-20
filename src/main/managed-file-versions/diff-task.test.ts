@@ -1,11 +1,85 @@
 import { createRequire } from 'node:module'
+import {
+  inspectManagedTextEditEligibility,
+  type ManagedFileVersionDiffRow,
+  type ManagedFileVersionDiffLine
+} from '../../shared/managed-file-versions'
 
 import { describe, expect, it } from 'vitest'
 
 import { ManagedFileVersionError } from './service'
 import { ManagedTextDiffTaskRunner, resolveDiffModulePath } from './diff-task'
 
+const textLine = (line: ManagedFileVersionDiffRow | undefined): ManagedFileVersionDiffLine => {
+  if (!line || line.kind === 'omitted')
+    throw new Error('Expected a source line, not an omitted range')
+  return line
+}
+
 describe('ManagedTextDiffTaskRunner', () => {
+  it.each([6, 7, 50])(
+    'accounts for every source line when compacting %i unchanged lines',
+    async (count) => {
+      const before = Array.from({ length: count }, (_, index) => `value-${index}\n`)
+      const after = [...before]
+      if (count === 50) {
+        after[0] = 'changed-first\n'
+        after[24] = 'changed-middle\n'
+        after[26] = 'changed-nearby\n'
+        after[49] = 'changed-last\n'
+      }
+      const rows = await new ManagedTextDiffTaskRunner().run({
+        requestId: `context-${count}`,
+        before: before.join(''),
+        after: after.join('')
+      })
+      for (const [side, original] of [
+        ['old', before],
+        ['new', after]
+      ] as const) {
+        const reconstructed = rows
+          .flatMap((row) => {
+            if (row.kind === 'omitted') {
+              const start = (side === 'old' ? row.oldLineNumber : row.newLineNumber) - 1
+              return original.slice(start, start + row.count)
+            }
+            if (row.kind === (side === 'old' ? 'added' : 'removed')) return []
+            return row.segments.map((segment) => segment.text)
+          })
+          .join('')
+        expect(reconstructed).toBe(original.join(''))
+      }
+      const omissions = rows.filter((row) => row.kind === 'omitted')
+      expect(omissions.length).toBe(count === 6 ? 0 : count === 7 ? 1 : 2)
+      if (count === 7)
+        expect(omissions).toEqual([
+          { kind: 'omitted', oldLineNumber: 4, newLineNumber: 4, count: 1 }
+        ])
+      if (count === 50) expect(rows.filter((row) => row.kind === 'added')).toHaveLength(4)
+      expect(Buffer.byteLength(JSON.stringify(rows))).toBeLessThanOrEqual(500 * 1024)
+    }
+  )
+
+  it.each([100, 5000])(
+    'reviews a one-character edit in %i repeated lines within the existing budget',
+    async (count) => {
+      const before = 'value=12345\n'.repeat(count)
+      expect(Buffer.byteLength(before)).toBe(count * 12)
+      expect(inspectManagedTextEditEligibility('data.txt', Buffer.from(before)).editable).toBe(true)
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `sparse-edit-${count}`,
+        before,
+        after: before.replace('12345', '12346')
+      })
+      expect(lines.filter((line) => line.kind === 'added' || line.kind === 'removed')).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'removed' }),
+          expect.objectContaining({ kind: 'added', newLineNumber: 1 })
+        ])
+      )
+    }
+  )
+
   it('returns line numbers and intra-line segments for a replacement', async () => {
     const runner = new ManagedTextDiffTaskRunner()
 
@@ -30,10 +104,18 @@ describe('ManagedTextDiffTaskRunner', () => {
         segments: [{ kind: 'context', text: 'keep\n' }]
       }
     ])
-    expect(lines[0]?.segments.map((segment) => segment.text).join('')).toBe('alpha beta\n')
-    expect(lines[1]?.segments.map((segment) => segment.text).join('')).toBe('alpha gamma\n')
-    expect(lines[0]?.segments.some((segment) => segment.kind === 'removed')).toBe(true)
-    expect(lines[1]?.segments.some((segment) => segment.kind === 'added')).toBe(true)
+    expect(
+      textLine(lines[0])
+        .segments.map((segment) => segment.text)
+        .join('')
+    ).toBe('alpha beta\n')
+    expect(
+      textLine(lines[1])
+        .segments.map((segment) => segment.text)
+        .join('')
+    ).toBe('alpha gamma\n')
+    expect(textLine(lines[0]).segments.some((segment) => segment.kind === 'removed')).toBe(true)
+    expect(textLine(lines[1]).segments.some((segment) => segment.kind === 'added')).toBe(true)
   })
 
   it('preserves a shared CRLF on an unchanged context line', async () => {
@@ -230,8 +312,16 @@ describe('ManagedTextDiffTaskRunner', () => {
       after: `alpha${character}new`
     })
 
-    expect(lines[0]?.segments.map((segment) => segment.text).join('')).toBe(`alpha${character}old`)
-    expect(lines[1]?.segments.map((segment) => segment.text).join('')).toBe(`alpha${character}new`)
+    expect(
+      textLine(lines[0])
+        .segments.map((segment) => segment.text)
+        .join('')
+    ).toBe(`alpha${character}old`)
+    expect(
+      textLine(lines[1])
+        .segments.map((segment) => segment.text)
+        .join('')
+    ).toBe(`alpha${character}new`)
   })
 
   it('reconstructs both complete sources from a mixed-ending diff DTO', async () => {
@@ -245,7 +335,7 @@ describe('ManagedTextDiffTaskRunner', () => {
     const reconstruct = (excludedKind: 'added' | 'removed'): string =>
       lines
         .filter((line) => line.kind !== excludedKind)
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .map((segment) => segment.text)
         .join('')
 
@@ -352,9 +442,11 @@ describe('ManagedTextDiffTaskRunner', () => {
         kind: line.kind,
         oldLineNumber: line.oldLineNumber,
         newLineNumber: line.newLineNumber,
-        text: line.segments.map((segment) => segment.text).join(''),
-        changed: line.segments
-          .filter((segment) => segment.kind === line.kind)
+        text: textLine(line)
+          .segments.map((segment) => segment.text)
+          .join(''),
+        changed: textLine(line)
+          .segments.filter((segment) => segment.kind === line.kind)
           .map((segment) => segment.text)
           .join('')
       }))
@@ -409,9 +501,11 @@ describe('ManagedTextDiffTaskRunner', () => {
     })
     const summary = lines.map((line) => ({
       kind: line.kind,
-      text: line.segments.map((segment) => segment.text).join(''),
-      changed: line.segments
-        .filter((segment) => segment.kind === line.kind)
+      text: textLine(line)
+        .segments.map((segment) => segment.text)
+        .join(''),
+      changed: textLine(line)
+        .segments.filter((segment) => segment.kind === line.kind)
         .map((segment) => segment.text)
         .join('')
     }))
@@ -437,7 +531,7 @@ describe('ManagedTextDiffTaskRunner', () => {
   })
 
   it.each([199, 200])(
-    'preserves %i unchanged blank lines around a paragraph replacement',
+    'accounts for %i unchanged blank lines around a paragraph replacement',
     async (blankLineCount) => {
       const blankLines = '\n'.repeat(blankLineCount)
       const lines = await new ManagedTextDiffTaskRunner().run({
@@ -446,25 +540,30 @@ describe('ManagedTextDiffTaskRunner', () => {
         after: `Paragraph new.\n${blankLines}`
       })
 
-      expect(lines.filter((line) => line.kind === 'context')).toHaveLength(blankLineCount)
+      expect(lines.filter((line) => line.kind === 'context')).toHaveLength(6)
+      expect(lines.filter((line) => line.kind === 'omitted')).toEqual([
+        { kind: 'omitted', oldLineNumber: 5, newLineNumber: 5, count: blankLineCount - 6 }
+      ])
       expect(
         lines
           .filter((line) => line.kind === 'context')
           .every(
             (line) =>
-              line.segments.length === 1 &&
-              line.segments[0].kind === 'context' &&
-              line.segments[0].text === '\n'
+              textLine(line).segments.length === 1 &&
+              textLine(line).segments[0].kind === 'context' &&
+              textLine(line).segments[0].text === '\n'
           )
       ).toBe(true)
       expect(
         lines
-          .filter((line) => line.kind !== 'context')
+          .filter((line) => line.kind === 'added' || line.kind === 'removed')
           .map((line) => ({
             kind: line.kind,
-            text: line.segments.map((segment) => segment.text).join(''),
-            changed: line.segments
-              .filter((segment) => segment.kind === line.kind)
+            text: textLine(line)
+              .segments.map((segment) => segment.text)
+              .join(''),
+            changed: textLine(line)
+              .segments.filter((segment) => segment.kind === line.kind)
               .map((segment) => segment.text)
               .join('')
           }))
@@ -490,11 +589,11 @@ describe('ManagedTextDiffTaskRunner', () => {
     ])
     expect(
       lines
-        .filter((line) => line.kind !== 'context')
+        .filter((line) => line.kind === 'added' || line.kind === 'removed')
         .map((line) => ({
           kind: line.kind,
-          changed: line.segments
-            .filter((segment) => segment.kind === line.kind)
+          changed: textLine(line)
+            .segments.filter((segment) => segment.kind === line.kind)
             .map((segment) => segment.text)
             .join('')
         }))
@@ -514,9 +613,11 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines.map((line) => ({
         kind: line.kind,
-        text: line.segments.map((segment) => segment.text).join(''),
-        changed: line.segments
-          .filter((segment) => segment.kind === line.kind)
+        text: textLine(line)
+          .segments.map((segment) => segment.text)
+          .join(''),
+        changed: textLine(line)
+          .segments.filter((segment) => segment.kind === line.kind)
           .map((segment) => segment.text)
           .join('')
       }))
@@ -539,9 +640,11 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines.map((line) => ({
         kind: line.kind,
-        text: line.segments.map((segment) => segment.text).join(''),
-        changed: line.segments
-          .filter((segment) => segment.kind === line.kind)
+        text: textLine(line)
+          .segments.map((segment) => segment.text)
+          .join(''),
+        changed: textLine(line)
+          .segments.filter((segment) => segment.kind === line.kind)
           .map((segment) => segment.text)
           .join('')
       }))
@@ -574,7 +677,9 @@ describe('ManagedTextDiffTaskRunner', () => {
       after: fixture.after
     })
 
-    expect(lines.slice(0, 2).map((line) => line.segments.map((segment) => segment.text))).toEqual([
+    expect(
+      lines.slice(0, 2).map((line) => textLine(line).segments.map((segment) => segment.text))
+    ).toEqual([
       ['Heading ', 'old', '.\n'],
       ['Heading ', 'new', '.\n']
     ])
@@ -594,9 +699,11 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines.map((line) => ({
         kind: line.kind,
-        text: line.segments.map((segment) => segment.text).join(''),
-        changed: line.segments
-          .filter((segment) => segment.kind === line.kind)
+        text: textLine(line)
+          .segments.map((segment) => segment.text)
+          .join(''),
+        changed: textLine(line)
+          .segments.filter((segment) => segment.kind === line.kind)
           .map((segment) => segment.text)
           .join('')
       }))
@@ -619,9 +726,11 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines.slice(2, 4).map((line) => ({
         kind: line.kind,
-        text: line.segments.map((segment) => segment.text).join(''),
-        changed: line.segments
-          .filter((segment) => segment.kind === line.kind)
+        text: textLine(line)
+          .segments.map((segment) => segment.text)
+          .join(''),
+        changed: textLine(line)
+          .segments.filter((segment) => segment.kind === line.kind)
           .map((segment) => segment.text)
           .join('')
       }))
@@ -643,14 +752,14 @@ describe('ManagedTextDiffTaskRunner', () => {
     })
 
     expect(
-      lines[0]?.segments
-        .filter((segment) => segment.kind === 'context')
+      textLine(lines[0])
+        .segments.filter((segment) => segment.kind === 'context')
         .map((segment) => segment.text)
         .join('')
     ).toContain(fixture.common)
     expect(
-      lines[1]?.segments
-        .filter((segment) => segment.kind === 'context')
+      textLine(lines[1])
+        .segments.filter((segment) => segment.kind === 'context')
         .map((segment) => segment.text)
         .join('')
     ).toContain(fixture.common)
@@ -681,27 +790,27 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines
         .filter((line) => line.kind !== 'added')
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .map((segment) => segment.text)
         .join('')
     ).toBe(fixture.before)
     expect(
       lines
         .filter((line) => line.kind !== 'removed')
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .map((segment) => segment.text)
         .join('')
     ).toBe(fixture.after)
     expect(
       lines
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .filter((segment) => segment.kind === 'removed')
         .map((segment) => segment.text)
         .join('')
     ).toBe(fixture.removed)
     expect(
       lines
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .filter((segment) => segment.kind === 'added')
         .map((segment) => segment.text)
         .join('')
@@ -720,21 +829,21 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines
         .filter((line) => line.kind !== 'added')
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .map((segment) => segment.text)
         .join('')
     ).toBe(before)
     expect(
       lines
         .filter((line) => line.kind !== 'removed')
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .map((segment) => segment.text)
         .join('')
     ).toBe(after)
     expect(
       lines
         .filter((line) => line.kind === 'removed')
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .filter((segment) => segment.kind === 'context')
         .map((segment) => segment.text)
         .join('')
@@ -742,7 +851,7 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(
       lines
         .filter((line) => line.kind === 'added')
-        .flatMap((line) => line.segments)
+        .flatMap((line) => textLine(line).segments)
         .filter((segment) => segment.kind === 'context')
         .map((segment) => segment.text)
         .join('')
@@ -759,13 +868,13 @@ describe('ManagedTextDiffTaskRunner', () => {
     })
     const beforeContext = lines
       .filter((line) => line.kind !== 'added')
-      .flatMap((line) => line.segments)
+      .flatMap((line) => textLine(line).segments)
       .filter((segment) => segment.kind === 'context')
       .map((segment) => segment.text)
       .join('')
     const afterContext = lines
       .filter((line) => line.kind !== 'removed')
-      .flatMap((line) => line.segments)
+      .flatMap((line) => textLine(line).segments)
       .filter((segment) => segment.kind === 'context')
       .map((segment) => segment.text)
       .join('')
@@ -790,20 +899,20 @@ describe('ManagedTextDiffTaskRunner', () => {
       expect(
         lines
           .filter((line) => line.kind !== excludedKind)
-          .flatMap((line) => line.segments)
+          .flatMap((line) => textLine(line).segments)
           .map((segment) => segment.text)
           .join('')
       ).toBe(expected)
     }
     const beforeContext = lines
       .filter((line) => line.kind !== 'added')
-      .flatMap((line) => line.segments)
+      .flatMap((line) => textLine(line).segments)
       .filter((segment) => segment.kind === 'context')
       .map((segment) => segment.text)
       .join('')
     const afterContext = lines
       .filter((line) => line.kind !== 'removed')
-      .flatMap((line) => line.segments)
+      .flatMap((line) => textLine(line).segments)
       .filter((segment) => segment.kind === 'context')
       .map((segment) => segment.text)
       .join('')
@@ -918,12 +1027,12 @@ describe('ManagedTextDiffTaskRunner', () => {
     expect(terminated).toBe(true)
   })
 
-  it('rejects a complete diff beyond the line limit instead of returning a truncation', async () => {
+  it('rejects changed content beyond the output budget instead of returning a truncation', async () => {
     const runner = new ManagedTextDiffTaskRunner()
-    const before = Array.from({ length: 20_001 }, (_, index) => `old-${index}`).join('\n')
+    const before = Array.from({ length: 10_000 }, (_, index) => `old-${index}`).join('\n')
 
     await expect(
-      runner.run({ requestId: 'diff-output-limit', before, after: before })
+      runner.run({ requestId: 'diff-output-limit', before: '', after: before })
     ).rejects.toEqual(
       expect.objectContaining<Partial<ManagedFileVersionError>>({
         code: 'DIFF_OUTPUT_LIMIT_EXCEEDED'

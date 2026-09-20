@@ -2,7 +2,7 @@
 
 - **Generated and editable session details.** New sessions get an auto-generated title and description from the first message, and you can edit them at any time — Home cards now show what each session is about instead of truncated first lines. (#1721)
 - **Per-call usage insights.** When the framework reports enough data, each model call's tokens and context-window share are recorded, and the Context window dialog's Calls view becomes a per-call chart with pinned details and grouping by turn, model, or framework. (#1718, #1734, #1740)
-- **MCP client-config import/export.** Import the standard `mcpServers` JSON used by other MCP hosts (multi-server files let you pick one), and export either an Open Science Connector or an MCP client configuration — exported credentials and headers are always replaced with `${NAME}` placeholders. (#1698)
+- **MCP client-config import/export.** Import the standard `mcpServers` JSON used by other MCP hosts (multi-server files let you pick one), and export either an Open-Science Connector or an MCP client configuration — exported credentials and headers are always replaced with `${NAME}` placeholders. (#1698)
 - **Composer draft redo.** The standard redo shortcut (`Cmd/Ctrl+Shift+Z`) reapplies the most recently undone draft state, completing the unified draft history shared by text, pasted text, and attachments. (#1699, #1694)
 
 ## 🚀 New Features

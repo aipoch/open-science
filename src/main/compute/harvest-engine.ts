@@ -7,7 +7,7 @@ import { RetryableHarvestError } from './job-harvest-scheduler'
  *  2. Classification: delegates to harvest-classifier (pure, no I/O).
  *  3. Download: scp each file to the session workspace under hpc/<jobId>/.
  *
- * On any failure the engine sets harvestError + harvestedAt (harvest_failed outcome, design §9).
+ * Final failures set harvestError + harvestedAt; transient failures keep harvestedAt unset for retry.
  * The remote workdir is never deleted here (retained for manual recovery, design §7).
  *
  * Security: only files beneath the remote_workdir are downloaded (enumeration is scoped
@@ -253,9 +253,9 @@ const downloadFile = async (
     error.limitExceeded = true
     throw error
   }
-  if (result.timedOut) throw new Error('download timed out for ' + relativePath)
+  if (result.timedOut) throw new RetryableHarvestError('File transfer timed out.')
   if (result.exitCode !== 0) {
-    throw new Error('remote copy failed for ' + relativePath)
+    throw new RetryableHarvestError('File transfer failed.')
   }
   const localSize = Number((await stat(localDestPath)).size)
   const postTransferResult = await connection.run(remoteFileStatCommand(absRemotePath), {
@@ -356,18 +356,22 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
     const backupDir = `${harvestDir}.harvest-backup`
     const renamePath = deps.renameFn ?? rename
 
-    // Repair the only interrupted publication states before touching a new attempt. A whole harvest
-    // is published by directory rename, so readers see one complete generation or none, never a
-    // per-file mixture. Only exact app-owned sibling paths are cleaned.
-    if (await pathExists(backupDir)) {
-      if (await pathExists(harvestDir)) await rm(backupDir, { recursive: true, force: true })
-      else await renamePath(backupDir, harvestDir)
-    }
-    await rm(attemptDir, { recursive: true, force: true })
-
     try {
+      // Repair the only interrupted publication states before touching a new attempt. A whole harvest
+      // is published by directory rename, so readers see one complete generation or none, never a
+      // per-file mixture. Only exact app-owned sibling paths are cleaned.
+      if (await pathExists(backupDir)) {
+        if (await pathExists(harvestDir)) await rm(backupDir, { recursive: true, force: true })
+        else await renamePath(backupDir, harvestDir)
+      }
+      await rm(attemptDir, { recursive: true, force: true })
+
       await harvestJobUnchecked(job, deps, { harvestDir, attemptDir, backupDir, renamePath })
-    } catch (error) {
+    } catch (caught) {
+      const error =
+        (caught as NodeJS.ErrnoException)?.code === 'ENOSPC'
+          ? new RetryableHarvestError('Local storage is full.')
+          : caught
       if (error instanceof ComputeConnectionError || error instanceof RetryableHarvestError) {
         // Keep harvestedAt unset so restart/tick recovery retries. Persist only a safe error class;
         // never persist connection output or credentials.
@@ -559,9 +563,7 @@ const harvestJobUnchecked = async (
     host = await hostRepository.get(job.provider_id)
   } catch (err) {
     if (deps.signal?.aborted) throw err
-    const msg = toErrorMessage(err)
-    await finalizeAndReturn(`host lookup failed: ${msg}`, '[]')
-    return
+    throw new RetryableHarvestError('Host lookup failed.')
   }
 
   deps.signal?.throwIfAborted()
@@ -743,7 +745,12 @@ const harvestJobUnchecked = async (
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined)
       if (deps.signal?.aborted) throw error
-      if (error instanceof ComputeConnectionError) throw error
+      if (
+        error instanceof ComputeConnectionError ||
+        error instanceof RetryableHarvestError ||
+        (error as NodeJS.ErrnoException)?.code === 'ENOSPC'
+      )
+        throw error
       const candidate = error as HarvestDownloadLimitError
       if (candidate.limitExceeded) {
         const reason =

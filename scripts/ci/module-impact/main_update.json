@@ -1,0 +1,77 @@
+{
+  "ownerPaths": [
+    "src/main/update/create-strategy.test.ts",
+    "src/main/update/create-strategy.ts",
+    "src/main/update/downloader.test.ts",
+    "src/main/update/downloader.ts",
+    "src/main/update/electron-updater-provider-regressions.test.ts",
+    "src/main/update/electron-updater-strategy.test.ts",
+    "src/main/update/electron-updater-strategy.ts",
+    "src/main/update/ipc.test.ts",
+    "src/main/update/ipc.ts",
+    "src/main/update/legacy-shell-recovery.integration.test.ts",
+    "src/main/update/manifest.test.ts",
+    "src/main/update/manifest.ts",
+    "src/main/update/multipart-response.test.ts",
+    "src/main/update/scheduler.test.ts",
+    "src/main/update/scheduler.ts",
+    "src/main/update/service.save-dialog.test.ts",
+    "src/main/update/service.test.ts",
+    "src/main/update/service.ts",
+    "src/main/update/strategy.test.ts",
+    "src/main/update/strategy.ts",
+    "src/main/update/update-integrity-regressions.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/update/create-strategy.ts",
+    "src/main/update/ipc.ts",
+    "src/main/update/scheduler.ts",
+    "src/main/update/strategy.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/downloader.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/ipc.test.ts",
+      "src/main/update/legacy-shell-recovery.integration.test.ts",
+      "src/main/update/manifest.test.ts",
+      "src/main/update/multipart-response.test.ts",
+      "src/main/update/scheduler.test.ts",
+      "src/main/update/service.save-dialog.test.ts",
+      "src/main/update/service.test.ts",
+      "src/main/update/strategy.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts"
+    ],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": [
+      "src/main/acp/runtime.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

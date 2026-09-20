@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { app } from 'electron'
 
 import { createLogger } from '../logger'
+import { createMacInstallationGuard } from '../mac-installation'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import type { InstallGate, UpdateStrategy } from './strategy'
@@ -60,6 +61,7 @@ export const createUpdateStrategy = (
   const log = createLogger('update')
   const createInPlaceStrategy = (): ElectronUpdaterStrategy =>
     new ElectronUpdaterStrategy({
+      installationGuard: createMacInstallationGuard(),
       ...(opts.installGate ? { installGate: opts.installGate } : {}),
       ...(opts.releaseInstallHandoff ? { releaseInstallHandoff: opts.releaseInstallHandoff } : {}),
       log

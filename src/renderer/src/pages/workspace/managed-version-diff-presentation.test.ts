@@ -2,7 +2,10 @@ import { marked } from 'marked'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ManagedTextDiffTaskRunner } from '../../../../main/managed-file-versions/diff-task'
-import type { ManagedFileVersionDiffResult } from '../../../../shared/managed-file-versions'
+import type {
+  ManagedFileVersionDiffResult,
+  ManagedFileVersionDiffSegment
+} from '../../../../shared/managed-file-versions'
 import {
   toDiffPresentationBlocks,
   type DiffRenderBlock,
@@ -49,7 +52,7 @@ const expectPresentation = (actual: DiffRenderBlock[], expected: object[]): void
 }
 
 const expectSourceReconstruction = (
-  segments: ManagedFileVersionDiffResult['lines'][number]['segments'],
+  segments: ManagedFileVersionDiffSegment[],
   before: string,
   after: string
 ): void => {
@@ -1266,7 +1269,9 @@ describe('managed version diff presentation', () => {
     ].join('\n')
 
     const blocks = await diffMarkdown(before, after, 'rendered-real-world-shortened-paragraph')
-    const mixedBlocks = blocks.filter((block) => block.changeKind === 'mixed')
+    const mixedBlocks = blocks.filter(
+      (block) => block.kind !== 'omitted' && block.changeKind === 'mixed'
+    )
 
     expect(mixedBlocks.length).toBeGreaterThan(0)
     expect(mixedBlocks.every((block) => block.kind === 'markdown')).toBe(true)

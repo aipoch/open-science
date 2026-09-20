@@ -235,7 +235,9 @@ describe('AnthropicProviderBridge', () => {
         authorization: `Bearer ${connection.token}`,
         'content-type': 'application/json',
         'sec-fetch-site': 'same-origin',
-        'x-request-id': 'request-1'
+        'x-request-id': 'request-1',
+        'session-id': 'codex-conversation',
+        'x-opencode-session': 'opencode-conversation'
       },
       body: JSON.stringify({ model: 'ignored', messages: [] })
     })
@@ -243,6 +245,8 @@ describe('AnthropicProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+    expect(upstreamHeaders?.get('session-id')).toBe('codex-conversation')
+    expect(upstreamHeaders?.get('x-opencode-session')).toBe('opencode-conversation')
   })
 
   it('logs a redacted upstream connection failure after the loopback request arrives', async () => {
@@ -291,6 +295,7 @@ describe('AnthropicProviderBridge', () => {
   })
 
   it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const onProviderFailure = vi.fn()
     const fetchImpl = vi.fn(async () =>
       Response.json(
         { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
@@ -301,6 +306,7 @@ describe('AnthropicProviderBridge', () => {
       id: 'provider/model-a',
       baseUrl: 'https://provider.example.test',
       key: 'wrong-key',
+      onProviderFailure,
       model: 'model-a'
     }
     const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
@@ -326,6 +332,13 @@ describe('AnthropicProviderBridge', () => {
       error: { type: 'authentication_error', message: 'Incorrect API key provided' }
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+      startedAt: expect.any(Number),
+      category: 'auth',
+      status: 401,
+      model: 'model-a',
+      endpoint: 'anthropic'
+    })
   })
 
   it('labels a bounded fallback error as JSON on the first response and replay', async () => {

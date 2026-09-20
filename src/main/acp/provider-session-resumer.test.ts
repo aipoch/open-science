@@ -7,11 +7,16 @@ import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../sh
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  shellRuntimeAgentContract,
+  type ShellRuntimeAgentContract
+} from '../notebook/shell-runtime'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityName,
   type SessionCapabilityPolicy
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
@@ -61,6 +66,7 @@ const opencodeBackend: AcpBackendGenerationView = {
 
 type HarnessOptions = {
   attached?: boolean
+  isWslSetupSession?: () => Promise<boolean>
   attachError?: Error
   backendAfterFirstConfigure?: AcpBackendGenerationView
   capabilityPolicy?: SessionCapabilityPolicy
@@ -87,7 +93,10 @@ type HarnessOptions = {
     | null
   specialistSkills?: EffectiveSpecialistSkills
   supportsResume?: boolean
+  supportsClose?: boolean
   capabilityMcpServers?: McpServer[]
+  descriptorCapabilities?: SessionCapabilityName[]
+  shellRuntimeAgentContract?: ShellRuntimeAgentContract
 }
 
 type ResumerHarness = {
@@ -155,7 +164,10 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     order.push('registry publish')
     return AcpSessionRegistry.prototype.publish.call(registry, ...args)
   })
-  const request = vi.fn(async () => {
+  const request = vi.fn(async (method?: string) => {
+    if (method === acp.methods.agent.session.close && options.supportsClose === false) {
+      throw new Error('Method not found: session/close')
+    }
     order.push('session/resume')
     if (options.invalidateDuringResume) {
       registry.invalidatePending()
@@ -184,7 +196,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   })
   const connection = { agent: { request, attachSession } } as unknown as ClientConnection
   const commit = vi.fn(() => order.push('capability commit'))
-  const release = vi.fn(() => order.push('capability release'))
+  const release = vi.fn(() => {
+    order.push('capability release')
+  })
   const adopt = vi.fn(
     async (
       stableAppSessionId: string,
@@ -253,7 +267,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       role: 'primary' as const,
       delegation: 'denied' as const,
       transport: 'none' as const,
-      capabilities: [],
+      capabilities: options.descriptorCapabilities ?? [],
       canonicalMcpServerNames: [],
       modelFacingMcpServerNames: [],
       controlRpcMethods: []
@@ -261,6 +275,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return {
       mcpServers,
       descriptor,
+      ...(options.shellRuntimeAgentContract
+        ? { shellRuntimeAgentContract: options.shellRuntimeAgentContract }
+        : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
         mcpServers: [...mcpServers, ...servers],
         descriptor: {
@@ -287,6 +304,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     assertCurrentConnection,
     disconnectTimedOutConnection,
     resumeCapabilityAdvertised: () => options.supportsResume !== false,
+    supportsSessionClose: () => options.supportsClose !== false,
     currentBackend: () => currentBackend,
     registry,
     reserveIdentity: (sessionId) =>
@@ -295,7 +313,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         mayRenewAfterConnectionSetup: true,
         blockStartup: false
       }),
-    capabilities: { provision },
+    capabilities: { provision, isWslSetupSession: options.isWslSetupSession },
     capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
@@ -382,6 +400,51 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it.each([
+    ['Responses', false, codexResponsesBackend],
+    ['Chat', false, codexBridgeBackend],
+    ['Responses', true, codexResponsesBackend],
+    ['Chat', true, codexBridgeBackend]
+  ] as const)(
+    'rejects unsupported %s Skill scope refresh before requests or detach (attached: %s)',
+    async (_route, attached, initialBackend) => {
+      const harness = createHarness({
+        attached,
+        supportsClose: false,
+        initialBackend: {
+          ...initialBackend,
+          providerContinuityToken: 'same-provider',
+          session: {
+            ...initialBackend.session,
+            options: {
+              openScienceSkillRuntime: {
+                command: '/node',
+                entryPath: '/main.js',
+                root: '/codex',
+                skillsDirectory: '/codex/skills'
+              }
+            }
+          }
+        },
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+      const originalAttachment = harness.registry.lookup('stable-app-session')?.attachment
+      await expect(
+        attached
+          ? harness.reconfigure()
+          : harness.resume({
+              providerSessionId: harness.providerSession.sessionId,
+              providerContinuityToken: 'same-provider'
+            })
+      ).rejects.toThrow('does not support session/close; cannot safely refresh the Skill scope')
+      expect(harness.request).not.toHaveBeenCalled()
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+      expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(originalAttachment)
+      expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    }
+  )
+
   it('merges framework-contributed MCP servers into session/resume', async () => {
     const capabilityServer: McpServer = {
       type: 'http',
@@ -415,6 +478,40 @@ describe('AcpProviderSessionResumer', () => {
     )
   })
 
+  it('resumes with one redacted WSL shell prompt after persistent instructions', async () => {
+    const contract = shellRuntimeAgentContract({
+      kind: 'wsl2-bash',
+      profileId: 'private-profile',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    })
+    const harness = createHarness({
+      descriptorCapabilities: ['notebook'],
+      shellRuntimeAgentContract: contract,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      initialBackend: {
+        ...codexResponsesBackend,
+        prompt: {
+          systemPromptAppends: [],
+          persistentSystemPrompt: 'Baked Codex developer instructions.'
+        }
+      }
+    })
+
+    await harness.resume({
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    })
+
+    const setupText = harness.sessionSetupAppends.flat().join('\n')
+    expect(setupText.match(/Notebook `bash_execute` is bound to WSL2 Bash/g)).toHaveLength(1)
+    expect(setupText).not.toMatch(/private-profile|Ubuntu-22\.04|researcher/)
+    const prefix = harness.registry
+      .lookup('stable-app-session')
+      ?.aggregate.snapshot().sessionSetupPromptPrefix
+    expect(prefix).toContain('host and workspace path are Windows')
+    expect(prefix).not.toContain('Baked Codex developer instructions.')
+  })
+
   it.each([
     ['claude-code', backend],
     ['opencode', opencodeBackend],
@@ -427,7 +524,24 @@ describe('AcpProviderSessionResumer', () => {
         initialBackend.framework.id === 'codex'
           ? '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
           : 'provider-session'
-      const harness = createHarness({ attached: true, initialBackend, providerSessionId })
+      const harness = createHarness({
+        attached: true,
+        initialBackend: {
+          ...initialBackend,
+          session: {
+            ...initialBackend.session,
+            options: {
+              openScienceSkillRuntime: {
+                command: '/node',
+                entryPath: '/main.js',
+                root: '/codex',
+                skillsDirectory: '/codex/skills'
+              }
+            }
+          }
+        },
+        providerSessionId
+      })
 
       await expect(harness.reconfigure()).resolves.toMatchObject({
         sessionId: 'stable-app-session',
@@ -435,7 +549,14 @@ describe('AcpProviderSessionResumer', () => {
       })
 
       expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
-      expect(harness.request).toHaveBeenCalledOnce()
+      if (initialBackend.framework.id === 'codex') {
+        expect(harness.request.mock.calls.map((call) => call[0])).toEqual([
+          acp.methods.agent.session.close,
+          acp.methods.agent.session.resume
+        ])
+      } else {
+        expect(harness.request).toHaveBeenCalledOnce()
+      }
       expect(harness.provision).toHaveBeenCalledOnce()
       expect(harness.adopt).not.toHaveBeenCalled()
     }
@@ -452,6 +573,32 @@ describe('AcpProviderSessionResumer', () => {
       message: 'Resource not found'
     })
     expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
+  it('does not restore a closed Codex attachment when scope reconfiguration fails', async () => {
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...codexResponsesBackend,
+        session: {
+          ...codexResponsesBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      },
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      configureError: new Error('configuration failed')
+    })
+    await expect(harness.reconfigure()).rejects.toThrow('configuration failed')
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalled()
   })
 
   it('preserves the runtime capability policy on compatible provider resume', async () => {
@@ -485,6 +632,7 @@ describe('AcpProviderSessionResumer', () => {
       backend: harness.backend,
       connection: harness.connection,
       session: harness.providerSession,
+      cancellationSignal: expect.any(AbortSignal),
       permissionProfile: 'full'
     })
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
@@ -498,8 +646,85 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()
-    expect(harness.setTimer).not.toHaveBeenCalled()
+    expect(harness.setTimer).toHaveBeenCalledOnce()
     expect(harness.assertCurrentConnection).toHaveBeenCalledWith(harness.connection)
+  })
+
+  it('bounds an attached refresh without disconnecting its live provider or committing late metadata', async () => {
+    const harness = createHarness({ attached: true })
+    const attachment = harness.registry.lookup('stable-app-session')?.attachment
+    const before = harness.registry.lookup('stable-app-session')?.aggregate.snapshot()
+    let complete!: (value: SessionPermissionProfileState) => void
+    harness.configurePermissionProfile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    const pending = harness.resume({
+      cwd: '/late-workspace',
+      specialistId: 'late-specialist',
+      permissionProfile: 'full'
+    })
+    await vi.waitFor(() => expect(harness.configurePermissionProfile).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow(/timed out.*permission.*unknown/i)
+    harness.fireTimeout()
+    await rejected
+    expect(harness.disconnectTimedOutConnection).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
+    complete({ ...permissionProfile, selectedProfile: 'full' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toEqual(before)
+    expect(harness.clearLivePermissionProfile).not.toHaveBeenCalled()
+  })
+
+  it('does not start permission configuration after an attached capability lookup times out', async () => {
+    let complete!: (value: boolean) => void
+    const lookup = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          complete = resolve
+        })
+    )
+    const harness = createHarness({ attached: true, isWslSetupSession: lookup })
+    const pending = harness.resume({ permissionProfile: 'full' })
+    await vi.waitFor(() => expect(lookup).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow(/No permission update was attempted/)
+    harness.fireTimeout()
+    await rejected
+    complete(false)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
+    expect(harness.disconnectTimedOutConnection).not.toHaveBeenCalled()
+  })
+
+  it('does not change an attached Codex Skill scope through a presentation-only resume', async () => {
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...codexResponsesBackend,
+        session: {
+          ...codexResponsesBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      }
+    })
+    await expect(harness.resume({ specialistId: 'regulation' })).rejects.toThrow(
+      'Specialist switching'
+    )
+    expect(
+      harness.registry.lookup('stable-app-session')?.aggregate.snapshot().specialistId
+    ).toBeUndefined()
+    expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
   })
 
   it('does not update a successor attachment after permission configuration', async () => {
@@ -551,7 +776,7 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
       cwd: '/successor-workspace',
       projectId: 'successor-project',
-      specialistId: 'stale-specialist',
+      specialistId: undefined,
       permissionProfile
     })
     expect(harness.registry.currentSessionId).toBe('stable-app-session')
@@ -842,6 +1067,49 @@ describe('AcpProviderSessionResumer', () => {
       expect.objectContaining({ sessionId: providerSessionId }),
       expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('fresh-adopts a forked Codex Session when its adapter reports missing rollout details', async () => {
+    const forkedSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const harness = createHarness({
+      initialBackend: {
+        ...codexResponsesCompatibilityBackend,
+        session: {
+          ...codexResponsesCompatibilityBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      }
+    })
+    // The installed Codex adapter succeeds on close, then wraps the native missing-thread
+    // diagnostic in data.details rather than the top-level ACP error message.
+    harness.request.mockImplementation(async (method) => {
+      if (method === acp.methods.agent.session.close) return {}
+      throw acp.RequestError.internalError({
+        details: `no rollout found for thread id ${forkedSessionId}`
+      })
+    })
+
+    await expect(
+      harness.resume({
+        sessionId: forkedSessionId,
+        previousFrameworkId: 'codex',
+        previousBackendId: codexResponsesCompatibilityBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
+      acp.methods.agent.session.close,
+      acp.methods.agent.session.resume
+    ])
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
     expect(harness.adopt).toHaveBeenCalledOnce()
   })
@@ -1148,6 +1416,62 @@ describe('AcpProviderSessionResumer', () => {
       expect(harness.providerSession.dispose).not.toHaveBeenCalled()
     }
   )
+
+  it('rejects a Codex resume that mounted an older Skill scope and retries with the current scope', async () => {
+    const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const initialBackend = {
+      ...codexResponsesBackend,
+      session: {
+        ...codexResponsesBackend.session,
+        options: {
+          openScienceSkillRuntime: {
+            command: '/node',
+            entryPath: '/main.js',
+            root: '/codex',
+            skillsDirectory: '/codex/skills'
+          }
+        }
+      }
+    }
+    const harness = createHarness({
+      initialBackend,
+      providerSessionId,
+      specialistIdentity: { append: '', prefix: 'Regulation only' },
+      specialistSkills: {
+        kind: 'specialist',
+        skillIds: ['regulation'],
+        frameworkNames: ['mcp-regulation'],
+        missingSkillIds: []
+      }
+    })
+    const aggregate = harness.registry.ensureAffinity('stable-app-session').aggregate
+    const pending = Promise.withResolvers<{ sessionId: string }>()
+    harness.request.mockImplementationOnce(() => pending.promise)
+    const request = {
+      providerSessionId,
+      previousFrameworkId: 'codex' as const,
+      previousBackendId: initialBackend.backendId
+    }
+    const resumed = harness.resume(request)
+    const rejected = expect(resumed).rejects.toThrow('ACP session startup was superseded.')
+    await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
+    aggregate.setSpecialistId('regulation')
+    pending.resolve({ sessionId: providerSessionId })
+    await rejected
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+    await harness.resume(request)
+    expect(harness.request.mock.calls.at(-1)?.[1].mcpServers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'skills',
+          env: expect.arrayContaining([
+            { name: 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES', value: '["mcp-regulation"]' }
+          ])
+        })
+      ])
+    )
+  })
 
   it('rechecks the Specialist binding after an asynchronous projection refresh', async () => {
     const delayedIdentity = Promise.withResolvers<{ append: string; prefix: string }>()

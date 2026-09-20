@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Molecule } from 'openchemlib'
 
 import { MOLECULE_TOOLS } from './molecule'
 import type { ToolContext } from '../types'
@@ -16,6 +17,9 @@ const ctx: ToolContext = {
   },
   fetchJsonWithHeaders: async () => {
     throw new Error('render_molecule must not use ctx.fetchJsonWithHeaders')
+  },
+  postForm: async () => {
+    throw new Error('unused multipart transport')
   },
   postJson: async () => {
     throw new Error('render_molecule must not use ctx.postJson')
@@ -56,15 +60,54 @@ describe('molecule/render_molecule', () => {
     expect(out.filename_suggestion).toBe('C9H8O4.mol')
   })
 
-  it('accepts a molfile input and returns the success shape', async () => {
-    // We only assert that molfile input is accepted (valid:true). Descriptor accuracy (formula,
-    // weight, atom count, canonical smiles) is asserted on the SMILES path above and verified in the
-    // real Node/Electron main process; OpenChemLib's molfile molecule state is unreliable under the
-    // vite-node test sandbox after repeated parses, so asserting descriptors here tests the sandbox.
-    const seed = (await renderMolecule.run!(ctx, { smiles: ASPIRIN_SMILES })) as RenderResult
-    const out = (await renderMolecule.run!(ctx, { molfile: seed.molfile })) as RenderResult
-
+  it.each([
+    ['[H][H]', 0],
+    ['[2H]O[2H]', 1],
+    ['[3H]O[3H]', 1],
+    ['[13C]O', 2]
+  ])('counts heavy atoms by atomic number for %s', async (smiles, expected) => {
+    const out = (await renderMolecule.run!(ctx, { smiles })) as RenderResult
     expect(out.valid).toBe(true)
+    expect(out.heavy_atom_count).toBe(expected)
+  })
+
+  it.each(['\n', '\r\n'])('preserves a generated molfile with %j line endings', async (newline) => {
+    const seed = (await renderMolecule.run!(ctx, { smiles: ASPIRIN_SMILES })) as RenderResult
+    expect(seed.molfile).toMatch(/^\n/)
+    const out = (await renderMolecule.run!(ctx, {
+      molfile: seed.molfile!.replaceAll('\n', newline)
+    })) as RenderResult
+
+    expect(out).toMatchObject({
+      valid: true,
+      smiles: seed.smiles,
+      formula: 'C9H8O4',
+      heavy_atom_count: 13
+    })
+    expect(out.molecular_weight).toBeCloseTo(180.16, 1)
+    expect(Molecule.fromMolfile(out.molfile!).getAllAtoms()).toBe(13)
+  })
+
+  it('preserves a V3000 molfile with an empty title', async () => {
+    const molfile = Molecule.fromSmiles(ASPIRIN_SMILES).toMolfileV3()
+    const out = (await renderMolecule.run!(ctx, { molfile })) as RenderResult
+
+    expect(out).toMatchObject({ valid: true, formula: 'C9H8O4', heavy_atom_count: 13 })
+    expect(out.molecular_weight).toBeCloseTo(180.16, 1)
+  })
+
+  it('continues to accept a molfile with a nonempty title', async () => {
+    const molfile = `aspirin${Molecule.fromSmiles(ASPIRIN_SMILES).toMolfile()}`
+    const out = (await renderMolecule.run!(ctx, { molfile })) as RenderResult
+
+    expect(out).toMatchObject({ valid: true, formula: 'C9H8O4', heavy_atom_count: 13 })
+  })
+
+  it('returns valid:false for an empty molecular structure', async () => {
+    const molfile = new Molecule(0, 0).toMolfile()
+    const out = (await renderMolecule.run!(ctx, { molfile })) as RenderResult
+
+    expect(out).toMatchObject({ valid: false, error: expect.any(String) })
   })
 
   it('returns valid:false with an error for an unparseable SMILES', async () => {
@@ -78,5 +121,9 @@ describe('molecule/render_molecule', () => {
     await expect(
       renderMolecule.run!(ctx, { smiles: ASPIRIN_SMILES, molfile: 'x' })
     ).rejects.toThrow(/only one/)
+    await expect(renderMolecule.run!(ctx, { molfile: ' \n\t ' })).rejects.toThrow(/requires either/)
+    await expect(
+      renderMolecule.run!(ctx, { smiles: ASPIRIN_SMILES, molfile: ' \n\t ' })
+    ).resolves.toMatchObject({ valid: true, formula: 'C9H8O4' })
   })
 })

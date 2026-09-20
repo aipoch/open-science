@@ -1,3 +1,4 @@
+import { isRuntimeWriter } from './runtime-writer-client'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   createContext,
@@ -51,6 +52,7 @@ import {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
   syncWorkspacePermissionState,
   useWorkspaceRuntimeEventDrain,
   useWorkspaceRuntimeEventIngest
@@ -294,7 +296,7 @@ const useOwnedWorkspaceAgentRuntime = (
   }, [permissionResponseAttemptOwner, runtime.state.pendingPermissions])
 
   useEffect(() => {
-    if (liveRuntimeEvents) return
+    if (liveRuntimeEvents || !isRuntimeWriter()) return
     lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
       supportsImageRelay: visionRelayAvailable,
       getAgentTarget: getSessionAgentTarget,
@@ -558,7 +560,8 @@ const useOwnedWorkspaceAgentRuntime = (
                       agentFrameworkId: resumed.frameworkId,
                       agentBackendId: resumed.backendId,
                       providerSessionId: resumed.providerSessionId,
-                      providerContinuityToken: resumed.providerContinuityToken
+                      providerContinuityToken: resumed.providerContinuityToken,
+                      wslSetup: resumed.wslSetup
                     }
                   : undefined
               )
@@ -710,6 +713,7 @@ export {
   pendingWorkspacePermissions,
   syncWorkspaceContextUsage,
   syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
   useWorkspaceSubagentRuntimeSession,
   useWorkspaceAgentRuntime
 }

@@ -1,3 +1,4 @@
+import { TiffPageDecodeError } from './tiff-preview-types'
 import type { DecodedTiffPage, TiffPreviewLimits } from './tiff-preview-types'
 import type {
   TiffDecodeWorkerRequest,
@@ -82,7 +83,12 @@ const createTiffDecodeSession = (
     decode.settled = true
 
     if (response.type === 'decoded') decode.resolve(response.page)
-    else decode.reject(new Error(response.message))
+    else
+      decode.reject(
+        response.pageCount === undefined
+          ? new Error(response.message)
+          : new TiffPageDecodeError(response.message, response.pageCount)
+      )
   }
 
   const onError = (): void => failSession(new Error('TIFF decoder worker failed'))

@@ -422,6 +422,15 @@ const NotebookNetworkApprovalDetail = ({
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
       <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
       {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
+      {approval.runtime &&
+      approval.runtime !== 'bash' &&
+      request.options.some((option) => option.kind === 'allow_once') ? (
+        <p>
+          {t(
+            'Allow once applies to the next execution of the same command in this session and runtime. It allows multiple connections to this domain during that execution.'
+          )}
+        </p>
+      ) : null}
       <button
         type="button"
         aria-expanded={expanded}
@@ -600,13 +609,15 @@ const ScopeDropdown = ({
   available,
   onSelect,
   onClose,
-  portaled
+  portaled,
+  onceDescription
 }: {
   selected: PermissionScope
   available: Set<PermissionScope>
   onSelect: (scope: PermissionScope) => void
   onClose: (restoreTriggerFocus?: boolean) => void
   portaled: boolean
+  onceDescription?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const ref = useRef<HTMLDivElement>(null)
@@ -684,7 +695,9 @@ const ScopeDropdown = ({
           {/* Label column: left-aligned flush to padding so both rows line up */}
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-xs font-medium text-foreground">{t(label)}</span>
-            <span className="text-[11px] leading-tight text-muted-foreground">{t(subtitle)}</span>
+            <span className="text-[11px] leading-tight text-muted-foreground">
+              {scope === 'once' && onceDescription ? onceDescription : t(subtitle)}
+            </span>
           </div>
           {/* Check column: right side, fixed slot so selection never shifts the label */}
           <span className="flex w-3.5 shrink-0 justify-center text-primary">
@@ -731,6 +744,7 @@ const PermissionApprovalCard = ({
   onSubmitted
 }: PermissionApprovalCardProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const networkRuntime = getNotebookNetworkApproval(request)?.runtime
   const [scope, setScope] = useState<PermissionScope>('session')
   const [scopeOpen, setScopeOpen] = useState(false)
   const [scopeConfirmation, setScopeConfirmation] = useState<PendingScopeConfirmation | undefined>(
@@ -962,7 +976,11 @@ const PermissionApprovalCard = ({
         <div className="flex flex-col gap-1 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-semibold text-foreground">{request.delegated.childTitle}</span>
-            <span className="text-muted-foreground">{request.delegated.riskScope}</span>
+            <span className="text-muted-foreground">
+              {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel)
+                ? t('This conversation or this call')
+                : request.delegated.riskScope}
+            </span>
           </div>
           <span className="break-words text-muted-foreground">
             {literatureSummary ? presentation.description : request.title}
@@ -991,6 +1009,10 @@ const PermissionApprovalCard = ({
           scopeDescription={scopeDescription}
         />
       </div>
+
+      {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel) ? (
+        <p className="text-muted-foreground">{presentation.description}</p>
+      ) : null}
 
       {/* Affected file targets — the canonical location field, shown so read/edit/delete
           prompts always reveal the path being authorized. Wraps to keep full values readable. */}
@@ -1035,7 +1057,7 @@ const PermissionApprovalCard = ({
           ) : null}
         </div>
       ) : literatureSummary ? (
-        <WorkspaceLiteratureToolCard summary={literatureSummary} />
+        <WorkspaceLiteratureToolCard summary={literatureSummary} isApproval />
       ) : isNotebookNetworkApprovalRequest(request) ? (
         <NotebookNetworkApprovalDetail request={request} />
       ) : isSpecialistSwitchRequest(request) ? (
@@ -1085,6 +1107,11 @@ const PermissionApprovalCard = ({
                 onSelect={setScope}
                 onClose={closeScopeMenu}
                 portaled={embedded}
+                onceDescription={
+                  networkRuntime && networkRuntime !== 'bash'
+                    ? t('Next matching execution')
+                    : undefined
+                }
               />
             )}
             <PopoverAnchor asChild>

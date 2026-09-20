@@ -1,13 +1,17 @@
-import { mkdir, readdir } from 'node:fs/promises'
+import { readdir } from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
+import { DATA_ROOT_SELECTION_CHANGED } from '../../shared/storage'
+import { assertDataRootSelection, dataRootIdentity } from './data-root-selection'
 import type { Dirent } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { app, dialog, shell } from 'electron'
 
 import type {
   ActiveSessionInfo,
   DataRootInspection,
+  DataRootSelection,
   DataRootValidationResult,
   DiscardMigratedCopyResult,
   MigrationOutcome,
@@ -33,6 +37,7 @@ import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
 import { removeNotebookWorkloadCache } from '../notebook/notebook-workload-cache-paths'
 import { detectActiveSessions } from './detect-active'
 import { hasAnyExistingPath, isDataRootMissing } from './path-presence'
+import { directoryHasFiles } from './location-evidence'
 import {
   acceptMissingDataRoot as acceptMissingDataRootWrite,
   beginMigration,
@@ -85,6 +90,7 @@ type StorageCommandOwnerDeps = {
   getActiveSideChatSessions: () => LegacySessionSource[]
   getActiveDelegatedSessions: () => LegacySessionSource[]
   hasActiveReviewerWork: () => boolean
+  hasActivePackageOperation?: () => boolean
   settingsService: {
     setDataRoot: (path: string, options?: SetDataRootOptions) => Promise<void>
     // Marks the one-time legacy-data-move prompt as answered so it is never shown again.
@@ -93,6 +99,8 @@ type StorageCommandOwnerDeps = {
     // and to gate the one-time legacy-data-move prompt (legacyDataMovePromptDismissedAt).
     getStoredSettings: () => Promise<{
       dataRoot?: string
+      onboardingCompletedAt?: number
+      dataRootIsInitialDefault?: boolean
       legacyDataMovePromptDismissedAt?: number
     }>
   }
@@ -105,6 +113,7 @@ type StorageCommandOwnerDeps = {
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   exportRuntimeLocks?: typeof exportRuntimeLocks
   discardStagedCopy?: typeof discardStagedCopy
+  deleteSources?: typeof import('./data-migration').deleteSources
   runDataRootMigration?: typeof runDataRootMigration
   pauseDataRootWriters?: typeof pauseDataRootWriters
   // Windows classification probes volume capabilities; inject only when a host-independent command
@@ -128,8 +137,8 @@ type StorageCommandOwnerDeps = {
   availableBytes?: typeof availableBytes
 }
 
-type StorageParentRequest = Readonly<{ parent: string }>
-type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
+type StorageParentRequest = Readonly<{ parent: string; selection?: DataRootSelection }>
+type StorageRootRequest = StorageParentRequest & Readonly<{ markOnboarding?: boolean }>
 
 const NON_UPLOAD_DATA_ROOT_DIRS = [...MIGRATABLE_DATA_DIRS, 'runtime'].filter(
   (dir) => dir !== UPLOADS_DIR
@@ -250,12 +259,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     canAutoSelectDataDrive: boolean
   }> => {
     const dataRoot = resolveDataRoot()
-    // Only an explicitly-configured-but-now-gone root counts as "missing"; a fresh install's unset
-    // dataRoot (default `~/OpenScience` not created yet) is normal and must never nag the user.
+    // Saved and completed legacy roots are existing storage; a fresh install's unset
+    // dataRoot (default `~/Open-Science` not created yet) is normal and must never nag the user.
     let dataRootMissing = false
-    // A pre-§20 legacy install still keeps its data in the hidden config root: settings.dataRoot is
-    // unset (using the default), that default resolved to the config root itself, and real user data
-    // lives there. Offer the one-time "move to the visible OpenScience folder" prompt until answered.
+    // An explicitly saved pre-§20 config-root layout retains its unanswered migration prompt.
     let legacyDataMovePrompt = false
     // Fail closed: only the same main-owned filesystem/settings snapshot that identifies an empty,
     // unconfigured root may authorize onboarding's pointer-only default-drive selection.
@@ -270,12 +277,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     }
 
     if (storedSettings) {
-      // Only an explicitly-configured root that stat proves is gone (ENOENT/ENOTDIR) counts as
+      // Only an existing root that stat proves is gone (ENOENT/ENOTDIR) counts as
       // missing. isDataRootMissing deliberately does NOT collapse other stat errors into "missing"
       // the way a bare existsSync would, so a non-ENOENT failure (seen with non-ASCII paths on some
       // Windows setups, or a transient drive/IO hiccup) can't nag the user to abandon real data.
       const configuredRootMissing =
-        Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(dataRoot))
+        (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+        (await isDataRootMissing(dataRoot))
       // A failed reconnect recovery leaves the availability owner in its fail-closed missing state.
       // Project that state as still missing so both the initial status probe and an open dialog stay
       // reachable for retry instead of falling back to the Session-loading screen.
@@ -287,9 +295,10 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       }
       try {
         const configRoot = resolveConfigRoot()
-        const legacyInPlace = !storedSettings.dataRoot && samePath(dataRoot, configRoot)
-        const hasUserData = await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
-          MIGRATABLE_DATA_DIRS.map((dir) => join(configRoot, dir))
+        const legacyInPlace =
+          samePath(dataRoot, configRoot) && storedSettings.dataRootIsInitialDefault !== true
+        const hasUserData = MIGRATABLE_DATA_DIRS.some((dir) =>
+          directoryHasFiles(join(configRoot, dir))
         )
         legacyDataMovePrompt =
           legacyInPlace &&
@@ -301,7 +310,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           (await (deps.hasAnyExistingPath ?? hasAnyExistingPath)(
             NON_UPLOAD_DATA_ROOT_DIRS.map((dir) => join(dataRoot, dir))
           )) || (await hasUploadDataBeyondStartupScaffold(dataRoot))
-        canAutoSelectDataDrive = !storedSettings.dataRoot && !currentRootHasData && !dataRootMissing
+        canAutoSelectDataDrive =
+          storedSettings.onboardingCompletedAt === undefined &&
+          (!storedSettings.dataRoot || storedSettings.dataRootIsInitialDefault === true) &&
+          !currentRootHasData &&
+          !dataRootMissing
       } catch (err) {
         logger.warn('data root status detection failed', diagnosticErrorFields(err))
       }
@@ -326,7 +339,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const acceptMissingDataRoot = async (): Promise<void> => {
     const storedSettings = await deps.settingsService.getStoredSettings()
     const configuredRootMissing =
-      Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+      (Boolean(storedSettings.dataRoot) || storedSettings.onboardingCompletedAt !== undefined) &&
+      (await isDataRootMissing(resolveDataRoot()))
     if (!configuredRootMissing) {
       await reconcileDataRootWriteAvailability(false)
       return
@@ -390,6 +404,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     })
 
   const directHandoffBlocker = (): string | undefined => {
+    if (deps.hasActivePackageOperation?.())
+      return 'Wait for the Session package operation to finish before moving data.'
     const activeSessions = detectActive()
     const reviewerActive = deps.hasActiveReviewerWork()
     if (activeSessions.length === 0 && !reviewerActive) return undefined
@@ -417,6 +433,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     request: StorageParentRequest,
     handoffTarget: RendererSessionPersistenceTarget = { surface: 'electron-renderer' }
   ): Promise<MigrationOutcome> => {
+    if (deps.hasActivePackageOperation?.())
+      return {
+        ok: false,
+        error: 'Wait for the Session package operation to finish before moving data.'
+      }
     if (activeStaged || resolutionInProgress) {
       return {
         ok: false,
@@ -452,7 +473,21 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // Reject stale/invalid requests before stopping any producer. The migration engine validates
       // again at its own filesystem boundary, but ordinary invalid targets must have no teardown side
       // effects at the command boundary.
-      const validation = await validateNewDataRootImpl(request.parent, resolveDataRoot())
+      const target = request.selection?.dataRoot ?? dataRootForPicked(request.parent)
+      if (!samePath(dataRootForPicked(request.parent), target))
+        throw new Error(DATA_ROOT_SELECTION_CHANGED)
+      const selection: DataRootSelection = request.selection ?? {
+        pickedPath: request.parent,
+        dataRoot: target,
+        kind: 'move',
+        identity: dataRootIdentity(target)
+      }
+      if (selection.kind !== 'move') throw new Error(DATA_ROOT_SELECTION_CHANGED)
+      assertDataRootSelection(selection)
+      const validation = await validateNewDataRootImpl(target, resolveDataRoot(), {
+        exactTarget: true
+      })
+      assertDataRootSelection(selection)
       if (controller.signal.aborted) {
         return { ok: false, error: 'migration cancelled', cancelled: true }
       }
@@ -484,6 +519,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         }
       }
 
+      assertDataRootSelection(selection)
+
       // Flag the copy: sets both the quit guard (Cmd+Q warning) and the write-gate (blocks ACP/notebook
       // writes to the old root for the whole copy→commit window).
       beginMigration()
@@ -509,8 +546,9 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
                 captureMicromamba(argv, micromambaSpawnEnv(runtimeRoot(fromDataRoot)))
             })
         },
-        request.parent,
+        target,
         {
+          selection,
           signal: controller.signal,
           onProgress: (progress) => (deps.broadcastProgress ?? defaultBroadcast)(progress),
           onVerified: (staged) => {
@@ -571,7 +609,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     return { token: marker.token, target, correlationId: randomUUID(), recovered: true }
   }
 
-  // Discards a completed-but-uncommitted copy at `<parent>/OpenScience` when the user picks "Keep
+  // Discards a completed-but-uncommitted copy at `<parent>/Open-Science` when the user picks "Keep
   // current location" on the done stage. Since the copy phase never touched settings.dataRoot or the
   // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
   // refuses anything that isn't a marker-confirmed staging copy for the current root, so a misrouted
@@ -831,20 +869,30 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       let outcome: MigrationOutcome
       try {
         const currentDataRoot = resolveDataRoot()
+        const selection: DataRootSelection = {
+          pickedPath: target,
+          dataRoot: target,
+          kind: 'recover',
+          identity: dataRootIdentity(target)
+        }
         outcome = await commitDataRootSwitch(
           {
             currentDataRoot,
             // Arrow-wrapped so setDataRoot is called as a method (it reads `this.repository`).
             setDataRoot: (path) =>
-              deps.settingsService.setDataRoot(path, { previousDataRoot: currentDataRoot }),
+              deps.settingsService.setDataRoot(path, {
+                previousDataRoot: currentDataRoot,
+                validateTarget: () => assertDataRootSelection(selection)
+              }),
             // Prove the on-disk copy is the one this session staged (guards against a stale marker).
             expectedToken: staged.token,
             cleanupJournal,
+            deleteSources: deps.deleteSources,
             cleanupRuntimeCache: (sourceRoot) => cleanupRuntimeCache(join(sourceRoot, 'runtime')),
             logger,
             diagnosticCorrelationId: staged.correlationId
           },
-          request.parent
+          target
         )
       } catch (err) {
         logger.error('data root commit boundary failed', diagnosticErrorFields(err))
@@ -904,17 +952,25 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // Settings + onboarding recovery: classify a candidate parent without committing to it, so the
   // caller can route to the right UI (migrate confirm for 'move', adopt confirm for 'adopt',
   // staged-copy resolution for 'recover', inline error for 'invalid') and display the derived
-  // `<parent>/OpenScience` path regardless of kind. Never throws.
+  // `<parent>/Open-Science` path regardless of kind. Never throws.
   const inspectDataRoot = async (request: StorageParentRequest): Promise<DataRootInspection> => {
     let dataRoot = ''
     try {
       if (typeof request?.parent !== 'string') throw new Error('The selected folder is not usable.')
       dataRoot = dataRootForPicked(request.parent)
-      const result = await classifyDataRootImpl(request.parent, resolveDataRoot())
+      const identity = dataRootIdentity(dataRoot)
+      const result = await classifyDataRootImpl(dataRoot, resolveDataRoot(), { exactTarget: true })
       if (result.kind === 'invalid') return { ...result, dataRoot }
 
+      const selection: DataRootSelection = {
+        pickedPath: request.parent,
+        dataRoot,
+        kind: result.kind,
+        identity
+      }
+      assertDataRootSelection(selection)
       const targetWasAbsent = result.kind === 'move' ? await isDataRootMissing(dataRoot) : undefined
-      const capacityPath = targetWasAbsent ? resolve(request.parent) : dataRoot
+      const capacityPath = targetWasAbsent ? dirname(dataRoot) : dataRoot
 
       let targetAvailableBytes: number | undefined
       try {
@@ -924,9 +980,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         logger.warn('candidate storage capacity lookup failed', diagnosticErrorFields(error))
       }
 
+      assertDataRootSelection(selection)
       return {
         ...result,
         dataRoot,
+        selection,
         ...(targetWasAbsent === undefined ? {} : { targetWasAbsent }),
         ...(targetAvailableBytes === undefined ? {} : { targetAvailableBytes })
       }
@@ -981,7 +1039,13 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     let rendererPrepared = false
     operation.phase('classify-target')
     try {
-      const classification = await classifyDataRootImpl(request.parent, resolveDataRoot())
+      const target = request.selection?.dataRoot ?? dataRootForPicked(request.parent)
+      if (!samePath(dataRootForPicked(request.parent), target))
+        throw new Error(DATA_ROOT_SELECTION_CHANGED)
+      const identity = request.selection?.identity ?? dataRootIdentity(target)
+      const classification = await classifyDataRootImpl(target, resolveDataRoot(), {
+        exactTarget: true
+      })
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'))
         return { ok: false, error: 'Data-root change cancelled.' }
@@ -992,6 +1056,15 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         })
         return { ok: false, error: classification.error ?? 'The selected folder is not usable.' }
       }
+
+      let selection: DataRootSelection = request.selection ?? {
+        pickedPath: request.parent,
+        dataRoot: target,
+        kind: classification.kind,
+        identity
+      }
+      if (selection.kind !== classification.kind) throw new Error(DATA_ROOT_SELECTION_CHANGED)
+      assertDataRootSelection(selection)
 
       // Unlike migration, this direct switch has no confirmation stage. Refuse every active data
       // producer before the teardown gate so adopting a root never silently terminates current work.
@@ -1055,37 +1128,34 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
         }
       }
 
-      const target = dataRootForPicked(request.parent)
-      // Create the data root now, before persisting the pointer. Unlike storage:migrate there is no
-      // copy phase to mkdir it, so a fresh onboarding folder ('move') would be recorded in
-      // settings.dataRoot without ever existing on disk - and the next launch's startup guard would
-      // read that explicitly-configured-but-absent root as deleted and wrongly show "Data folder not
-      // found". For an 'adopt' target the folder already exists, so this is a no-op. classifyDataRoot
-      // has already proven the parent writable, so failure here is genuinely unexpected.
+      assertDataRootSelection(selection)
       operation.phase('prepare-target', { mode: classification.kind })
-      await mkdir(target, { recursive: true })
+      // An adoption must still exist. Only the explicitly confirmed empty target may be created.
+      if (classification.kind === 'move' && (await isDataRootMissing(target))) {
+        assertDataRootSelection(selection)
+        mkdirSync(target)
+        selection = { ...selection, identity: dataRootIdentity(target) }
+      }
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
         return { ok: false, error: 'Data-root change cancelled.' }
       }
-      const preparedClassification = await classifyDataRootImpl(request.parent, resolveDataRoot())
+      const preparedClassification = await classifyDataRootImpl(target, resolveDataRoot(), {
+        exactTarget: true
+      })
       if (signal.aborted) {
         operation.fail(new Error('data root change cancelled'), { mode: classification.kind })
         return { ok: false, error: 'Data-root change cancelled.' }
       }
-      if (preparedClassification.kind !== 'move' && preparedClassification.kind !== 'adopt') {
-        operation.fail(new Error(preparedClassification.error ?? 'invalid target'), {
-          mode: preparedClassification.kind
-        })
-        return {
-          ok: false,
-          error: preparedClassification.error ?? 'The selected folder is not usable.'
-        }
+      if (preparedClassification.kind !== classification.kind) {
+        throw new Error(DATA_ROOT_SELECTION_CHANGED)
       }
+      assertDataRootSelection(selection)
       operation.phase('persist-pointer', { mode: classification.kind })
       await deps.settingsService.setDataRoot(target, {
         completeOnboarding: request.markOnboarding === true,
-        previousDataRoot: resolveDataRoot()
+        previousDataRoot: resolveDataRoot(),
+        validateTarget: () => assertDataRootSelection(selection)
       })
       pointerCommitted = true
       quitOperation.markCommitted()

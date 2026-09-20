@@ -67,7 +67,7 @@ const expectUnifiedDialogChrome = (): void => {
     String(element.className)
   )
 
-  expect(classNames.some((className) => className.includes('overflow-hidden'))).toBe(true)
+  expect(classNames.some((className) => className.includes('overflow-y-auto'))).toBe(true)
   expect(
     classNames.some((className) => className.includes('border-b border-border-300/90 px-5 py-3.5'))
   ).toBe(true)
@@ -114,7 +114,7 @@ describe('ClaudeIsolatedSignInModal UI state', () => {
   it('accurately describes where the encrypted setup token is stored', () => {
     renderModal({})
 
-    expect(document.body.textContent).toContain('encrypted in Open Science app storage')
+    expect(document.body.textContent).toContain('encrypted in Open-Science app storage')
     expect(document.body.textContent).not.toContain(
       'stored encrypted in your app-owned Claude config'
     )

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 import type { CompletionHandoffLifecycleEvent } from '../../../../shared/specialist'
+import { installWebRendererContracts } from '../../../web/api-installer'
 
 import { IpcHandoffLifecycleClient } from './handoff-lifecycle-source'
 
@@ -25,6 +26,42 @@ const event = (
 })
 
 describe('IPC handoff lifecycle client', () => {
+  it('handles the web-installed specialist API without Electron-only lifecycle methods', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+    const subscribe = vi.fn()
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['specialist:list']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe,
+      nativeAdapters: {}
+    })
+
+    expect(api.specialist).toMatchObject({ list: expect.any(Function) })
+    for (const method of ['getHandoffEvents', 'onHandoffLifecycleEvent', 'retryHandoff']) {
+      expect(api.specialist).not.toHaveProperty(method)
+    }
+    // The shared API type describes Electron; the web installer intentionally omits these methods.
+    const client = new IpcHandoffLifecycleClient(
+      () => api.specialist as typeof window.api.specialist
+    )
+    const listener = vi.fn()
+    const snapshot = client.getEvents('session-1')
+    expect(snapshot).toEqual([])
+    const unsubscribe = client.subscribe(listener)
+
+    await expect(client.load('session-1')).resolves.toBeUndefined()
+    expect(client.getEvents('session-1')).toBe(snapshot)
+    expect(unsubscribe).not.toThrow()
+    await expect(
+      client.retry({ sessionId: 'session-1', originatingTurnId: 'turn-1' })
+    ).rejects.toThrow('Handoff lifecycle API is unavailable')
+    expect(listener).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(subscribe).not.toHaveBeenCalled()
+  })
+
   it('keeps the empty event snapshot stable before a session has handoff events', () => {
     const api = {
       getHandoffEvents: vi.fn(async () => []),

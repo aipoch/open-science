@@ -47,7 +47,7 @@ const isPdfCandidate = (file: ProjectFileItem): boolean =>
 const inspectCandidates = async (
   projectId: string,
   candidates: readonly EligiblePdf[]
-): Promise<EligiblePdf[]> => {
+): Promise<{ items: EligiblePdf[]; unavailableCount: number }> => {
   const byKey = new Map<string, EligiblePdf>()
   for (const candidate of candidates) {
     if (!byKey.has(sourceKey(candidate.source))) byKey.set(sourceKey(candidate.source), candidate)
@@ -55,21 +55,28 @@ const inspectCandidates = async (
 
   const uniqueCandidates = [...byKey.values()]
   const eligible = new Set<string>()
+  let unavailableCount = 0
   for (let offset = 0; offset < uniqueCandidates.length; offset += 100) {
     const page = uniqueCandidates.slice(offset, offset + 100)
     const result = await window.api.sessions.filterPdfContextCandidates({
       projectId,
       sources: page.map(({ source }) => source)
     })
+    unavailableCount += result.unavailableSources?.length ?? 0
     for (const source of result.sources) eligible.add(sourceKey(source))
   }
-  return uniqueCandidates.filter(({ source }) => eligible.has(sourceKey(source)))
+  return {
+    items: uniqueCandidates.filter(({ source }) => eligible.has(sourceKey(source))),
+    unavailableCount
+  }
 }
 
-const loadProjectPdfs = async (projectId: string): Promise<EligiblePdf[]> => {
+const loadProjectPdfs = async (
+  projectId: string
+): Promise<{ items: EligiblePdf[]; unavailableCount: number }> => {
   const [files, literature] = await Promise.all([
     loadAllProjectFiles(projectId),
-    searchLiteraturePdfOptions('', { projectId }).catch(() => [])
+    searchLiteraturePdfOptions('', { projectId })
   ])
   const candidates = [
     ...files.flatMap((file): EligiblePdf[] => {
@@ -86,7 +93,10 @@ const loadProjectPdfs = async (projectId: string): Promise<EligiblePdf[]> => {
   return inspectCandidates(projectId, candidates)
 }
 
-const loadLibraryPdfs = async (projectId: string, query: string): Promise<EligiblePdf[]> => {
+const loadLibraryPdfs = async (
+  projectId: string,
+  query: string
+): Promise<{ items: EligiblePdf[]; unavailableCount: number }> => {
   const options = await searchLiteraturePdfOptions(query)
   return inspectCandidates(
     projectId,
@@ -115,6 +125,7 @@ export const ReadingContextPicker = ({
   const [result, setResult] = useState<{
     projectId?: string
     items: EligiblePdf[]
+    unavailableCount?: number
     status: 'idle' | 'loading' | 'loaded' | 'error'
   }>({ items: [], status: 'idle' })
   const sourceQuery = source === 'library' ? query : ''
@@ -129,8 +140,8 @@ export const ReadingContextPicker = ({
             ? loadProjectPdfs(projectId)
             : loadLibraryPdfs(projectId, sourceQuery)
         ).then(
-          (items) => {
-            if (!cancelled) setResult({ projectId, items, status: 'loaded' })
+          (loaded) => {
+            if (!cancelled) setResult({ projectId, ...loaded, status: 'loaded' })
           },
           () => {
             if (!cancelled) setResult({ projectId, items: [], status: 'error' })
@@ -203,6 +214,7 @@ export const ReadingContextPicker = ({
                   type="button"
                   aria-pressed={source === candidateSource}
                   onClick={() => {
+                    if (candidateSource === source) return
                     setSource(candidateSource)
                     setResult({ items: [], status: 'loading' })
                   }}
@@ -227,6 +239,22 @@ export const ReadingContextPicker = ({
               />
             </label>
           </>
+        ) : null}
+        {isCurrentProject && result.status === 'loaded' && !!result.unavailableCount ? (
+          <div role="alert" className="px-2 py-2">
+            <ErrorNotice
+              icon={AlertTriangle}
+              tone="amber"
+              title={t('Some PDFs are unavailable. Available PDFs are listed below.')}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () => {
+                  setResult({ items: [], status: 'loading' })
+                  setLoadRevision((revision) => revision + 1)
+                }
+              }}
+            />
+          </div>
         ) : null}
         {atLimit ? (
           <p className="px-2 py-2 text-sm text-text-300">

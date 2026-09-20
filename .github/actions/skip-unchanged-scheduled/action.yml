@@ -1,0 +1,70 @@
+name: Skip unchanged scheduled revision
+description: >-
+  Decide whether a scheduled run on main still has work to do. A workflow_dispatch always runs.
+  A scheduled run is skipped when the most recent successful scheduled run of the same workflow
+  already covered GITHUB_SHA. Manual dispatches never count as coverage: the REST runs API does
+  not expose dispatch inputs, so a partial-mode run cannot be distinguished from a complete one.
+  With require-published-ref, the revision must additionally be published under that Git ref, so
+  a build whose publication failed is retried instead of skipped. Requires GH_TOKEN in the
+  caller's env.
+inputs:
+  workflow-file:
+    description: Workflow file name whose successful scheduled runs count as coverage (for example windows-full-test.yml)
+    required: true
+  require-published-ref:
+    description: >-
+      Git ref (for example the rolling nightly tag) that must already point at GITHUB_SHA before
+      the run is skipped. Leave empty when the workflow publishes nothing.
+    required: false
+    default: ''
+outputs:
+  should_run:
+    description: "'true' when the caller must run, 'false' when GITHUB_SHA is already covered"
+    value: ${{ steps.decide.outputs.should_run }}
+  last_successful_sha:
+    description: Head SHA of the successful scheduled run that was compared, empty when none is available
+    value: ${{ steps.decide.outputs.last_successful_sha }}
+runs:
+  using: composite
+  steps:
+    - name: Compare with the last successful scheduled run
+      id: decide
+      shell: bash
+      env:
+        WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        PUBLISHED_REF: ${{ inputs.require-published-ref }}
+      run: |
+        set -euo pipefail
+        if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "last_successful_sha=" >> "$GITHUB_OUTPUT"
+          echo "Manual dispatch always runs $WORKFLOW_FILE for $GITHUB_SHA."
+          exit 0
+        fi
+
+        scheduled_sha="$(
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs?branch=main&event=schedule&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true
+        )"
+        echo "last_successful_sha=$scheduled_sha" >> "$GITHUB_OUTPUT"
+
+        if [[ -z "$scheduled_sha" || "$scheduled_sha" != "$GITHUB_SHA" ]]; then
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "Running $WORKFLOW_FILE for $GITHUB_SHA; last successful scheduled run is ${scheduled_sha:-unavailable}."
+          exit 0
+        fi
+
+        # A tested revision whose publication never landed must be rebuilt so the publisher retries.
+        if [[ -n "$PUBLISHED_REF" ]]; then
+          published_sha="$(
+            gh api "repos/$GITHUB_REPOSITORY/commits/$PUBLISHED_REF" --jq '.sha // ""' 2>/dev/null || true
+          )"
+          if [[ "$published_sha" != "$GITHUB_SHA" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Running $WORKFLOW_FILE for $GITHUB_SHA: tested, but $PUBLISHED_REF points at ${published_sha:-nothing}."
+            exit 0
+          fi
+        fi
+
+        echo "should_run=false" >> "$GITHUB_OUTPUT"
+        echo "Skipping $WORKFLOW_FILE: a scheduled run already succeeded for $GITHUB_SHA${PUBLISHED_REF:+ and $PUBLISHED_REF already points at it}."

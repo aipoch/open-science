@@ -1,4 +1,9 @@
+import type { StoredClassificationSettings } from './types'
+import { statSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+import { samePath } from '../storage-root'
 import { isDeepStrictEqual } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 import type {
   AgentFrameworkId,
   AppIconVariant,
@@ -35,6 +40,7 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LanguagePreference } from '../../shared/locale'
+import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
 import {
   type StoredComputeGrant,
   type StoredConnectors,
@@ -44,6 +50,7 @@ import {
   type StoredSettings
 } from './types'
 import { buildProviderValidationPatch } from './provider-validation-state'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
@@ -61,6 +68,8 @@ import {
   buildVisionModelMutation
 } from './subagent-model-settings'
 import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'
+import { isApplicationRequiredSkillId } from '../skills/activation-policy'
+import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
 type Write = Promise<StoredSettings>
@@ -69,10 +78,30 @@ type DataRootUpdate = Readonly<{
   onboardingCompletedAt?: number
   previousDataRoot?: string
 }>
+type LocalShellRuntimeWrite = Readonly<{
+  settings: StoredSettings
+  mutation: LocalShellRuntimeMutation
+}>
+
+type ProviderValidationHistory = {
+  configRevision: number
+  keyRef?: string
+  latestAt: number
+  unscopedAt: number
+  scopes: Map<string, number>
+}
+
+const validationScopeKey = (target: ProviderValidationTarget): string =>
+  JSON.stringify([target.model, target.endpoint])
 
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
+  // In-flight requests cannot survive this repository's process. Retain recovery scopes only in
+  // memory so validating B does not erase A's recovery watermark or suppress an unrelated C failure.
+  private readonly providerValidationHistory = new Map<string, ProviderValidationHistory>()
+  private localShellRuntimeRevision = 0
+  private currentLocalShellRuntimeRevision: number | undefined
 
   constructor(
     storage: string | SettingsDocumentStore,
@@ -86,16 +115,134 @@ class SettingsRepository {
     return this.store.read()
   }
 
+  async selectBootstrapCodex(): Promise<void> {
+    await this.mutate((settings) => {
+      if (settings.agentFrameworkId && settings.agentFrameworkId !== 'codex')
+        throw new BootstrapError('configuration_conflict')
+      if (!settings.agentFrameworkId && settings.providers.length > 0)
+        throw new BootstrapError('configuration_conflict')
+      return settings.agentFrameworkId === 'codex'
+        ? settings
+        : { ...settings, agentFrameworkId: 'codex' }
+    })
+  }
+
+  async publishBootstrapProvider(
+    expected: StoredSettings,
+    provider: StoredProvider,
+    activate: boolean
+  ): Promise<void> {
+    await this.mutate((settings) => {
+      if (
+        settings.agentFrameworkId !== 'codex' ||
+        !isDeepStrictEqual(settings.providers, expected.providers) ||
+        settings.activeProviderId !== expected.activeProviderId ||
+        settings.activeModel !== expected.activeModel ||
+        (settings.activeProviderId && settings.activeProviderId !== provider.id)
+      )
+        throw new BootstrapError('configuration_conflict')
+      const providers = settings.providers.some(({ id }) => id === provider.id)
+        ? settings.providers.map((entry) => (entry.id === provider.id ? provider : entry))
+        : [...settings.providers, provider]
+      return {
+        ...settings,
+        providers,
+        ...(activate
+          ? {
+              activeProviderId: provider.id,
+              activeModel:
+                settings.activeProviderId === provider.id ? settings.activeModel : provider.model
+            }
+          : {})
+      }
+    })
+  }
+
+  async publishBootstrapOpenAlex(
+    expected: StoredConnectors | undefined,
+    apiKeyRef: string
+  ): Promise<void> {
+    await this.mutate((settings) => {
+      if (!isDeepStrictEqual(settings.connectors, expected))
+        throw new BootstrapError('configuration_conflict')
+      return {
+        ...settings,
+        connectors: {
+          enabledIds: [],
+          autoAllowIds: [],
+          ...settings.connectors,
+          openAlexApiKeyRef: apiKeyRef,
+          disabledConnectorIds: (settings.connectors?.disabledConnectorIds ?? []).filter(
+            (id) => id !== 'literature'
+          )
+        }
+      }
+    })
+  }
+
   // Inserts or replaces a provider without reordering existing entries. existingId, when supplied,
   // is checked in the same mutation so stale edits cannot append a deleted provider.
-  async upsertProvider(provider: StoredProvider, existingId?: string): Promise<StoredSettings> {
+  async upsertProvider(
+    provider: StoredProvider,
+    existingId?: string,
+    configEdit?: {
+      expectedConfigRevision?: number
+      expectedValidationState?: Pick<
+        StoredProvider,
+        'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
+      >
+    }
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
+      const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
+      if (
+        configEdit?.expectedConfigRevision !== undefined &&
+        (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
+      )
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+      if (
+        configEdit?.expectedValidationState &&
+        !isDeepStrictEqual(
+          {
+            lastValidatedAt: source?.lastValidatedAt,
+            lastValidatedTarget: source?.lastValidatedTarget,
+            lastValidationFailure: source?.lastValidationFailure
+          },
+          configEdit.expectedValidationState
+        )
+      ) {
+        throw new Error(
+          'Provider connection status changed. Your changes have not been saved. Test the connection again.'
+        )
+      }
+      const revision = Math.max(
+        source?.configRevision ?? 0,
+        settings.providers[index]?.configRevision ?? 0
+      )
+      if (configEdit && revision >= Number.MAX_SAFE_INTEGER)
+        throw new Error('Provider revision limit reached.')
+      provider = {
+        ...provider,
+        ...(configEdit
+          ? { configRevision: revision + 1 }
+          : source?.configRevision !== undefined
+            ? { configRevision: source.configRevision }
+            : {})
+      }
       const providers = [...settings.providers]
       if (index >= 0) {
         const existing = providers[index]
+        if (
+          existing.type === provider.type &&
+          existing.vendorId === provider.vendorId &&
+          existing.region === provider.region &&
+          existing.keyRef === provider.keyRef &&
+          existing.fetchedModels
+        )
+          provider = { ...provider, fetchedModels: existing.fetchedModels }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -111,6 +258,11 @@ class SettingsRepository {
       return {
         ...settings,
         providers,
+        // A custom provider has one model. Keep its active selection in the same save so
+        // validation and runtime resolution cannot keep using the model from before the edit.
+        ...(configEdit && provider.type === 'custom' && settings.activeProviderId === provider.id
+          ? { activeModel: provider.model }
+          : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&
         isClaudeSubscriptionProviderId(provider.id)
           ? { claudeSubscriptionProviderId: provider.id }
@@ -156,19 +308,71 @@ class SettingsRepository {
     id: string,
     matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
     result: ValidateProviderResult,
-    target: ProviderValidationTarget | undefined
+    target: ProviderValidationTarget | undefined,
+    observationStartedAt?: number
   ): Promise<boolean> {
     let applied = false
     await this.mutate((settings) => {
       const index = settings.providers.findIndex((provider) => provider.id === id)
       const current = settings.providers[index]
       if (!current || !matches(current, settings)) return settings
+      const history = this.rememberProviderRecovery(current, settings)
+      if (observationStartedAt !== undefined) {
+        const recoveredAt = target
+          ? Math.max(history.unscopedAt, history.scopes.get(validationScopeKey(target)) ?? 0)
+          : history.latestAt
+        if (recoveredAt >= observationStartedAt) return settings
+      }
       const providers = [...settings.providers]
       providers[index] = { ...current, ...buildProviderValidationPatch(current, result, target) }
       applied = true
       return { ...settings, providers }
     })
     return applied
+  }
+
+  private rememberProviderRecovery(
+    provider: StoredProvider,
+    settings: StoredSettings
+  ): ProviderValidationHistory {
+    for (const id of this.providerValidationHistory.keys()) {
+      if (!settings.providers.some((current) => current.id === id))
+        this.providerValidationHistory.delete(id)
+    }
+    let history = this.providerValidationHistory.get(provider.id)
+    if (
+      !history ||
+      history.configRevision !== (provider.configRevision ?? 0) ||
+      history.keyRef !== provider.keyRef
+    ) {
+      history = {
+        configRevision: provider.configRevision ?? 0,
+        keyRef: provider.keyRef,
+        latestAt: 0,
+        unscopedAt: 0,
+        scopes: new Map()
+      }
+      this.providerValidationHistory.set(provider.id, history)
+    }
+    // Remember only the already-committed state read by the serialized mutation. A failed write
+    // must never create a recovery watermark. The next mutation observes this one's committed result.
+    const at = provider.lastValidatedAt
+    if (at !== undefined) {
+      history.latestAt = Math.max(history.latestAt, at)
+      if (provider.lastValidatedTarget) {
+        const key = validationScopeKey(provider.lastValidatedTarget)
+        if (
+          !history.scopes.has(key) &&
+          history.scopes.size >= PROVIDER_RESOURCE_LIMITS.fetchedModels
+        ) {
+          // Bound process-local history; retire older observations if their recovery history is dropped.
+          history.unscopedAt = history.latestAt
+          history.scopes.clear()
+        }
+        history.scopes.set(key, Math.max(history.scopes.get(key) ?? 0, at))
+      } else history.unscopedAt = Math.max(history.unscopedAt, at)
+    }
+    return history
   }
 
   async updateXaiCredentialsIfKeyMatches(
@@ -500,6 +704,64 @@ class SettingsRepository {
     return this.mutate((settings) => ({ ...settings, notebookNetwork }))
   }
 
+  async setWslSelection(selection: WslSelection): Promise<StoredSettings> {
+    const distro = selection.distro.trim()
+    const user = selection.user.trim()
+    if (!distro || !user) throw new Error('Invalid WSL profile selection.')
+    return this.mutate((settings) => ({ ...settings, wslSelection: { distro, user } }))
+  }
+
+  async setLocalShellRuntime(
+    runtime: LocalShellRuntimePreference,
+    activatedWslSelection?: WslSelection
+  ): Promise<LocalShellRuntimeWrite> {
+    if (runtime === 'wsl2-bash' && !activatedWslSelection) {
+      throw new Error('A verified WSL2 Shell profile is required for activation.')
+    }
+    let mutation: LocalShellRuntimeMutation | undefined
+    const settings = await this.mutate((current) => {
+      mutation = Object.freeze({
+        revision: ++this.localShellRuntimeRevision,
+        runtime,
+        previous: current.localShellRuntime,
+        ...(current.activatedWslSelection
+          ? { previousActivatedWslSelection: { ...current.activatedWslSelection } }
+          : {})
+      })
+      this.currentLocalShellRuntimeRevision = mutation.revision
+      if (runtime !== 'wsl2-bash') return { ...current, localShellRuntime: runtime }
+      if (!activatedWslSelection) {
+        throw new Error('A verified WSL2 Shell profile is required for activation.')
+      }
+      return {
+        ...current,
+        localShellRuntime: runtime,
+        activatedWslSelection: { ...activatedWslSelection }
+      }
+    })
+    if (!mutation) throw new Error('Local Shell runtime mutation was not recorded.')
+    return Object.freeze({ settings, mutation })
+  }
+
+  async restoreLocalShellRuntime(mutation: LocalShellRuntimeMutation): Promise<boolean> {
+    let restored = false
+    await this.mutate((settings) => {
+      if (this.currentLocalShellRuntimeRevision !== mutation.revision) return settings
+      restored = true
+      this.currentLocalShellRuntimeRevision = ++this.localShellRuntimeRevision
+      const restoredSettings = { ...settings }
+      if (mutation.previous) restoredSettings.localShellRuntime = mutation.previous
+      else delete restoredSettings.localShellRuntime
+      if (mutation.previousActivatedWslSelection) {
+        restoredSettings.activatedWslSelection = { ...mutation.previousActivatedWslSelection }
+      } else {
+        delete restoredSettings.activatedWslSelection
+      }
+      return restoredSettings
+    })
+    return restored
+  }
+
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
   }
@@ -640,13 +902,23 @@ class SettingsRepository {
     })
   }
 
-  // Stamps the onboarding-completed time exactly once; later calls leave the first value intact.
-  async markOnboardingComplete(timestamp: number): Promise<StoredSettings> {
-    return this.mutate((settings) =>
-      settings.onboardingCompletedAt === undefined
-        ? { ...settings, onboardingCompletedAt: timestamp }
-        : settings
-    )
+  // Commit the confirmed running root and completion in one settings transaction. Never replace
+  // a concurrently saved selection or mark onboarding complete with an unavailable root.
+  async markOnboardingComplete(timestamp: number, dataRoot: string): Promise<StoredSettings> {
+    return this.mutate((settings) => {
+      if (settings.onboardingCompletedAt !== undefined) return settings
+      if (settings.dataRoot && !samePath(settings.dataRoot, dataRoot))
+        throw new Error('The data location changed. Restart to use the saved location.')
+      if (!isAbsolute(dataRoot) || !statSync(dataRoot, { throwIfNoEntry: false })?.isDirectory())
+        throw new Error(
+          `The saved data location is missing or is not a directory: ${dataRoot}. Reconnect it before restarting.`
+        )
+      return {
+        ...settings,
+        dataRoot: settings.dataRoot ?? dataRoot,
+        onboardingCompletedAt: timestamp
+      }
+    })
   }
 
   // Stamps the legacy-path-normalization completion time exactly once; later calls leave the first
@@ -672,8 +944,8 @@ class SettingsRepository {
   // Persists the relocatable data root, optional onboarding marker, and fail-closed managed-runtime
   // disable overrides in one atomic document mutation. Old keys remain for safe retry/rollback;
   // matching new-root keys are additive and idempotent.
-  async setDataRoot(update: DataRootUpdate): Promise<StoredSettings> {
-    return this.mutate((settings) => {
+  async setDataRoot(update: DataRootUpdate, validateTarget?: () => void): Promise<StoredSettings> {
+    return this.store.mutate((settings) => {
       let notebookRuntimeEnablement = settings.notebookRuntimeEnablement
       if (update.previousDataRoot) {
         notebookRuntimeEnablement = relocateManagedRuntimeEnablement({
@@ -689,9 +961,10 @@ class SettingsRepository {
           : { onboardingCompletedAt: update.onboardingCompletedAt }),
         ...settings,
         ...(notebookRuntimeEnablement ? { notebookRuntimeEnablement } : {}),
-        dataRoot: update.dataRoot
+        dataRoot: update.dataRoot,
+        dataRootIsInitialDefault: undefined
       }
-    })
+    }, validateTarget)
   }
 
   // Applies one RuntimeEnablement change to the latest persisted value inside the write queue.
@@ -703,7 +976,8 @@ class SettingsRepository {
       const current = settings.notebookRuntimeEnablement?.[language]
       const enablement = update({
         enabled: { ...current?.enabled },
-        installAuthorized: { ...current?.installAuthorized }
+        installAuthorized: { ...current?.installAuthorized },
+        ...(current?.installLibraries ? { installLibraries: { ...current.installLibraries } } : {})
       })
       const sanitized = sanitizeSettings({ notebookRuntimeEnablement: { [language]: enablement } })
         .notebookRuntimeEnablement?.[language]
@@ -748,6 +1022,11 @@ class SettingsRepository {
   }
 
   async setSkillsEnabled(ids: string[], enabled: boolean): Promise<StoredSettings> {
+    if (!enabled) {
+      const requiredId = ids.find(isApplicationRequiredSkillId)
+      if (requiredId)
+        throw new Error(`Application-required Skill cannot be disabled: ${requiredId}`)
+    }
     const update = (): Promise<StoredSettings> =>
       this.mutate((settings) => {
         const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -819,6 +1098,19 @@ class SettingsRepository {
     return this.mutateConnectors((connectors) => {
       connectors.openAlexApiKeyRef = apiKeyRef || undefined
     })
+  }
+
+  async mutateClassification(
+    update: (
+      value: StoredClassificationSettings | undefined,
+      settings: StoredSettings
+    ) => StoredClassificationSettings
+  ): Promise<StoredClassificationSettings> {
+    const settings = await this.mutate((current) => ({
+      ...current,
+      classification: update(current.classification, current)
+    }))
+    return settings.classification!
   }
 
   async setGitHubToken(

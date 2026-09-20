@@ -1,15 +1,8 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  LoaderCircle,
-  ScrollText,
-  SearchX,
-  Star
-} from 'lucide-react'
+import { ChevronDown, ChevronUp, LoaderCircle, ScrollText, SearchX, Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -234,30 +227,33 @@ const SkillImportView = ({
             onClick={() => void runPreview()}
             disabled={busy || input.trim().length === 0}
             className="shrink-0 [@media(pointer:coarse)]:min-h-11"
+            aria-busy={Boolean(operation?.kind === 'find')}
           >
-            {operation?.kind === 'find' ? (
-              <>
-                <LoaderCircle
-                  className="size-4 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-                {t('Finding…')}
-              </>
-            ) : (
-              t('Find skills')
-            )}
+            <span key={String(operation?.kind === 'find')} className="button-feedback">
+              {operation?.kind === 'find' ? (
+                <>
+                  <LoaderCircle
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                  {t('Finding…')}
+                </>
+              ) : (
+                t('Find skills')
+              )}
+            </span>
           </Button>
         </div>
       </div>
       <div aria-busy={busy}>
         {message?.kind === 'error' ? (
-          <div
+          <ErrorNotice
+            inline
             role="alert"
-            className="mt-2 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <p className="min-w-0 flex-1 break-words py-0.5">{message.text}</p>
-          </div>
+            tone="amber"
+            className="mt-2"
+            description={message.text}
+          />
         ) : null}
 
         {repositories ? (
@@ -332,24 +328,32 @@ const SkillImportView = ({
                               })
                             }}
                           >
-                            {operation?.kind === 'scan' &&
-                            operation.repositoryName === repository.fullName ? (
-                              <>
-                                <LoaderCircle
-                                  className="size-4 animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                                {t('Scanning…')}
-                              </>
-                            ) : scannedRepo === repository.fullName ? (
-                              scanned && scanned.length > 0 ? (
-                                t('Scanned')
+                            <span
+                              key={String(
+                                operation?.kind === 'scan' &&
+                                  operation.repositoryName === repository.fullName
+                              )}
+                              className="button-feedback"
+                            >
+                              {operation?.kind === 'scan' &&
+                              operation.repositoryName === repository.fullName ? (
+                                <>
+                                  <LoaderCircle
+                                    className="size-4 animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                  {t('Scanning…')}
+                                </>
+                              ) : scannedRepo === repository.fullName ? (
+                                scanned && scanned.length > 0 ? (
+                                  t('Scanned')
+                                ) : (
+                                  t('No skills found')
+                                )
                               ) : (
-                                t('No skills found')
-                              )
-                            ) : (
-                              t('Scan for skills')
-                            )}
+                                t('Scan for skills')
+                              )}
+                            </span>
                           </Button>
                         </div>
                       </li>
@@ -393,18 +397,21 @@ const SkillImportView = ({
                 onClick={() => void importSelected()}
                 disabled={busy || selected.size === 0}
                 className="self-start [@media(pointer:coarse)]:min-h-11 sm:self-auto"
+                aria-busy={Boolean(operation?.kind === 'import')}
               >
-                {operation?.kind === 'import' ? (
-                  <>
-                    <LoaderCircle
-                      className="size-4 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                    {t('Importing…')}
-                  </>
-                ) : (
-                  t('Import selected ({{count}})', { count: selected.size })
-                )}
+                <span key={String(operation?.kind === 'import')} className="button-feedback">
+                  {operation?.kind === 'import' ? (
+                    <>
+                      <LoaderCircle
+                        className="size-4 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Importing…')}
+                    </>
+                  ) : (
+                    t('Import selected ({{count}})', { count: selected.size })
+                  )}
+                </span>
               </Button>
             </div>
 
@@ -503,6 +510,13 @@ const SkillImportView = ({
         )}
       </section>
 
+      {scanned?.some((skill) => selected.has(skill.url) && skill.installedId) ? (
+        <p className="my-3 text-xs text-muted-foreground">
+          {t(
+            'The installed folder will be replaced, including local edits and files absent from this package. Cancel to keep the current copy.'
+          )}
+        </p>
+      ) : null}
       <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>
   )

@@ -5,6 +5,8 @@ import {
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID
 } from '../../shared/settings'
+import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
+import type { ProviderView } from '../../shared/settings'
 import type { SettingsService } from './service'
 import type { SettingsIpcOptions } from './ipc'
 import type { SettingsWorkflowEffects } from './workflows'
@@ -49,6 +51,7 @@ type FakeSettingsService = Record<
   | 'installCodeBuddy'
   | 'installOpencode'
   | 'installCodex'
+  | 'installMissingWslDependencies'
   | 'uninstallClaude'
   | 'uninstallOpencode'
   | 'uninstallCodeBuddy'
@@ -69,6 +72,7 @@ type FakeSettingsService = Record<
   | 'setDefaultPermissionProfile'
   | 'setAppIconVariant'
   | 'upsertProvider'
+  | 'saveValidatedProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'validateProvider'
@@ -88,11 +92,19 @@ type FakeSettingsService = Record<
   | 'logoutXaiOAuth'
   | 'refreshProviderModels'
   | 'markOnboardingComplete'
+  | 'switchLocalShellToPowerShell'
+  | 'useWsl2Bash'
+  | 'getLocalShellRuntimePreference'
+  | 'restoreLocalShellRuntimePreference'
   | 'getPackageMirror'
   | 'setPackageMirror'
   | 'setNetworkProxy'
   | 'setNotebookNetwork'
   | 'listSkills'
+  | 'startSkillMarketplaceBatch'
+  | 'listSkillMarketplace'
+  | 'getSkillMarketplaceBatch'
+  | 'stopSkillMarketplaceBatch'
   | 'getSkillDetail'
   | 'resolveSkillDocument'
   | 'buildSkillExport'
@@ -134,6 +146,11 @@ const createFakeService = (): FakeSettingsService => ({
   installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'cb', ok: true }),
   installOpencode: vi.fn().mockResolvedValue({ installId: 'oc', ok: true }),
   installCodex: vi.fn().mockResolvedValue({ installId: 'cx', ok: true }),
+  installMissingWslDependencies: vi.fn().mockResolvedValue({
+    state: 'ready',
+    distros: [],
+    operationReference: 'dependencies-1'
+  }),
   uninstallClaude: vi.fn().mockResolvedValue({
     snapshot: { claude: {}, providers: [], agentFrameworkId: 'claude-code' },
     activeBackendAffected: true
@@ -195,6 +212,9 @@ const createFakeService = (): FakeSettingsService => ({
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], appIconVariant: 'dark' }),
   upsertProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+  saveValidatedProvider: vi
+    .fn()
+    .mockResolvedValue({ validation: { ok: true, category: 'ok' }, providerId: 'p1' }),
   deleteProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   setActiveProvider: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
@@ -216,6 +236,24 @@ const createFakeService = (): FakeSettingsService => ({
   logoutXaiOAuth: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   refreshProviderModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+  switchLocalShellToPowerShell: vi.fn().mockResolvedValue({
+    result: {
+      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      appliesTo: 'subsequent-executions',
+      wslProfilePreserved: true
+    },
+    mutation: { revision: 1, runtime: 'powershell', previous: undefined }
+  }),
+  useWsl2Bash: vi.fn().mockResolvedValue({
+    result: {
+      runtime: 'wsl2-bash',
+      selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
+      appliesTo: 'subsequent-executions'
+    },
+    mutation: { revision: 2, runtime: 'wsl2-bash', previous: 'powershell' }
+  }),
+  getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined),
+  restoreLocalShellRuntimePreference: vi.fn().mockResolvedValue(true),
   getPackageMirror: vi.fn().mockResolvedValue({}),
   setPackageMirror: vi.fn().mockResolvedValue({}),
   setNetworkProxy: vi.fn().mockResolvedValue({ mode: 'system' }),
@@ -225,6 +263,10 @@ const createFakeService = (): FakeSettingsService => ({
     disabledOpenScienceDomains: []
   }),
   listSkills: vi.fn().mockResolvedValue([]),
+  startSkillMarketplaceBatch: vi.fn().mockReturnValue({ ok: false, error: 'busy' }),
+  listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: { entries: [] } }),
+  getSkillMarketplaceBatch: vi.fn().mockReturnValue(null),
+  stopSkillMarketplaceBatch: vi.fn().mockReturnValue(true),
   getSkillDetail: vi.fn().mockResolvedValue({
     id: 'demo',
     name: 'Demo',
@@ -293,6 +335,7 @@ const asService = (fake: FakeSettingsService): SettingsService => fake as unknow
 type TestSettingsIpcOptions = {
   service: SettingsService
   onActiveProviderChanged?: () => void
+  onShellRuntimeRefresh?: () => void
   onAgentFrameworkChanged?: SettingsWorkflowEffects['runtime']['requestAgentFrameworkSwitch']
   onSkillsChanged?: () => void
   onConnectorsChanged?: () => void
@@ -308,6 +351,7 @@ type TestSettingsIpcOptions = {
 const registerTestSettingsIpcHandlers = ({
   service,
   onActiveProviderChanged,
+  onShellRuntimeRefresh,
   onAgentFrameworkChanged,
   onSkillsChanged,
   onConnectorsChanged,
@@ -327,6 +371,9 @@ const registerTestSettingsIpcHandlers = ({
       runtime: {
         requestProviderReconnect: onActiveProviderChanged ?? (() => undefined),
         requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined)
+      },
+      localShell: {
+        requestShellRuntimeRefresh: async () => onShellRuntimeRefresh?.()
       },
       skills: {
         requestSkillsReload: onSkillsChanged ?? (() => undefined),
@@ -364,6 +411,29 @@ const invoke = (channel: string, payload?: unknown): unknown =>
   handlers.get(channel)!({ sender: ipcSender }, payload)
 
 describe('settings IPC handlers', () => {
+  it('forwards catalog refresh and local reconciliation options unchanged', async () => {
+    const fake = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(fake) })
+    for (const request of [undefined, { forceRefresh: true }, { snapshotId: 'a'.repeat(64) }]) {
+      await invoke('settings:list-skill-marketplace', request)
+      expect(fake.listSkillMarketplace).toHaveBeenLastCalledWith(request)
+    }
+  })
+  it('routes batch start, progress and stop through the shared owners', async () => {
+    const fake = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(fake) })
+    const request = {
+      snapshotId: 'a'.repeat(64),
+      items: [{ id: 'one', version: '1.0.0', expectedVersion: null }]
+    }
+    await expect(
+      handlers.get('settings:start-skill-marketplace-batch')!({}, request)
+    ).resolves.toEqual({ ok: false, error: 'busy' })
+    expect(fake.startSkillMarketplaceBatch).toHaveBeenCalledWith(request, expect.any(Function))
+    expect(await handlers.get('settings:get-skill-marketplace-batch')!({}, undefined)).toBeNull()
+    expect(await handlers.get('settings:stop-skill-marketplace-batch')!({}, 'batch')).toBe(true)
+    expect(fake.stopSkillMarketplaceBatch).toHaveBeenCalledWith('batch')
+  })
   it('registers every settings channel', () => {
     handlers.clear()
     registerTestSettingsIpcHandlers({ service: asService(createFakeService()) })
@@ -393,6 +463,7 @@ describe('settings IPC handlers', () => {
       'settings:cancel-isolated-claude-login',
       'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete',
+      'settings:install-missing-wsl-dependencies',
       'settings:export-skill',
       'settings:preview-custom-server-template-export',
       'settings:select-custom-server-template',
@@ -481,6 +552,15 @@ describe('settings IPC handlers', () => {
     await invoke('settings:upsert-provider', { type: 'custom', name: 'G' })
     expect(service.upsertProvider).toHaveBeenCalledWith({ type: 'custom', name: 'G' })
 
+    await expect(
+      invoke('settings:save-validated-provider', { id: 'p1', type: 'custom', name: 'G' })
+    ).resolves.toMatchObject({ providerId: 'p1' })
+    expect(service.saveValidatedProvider).toHaveBeenCalledWith({
+      id: 'p1',
+      type: 'custom',
+      name: 'G'
+    })
+
     await invoke('settings:delete-provider', { id: 'p1', scenarioModelHandling: 'inherit' })
     expect(service.deleteProvider).toHaveBeenCalledWith('p1', 'inherit')
 
@@ -538,7 +618,7 @@ describe('settings IPC handlers', () => {
     service.logoutIsolatedCodex.mockResolvedValue({
       ok: false,
       category: 'unknown',
-      message: 'The Open Science Codex login could not be removed.'
+      message: 'The Open-Science Codex login could not be removed.'
     })
     const onActiveProviderChanged = vi.fn()
     registerTestSettingsIpcHandlers({
@@ -603,6 +683,50 @@ describe('settings IPC handlers', () => {
     await invoke('settings:mark-onboarding-complete')
 
     expect(service.markOnboardingComplete).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists a PowerShell switch before refreshing subsequent Shell sessions', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onShellRuntimeRefresh = vi.fn()
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      onShellRuntimeRefresh
+    })
+
+    await invoke('settings:switch-local-shell-to-powershell')
+
+    expect(service.switchLocalShellToPowerShell).toHaveBeenCalledOnce()
+    expect(onShellRuntimeRefresh).toHaveBeenCalledOnce()
+    expect(service.switchLocalShellToPowerShell.mock.invocationCallOrder[0]).toBeLessThan(
+      onShellRuntimeRefresh.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('routes explicit WSL2 Bash enablement through the same awaited capability refresh', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onShellRuntimeRefresh = vi.fn()
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      onShellRuntimeRefresh
+    })
+
+    await invoke('settings:use-wsl2-bash')
+
+    expect(service.useWsl2Bash).toHaveBeenCalledOnce()
+    expect(onShellRuntimeRefresh).toHaveBeenCalledOnce()
+  })
+
+  it('forwards the revision-bound WSL dependency install request unchanged', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const request = { expectedRevision: 17 }
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:install-missing-wsl-dependencies', request)
+
+    expect(service.installMissingWslDependencies).toHaveBeenCalledWith(request)
   })
 
   it('fires onConnectorsChanged after a connector is toggled', async () => {
@@ -748,6 +872,62 @@ describe('settings IPC handlers', () => {
       })
 
       expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['p1', 'other'])(
+    'reconnects provider-default Sessions after catalog refresh with active provider %s',
+    async (activeProviderId) => {
+      handlers.clear()
+      const service = createFakeService()
+      let provider: ProviderView = {
+        id: 'p1',
+        type: 'official',
+        vendorId: 'anthropic',
+        name: 'Anthropic',
+        models: ['claude-sonnet-4-6', 'claude-opus-4-6'],
+        supportsImageInput: true,
+        hasKey: true,
+        needsKey: false
+      }
+      service.getSettingsView.mockImplementation(async () => ({
+        claude: {},
+        activeProviderId,
+        providers: [provider]
+      }))
+      const onActiveProviderChanged = vi.fn()
+      registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+      expect(resolveProviderEffectiveModel(provider, undefined)).toBe('claude-sonnet-4-6')
+      service.refreshProviderModels.mockImplementation(async () => {
+        provider = { ...provider, models: ['claude-opus-4-6', 'claude-sonnet-4-6'] }
+        return { ok: true, category: 'ok', models: provider.models }
+      })
+      await invoke('settings:refresh-provider-models', { providerId: 'p1' })
+      expect(resolveProviderEffectiveModel(provider, undefined)).toBe('claude-opus-4-6')
+      expect(onActiveProviderChanged).toHaveBeenCalledWith(['p1'], activeProviderId === 'p1')
+    }
+  )
+
+  it.each(['unchanged', 'failed'])(
+    'does not reconnect existing Sessions after an %s catalog refresh',
+    async (outcome) => {
+      handlers.clear()
+      const service = createFakeService()
+      const provider = { id: 'p1', models: ['claude-opus-4-6', 'claude-sonnet-4-6'] }
+      service.getSettingsView.mockResolvedValue({
+        claude: {},
+        activeProviderId: 'p1',
+        providers: [provider]
+      })
+      service.refreshProviderModels.mockResolvedValue(
+        outcome === 'failed'
+          ? { ok: false, category: 'network' }
+          : { ok: true, category: 'ok', models: provider.models }
+      )
+      const onActiveProviderChanged = vi.fn()
+      registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+      await invoke('settings:refresh-provider-models', { providerId: 'p1' })
+      expect(onActiveProviderChanged).not.toHaveBeenCalled()
     }
   )
 

@@ -3,7 +3,23 @@ import { createHash } from 'node:crypto'
 import type { PermissionCapability } from '../../shared/permission-grants'
 import { isPreRegisteredPermissionIdentity } from './identity-catalog'
 
-const NOTEBOOK_RUNTIME_QUALIFIERS = new Set(['python', 'r', 'javascript', 'bash'])
+const NOTEBOOK_PERMISSION_RUNTIME_QUALIFIERS = Object.freeze({
+  python: 'python',
+  r: 'r',
+  javascript: 'javascript',
+  bash: 'bash',
+  powershell: 'bash',
+  'native-posix': 'bash',
+  'wsl2-bash': 'wsl2-bash'
+} as const)
+const notebookPermissionRuntimeQualifier = (runtime: string | undefined): string | undefined => {
+  if (runtime && /^wsl2-bash@wsl2-[a-f0-9]{24}$/u.test(runtime)) return runtime
+  return runtime && Object.hasOwn(NOTEBOOK_PERMISSION_RUNTIME_QUALIFIERS, runtime)
+    ? NOTEBOOK_PERMISSION_RUNTIME_QUALIFIERS[
+        runtime as keyof typeof NOTEBOOK_PERMISSION_RUNTIME_QUALIFIERS
+      ]
+    : undefined
+}
 const FILE_OPERATION_KEYS: Readonly<Record<string, string>> = {
   Read: 'read',
   Write: 'write',
@@ -126,6 +142,8 @@ const categoryFromTrustedToolName = (value: string | undefined): string | undefi
   value ? TRUSTED_TOOL_CATEGORIES[normalizeTrustedToolName(value)] : undefined
 
 const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability | undefined => {
+  if (categoryKey === 'builtin:web_fetch' || categoryKey === 'builtin:web_search')
+    return { kind: 'builtin_tool', key: categoryKey }
   if (categoryKey.startsWith('customize:')) {
     const key = categoryKey
     return isPreRegisteredPermissionIdentity('customize_mutation', key)
@@ -165,7 +183,8 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
     const separator = descriptor.lastIndexOf(':')
     const possibleQualifier = separator >= 0 ? descriptor.slice(separator + 1) : undefined
     const hasRuntimeQualifier =
-      possibleQualifier !== undefined && NOTEBOOK_RUNTIME_QUALIFIERS.has(possibleQualifier)
+      possibleQualifier !== undefined &&
+      notebookPermissionRuntimeQualifier(possibleQualifier) === possibleQualifier
     const identity = hasRuntimeQualifier ? descriptor.slice(0, separator) : descriptor
     if (!identity.includes('/')) return undefined
     const key = `mcp:${identity}`
@@ -193,8 +212,8 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
     return operation ? { kind: 'file_operation', key: `file:${operation}` } : undefined
   }
 
-  // V1 has no persistable built-in provider tools. Unknown provider-native fallback names remain
-  // Once-only until an explicit cross-framework Broker registration is added.
+  // Unknown provider-native fallback names remain Once-only. Web reading is admitted above only
+  // through the broker's framework-specific native-tool contract.
   return undefined
 }
 
@@ -203,5 +222,6 @@ export {
   categoryFromTrustedToolName,
   commandPrefixPermissionCategory,
   containsSecretBearingMaterial,
-  exactPermissionQualifier
+  exactPermissionQualifier,
+  notebookPermissionRuntimeQualifier
 }

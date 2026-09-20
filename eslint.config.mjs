@@ -18,6 +18,8 @@ export default defineConfig(
       // Local package caches and generated scratch trees are not repository source.
       '**/.pnpm-store/**',
       '**/tmp/**',
+      // Frozen investigation evidence is not maintained source, matching the Vitest boundary.
+      'docs/internal/**',
       // Packaged e2e build output (electron-builder --dir into dist-e2e-*); bundled JS, not source.
       '**/dist-e2e-*',
       // Git worktrees hold full source copies; don't lint duplicate source from either supported root.

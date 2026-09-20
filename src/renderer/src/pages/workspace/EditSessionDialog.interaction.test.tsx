@@ -62,6 +62,69 @@ describe('EditSessionDialog interactions', () => {
     container.remove()
   })
 
+  it('blocks saving an existing oversized title and explains how to correct it', () => {
+    const title = `Attached ${'a'.repeat(100)}.csv`
+    const render = (titleDraft: string): void => {
+      act(() =>
+        root.render(
+          <EditSessionDialog
+            session={{ ...session, title }}
+            titleDraft={titleDraft}
+            descriptionDraft="Updated description"
+            onTitleDraftChange={() => undefined}
+            onDescriptionDraftChange={() => undefined}
+            onCancel={() => undefined}
+            onConfirmEdit={(event) => event.preventDefault()}
+          />
+        )
+      )
+    }
+    render(title)
+    const input = document.querySelector<HTMLInputElement>('#edit-session-title')!
+    expect(input.value).toHaveLength(113)
+    expect(input.maxLength).toBe(80)
+    expect
+      .soft(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled)
+      .toBe(true)
+    expect.soft(document.querySelector('[role="alert"]')?.textContent ?? '').toMatch(/title.*80/i)
+    render('Short title')
+    expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it.each([
+    ['title', 'x'.repeat(81), 'Summary', /title.*80/i],
+    ['description', 'Title', 'x'.repeat(1001), /description.*1000/i]
+  ])(
+    'blocks form submission for an existing oversized %s',
+    (_field, titleDraft, descriptionDraft, message) => {
+      const confirm = vi.fn((event) => event.preventDefault())
+      act(() =>
+        root.render(
+          <EditSessionDialog
+            session={session}
+            titleDraft={titleDraft as string}
+            descriptionDraft={descriptionDraft as string}
+            onTitleDraftChange={() => undefined}
+            onDescriptionDraftChange={() => undefined}
+            onCancel={() => undefined}
+            onConfirmEdit={confirm}
+          />
+        )
+      )
+      act(() =>
+        document
+          .querySelector('form')!
+          .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      )
+      expect(confirm).not.toHaveBeenCalled()
+      expect(document.querySelector('[role="alert"]')?.textContent ?? '').toMatch(message as RegExp)
+      expect(
+        document.querySelector('[aria-invalid="true"]')?.getAttribute('aria-describedby')
+      ).toBe('edit-session-error')
+    }
+  )
+
   it('opens from the Session action without entering a render loop', () => {
     act(() => root.render(<Harness />))
 

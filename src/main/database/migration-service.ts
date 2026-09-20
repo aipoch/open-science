@@ -1,3 +1,16 @@
+import { classificationUsageMigration } from './migrations/0042-classification-usage'
+import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
+import { bookmarksMigration } from './migrations/0041-bookmarks'
+import {
+  literatureSearchTextMigration,
+  backfillLiteratureSearchText
+} from './migrations/0038-literature-search-text'
+import { literatureMetadataCommitReceiptMigration } from './migrations/0039-literature-metadata-commit-receipt'
+import { literaturePdfProvenanceMigration } from './migrations/0035-literature-pdf-provenance'
+import {
+  literatureInboxIntegrityMigration,
+  literatureDiscoveryBackfillStatement
+} from './migrations/0037-literature-inbox-integrity'
 import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
 import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
@@ -62,6 +75,8 @@ import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-
 import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
 import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
 import { computeHostExecutionModeMigration } from './migrations/0029-compute-host-execution-mode'
+import { contentVerificationObservationMigration } from './migrations/0036-content-verification-observation'
+import { backgroundResultDeliveryMigration } from './migrations/0034-background-result-delivery'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -223,6 +238,11 @@ const checksumMigrationPayload = (
   return hash.digest('hex')
 }
 
+const LITERATURE_SEARCH_TEXT_CHECKSUM = checksumMigrationPayload(
+  literatureSearchTextMigration.id,
+  literatureSearchTextMigration.statements,
+  literatureSearchTextMigration.verifiers
+)
 const BASELINE_CHECKSUM = checksumMigrationPayload(
   BASELINE_ID,
   runtimeSchemaBaselineMigration.statements,
@@ -270,6 +290,12 @@ const MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
   managedFileVersionFoundationMigration.id,
   managedFileVersionFoundationMigration.statements,
   managedFileVersionFoundationMigration.verifiers
+)
+const BACKGROUND_RESULT_DELIVERY_CHECKSUM = checksumMigrationPayload(
+  backgroundResultDeliveryMigration.id,
+  backgroundResultDeliveryMigration.statements,
+  backgroundResultDeliveryMigration.verifiers,
+  backgroundResultDeliveryMigration.operations
 )
 const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   visionEvidenceMigration.id,
@@ -486,6 +512,11 @@ const NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Ob
     Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
   ])
 )
+const CLASSIFICATION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = {
+  SessionAuxiliaryTurnUsage: {
+    SessionAuxiliaryTurnUsage_source_check: `"source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')`
+  }
+}
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -713,6 +744,95 @@ const MIGRATION_MANIFEST = [
     backupOnApply: 'required',
     backupRetention: 'retain',
     foreignKeysDuringApply: 'disabled'
+  },
+  {
+    ...backgroundResultDeliveryMigration,
+    checksum: BACKGROUND_RESULT_DELIVERY_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literaturePdfProvenanceMigration,
+    checksum: checksumMigrationPayload(
+      literaturePdfProvenanceMigration.id,
+      literaturePdfProvenanceMigration.statements,
+      literaturePdfProvenanceMigration.verifiers,
+      literaturePdfProvenanceMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...contentVerificationObservationMigration,
+    checksum: checksumMigrationPayload(
+      contentVerificationObservationMigration.id,
+      contentVerificationObservationMigration.statements,
+      contentVerificationObservationMigration.verifiers,
+      contentVerificationObservationMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureInboxIntegrityMigration,
+    checksum: checksumMigrationPayload(
+      literatureInboxIntegrityMigration.id,
+      literatureInboxIntegrityMigration.statements,
+      literatureInboxIntegrityMigration.verifiers,
+      literatureInboxIntegrityMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureSearchTextMigration,
+    checksum: LITERATURE_SEARCH_TEXT_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureMetadataCommitReceiptMigration,
+    checksum: checksumMigrationPayload(
+      literatureMetadataCommitReceiptMigration.id,
+      literatureMetadataCommitReceiptMigration.statements,
+      literatureMetadataCommitReceiptMigration.verifiers,
+      literatureMetadataCommitReceiptMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureCollectionRevisionMigration,
+    checksum: checksumMigrationPayload(
+      literatureCollectionRevisionMigration.id,
+      literatureCollectionRevisionMigration.statements,
+      literatureCollectionRevisionMigration.verifiers,
+      literatureCollectionRevisionMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...bookmarksMigration,
+    checksum: checksumMigrationPayload(
+      bookmarksMigration.id,
+      bookmarksMigration.statements,
+      bookmarksMigration.verifiers,
+      bookmarksMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...classificationUsageMigration,
+    checksum: checksumMigrationPayload(
+      classificationUsageMigration.id,
+      classificationUsageMigration.statements,
+      classificationUsageMigration.verifiers,
+      classificationUsageMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -818,6 +938,8 @@ const verifyForeignKeyIntegrity = async (client: PrismaClient): Promise<void> =>
 
 const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<void> => {
   await verifyForeignKeyIntegrity(client)
+  // Repeated saves can durably reference a pending revision before the turn finalizes. Accept
+  // that ancestry only within the same unfinished Agent ownership context, including crash staging.
   const violations = await migrationSqlExecutor.query<Array<{ kind: string; id: string }>>(
     client,
     `
@@ -848,8 +970,22 @@ const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<voi
         SELECT 1 FROM "ArtifactVersion" AS "parent"
         WHERE "parent"."id" = "version"."basedOnVersionId"
           AND "parent"."artifactId" = "version"."artifactId"
-          AND "parent"."state" = 'finalized'
           AND "parent"."versionNumber" < "version"."versionNumber"
+          AND (
+            "parent"."state" = 'finalized'
+            OR (
+              "parent"."state" = 'pending'
+              AND "version"."state" IN ('staging', 'pending')
+              AND "parent"."originKind" = 'agent_generated'
+              AND "version"."originKind" = 'agent_generated'
+              AND "parent"."artifactRunId" = "version"."artifactRunId"
+              AND "parent"."rootFrameId" = "version"."rootFrameId"
+              AND "parent"."agentFrameId" = "version"."agentFrameId"
+              AND "parent"."messageBranchId" = "version"."messageBranchId"
+              AND "parent"."runtimeSegmentId" = "version"."runtimeSegmentId"
+              AND "parent"."promptMessageId" = "version"."promptMessageId"
+            )
+          )
       )
     UNION ALL
     SELECT 'upload-based-on', "version"."id"
@@ -1109,7 +1245,10 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(
     client,
     sessionAuxiliaryTurnUsageMigration.verifiers,
-    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+    mergeAllowedSuffixChecks(
+      NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS,
+      CLASSIFICATION_ALLOWED_SUFFIX_CHECKS
+    )
   )
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
@@ -1121,7 +1260,20 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
   )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
-  await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
+  // The generated contract verifies the owner-scoped source indexes introduced by the suffix.
+  await runMigrationVerifiers(
+    client,
+    literatureFoundationMigration.verifiers,
+    {},
+    new Set(['LiteratureSourceRecord'])
+  )
+  await runMigrationVerifiers(client, literatureInboxIntegrityMigration.verifiers)
+  await runMigrationVerifiers(client, computeJobRemoteCleanupMigration.verifiers)
+  await runMigrationVerifiers(client, backgroundResultDeliveryMigration.verifiers)
+  await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
+  await runMigrationVerifiers(client, contentVerificationObservationMigration.verifiers)
+  await runMigrationVerifiers(client, literatureMetadataCommitReceiptMigration.verifiers)
+  await runMigrationVerifiers(client, literatureCollectionRevisionMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1426,7 +1578,7 @@ const validateLedger = (
     const newerMigration = ledger[manifest.length]!
     throw new DatabaseMigrationError(
       'database_newer_than_app',
-      'The database was updated by a newer version of Open Science.',
+      'The database was updated by a newer version of Open-Science.',
       false,
       newerMigration.id
     )
@@ -1505,7 +1657,7 @@ const classifyDatabaseFailure = (
   if (phase !== 'migration') {
     return new DatabaseMigrationError(
       'database_open_failed',
-      'Open Science could not open its database.',
+      'Open-Science could not open its database.',
       transient,
       undefined,
       { cause: error }
@@ -1513,7 +1665,7 @@ const classifyDatabaseFailure = (
   }
   return new DatabaseMigrationError(
     'database_migration_failed',
-    'Open Science could not update its database. Existing data was not reset.',
+    'Open-Science could not update its database. Existing data was not reset.',
     transient,
     migrationId,
     { cause: error }
@@ -1652,11 +1804,40 @@ const applyManifestMigration = async (
   const currentTableNames = new Set(adapted.currentTableNames)
   // An unledgered current schema can already carry 0028's stronger CHECKs. Accept that exact
   // immutable suffix while verifying older steps, so their ALTERs are not replayed over it.
-  const allowedCheckUpgrades =
+  const allowedCheckUpgrades = mergeAllowedSuffixChecks(
     migration.id < numericAndNullConstraintsMigration.id
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
-      : {}
+      : {},
+    migration.id < classificationUsageMigration.id ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS : {}
+  )
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
+    if (
+      migration.id === literatureFoundationMigration.id &&
+      migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
+    ) {
+      // An unledgered current database may already use the successor's source ownership keys.
+      // Verify that exact generated table contract before accepting the frozen foundation.
+      let currentSources = false
+      try {
+        await verifyCurrentRuntimeSchemaTables(targetClient, ['LiteratureSourceRecord'])
+        currentSources = true
+      } catch (error) {
+        if (
+          classifyDatabaseFailure(error, 'validation', migration.id).code !==
+          'database_validation_failed'
+        )
+          throw error
+      }
+      if (currentSources) {
+        await runMigrationVerifiers(
+          targetClient,
+          migration.verifiers,
+          allowedCheckUpgrades,
+          new Set(['LiteratureSourceRecord'])
+        )
+        return
+      }
+    }
     if (!canVerifyAsCurrentSchema) {
       await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
       return
@@ -1680,85 +1861,106 @@ const applyManifestMigration = async (
   try {
     foreignKeysWereEnabled = disableForeignKeys && (await readForeignKeyState(client)) === 1
     if (foreignKeysWereEnabled) await setForeignKeys(client, false)
-    await client.$transaction(async (transaction) => {
-      const transactionClient = transaction as unknown as PrismaClient
-      // A pre-ledger build may already have emitted the current generated schema. When this
-      // migration's complete verifier contract is already satisfied, adopt its immutable ledger
-      // identity without replaying non-idempotent SQLite ALTER TABLE statements.
-      let contractAlreadySatisfied = false
-      try {
-        await verifyMigrationTarget(transactionClient)
-        contractAlreadySatisfied = true
-      } catch (error) {
-        const failure = classifyDatabaseFailure(error, 'validation', migration.id)
-        // Only a contract mismatch calls for schema changes. A failed read must not cause
-        // non-idempotent ALTER statements to be replayed over an already compatible schema.
-        if (failure.code !== 'database_validation_failed') throw failure
-      }
-      if (
-        contractAlreadySatisfied &&
-        migration.id === managedFileVersionFoundationMigration.id &&
-        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
-      ) {
-        for (const statement of managedFileVersionFoundationCurrentSchemaAdoptionStatements) {
-          await migrationSqlExecutor.execute(transaction, statement)
+    await client.$transaction(
+      async (transaction) => {
+        const transactionClient = transaction as unknown as PrismaClient
+        // A pre-ledger build may already have emitted the current generated schema. When this
+        // migration's complete verifier contract is already satisfied, adopt its immutable ledger
+        // identity without replaying non-idempotent SQLite ALTER TABLE statements.
+        let contractAlreadySatisfied = false
+        try {
+          await verifyMigrationTarget(transactionClient)
+          contractAlreadySatisfied = true
+        } catch (error) {
+          const failure = classifyDatabaseFailure(error, 'validation', migration.id)
+          // Only a contract mismatch calls for schema changes. A failed read must not cause
+          // non-idempotent ALTER statements to be replayed over an already compatible schema.
+          if (failure.code !== 'database_validation_failed') throw failure
         }
-      }
-      if (
-        contractAlreadySatisfied &&
-        migration.id === literatureFoundationMigration.id &&
-        migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
-      ) {
-        for (const statement of literatureContentBlobBackfillStatements) {
-          await migrationSqlExecutor.execute(transaction, statement)
-        }
-      }
-      if (!contractAlreadySatisfied) {
-        if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {
-          await migrationSqlExecutor.execute(
-            transaction,
-            `DELETE FROM "ProjectPreviewState"
-             WHERE NOT EXISTS (
-               SELECT 1 FROM "Project" WHERE "Project"."id" = "ProjectPreviewState"."projectId"
-             )`
-          )
-        } else {
-          for (const statement of migration.statements) {
+        if (
+          contractAlreadySatisfied &&
+          migration.id === managedFileVersionFoundationMigration.id &&
+          migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
+        ) {
+          for (const statement of managedFileVersionFoundationCurrentSchemaAdoptionStatements) {
             await migrationSqlExecutor.execute(transaction, statement)
           }
         }
-        await applySqliteMigrationOperations(transactionClient, adapted.operations)
-      }
-      if (options.repairVisionEvidenceReference && !contractAlreadySatisfied) {
-        // The upstream history created VisionEvidence before this immutable migration. Rebuild it
-        // after UploadVersion so SQLite does not retain the temporary rename as its FK target.
-        await applySqliteMigrationOperations(transactionClient, visionEvidenceMigration.operations)
-      }
-      if (options.repairLiteratureManifestReference) {
-        const manifestTables = await migrationSqlExecutor.query<Array<{ name: string }>>(
-          transactionClient,
-          `SELECT "name" FROM "sqlite_schema"
-           WHERE "type" = 'table' AND "name" = 'ArtifactLiteratureManifest'`
-        )
-        if (manifestTables.length > 0) {
-          const manifestForeignKeys = await migrationSqlExecutor.query<Array<{ table: string }>>(
-            transactionClient,
-            `PRAGMA foreign_key_list("ArtifactLiteratureManifest")`
+        if (
+          contractAlreadySatisfied &&
+          migration.id === literatureFoundationMigration.id &&
+          migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
+        ) {
+          for (const statement of literatureContentBlobBackfillStatements) {
+            await migrationSqlExecutor.execute(transaction, statement)
+          }
+        }
+        if (
+          contractAlreadySatisfied &&
+          migration.id === literatureInboxIntegrityMigration.id &&
+          MIGRATION_MANIFEST.some(
+            (entry) => entry.id === migration.id && entry.checksum === migration.checksum
           )
-          if (manifestForeignKeys.some((foreignKey) => foreignKey.table !== 'ArtifactVersion')) {
-            for (const statement of artifactLiteratureManifestReferenceRepairStatements) {
+        ) {
+          await migrationSqlExecutor.execute(transaction, literatureDiscoveryBackfillStatement)
+        }
+        if (!contractAlreadySatisfied) {
+          if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {
+            await migrationSqlExecutor.execute(
+              transaction,
+              `DELETE FROM "ProjectPreviewState"
+             WHERE NOT EXISTS (
+               SELECT 1 FROM "Project" WHERE "Project"."id" = "ProjectPreviewState"."projectId"
+             )`
+            )
+          } else {
+            for (const statement of migration.statements) {
               await migrationSqlExecutor.execute(transaction, statement)
             }
           }
+          await applySqliteMigrationOperations(transactionClient, adapted.operations)
         }
-      }
-      try {
-        await verifyMigrationTarget(transactionClient)
-      } catch (error) {
-        throw classifyDatabaseFailure(error, 'validation', migration.id)
-      }
-      await insertLedgerRow(transactionClient, migration)
-    })
+        if (
+          migration.id === literatureSearchTextMigration.id &&
+          migration.checksum === LITERATURE_SEARCH_TEXT_CHECKSUM
+        ) {
+          await backfillLiteratureSearchText(transaction)
+        }
+        if (options.repairVisionEvidenceReference && !contractAlreadySatisfied) {
+          // The upstream history created VisionEvidence before this immutable migration. Rebuild it
+          // after UploadVersion so SQLite does not retain the temporary rename as its FK target.
+          await applySqliteMigrationOperations(
+            transactionClient,
+            visionEvidenceMigration.operations
+          )
+        }
+        if (options.repairLiteratureManifestReference) {
+          const manifestTables = await migrationSqlExecutor.query<Array<{ name: string }>>(
+            transactionClient,
+            `SELECT "name" FROM "sqlite_schema"
+           WHERE "type" = 'table' AND "name" = 'ArtifactLiteratureManifest'`
+          )
+          if (manifestTables.length > 0) {
+            const manifestForeignKeys = await migrationSqlExecutor.query<Array<{ table: string }>>(
+              transactionClient,
+              `PRAGMA foreign_key_list("ArtifactLiteratureManifest")`
+            )
+            if (manifestForeignKeys.some((foreignKey) => foreignKey.table !== 'ArtifactVersion')) {
+              for (const statement of artifactLiteratureManifestReferenceRepairStatements) {
+                await migrationSqlExecutor.execute(transaction, statement)
+              }
+            }
+          }
+        }
+        try {
+          await verifyMigrationTarget(transactionClient)
+        } catch (error) {
+          throw classifyDatabaseFailure(error, 'validation', migration.id)
+        }
+        await insertLedgerRow(transactionClient, migration)
+      },
+      migration.id === literatureSearchTextMigration.id ? { timeout: 120_000 } : undefined
+    )
   } catch (error) {
     migrationFailure = error
   }
@@ -1959,6 +2161,16 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === literatureFoundationMigration.id &&
       candidate.checksum === LITERATURE_FOUNDATION_CHECKSUM
   )
+  const adoptsComputeJobRemoteCleanup = manifest.some(
+    (candidate) =>
+      candidate.id === computeJobRemoteCleanupMigration.id &&
+      candidate.checksum === COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM
+  )
+  const adoptsBackgroundResultDelivery = manifest.some(
+    (candidate) =>
+      candidate.id === backgroundResultDeliveryMigration.id &&
+      candidate.checksum === BACKGROUND_RESULT_DELIVERY_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1969,7 +2181,10 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsCrossResourceTags ? CROSS_RESOURCE_TAGS_ALLOWED_SUFFIX_CHECKS : {},
     adoptsAgentMemoryProjectScope ? AGENT_MEMORY_PROJECT_SCOPE_ALLOWED_SUFFIX_CHECKS : {},
     adoptsSessionAuxiliaryTurnUsage ? SESSION_AUXILIARY_TURN_USAGE_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsComputeJobOperation ? COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsComputeJobOperation ? COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS : {},
+    manifest.some((entry) => entry.id === classificationUsageMigration.id)
+      ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS
+      : {}
   )
 
   let nextIndex = appliedCount
@@ -1984,16 +2199,30 @@ const migrateApplicationDatabaseWithManifest = async (
       allowedSuffixChecks,
       adoptsManagedFileVersionFoundation,
       {
-        ...(adoptsAgentMemoryProjectScope
+        // The frozen Literature foundation verifies this released index before its replacement.
+        ...(adoptsLiteratureFoundation
+          ? { indexNames: ['LiteratureSourceRecord_provider_externalId_key'] }
+          : {}),
+        ...(adoptsAgentMemoryProjectScope || adoptsBackgroundResultDelivery
           ? {
-              tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
+              tableNames: [
+                ...(adoptsAgentMemoryProjectScope ? MEMORY_AUXILIARY_TABLE_NAMES : []),
+                ...(adoptsBackgroundResultDelivery ? ['BackgroundResultDelivery'] : [])
+              ],
               schemaObjects: MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
-                type === 'trigger' ? [{ type, name }] : []
+                adoptsAgentMemoryProjectScope && type === 'trigger' ? [{ type, name }] : []
               )
             }
           : {}),
-        ...(adoptsComputeJobFileEvidence
-          ? { columns: { ComputeJob: ['producerRunId', 'fileEvidence'] } }
+        ...(adoptsComputeJobFileEvidence || adoptsComputeJobRemoteCleanup
+          ? {
+              columns: {
+                ComputeJob: [
+                  ...(adoptsComputeJobFileEvidence ? ['producerRunId', 'fileEvidence'] : []),
+                  ...(adoptsComputeJobRemoteCleanup ? ['remoteCleanupDisposition'] : [])
+                ]
+              }
+            }
           : {})
       }
     )
@@ -2040,6 +2269,7 @@ export {
   AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
   COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM,
   MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM,
+  BACKGROUND_RESULT_DELIVERY_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

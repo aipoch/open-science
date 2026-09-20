@@ -2,7 +2,7 @@ import type { ToolContext, ToolDescriptor } from '../types'
 
 const GTEX = 'https://gtexportal.org/api/v2'
 const DEFAULT_DATASET = 'gtex_v8'
-// GTEx caps a single page at 1000 rows; use it to minimise round-trips when walking paged routes.
+// Keep individual GTEx responses bounded while walkPages() retrieves complete paged result sets.
 const PAGE_SIZE = 1000
 
 // A pinned dataset release maps to a fixed GENCODE version; the /reference/gene route keys off the
@@ -75,6 +75,13 @@ function geneRecord(g: Record<string, unknown>): Record<string, unknown> {
     gene_type: g.geneType,
     description: g.description
   }
+}
+
+function geneReferenceUrl(args: Record<string, unknown>): string {
+  const params = [repeatParam('geneId', args.genes).slice(1)]
+  const version = DATASET_GENCODE_VERSION[datasetOf(args)]
+  if (version) params.push(`gencodeVersion=${encodeURIComponent(version)}`)
+  return `${GTEX}/reference/gene?${params.filter(Boolean).join('&')}`
 }
 
 // GTEx Portal API v2 (https://gtexportal.org/api/v2): read-only tissue/sample metadata, bulk RNA-seq
@@ -222,18 +229,9 @@ export const EXPRESSION_TOOLS: ToolDescriptor[] = [
       '`{ "total": int, "genes": [ { "gene_symbol": str, "gencode_id": str, "ensembl_id": str, "gencode_version": str, "genome_build": str, "chromosome": str, "start": int, "end": int, "strand": str, "entrez_gene_id": int, "gene_type": str, "description": str } ] }` — one record per matched reference gene; unmatched inputs are simply absent.',
     example:
       'const result = await host.mcp("expression", "gtex_resolve_genes", {"genes": ["GAPDH", "BRCA2"]})',
-    url: (a) => {
-      const version = DATASET_GENCODE_VERSION[datasetOf(a)]
-      return (
-        `${GTEX}/reference/gene?itemsPerPage=${PAGE_SIZE}` +
-        repeatParam('geneId', a.genes) +
-        (version ? `&gencodeVersion=${encodeURIComponent(version)}` : '')
-      )
-    },
-    parse: (raw) => {
-      const res = raw as PagedResponse
-      const genes = (res.data ?? []).map(geneRecord)
-      return { total: res.paging_info?.totalNumberOfItems ?? genes.length, genes }
+    run: async (ctx, a) => {
+      const { rows, total } = await walkPages(ctx, geneReferenceUrl(a))
+      return { total: total || rows.length, genes: rows.map(geneRecord) }
     }
   },
   {

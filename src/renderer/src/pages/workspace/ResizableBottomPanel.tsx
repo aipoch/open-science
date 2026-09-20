@@ -1,4 +1,14 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode
+} from 'react'
 
 const PANEL_MIN_HEIGHT_PX = 288
 const PANEL_MAX_HEIGHT_PX = 704
@@ -32,8 +42,12 @@ const ResizableBottomPanel = ({
   const surfaceRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<DragState | undefined>(undefined)
   const [height, setHeight] = useState<number>()
+  const observerRef = useRef<ResizeObserver | undefined>(undefined)
+  const observedTargetsRef = useRef(new Set<Element>())
+  const panelId = useId()
+  const [size, setSize] = useState({ now: 0, min: 0, max: 0 })
 
-  const resizeBounds = (): ResizeBounds => {
+  const resizeBounds = useCallback((): ResizeBounds => {
     const viewportMax = Math.round(
       Math.min(window.innerHeight * PANEL_MAX_VIEWPORT_RATIO, PANEL_MAX_HEIGHT_PX)
     )
@@ -68,14 +82,63 @@ const ResizableBottomPanel = ({
       min,
       max
     }
-  }
+  }, [scrollTestId, constrainGrowthToOverflow, minimumContentSelector, minimumContentIndex])
+
+  const measure = useCallback((): void => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const bounds = resizeBounds()
+    const actual = Math.round(surface.getBoundingClientRect().height)
+    // Natural content may be shorter than the preferred drag minimum.
+    const next = {
+      now: actual,
+      min: Math.min(bounds.min, actual),
+      max: Math.max(bounds.max, actual)
+    }
+    setSize((current) =>
+      current.now === next.now && current.min === next.min && current.max === next.max
+        ? current
+        : next
+    )
+    if (height !== undefined && height > bounds.max) setHeight(bounds.max)
+  }, [height, resizeBounds])
+  const measureObservedResize = useEffectEvent(measure)
+
+  useLayoutEffect(() => {
+    const update = (): void => measureObservedResize()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
+    observerRef.current = observer
+    window.addEventListener('resize', update)
+    return () => {
+      observer?.disconnect()
+      observerRef.current = undefined
+      observedTargetsRef.current.clear()
+      window.removeEventListener('resize', update)
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    const surface = surfaceRef.current
+    if (!surface) return
+    const scroll = surface.querySelector<HTMLElement>(`[data-testid="${scrollTestId}"]`)
+    const targets = new Set<Element>([surface, ...(scroll ? [scroll, ...scroll.children] : [])])
+    // React children change during streaming; only actual DOM replacements need re-observing.
+    for (const target of observedTargetsRef.current) {
+      if (!targets.has(target)) observerRef.current?.unobserve(target)
+    }
+    for (const target of targets) {
+      if (!observedTargetsRef.current.has(target)) observerRef.current?.observe(target)
+    }
+    observedTargetsRef.current = targets
+    measure()
+  }, [measure, scrollTestId, children])
 
   const resizeTo = (nextHeight: number): void => {
     const bounds = resizeBounds()
     setHeight(Math.min(bounds.max, Math.max(bounds.min, Math.round(nextHeight))))
   }
 
-  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>): void => {
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>): void => {
     if (
       !surfaceRef.current ||
       event.isPrimary === false ||
@@ -91,13 +154,13 @@ const ResizableBottomPanel = ({
     }
   }
 
-  const handlePointerMove = (event: PointerEvent<HTMLButtonElement>): void => {
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
     const dragState = dragStateRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
     resizeTo(dragState.startHeight - (event.clientY - dragState.startY))
   }
 
-  const endPointerDrag = (event: PointerEvent<HTMLButtonElement>): void => {
+  const endPointerDrag = (event: PointerEvent<HTMLDivElement>): void => {
     if (dragStateRef.current?.pointerId !== event.pointerId) return
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -105,7 +168,7 @@ const ResizableBottomPanel = ({
     dragStateRef.current = undefined
   }
 
-  const handleResizeKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     event.preventDefault()
     const currentHeight = surfaceRef.current?.getBoundingClientRect().height
@@ -126,9 +189,16 @@ const ResizableBottomPanel = ({
       data-testid={testId}
       style={height === undefined ? undefined : { height }}
     >
-      <button
-        type="button"
+      <div
+        role="separator"
+        tabIndex={0}
         aria-label={ariaLabel}
+        aria-orientation="horizontal"
+        aria-valuenow={size.now}
+        aria-valuetext={`${size.now}px`}
+        aria-valuemin={size.min}
+        aria-valuemax={size.max}
+        aria-controls={panelId}
         className={`group absolute top-0 z-20 grid cursor-ns-resize touch-none select-none place-items-center focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
           variant === 'integrated'
             ? 'left-1/2 h-8 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-bg-10/0 to-bg-000/95 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28'
@@ -145,8 +215,9 @@ const ResizableBottomPanel = ({
           aria-hidden="true"
           className="relative z-10 h-1 w-12 rounded-full bg-text-300/70 transition-colors duration-200 group-hover:bg-text-100 group-focus-visible:bg-text-100 group-active:bg-text-000"
         />
-      </button>
+      </div>
       <div
+        id={panelId}
         className={`min-h-0 flex-1 overscroll-contain rounded-2xl border border-border-200 bg-bg-000 ${
           variant === 'integrated' ? 'overflow-hidden shadow-none' : 'overflow-y-auto shadow-sm'
         }`}

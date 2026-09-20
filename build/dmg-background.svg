@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="534" viewBox="0 0 660 534">
+  <rect width="660" height="534" fill="#eeeeee"/>
+  <!-- Reserve the first 150px for Finder helper files, including when hidden files are visible. -->
+  <text x="330" y="196" text-anchor="middle" font-family="Helvetica Neue, sans-serif"
+    font-size="29" font-weight="600" letter-spacing="-1" fill="#29312e">AIPOCH Open-Science</text>
+  <!-- Finder places the actual application icons at (130, 286) and (530, 286). -->
+  <path d="M306 307 H325 V288 L355 318 L325 348 V329 H306 Z"
+    fill="none" stroke="#686868" stroke-width="1.5" stroke-dasharray="3 2"
+    stroke-linejoin="round" transform="translate(0 -32)"/>
+  <!-- Keep both instructions inside the first 430px of Finder content, above bottom chrome. -->
+  <g text-anchor="middle" font-family="Helvetica Neue, sans-serif">
+    <text x="330" y="390" font-size="13" fill="#505854">Drag Open-Science to Applications to install.</text>
+    <text x="330" y="412" font-size="12" fill="#6d756f">Then open Open-Science from Applications.</text>
+  </g>
+</svg>

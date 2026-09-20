@@ -64,6 +64,25 @@ const dependencies = (
 })
 
 describe('AcpSessionDeletionWorkflow', () => {
+  it('forgets durable WSL setup authority after successful owned Session deletion', async () => {
+    const registry = new AcpSessionRegistry()
+    publishSession(registry, 'setup-session', 'provider-setup')
+    const forgetSetupSession = vi.fn(async () => undefined)
+    const base = dependencies(registry, undefined, { delete: false, close: false })
+    const workflow = new AcpSessionDeletionWorkflow({
+      ...base,
+      capabilities: {
+        revokeSession: base.capabilities.revokeSession,
+        forgetSetupSession
+      }
+    })
+
+    await workflow.delete('setup-session')
+
+    expect(forgetSetupSession).toHaveBeenCalledWith('setup-session')
+    expect(base.capabilities.revokeSession).toHaveBeenCalledWith('setup-session')
+  })
+
   it('deletes an attached provider Session and cleans each app-owned Session interface in order', async () => {
     const actions: string[] = []
     const registry = new AcpSessionRegistry()

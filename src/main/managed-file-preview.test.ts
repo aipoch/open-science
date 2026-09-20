@@ -2,15 +2,19 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReadArtifactPreviewRequest } from '../shared/artifacts'
-import { readBoundedManagedFilePreview } from './managed-file-preview'
+import {
+  readBoundedManagedFilePreview,
+  waitForManagedFilePublication
+} from './managed-file-preview'
 
 describe('readBoundedManagedFilePreview', () => {
   let directory: string | undefined
 
   afterEach(async () => {
+    vi.useRealTimers()
     if (directory) await rm(directory, { recursive: true, force: true })
   })
 
@@ -59,5 +63,34 @@ describe('readBoundedManagedFilePreview', () => {
     expect(first.content).toBe('a你')
     expect(`${first.content}${second.content}`).toBe('a你b')
     expect(`${first.content}${second.content}`).not.toContain('\uFFFD')
+  })
+})
+
+describe('waitForManagedFilePublication', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('stops retrying and preserves the publication error after the bounded wait', async () => {
+    vi.useFakeTimers()
+    const publicationPending = Object.assign(new Error('Managed file has no published version.'), {
+      code: 'VERSION_NOT_FOUND'
+    })
+    const openManagedFile = vi.fn().mockRejectedValue(publicationPending)
+
+    const result = waitForManagedFilePublication(openManagedFile)
+    const rejection = expect(result).rejects.toBe(publicationPending)
+    await vi.runAllTimersAsync()
+
+    await rejection
+    expect(openManagedFile).toHaveBeenCalledTimes(6)
+  })
+
+  it('does not retry an unrelated missing Version', async () => {
+    const missingVersion = Object.assign(new Error('Managed file version was not found.'), {
+      code: 'VERSION_NOT_FOUND'
+    })
+    const openManagedFile = vi.fn().mockRejectedValue(missingVersion)
+
+    await expect(waitForManagedFilePublication(openManagedFile)).rejects.toBe(missingVersion)
+    expect(openManagedFile).toHaveBeenCalledOnce()
   })
 })

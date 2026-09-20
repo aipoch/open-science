@@ -8,7 +8,7 @@ import {
   type ArtifactLiteratureSidecar
 } from '../../shared/artifact-literature'
 import type { LiteratureItemView } from '../../shared/literature'
-import { LiteratureCitationFormatter } from './citation-formatter'
+import { citationKey, LiteratureCitationFormatter } from './citation-formatter'
 
 const CITATION_MARKER_PATTERN = /\{\{cite:([A-Za-z0-9._-]{1,512})\}\}/gu
 const BIBLIOGRAPHY_MARKER = '{{bibliography}}'
@@ -32,12 +32,6 @@ type PreparedLatexBundle = Readonly<{
 
 const sha256 = (value: string | Uint8Array): string =>
   createHash('sha256').update(value).digest('hex')
-
-const citationKey = (item: LiteratureItemView): string => {
-  const imported = item.item.citationKey?.trim()
-  if (imported && /^[A-Za-z0-9][A-Za-z0-9_:.+-]{0,127}$/u.test(imported)) return imported
-  return `os${sha256(item.id).slice(0, 12)}`
-}
 
 class LiteratureLatexBundle {
   constructor(
@@ -70,7 +64,10 @@ class LiteratureLatexBundle {
     }
 
     const keysByItemId = new Map(
-      uniqueItemIds.map((itemId) => [itemId, citationKey(itemsById.get(itemId)!)])
+      uniqueItemIds.map((itemId) => [
+        itemId,
+        citationKey(`os${sha256(itemId).slice(0, 12)}`, itemsById.get(itemId)!.item)
+      ])
     )
     if (new Set(keysByItemId.values()).size !== keysByItemId.size) {
       throw new Error('Selected Literature Items have duplicate citation keys.')

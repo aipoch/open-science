@@ -29,11 +29,17 @@ type RuntimeInstallAuthorizationRequest = Readonly<{
   language: NotebookLanguage
   envId: string
   authorized: boolean
+  library?: string
 }>
 type RuntimeInterpreterRequest = Readonly<{ language: NotebookLanguage; path: string }>
 type RuntimeAgentEnvironmentCreationRequest = Readonly<{ enabled: boolean }>
 
 const runtimeApplicationCommands = Object.freeze({
+  setSandboxAccess: defineApplicationCommand<
+    'runtime:set-sandbox-access',
+    readonly [request: RuntimeInstallAuthorizationRequest],
+    { cancelled: boolean }
+  >('runtime:set-sandbox-access'),
   listEnvironments: defineApplicationCommand<
     'runtime:list-environments',
     readonly [],
@@ -103,6 +109,7 @@ const runtimeApplicationCommandGroup = defineApplicationCommandGroup('runtime', 
   runtimeApplicationCommands.listPackages,
   runtimeApplicationCommands.pickInterpreter,
   runtimeApplicationCommands.registerInterpreter,
+  runtimeApplicationCommands.setSandboxAccess,
   runtimeApplicationCommands.setAgentEnvironmentCreationEnabled,
   runtimeApplicationCommands.setEnvironmentEnabled,
   runtimeApplicationCommands.setInstallAuthorized,
@@ -128,6 +135,10 @@ const registerRuntimeApplicationCommands = (
 
   try {
     scope.registerGroup(runtimeApplicationCommandGroup, {
+      'runtime:set-sandbox-access': (invocation) => {
+        requireLocalCaller(invocation.callerContext)
+        return dependencies.workflows.setSandboxAccess(invocation.args[0])
+      },
       'runtime:list-environments': () => dependencies.workflows.listEnvironments(),
       'runtime:list-packages': (invocation) =>
         dependencies.workflows.listPackages(invocation.args[0]),

@@ -1,3 +1,7 @@
+import {
+  literatureDeletionError,
+  parseLiteratureDeletionError
+} from '../../shared/literature-deletion'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -28,6 +32,138 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it('carries the inspected target and intent across the local Web storage boundary', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['storage:migrate', 'storage:set-data-root-and-relaunch']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    const selection = {
+      pickedPath: '/picked',
+      dataRoot: '/picked/Open-Science',
+      kind: 'move',
+      identity: 'inspection'
+    }
+    await methodAt(api, 'storage.migrate')!(selection.dataRoot, selection)
+    await methodAt(api, 'storage.setDataRootAndRelaunch')!(selection.dataRoot, false, selection)
+    expect(invoke.mock.calls).toEqual([
+      ['storage:migrate', [{ parent: selection.dataRoot, selection }]],
+      [
+        'storage:set-data-root-and-relaunch',
+        [{ parent: selection.dataRoot, markOnboarding: false, selection }]
+      ]
+    ])
+  })
+  it('forwards the private bookmark identity on Web and retains a failed save for retry', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn().mockRejectedValueOnce(new Error('Bookmark was not saved.'))
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['bookmarks:create']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    const request = { id: 'bookmark-1', projectId: 'project-1', sessionId: 'session-1', note: '' }
+    await expect(methodAt(api, 'bookmarks.create')!(request)).rejects.toThrow(
+      'Bookmark was not saved.'
+    )
+    const saved = { ...request, createdAt: '2026-09-14T00:00:00.000Z' }
+    invoke.mockResolvedValueOnce(saved)
+    await expect(methodAt(api, 'bookmarks.create')!(request)).resolves.toEqual(saved)
+    expect(invoke.mock.calls).toEqual([
+      ['bookmarks:create', [request]],
+      ['bookmarks:create', [request]]
+    ])
+  })
+  it('forwards external R library consent through the Web contract', async () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['runtime:set-install-authorized']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await methodAt(api, 'runtime.setInstallAuthorized')!('r', 'external-r', true, '/user/R/library')
+    expect(invoke).toHaveBeenCalledWith('runtime:set-install-authorized', [
+      {
+        language: 'r',
+        envId: 'external-r',
+        authorized: true,
+        library: '/user/R/library'
+      }
+    ])
+  })
+  it('preserves recoverable deletion diagnostics without turning rejection into success', async () => {
+    const diagnostic = {
+      reason: 'scan-incomplete' as const,
+      references: [],
+      issues: [
+        {
+          kind: 'corrupt' as const,
+          projectId: 'project',
+          fileName: 'session.json',
+          recovered: true
+        }
+      ],
+      truncated: false
+    }
+    const error = literatureDeletionError(diagnostic)
+    const api: Record<string, unknown> = {}
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['literature:transact']),
+      restrictedRpcChannels: new Set(),
+      invoke: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(JSON.parse(JSON.stringify({ message: error.message })).message)
+        ),
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    const result = await (
+      methodAt(api, 'literature.transact')!({
+        kind: 'delete-items-permanently',
+        itemIds: ['item']
+      }) as Promise<unknown>
+    ).catch((error) => error)
+    expect(result).toBeInstanceOf(Error)
+    expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
+  })
+
+  it('returns a cache miss locally and installs a rejecting cache lookup remotely', async () => {
+    const channel = 'pdf-structure:read-cached'
+    const request = { attachmentVersionId: 'version-1', page: 1 }
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    const local: Record<string, unknown> = {}
+    installWebRendererContracts(local, {
+      availableRpcChannels: new Set([channel]),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await expect(methodAt(local, 'pdfStructure.readCached')?.(request)).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith(channel, [request])
+    invoke.mockClear()
+    const remote: Record<string, unknown> = {}
+    installWebRendererContracts(remote, {
+      availableRpcChannels: new Set(),
+      restrictedRpcChannels: new Set([channel]),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+    await expect(methodAt(remote, 'pdfStructure.readCached')?.(request)).rejects.toThrow()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('forwards the Session delegation mutation unchanged and returns the authoritative Session', async () => {
     const api: Record<string, unknown> = {}
     const authoritative = { id: 'session-1', projectId: 'project-1', delegationPolicy: 'deny' }
@@ -198,13 +334,13 @@ describe('installWebRendererContracts', () => {
       nativeAdapters: {}
     })
 
-    // specialist.* is ELECTRON / ELECTRON_EVENT — the namespace must not exist on web.
-    expect(api.specialist).toBeUndefined()
+    // Native selection remains unavailable even when the Web catalog is installed.
+    expect(methodAt(api, 'specialist.selectPackage')).toBeUndefined()
     // handoff.list is ELECTRON — namespace must not exist on web.
     expect(api.handoff).toBeUndefined()
     // officePreview.onState is ELECTRON_EVENT — namespace must not exist on web.
     expect(api.officePreview).toBeUndefined()
-    expect(methodAt(api, 'specialist.list')).toBeUndefined()
+    expect(methodAt(api, 'specialist.list')).toBeTypeOf('function')
   })
 
   it('accepts one test-local neutral descriptor in both renderer adapters', async () => {

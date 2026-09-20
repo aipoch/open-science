@@ -41,6 +41,20 @@ if (!Element.prototype.hasPointerCapture) {
 let container: HTMLDivElement
 let root: Root
 const initialStore = useSpecialistStore.getState()
+const installWebImportApi = (): void => {
+  delete (window.api.specialist as Partial<Window['api']['specialist']>).selectPackage
+  Object.assign(window.api.specialist, {
+    beginPackageUpload: vi.fn(),
+    previewPackageUpload: vi.fn(),
+    abortPackageUpload: vi.fn(),
+    installPackage: vi.fn(),
+    cancelPackage: vi.fn()
+  })
+  window.api.uploads = {
+    appendTransfer: vi.fn(),
+    getTransferStatus: vi.fn()
+  } as unknown as Window['api']['uploads']
+}
 const specialistItems: SpecialistListItem[] = [
   {
     kind: 'custom',
@@ -96,6 +110,7 @@ beforeEach(() => {
   resetMarketplaceStoreForTests()
   window.api = {
     specialist: {
+      selectPackage: vi.fn().mockResolvedValue({ cancelled: true }),
       list: vi.fn().mockResolvedValue({ items: specialistItems, integrity: { status: 'ok' } }),
       create: vi.fn(),
       update: vi.fn(),
@@ -202,7 +217,7 @@ describe('SpecialistsPanel', () => {
     })
 
     expect(document.body.textContent).toContain(
-      'Open Science could not load Specialists. Retry to continue.'
+      'Open-Science could not load Specialists. Retry to continue.'
     )
     expect(document.body.textContent).not.toContain('Loading…')
 
@@ -705,6 +720,47 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).not.toContain('Export complete')
   })
 
+  it('opens a browser ZIP chooser on Remote Web without the native picker', async () => {
+    installWebImportApi()
+    useSpecialistStore.setState({ items: [], isLoaded: false })
+    const selectionErrors: unknown[] = []
+    // Observe the real store action without leaking its rejection into unrelated tests.
+    useSpecialistStore.setState({
+      selectPackage: async () => {
+        try {
+          return await initialStore.selectPackage()
+        } catch (error) {
+          selectionErrors.push(error)
+          return { cancelled: true }
+        }
+      }
+    })
+    const requestedInputs: HTMLInputElement[] = []
+    const inputClick = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement
+    ) {
+      requestedInputs.push(this)
+    })
+    try {
+      await act(async () => {
+        root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+      })
+      const chooseZip = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Choose ZIP'
+      )
+      expect(chooseZip).toBeDefined()
+      expect(chooseZip?.disabled).toBe(false)
+      await act(async () => chooseZip!.click())
+
+      expect.soft(selectionErrors).toEqual([])
+      expect(
+        requestedInputs.some((input) => input.type === 'file' && input.accept.includes('.zip'))
+      ).toBe(true)
+    } finally {
+      inputClick.mockRestore()
+    }
+  })
+
   it('matches the Import ZIP entry hierarchy and template action summary', async () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
@@ -726,6 +782,29 @@ describe('SpecialistsPanel', () => {
     )
     expect(document.body.textContent).toContain('Choose ZIP')
     expect(document.body.textContent).toContain('Back')
+  })
+
+  it('explains when the host already has two active Web imports', async () => {
+    installWebImportApi()
+    useSpecialistStore.setState({
+      selectPackage: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+          )
+        )
+    })
+    await act(async () =>
+      root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    )
+    const choose = Array.from(document.body.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Choose ZIP'
+    )
+    await act(async () => choose?.click())
+    expect(document.body.textContent).toContain(
+      'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+    )
   })
 
   it('starts the template download directly without an intermediate page', async () => {
@@ -786,7 +865,7 @@ describe('SpecialistsPanel', () => {
     await act(async () => finishSave?.({ saved: true }))
     expect(document.body.textContent).toContain('Template saved')
     expect(document.body.textContent).toContain(
-      'openscience-specialist-template.zip is ready for contributor editing.'
+      'open-science-specialist-template.zip is ready for contributor editing.'
     )
   })
 
@@ -872,7 +951,7 @@ describe('SpecialistsPanel', () => {
       status: 'installed',
       specialist: { id: 'research-synth' }
     })
-    const cancelPackage = vi.fn()
+    const cancelPackage = vi.fn().mockResolvedValue(undefined)
     const savePackageReport = vi.fn().mockResolvedValue({ saved: true })
     window.api.specialist.savePackageReport = savePackageReport
     const writeText = vi.fn().mockResolvedValue(undefined)
@@ -932,6 +1011,7 @@ describe('SpecialistsPanel', () => {
 
     // After the install, the Skill catalog must be refreshed so a Skill bundled by the package is
     // recognized as available in the editor instead of showing "Missing · unavailable".
+    useSettingsStore.setState({ skillsLoaded: true, skills: [] })
     window.api.settings.listSkills = vi.fn().mockResolvedValue([
       {
         id: 'analysis-tools',
@@ -939,12 +1019,12 @@ describe('SpecialistsPanel', () => {
         description: 'Runs analyses.',
         source: 'personal',
         updatedAt: '2026-08-04T00:00:00.000Z',
-        enabled: true
+        enabled: false
       }
     ])
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent === 'Next')
+        .find((button) => button.textContent === 'Import and configure')
         ?.click()
     })
     expect(installPackage).toHaveBeenCalledOnce()
@@ -956,7 +1036,7 @@ describe('SpecialistsPanel', () => {
         description: 'Runs analyses.',
         source: 'personal',
         updatedAt: '2026-08-04T00:00:00.000Z',
-        enabled: true
+        enabled: false
       }
     ])
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
@@ -975,7 +1055,7 @@ describe('SpecialistsPanel', () => {
     },
     {
       code: 'recovery-failed' as const,
-      copy: 'Open Science could not recover an earlier package operation. Restart the app before trying again.',
+      copy: 'Open-Science could not recover an earlier package operation. Restart the app before trying again.',
       action: 'Open data folder'
     },
     {
@@ -1020,7 +1100,7 @@ describe('SpecialistsPanel', () => {
       })
       await act(async () => {
         Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-          .find((button) => button.textContent === 'Next')
+          .find((button) => button.textContent === 'Import and configure')
           ?.click()
       })
 
@@ -1209,7 +1289,7 @@ describe('SpecialistsPanel', () => {
       modifiedSinceImport: false,
       marketplaceProvenance: {
         sourceId: 'official',
-        publisher: 'Open Science',
+        publisher: 'Open-Science',
         version: '1.0.1'
       },
       importBaseline: {
@@ -1244,7 +1324,7 @@ describe('SpecialistsPanel', () => {
     )
     expect(marketplaceGroup?.textContent).toContain('RNA Reviewer')
     expect(document.body.textContent).toContain('Marketplace')
-    expect(document.body.textContent).toContain('Publisher: Open Science')
+    expect(document.body.textContent).toContain('Publisher: Open-Science')
     expect(document.body.textContent).toContain('Version 1.0.1')
     expect(document.body.textContent).not.toContain('Unchanged locally')
     expect(document.body.textContent).not.toContain('Imported ZIP')
@@ -1265,7 +1345,7 @@ describe('SpecialistsPanel', () => {
       modifiedSinceImport: false,
       marketplaceProvenance: {
         sourceId: 'official',
-        publisher: 'Open Science',
+        publisher: 'Open-Science',
         version: '1.0.0'
       }
     }
@@ -1722,7 +1802,7 @@ describe('SpecialistsPanel', () => {
   // Concurrency and reload (Findings 1, 2, 3)
   // ---------------------------------------------------------------------------
 
-  it('F1: save payload carries the original revision even after a catalog-changed refreshes props', async () => {
+  it('F1: blocks stale saves and preserves input after a catalog-changed refreshes props', async () => {
     // rev 1 at mount
     const updateMock = vi.fn().mockResolvedValue(specialistItems[0])
     useSpecialistStore.setState({
@@ -1760,14 +1840,18 @@ describe('SpecialistsPanel', () => {
       })
     }
 
-    // Click Save — payload must still carry revision 1 (the pinned base revision).
+    // The pinned revision conflicts with the new catalog: do not submit or discard the draft.
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
         .find((btn) => btn.textContent === 'Save changes')
         ?.click()
     })
 
-    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ revision: 1 }))
+    expect(updateMock).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[aria-label="Revision conflict"]')).not.toBeNull()
+    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe(
+      'RNA Reviewer Edited'
+    )
   })
 
   it('F2: Reload actually replaces form content with the latest profile data', async () => {
@@ -2013,7 +2097,7 @@ describe('SpecialistsPanel', () => {
       packageVersion: '1.0.0',
       marketplaceProvenance: {
         sourceId: 'official',
-        publisher: 'Open Science',
+        publisher: 'Open-Science',
         version: '1.0.0'
       }
     }
@@ -2039,12 +2123,12 @@ describe('SpecialistsPanel', () => {
         specialists: [
           {
             sourceId: 'official',
-            sourceName: 'Open Science Marketplace',
+            sourceName: 'Open-Science Marketplace',
             sourceTrust: 'official',
             id: managed.id,
             displayName: managed.name,
             summary: managed.description,
-            publisher: { id: 'open-science', name: 'Open Science' },
+            publisher: { id: 'open-science', name: 'Open-Science' },
             version: '1.1.0',
             installedVersion: '1.0.0',
             updateAvailable: true
@@ -2075,6 +2159,30 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain(
       'This removes the Marketplace Specialist from this device.'
     )
+  })
+
+  it('disables unsupported Web package actions in Marketplace-installed Specialist details', async () => {
+    const managed = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      origin: 'marketplace' as const
+    }
+    installWebImportApi()
+    useSpecialistStore.setState({ items: [managed] })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [managed],
+      integrity: { status: 'ok' }
+    })
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'edit', id: managed.id }} onNavigate={vi.fn()} />)
+    })
+    for (const name of ['Create editable copy', 'Uninstall']) {
+      const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (item) => item.textContent === name
+      )
+      expect(button).toBeDefined()
+      expect(button!.disabled).toBe(true)
+    }
+    expect(document.body.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false)
   })
 
   it('marks a Marketplace Specialist whose source was removed and links source management', async () => {
@@ -2210,6 +2318,35 @@ describe('SpecialistsPanel Chat with agent', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'import' })
   })
 
+  it.each([
+    ['specialist', 'beginPackageUpload'],
+    ['specialist', 'previewPackageUpload'],
+    ['specialist', 'abortPackageUpload'],
+    ['specialist', 'installPackage'],
+    ['specialist', 'cancelPackage'],
+    ['uploads', 'appendTransfer'],
+    ['uploads', 'getTransferStatus']
+  ] as const)('disables ZIP import when %s.%s is unavailable', async (namespace, method) => {
+    installWebImportApi()
+    Reflect.deleteProperty(window.api[namespace], method)
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    )
+    openRadixMenu(openAddSpecialistMenu())
+    const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (node) => node.textContent?.includes('Import ZIP')
+    )
+    expect(item?.getAttribute('aria-disabled')).toBe('true')
+    await act(async () =>
+      root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={onNavigate} />)
+    )
+    const choose = Array.from(document.body.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Choose ZIP'
+    )
+    expect(choose?.disabled).toBe(true)
+  })
+
   it('uses the approved Chat with agent subtitle copy', async () => {
     useProjectStore.setState({ projects: [project('climate-models', 1)] })
     await renderList()
@@ -2334,7 +2471,7 @@ describe('S04 explicit Specialist refresh controls', () => {
       useSpecialistStore.setState(
         scenario === 'read failure'
           ? {
-              loadError: 'Open Science could not load Specialists. Retry to continue.'
+              loadError: 'Open-Science could not load Specialists. Retry to continue.'
             }
           : {
               integrity: {

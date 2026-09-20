@@ -97,9 +97,11 @@ const createWorkspaceConversationTimeline = (
   const terminalMessageIds = resolveTurnTerminalAgentMessageIds(session.messages)
   const activePromptMessageId = openPromptMessageId(session)
   const resolveActivityPrompt = createActivityPromptResolver(session)
-  const promptByItemIndex = groupedItems.map((item) =>
-    resolveTimelineItemPrompt(item, resolveActivityPrompt)
-  )
+  const lastItemIndexByPromptId = new Map<string, number>()
+  groupedItems.forEach((item, index) => {
+    const promptId = resolveTimelineItemPrompt(item, resolveActivityPrompt)
+    if (promptId) lastItemIndexByPromptId.set(promptId, index)
+  })
   const itemIndexById = new Map(groupedItems.map((item, index) => [item.id, index]))
   const completionsByItemIndex = new Map<number, ConversationTurnCompletionItem[]>()
 
@@ -114,10 +116,10 @@ const createWorkspaceConversationTimeline = (
     if (messageIndex === undefined) continue
     let completionIndex = messageIndex
     if (promptMessageId) {
-      promptByItemIndex.forEach((candidatePromptMessageId, index) => {
-        if (candidatePromptMessageId === promptMessageId)
-          completionIndex = Math.max(completionIndex, index)
-      })
+      completionIndex = Math.max(
+        completionIndex,
+        lastItemIndexByPromptId.get(promptMessageId) ?? messageIndex
+      )
     }
 
     const completion: ConversationTurnCompletionItem = {
@@ -145,5 +147,41 @@ const createWorkspaceConversationTimeline = (
   ])
 }
 
-export { createWorkspaceConversationTimeline }
+// Anchor to the copied conversation path, not the last inherited footer: late tool events can
+// move an old turn completion below newer turns. Legacy forks have no explicit local head.
+const resolveForkBoundaryItemId = (
+  session: ChatSession | undefined,
+  timeline: readonly WorkspaceConversationTimelineItem[]
+): string | undefined => {
+  if (!session?.forkOrigin && !session?.branchSource) return undefined
+  const headId =
+    session.forkHeadMessageId ??
+    (session.forkOrigin
+      ? session.messages.findLast((message) => message.usageOrigin)?.id
+      : session.branchSource?.headMessageId)
+  const headIndex = session.messages.findIndex((message) => message.id === headId)
+  if (headIndex < 0) return undefined
+
+  const visibleMessageIndex = new Map(
+    timeline.flatMap((item, index) =>
+      item.type === 'message' ? [[item.message.id, index] as const] : []
+    )
+  )
+  // Hidden control messages can be the graph head. Use its last visible ancestor, and do not
+  // relocate the divider onto a different branch when the recorded head is absent there.
+  const visibleHead = session.messages
+    .slice(0, headIndex + 1)
+    .findLast((message) => visibleMessageIndex.has(message.id))
+  if (!visibleHead) return undefined
+  const messageIndex = visibleMessageIndex.get(visibleHead.id)!
+  const completionIndex = timeline.findIndex(
+    (item) => item.type === 'turn-completion' && item.message.id === visibleHead.id
+  )
+  const completionBelongsBeforeNextTurn =
+    completionIndex > messageIndex &&
+    !timeline.slice(messageIndex + 1, completionIndex).some((item) => item.type === 'message')
+  return timeline[completionBelongsBeforeNextTurn ? completionIndex : messageIndex].id
+}
+
+export { createWorkspaceConversationTimeline, resolveForkBoundaryItemId }
 export type { ConversationTurnCompletionItem, WorkspaceConversationTimelineItem }

@@ -5,12 +5,13 @@ import type { SkillView } from '../../../../../shared/settings'
 import { resolveLocalPath } from '../../../../../shared/local-fs'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { constrainMessageClipboard, readMessageClipboard } from './message-clipboard'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
 import { createPreviewFileItemFromMention } from '../preview-file-item'
-import { createPreviewRequestScope } from '../previews/preview-file-reader'
 
 import {
   ArtifactMentionPopup,
@@ -24,6 +25,7 @@ import {
   docArtifactCount,
   docSessionCount,
   domToDoc,
+  domToDocWithCaret,
   isPastedTextCaretHost,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
@@ -69,12 +71,13 @@ type ComposerEditorProps = {
   ariaLabel: string
   // Undefined shows Main-enabled Skills; an empty array intentionally hides every Skill.
   allowedSkillIds?: readonly string[]
+  onSelectWslSetup?: () => void
   isHistoryBrowsing?: boolean
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
-  // Scope for previewing clicked `@` mention chips (uploads/artifacts); without it those chips
-  // stay inert on click (linked-folder chips resolve through the granted-roots store instead).
+  // Legacy paths need their owner context; version locators already carry their source Session.
   mentionPreviewContext?: { sessionId: string; projectId?: string }
+  onPreviewMentionArtifact?: (part: Parameters<typeof createPreviewFileItemFromMention>[0]) => void
   focusRequest?: string | number
   restoreFocusRequest?: number
   caretRequest?: { key: number; position: ComposerCaretPosition }
@@ -414,6 +417,12 @@ const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefi
   if (!selection || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
   if (!root.contains(range.startContainer)) return undefined
+  const hasBrowserBlocks = Array.from(root.children).some(
+    (child) => child.tagName === 'DIV' || child.tagName === 'P' || child.tagName === 'BR'
+  )
+  if (hasBrowserBlocks) {
+    return domToDocWithCaret(root, range.startContainer, range.startOffset).caret
+  }
   if (range.startContainer === root) {
     return { nodeIndex: Math.min(range.startOffset, root.childNodes.length), offset: 0 }
   }
@@ -428,7 +437,8 @@ const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefi
 }
 
 const canReceiveFocus = (root: HTMLElement): boolean =>
-  root.getAttribute('contenteditable') === 'true' && root.closest('[hidden]') === null
+  root.getAttribute('contenteditable') === 'true' &&
+  root.closest('[hidden], [inert], [aria-hidden="true"]') === null
 
 // A contenteditable composer driven by a pure ComposerDoc model. External doc changes flow into the
 // DOM via applyDocToDom; user edits flow out via domToDoc. A `/` mention trigger mounts a skill popup.
@@ -446,10 +456,12 @@ export const ComposerEditor = ({
   className,
   ariaLabel,
   allowedSkillIds,
+  onSelectWslSetup,
   isHistoryBrowsing = false,
   historyStatus = '',
   onNavigateHistory,
   mentionPreviewContext,
+  onPreviewMentionArtifact,
   focusRequest,
   restoreFocusRequest,
   caretRequest
@@ -457,6 +469,7 @@ export const ComposerEditor = ({
   const { t } = useTranslation()
 
   const editorRef = useRef<HTMLDivElement>(null)
+  const [pasteStatus, setPasteStatus] = useState<{ scope: string; message: string }>()
   const historyDescriptionId = useId()
   const historyStatusId = useId()
   const mentionListboxId = useId()
@@ -493,14 +506,42 @@ export const ComposerEditor = ({
     trigger: '#',
     disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
   })
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const pasteScope = `${mentionPreviewContext?.projectId ?? activeProjectId}:${mentionPreviewContext?.sessionId ?? ''}`
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
   const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
+
+  const { cancel: cancelSkillMention } = mention
+  const { cancel: cancelArtifactMention } = artifactMention
+  const { cancel: cancelSessionMention } = sessionMention
+
+  // Different Sessions can have identical draft text and therefore reuse the same DOM token.
+  useLayoutEffect(() => {
+    cancelSkillMention()
+    cancelArtifactMention()
+    cancelSessionMention()
+  }, [
+    mentionPreviewContext?.sessionId,
+    mentionPreviewContext?.projectId,
+    activeProjectId,
+    cancelSkillMention,
+    cancelArtifactMention,
+    cancelSessionMention
+  ])
 
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current
     if (root) {
       const nextDoc = domToDoc(root)
+      const hasBrowserBlocks = Array.from(root.children).some(
+        (child) => child.tagName === 'DIV' || child.tagName === 'P' || child.tagName === 'BR'
+      )
+      if (hasBrowserBlocks) {
+        const caret = currentCaretPosition(root)
+        applyDocToDom(root, nextDoc)
+        if (caret) moveCaretToPosition(root, caret)
+      }
       if (undoCaretRef.current) onDocChange(nextDoc, undoCaretRef.current)
       else onDocChange(nextDoc)
     }
@@ -529,6 +570,8 @@ export const ComposerEditor = ({
     }
   }, [caretRequest, doc, focusRequest])
 
+  // Consume each request once, including while a blocking interaction covers the composer.
+  // Removing the blocker must not replay focus and open a mobile software keyboard.
   useLayoutEffect(() => {
     const root = editorRef.current
     if (root && focusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
@@ -544,9 +587,8 @@ export const ComposerEditor = ({
   }, [emitDocFromDom])
 
   // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
-  // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
-  // (inert once the root is revoked); upload/artifact chips probe first so a stale chip stays
-  // inert, then open through the mention preview item.
+  // pills do. The preview surface owns loading, errors and retry; do not gate it on a separate
+  // read probe. Linked-folder chips still require a currently granted root.
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const root = editorRef.current
     const pastedTextMarker = (event.target as HTMLElement).closest?.(
@@ -604,10 +646,7 @@ export const ComposerEditor = ({
       return
     }
 
-    if (
-      (source !== 'upload' && source !== 'artifact' && source !== 'literature') ||
-      !mentionPreviewContext
-    ) {
+    if (source !== 'upload' && source !== 'artifact' && source !== 'literature') {
       return
     }
     const path = chip.getAttribute('data-mention-path')
@@ -616,36 +655,25 @@ export const ComposerEditor = ({
     const part: Parameters<typeof createPreviewFileItemFromMention>[0] = {
       type: 'artifact',
       id: chip.getAttribute('data-mention-id') ?? path,
+      sourceFileId: chip.getAttribute('data-mention-source-file-id') ?? undefined,
       name: chip.getAttribute('data-mention-filename') ?? path,
       path,
       source,
       mimeType: chip.getAttribute('data-mention-mime-type') ?? undefined,
       versionId: chip.getAttribute('data-mention-version-id') ?? undefined
     }
-    const { sessionId, projectId } = mentionPreviewContext
-    if (source === 'literature') {
-      usePreviewWorkbenchStore
-        .getState()
-        .upsertAndActivateItem(createPreviewFileItemFromMention(part, '__literature__', projectId))
+    if (onPreviewMentionArtifact && source !== 'literature') {
+      onPreviewMentionArtifact(part)
       return
     }
-    void (async () => {
-      const read =
-        source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
-      try {
-        await read({
-          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-          path,
-          maxBytes: 1,
-          encoding: 'utf8'
-        })
-      } catch {
-        return
-      }
-      usePreviewWorkbenchStore
-        .getState()
-        .upsertAndActivateItem(createPreviewFileItemFromMention(part, sessionId, projectId))
-    })()
+    const item = createPreviewFileItemFromMention(
+      part,
+      source === 'literature' ? '__literature__' : (mentionPreviewContext?.sessionId ?? ''),
+      mentionPreviewContext?.projectId ?? activeProjectId
+    )
+    // An unscoped legacy path cannot identify its source Session. Do not guess from the filename.
+    if (!item.sessionId) return
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(item)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -736,11 +764,61 @@ export const ComposerEditor = ({
   }
 
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
+    setPasteStatus(undefined)
     const activeRoot = editorRef.current
     undoCaretRef.current = activeRoot ? currentCaretPosition(activeRoot) : undefined
     // Forward first so the panel can route file attachments to its intake.
     onPaste(event)
     if (disabled || event.isDefaultPrevented()) return
+    const messageFragment = readMessageClipboard(
+      event.clipboardData?.getData('text/html') ?? '',
+      event.clipboardData?.getData('text/plain') ?? '',
+      mentionPreviewContext?.projectId ?? activeProjectId
+    )
+    const selected = activeRoot ? selectedRangeIn(activeRoot) : undefined
+    if (messageFragment && activeRoot && selected) {
+      event.preventDefault()
+      const catalog = useSettingsStore.getState()
+      if (messageFragment.nodes.some((node) => node.type === 'skill') && !catalog.skillsLoaded) {
+        setPasteStatus({
+          scope: pasteScope,
+          message: t('Skills are loading. Paste again shortly.')
+        })
+        void catalog.loadSkills().catch(() => {
+          setPasteStatus({
+            scope: pasteScope,
+            message: t('Could not load Skills. Try pasting again.')
+          })
+        })
+        return
+      }
+      const { selection, range } = selected
+      range.deleteContents()
+      const skills = useSettingsStore
+        .getState()
+        .skills.filter(
+          (skill) =>
+            skill.available !== false &&
+            (allowedSkillIds ? allowedSkillIds.includes(skill.id) : skill.enabled)
+        )
+      const fragment = constrainMessageClipboard(
+        messageFragment,
+        domToDoc(activeRoot),
+        new Set(skills.map((skill) => skill.id))
+      )
+      const staging = document.createElement('div')
+      applyDocToDom(staging, fragment)
+      const inserted = document.createDocumentFragment()
+      inserted.append(...staging.childNodes)
+      const last = inserted.lastChild
+      range.insertNode(inserted)
+      if (last) range.setStartAfter(last)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      emitDocFromDom()
+      return
+    }
     const internalFragment = parseComposerClipboardFragment(
       event.clipboardData?.getData(PASTED_TEXT_CLIPBOARD_TYPE) ?? ''
     )
@@ -812,8 +890,14 @@ export const ComposerEditor = ({
   const handleSelectSkill = (skill: SkillView): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
+    if (!mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })) {
+      undoCaretRef.current = undefined
+    }
+  }
+
+  const handleSelectWslSetup = (): void => {
     mention.cancel()
+    onSelectWslSetup?.()
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
@@ -821,29 +905,29 @@ export const ComposerEditor = ({
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     if ('type' in ref && (ref.type === 'literature' || ref.type === 'literature-scope')) {
-      artifactMention.replaceTokenWith(ref)
-      artifactMention.cancel()
+      if (!artifactMention.replaceTokenWith(ref)) undoCaretRef.current = undefined
       return
     }
     const artifact = ref as PickedArtifact
-    artifactMention.replaceTokenWith({
-      type: 'artifact',
-      id: artifact.id,
-      sourceFileId: artifact.sourceFileId,
-      name: artifact.name,
-      path: artifact.path,
-      source: artifact.source,
-      mimeType: artifact.mimeType,
-      versionId: artifact.versionId
-    })
-    artifactMention.cancel()
+    if (
+      !artifactMention.replaceTokenWith({
+        type: 'artifact',
+        id: artifact.id,
+        sourceFileId: artifact.sourceFileId,
+        name: artifact.name,
+        path: artifact.path,
+        source: artifact.source,
+        mimeType: artifact.mimeType,
+        versionId: artifact.versionId
+      })
+    )
+      undoCaretRef.current = undefined
   }
 
   const handleSelectSession = (session: PickedSession): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    sessionMention.replaceTokenWith(session)
-    sessionMention.cancel()
+    if (!sessionMention.replaceTokenWith(session)) undoCaretRef.current = undefined
   }
 
   return (
@@ -893,6 +977,11 @@ export const ComposerEditor = ({
           emitDocFromDom()
         }}
       />
+      {pasteStatus?.scope === pasteScope ? (
+        <div role="status" className="text-xs text-muted-foreground">
+          {pasteStatus.message}
+        </div>
+      ) : null}
       <span id={historyDescriptionId} className="sr-only">
         {t('At the start of the input, use Up and Down Arrow to browse prompt history.')}
       </span>
@@ -906,17 +995,21 @@ export const ComposerEditor = ({
       ) : null}
       {mention.active ? (
         <SkillMentionPopup
+          composingRef={composingRef}
           query={mention.query}
           allowedSkillIds={allowedSkillIds}
           listboxId={mentionListboxId}
           onActiveOptionIdChange={setActiveMentionOptionId}
           onSelect={handleSelectSkill}
+          onSelectWslSetup={onSelectWslSetup ? handleSelectWslSetup : undefined}
           onClose={mention.cancel}
         />
       ) : null}
       {artifactMention.active ? (
         <ArtifactMentionPopup
+          composingRef={composingRef}
           query={artifactMention.query}
+          selectionKey={artifactMention.selectionKey}
           onSelect={handleSelectArtifact}
           onClose={artifactMention.cancel}
           listboxId={mentionListboxId}
@@ -925,6 +1018,7 @@ export const ComposerEditor = ({
       ) : null}
       {sessionMention.active ? (
         <SessionMentionPopup
+          composingRef={composingRef}
           query={sessionMention.query}
           onSelect={handleSelectSession}
           onClose={sessionMention.cancel}

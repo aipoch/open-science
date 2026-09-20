@@ -43,6 +43,7 @@ type CommonAssessmentOptions = {
   session: PersistedChatSession
   sessionId: string
   scopeTurnMessageId: string
+  scopeMessageBranchId?: string
   evidenceScope?: DelegatedReviewEvidenceScope
   turnMessageId: string
   projectId: string
@@ -249,7 +250,7 @@ export const runReviewAssessment = async (
     scopeTurnMessageId,
     artifactStorageRoot,
     artifactVersionResolvers?.content,
-    evidenceScope?.messageBranchId
+    evidenceScope?.messageBranchId ?? options.scopeMessageBranchId
   )
   if (evidenceScope) assertDelegatedReviewEvidenceScope(session, scope, evidenceScope)
   const turnEvidence = await resolveReviewerTurnEvidence(

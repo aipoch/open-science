@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import type { CustomizeGoal } from '@/lib/customize-chat'
+import type { ComposerDoc } from '@/pages/workspace/composer/composer-doc'
 
 import { useProjectStore } from './project-store'
 import {
@@ -53,6 +54,13 @@ export type PdfReadingDocument = Readonly<{
   source: SessionPdfContextSource
 }>
 
+export type WslSupportPrefillIntent = {
+  projectId: string
+  doc: ComposerDoc
+  setupSessionToken: string
+  requestId: number
+}
+
 type NavigationStore = {
   view: NavigationView
   activeProjectId: string | undefined
@@ -68,8 +76,10 @@ type NavigationStore = {
   // A Library entry can open a normal New Conversation with its visible retrieval scope already
   // staged. Workspace consumes this once; the user can still edit or discard the draft.
   pendingLiteratureReviewPrefill: LiteratureReviewPrefillIntent | undefined
+  pendingWslSupportPrefill: WslSupportPrefillIntent | undefined
   // Home consumes this one-shot intent to open its existing New Project dialog.
   pendingProjectCreation: boolean
+  pendingWslSetupAfterProjectCreation: boolean
   // A same-Project Artifact selected from global search. WorkspacePage consumes it once and appends
   // its immutable Version reference to the currently active composer draft.
   pendingArtifactMention: ProjectFileItem | undefined
@@ -86,6 +96,7 @@ type NavigationStore = {
   artifactMentionAvailability: ArtifactMentionAvailability | undefined
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
+  returnFromLibrary: (origin: NavigationOrigin) => void
   openLibrary: (origin: NavigationOrigin) => void
   openLiteratureItem: (itemId: string, origin: NavigationOrigin) => void
   openProjectLiterature: (projectId: string, origin: NavigationOrigin) => boolean
@@ -129,8 +140,16 @@ type NavigationStore = {
   ) => boolean
   consumeCustomizePrefill: () => void
   consumeLiteratureReviewPrefill: () => void
+  startWslSupportConversation: (
+    projectId: string,
+    doc: ComposerDoc,
+    setupSessionToken: string
+  ) => boolean
+  consumeWslSupportPrefill: () => void
   requestProjectCreation: () => void
+  requestWslSetupProjectCreation: () => void
   consumeProjectCreation: () => void
+  consumeWslSetupProjectCreation: () => void
   requestArtifactMention: (file: ProjectFileItem) => void
   consumeArtifactMention: () => ProjectFileItem | undefined
   consumeLiteratureItem: (expectedItemId?: string) => string | undefined
@@ -210,7 +229,9 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   explicitNavigationRevision: 0,
   pendingCustomizePrefill: undefined,
   pendingLiteratureReviewPrefill: undefined,
+  pendingWslSupportPrefill: undefined,
   pendingProjectCreation: false,
+  pendingWslSetupAfterProjectCreation: false,
   pendingArtifactMention: undefined,
   pendingLiteratureItemId: undefined,
   pendingLiteratureProjectId: undefined,
@@ -230,6 +251,22 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     requestPreviewLeaveForNavigation({ view: 'home' }, () =>
       set((state) => navigationState(state, origin, { view: 'home' }))
     )
+  },
+
+  // Library retains the Workspace selection, including an unsent New Conversation. Opening the
+  // Project again would instead select its latest Session and replace that context.
+  returnFromLibrary: (origin) => {
+    const { view, activeProjectId } = get()
+    if (view !== 'library') return
+    if (!activeProjectId || !isActiveProject(activeProjectId)) {
+      get().goHome(origin)
+      return
+    }
+
+    const { selectedSessionId, clearSelection } = useSessionStore.getState()
+    if (selectedSessionId && !isActiveSession(activeProjectId, selectedSessionId)) clearSelection()
+    set((state) => navigationState(state, origin, { view: 'workspace', activeProjectId }))
+    usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
   },
 
   openLibrary: (origin) =>
@@ -355,6 +392,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         })
         return {
           ...navigation,
+          pendingWslSupportPrefill: undefined,
           pendingCustomizePrefill: {
             projectId,
             goal,
@@ -439,6 +477,34 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   consumeLiteratureReviewPrefill: () => set({ pendingLiteratureReviewPrefill: undefined }),
 
+  startWslSupportConversation: (projectId, doc, setupSessionToken) => {
+    if (!isActiveProject(projectId)) return false
+    return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
+      useSessionStore.getState().clearSelection()
+      recordLastOpenedProject(projectId)
+
+      set((state) => {
+        const navigation = navigationState(state, 'user', {
+          view: 'workspace',
+          activeProjectId: projectId
+        })
+        return {
+          ...navigation,
+          pendingCustomizePrefill: undefined,
+          pendingWslSupportPrefill: {
+            projectId,
+            doc,
+            setupSessionToken,
+            requestId: navigation.explicitNavigationRevision
+          }
+        }
+      })
+      usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
+    })
+  },
+
+  consumeWslSupportPrefill: () => set({ pendingWslSupportPrefill: undefined }),
+
   requestProjectCreation: () => {
     requestPreviewLeaveForNavigation({ view: 'home' }, () =>
       set((state) => ({
@@ -448,7 +514,16 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     )
   },
 
+  requestWslSetupProjectCreation: () => {
+    set((state) => ({
+      ...navigationState(state, 'user', { view: 'home' }),
+      pendingProjectCreation: true,
+      pendingWslSetupAfterProjectCreation: true
+    }))
+  },
+
   consumeProjectCreation: () => set({ pendingProjectCreation: false }),
+  consumeWslSetupProjectCreation: () => set({ pendingWslSetupAfterProjectCreation: false }),
 
   // Mentions never route between Projects. Keeping this guard at the Navigation boundary prevents a
   // dialog caller from leaking an Artifact locator into whichever composer happens to mount next.

@@ -85,8 +85,9 @@ const createHarness = (): Readonly<{
       session: structuredClone(durable)
     })),
     assertSessionIdentityOwnership: vi.fn(async () => undefined),
-    saveSession: vi.fn(async (session) => {
+    saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       durable = structuredClone(session)
+      return structuredClone(durable)
     }),
     saveCommittedProjectSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(async () => undefined),

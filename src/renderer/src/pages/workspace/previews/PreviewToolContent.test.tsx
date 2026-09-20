@@ -44,6 +44,11 @@ vi.mock('@/stores/review-store', () => ({
       loadReviewsForSession: mocks.loadReviewsForSession
     })
 }))
+vi.mock('../SubagentReleaseSurfaces', () => ({
+  SubagentPreview: ({ isActive }: { isActive: boolean }): React.JSX.Element => (
+    <div data-testid="subagent-preview" data-active={isActive} />
+  )
+}))
 vi.mock('../NotebookPreview', () => ({
   NotebookPreview: ({ item }: { item: PreviewToolItem }): React.JSX.Element => (
     <div data-testid="notebook-preview">{item.notebook?.sessionId}</div>
@@ -51,6 +56,9 @@ vi.mock('../NotebookPreview', () => ({
 }))
 vi.mock('../ProjectFilesView', () => ({
   ProjectFilesView: (): React.JSX.Element => <div data-testid="project-files">files</div>
+}))
+vi.mock('../ProjectComputeInbox', () => ({
+  ProjectComputeInbox: (): React.JSX.Element => <div data-testid="project-compute">compute</div>
 }))
 vi.mock('../SessionReviewerPanel', () => ({
   SessionReviewerPanel: ({
@@ -80,6 +88,16 @@ const render = (item: PreviewToolItem): string =>
   renderToStaticMarkup(<PreviewToolContent item={item} />)
 
 describe('PreviewToolContent', () => {
+  it('forwards visibility to Subagent previews so hidden mounted tabs cannot auto-load', () => {
+    const item = createItem({ toolKind: 'subagents' })
+    expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive={false} />)).toContain(
+      'data-active="false"'
+    )
+    expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive={true} />)).toContain(
+      'data-active="true"'
+    )
+  })
+
   beforeEach(() => {
     mocks.activeProjectId = 'project-1'
     mocks.getReviewSnapshot.mockReturnValue([])
@@ -89,6 +107,10 @@ describe('PreviewToolContent', () => {
 
   it('routes project file tools through a project-scoped remount boundary', () => {
     expect(render(createItem({ toolKind: 'files' }))).toContain('data-testid="project-files"')
+  })
+
+  it('routes Project Compute through a project-scoped remount boundary', () => {
+    expect(render(createItem({ toolKind: 'compute' }))).toContain('data-testid="project-compute"')
   })
 
   it('shows the reviewer empty state when the requested session has no reviews', () => {

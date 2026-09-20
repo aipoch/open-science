@@ -17,6 +17,16 @@ describe('runtime diagnostics', () => {
     expect(diagnostic.truncated).toBe(true)
   })
 
+  it('redacts an unquoted credential through the line boundary', () => {
+    const diagnostic = boundedRuntimeDiagnostic(
+      'password=FAKE SECRET WITH SPACES\nERROR: missing libgcc_s_seh-1.dll'
+    )
+
+    expect(diagnostic.text).not.toContain('FAKE')
+    expect(diagnostic.text).not.toContain('SECRET WITH SPACES')
+    expect(diagnostic.text).toContain('ERROR: missing libgcc_s_seh-1.dll')
+  })
+
   it('retains Node child-process exit diagnostics that Error serialization drops', () => {
     const fields = runtimeChildProcessErrorFields(
       Object.assign(new Error('Command failed'), {
@@ -24,7 +34,7 @@ describe('runtime diagnostics', () => {
         signal: null,
         killed: false,
         stdout: 'runtime output',
-        stderr: 'api_key=secret missing libgcc_s_seh-1.dll'
+        stderr: 'api_key=secret\nmissing libgcc_s_seh-1.dll'
       })
     )
 
@@ -35,7 +45,7 @@ describe('runtime diagnostics', () => {
       killed: false,
       stdout: { text: 'runtime output', truncated: false },
       stderr: {
-        text: 'api_key=[redacted] missing libgcc_s_seh-1.dll',
+        text: 'api_key=[redacted]\nmissing libgcc_s_seh-1.dll',
         truncated: false
       }
     })

@@ -1,10 +1,19 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import type { NotebookEnvironmentLock } from '../../shared/notebook'
 import {
   addRepairRequired,
   DEFAULT_ENV_VERSION,
@@ -12,11 +21,13 @@ import {
   DEFAULT_R_ENV,
   envDirectoryName,
   envPrefix,
+  importedEnvironmentLockMarkerPath,
   legacyDefaultEnvPrefix,
   logicalEnvNameFromDirectory,
   pkgsCache,
   pythonBin,
   rBin,
+  rScriptBin,
   rLibraryDir,
   readRReadyMarker,
   readReadyMarker,
@@ -37,6 +48,7 @@ import {
   type ProvisionerDeps
 } from './provisioner'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+import type { InstallSpawn } from './package-manager'
 import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
 import { EnvironmentLeaseManager } from './environment-lease-manager'
@@ -95,6 +107,7 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
       const bin = isPython ? pythonBin(prefix, platform) : rBin(prefix, platform)
       mkdirSync(join(bin, '..'), { recursive: true })
       writeFileSync(bin, 'x')
+      if (!isPython && platform === 'win32') writeFileSync(rScriptBin(prefix, platform), 'x')
       created.push(argv[1])
     },
     maintainCache: async () => undefined,
@@ -1069,6 +1082,62 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
 })
 
 describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () => {
+  it.each(['', 'x64'])(
+    'verifies the installed R executable in %s on the first provisioning attempt',
+    async (layout) => {
+      const root = makeRoot()
+      const prefix = envPrefix(root, DEFAULT_R_ENV, 'win32')
+      const executable = join(prefix, 'Lib', 'R', 'bin', layout, 'R.exe')
+      const verify = vi.fn(async (bin: string) => {
+        readFileSync(bin)
+      })
+      try {
+        const provisioner = new DefaultRuntimeProvisioner(
+          makeDeps(root, {
+            platform: 'win32',
+            runArgv: async () => {
+              mkdirSync(dirname(executable), { recursive: true })
+              writeFileSync(executable, 'fixture')
+              writeFileSync(join(dirname(executable), 'Rscript.exe'), 'fixture')
+            },
+            verify
+          })
+        )
+        await expect(provisioner.provisionR(() => {})).resolves.toBeUndefined()
+        expect(verify).toHaveBeenCalledWith(executable, prefix)
+        expect(readRReadyMarker(root)?.defaultEnvVersion).toBe(DEFAULT_ENV_VERSION)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('preserves packages in a valid legacy x64-only R prefix during provisioning', async () => {
+    const root = makeRoot()
+    const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
+    const executable = join(legacy, 'Lib', 'R', 'bin', 'x64', 'R.exe')
+    const userPackage = join(legacy, 'Lib', 'R', 'library', 'user-package', 'DESCRIPTION')
+    mkdirSync(dirname(executable), { recursive: true })
+    writeFileSync(executable, 'fixture')
+    writeFileSync(join(dirname(executable), 'Rscript.exe'), 'fixture')
+    mkdirSync(dirname(userPackage), { recursive: true })
+    writeFileSync(userPackage, 'Package: user-package\nVersion: 1.0\n')
+    mkdirSync(join(root, 'envs', '.r'), { recursive: true })
+    writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')
+    try {
+      await new DefaultRuntimeProvisioner(makeDeps(root, { platform: 'win32' })).provisionR(
+        () => {}
+      )
+
+      expect(existsSync(userPackage)).toBe(true)
+      expect(readFileSync(userPackage, 'utf8')).toContain('Package: user-package')
+      expect(envPrefix(root, DEFAULT_R_ENV, 'win32')).toBe(legacy)
+      expect(readRReadyMarker(root)?.prefixDirectory).toBe(DEFAULT_R_ENV)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps a committed legacy default beside a partial short prefix', async () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
@@ -1107,6 +1176,7 @@ describe('DefaultRuntimeProvisioner Windows default-prefix compatibility', () =>
       const legacy = legacyDefaultEnvPrefix(root, DEFAULT_R_ENV)
       mkdirSync(dirname(rBin(legacy)), { recursive: true })
       writeFileSync(rBin(legacy), 'legacy')
+      writeFileSync(rScriptBin(legacy), 'legacy')
       const short = join(root, 'envs', '.r')
       mkdirSync(short, { recursive: true })
       writeRReadyMarker(root, DEFAULT_ENV_VERSION, 'legacy-ready')
@@ -1334,7 +1404,7 @@ describe('default specs', () => {
       name: DEFAULT_R_ENV,
       language: 'r',
       version: '4.4',
-      packages: ['r-base=4.4', 'r-jsonlite']
+      packages: ['r-base=4.4', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
     })
     expect(DEFAULT_MANAGED_VERSION).toEqual({ python: '3.12', r: '4.4' })
     // version drives the packId-keyed offline lock the local bundle adapter looks up.
@@ -1344,7 +1414,7 @@ describe('default specs', () => {
 
   it('the named-env base floor constants stay lean', () => {
     expect(BASE_PYTHON_PACKAGES).toEqual(['python=3.12', 'matplotlib-base', 'nomkl'])
-    expect(BASE_R_PACKAGES).toEqual(['r-base', 'r-jsonlite'])
+    expect(BASE_R_PACKAGES).toEqual(['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
   })
 })
 
@@ -1362,7 +1432,7 @@ const makeNamedEnvDeps = (
     fetchBundle: async () => undefined,
     runArgv: async (argv) => {
       argvs.push(argv)
-      const idx = argv.indexOf('--prefix')
+      const idx = argv.findIndex((value) => value === '--prefix' || value === '-p')
       const prefix = argv[idx + 1]
       // Named envs are always Python in these tests unless the packages carry r-base.
       const isR = argv.includes('r-base')
@@ -1439,6 +1509,211 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
       }
     }
   )
+  it('imports an exact lock online and reuses the checksum-marked environment', async () => {
+    const root = makeRoot()
+    const nativeWorker = vi.fn<InstallSpawn>(async () => ({ code: 0, stdout: '', stderr: '' }))
+    const nativeSpawn = vi.fn(() => nativeWorker)
+    const { deps, argvs } = makeNamedEnvDeps(root, { nativeSpawn })
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    const checksum = 'a'.repeat(64)
+    const explicitLock =
+      '@EXPLICIT\nhttps://repo.example.test/python-3.12.conda#0123456789abcdef0123456789abcdef\n'
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'python',
+      environmentName: 'default-python',
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock,
+          packages: ['python', 'pip']
+        },
+        {
+          ecosystem: 'python',
+          format: 'pip-requirements',
+          resolution: 'locked',
+          files: [
+            {
+              path: 'requirements.lock',
+              checksum: '0'.repeat(64),
+              content: `numpy==2.0 --hash=sha256:${'1'.repeat(64)}\n`
+            }
+          ]
+        }
+      ],
+      untrackedPackages: ['python:numpy']
+    }
+
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(
+        `repro-${checksum.slice(0, 12)}`,
+        'python',
+        lock,
+        checksum,
+        { projectId: 'project-1' }
+      )
+    ).resolves.toMatchObject({ reused: false })
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(
+        `repro-${checksum.slice(0, 12)}`,
+        'python',
+        lock,
+        checksum,
+        { projectId: 'project-2' }
+      )
+    ).resolves.toMatchObject({ reused: true })
+
+    expect(argvs).toHaveLength(1)
+    expect(argvs[0]).not.toContain('--offline')
+    expect(argvs[0]).toEqual(expect.arrayContaining(['--file', expect.stringContaining(checksum)]))
+    expect(nativeSpawn).toHaveBeenCalledOnce()
+    expect(nativeWorker).toHaveBeenCalledWith(
+      expect.stringMatching(/python(\.exe)?$/u),
+      expect.arrayContaining(['--require-hashes']),
+      expect.any(Object),
+      expect.any(Function),
+      expect.any(Function),
+      false,
+      expect.stringContaining(checksum),
+      { onOutput: undefined, signal: undefined }
+    )
+    expect(
+      readFileSync(
+        join(envPrefix(root, `repro-${checksum.slice(0, 12)}`), '.open-science-environment-lock'),
+        'utf8'
+      )
+    ).toBe(`${checksum}\n`)
+  })
+
+  it.each([
+    ['python', 'native'],
+    ['r', 'native'],
+    ['python', 'conda'],
+    ['r', 'conda'],
+    ['python', 'verification'],
+    ['r', 'verification'],
+    ['python', 'unconfirmed'],
+    ['r', 'unconfirmed']
+  ] as const)('handles an imported %s environment after a %s failure', async (language, phase) => {
+    const root = makeRoot()
+    const checksum = 'b'.repeat(64)
+    const name = `repro-${checksum.slice(0, 12)}`
+    const prefix = envPrefix(root, name)
+    const bin = language === 'python' ? pythonBin(prefix) : rBin(prefix)
+    const nativeWorker = vi.fn<InstallSpawn>()
+    if (phase === 'native')
+      nativeWorker.mockResolvedValueOnce({
+        code: 1,
+        stdout: '',
+        stderr: 'temporary import failure'
+      })
+    if (phase === 'unconfirmed')
+      nativeWorker.mockRejectedValueOnce(
+        new Error(`${CHILD_UNCONFIRMED}: temporary import failure`)
+      )
+    nativeWorker.mockResolvedValue({ code: 0, stdout: '', stderr: '' })
+    let firstWrite = true
+    let firstVerification = true
+    const blocked = new Set<string>()
+    const runArgv = vi.fn(async () => {
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'interpreter')
+      if (phase === 'conda' && firstWrite) {
+        firstWrite = false
+        throw new Error('temporary import failure')
+      }
+    })
+    const { deps } = makeNamedEnvDeps(root, {
+      runArgv,
+      blockPrefix: (path) => {
+        blocked.add(path)
+      },
+      isPrefixBlocked: (path) => blocked.has(path),
+      nativeSpawn: () => nativeWorker,
+      verify: async () => {
+        if (phase === 'verification' && firstVerification) {
+          firstVerification = false
+          throw new Error('temporary import failure')
+        }
+      }
+    })
+    const lock: NotebookEnvironmentLock = {
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: language,
+      environmentName: `default-${language}`,
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock: `@EXPLICIT\nhttps://repo.example.test/runtime.conda#${'0'.repeat(32)}\n`,
+          packages: language === 'python' ? ['python', 'pip'] : ['r-base', 'r-renv']
+        },
+        language === 'python'
+          ? {
+              ecosystem: 'python',
+              format: 'pip-requirements',
+              resolution: 'locked',
+              files: [
+                {
+                  path: 'requirements.lock',
+                  checksum: '0'.repeat(64),
+                  content: `numpy==2.0 --hash=sha256:${'1'.repeat(64)}\n`
+                }
+              ]
+            }
+          : {
+              ecosystem: 'r',
+              format: 'renv-lock',
+              resolution: 'locked',
+              files: [
+                {
+                  path: 'renv.lock',
+                  checksum: '0'.repeat(64),
+                  content: JSON.stringify({
+                    Packages: { ggplot2: { Version: '4.0.3', Source: 'Repository' } }
+                  })
+                }
+              ]
+            }
+      ],
+      untrackedPackages: [language === 'python' ? 'python:numpy' : 'r:ggplot2']
+    }
+    const provisioner = new DefaultRuntimeProvisioner(deps)
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+    ).rejects.toThrow('temporary import failure')
+    if (phase === 'unconfirmed') {
+      expect(existsSync(bin)).toBe(true)
+      expect(existsSync(importedEnvironmentLockMarkerPath(prefix))).toBe(false)
+      expect(
+        await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()
+      ).toHaveLength(1)
+      await expect(
+        provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+      ).rejects.toThrow(/blocked|unconfirmed|recover/iu)
+      expect(runArgv).toHaveBeenCalledTimes(1)
+      return
+    }
+    expect(existsSync(prefix)).toBe(false)
+    expect(await RuntimeOperationJournal.forPath(operationJournalPath(root)).pending()).toEqual([])
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+    ).resolves.toMatchObject({ reused: false })
+    expect(nativeWorker).toHaveBeenCalledTimes(phase === 'conda' ? 1 : 2)
+    expect(runArgv).toHaveBeenCalledTimes(2)
+    expect(readFileSync(importedEnvironmentLockMarkerPath(prefix), 'utf8')).toBe(`${checksum}\n`)
+    writeFileSync(importedEnvironmentLockMarkerPath(prefix), `${'c'.repeat(64)}\n`)
+    await expect(
+      provisioner.createNamedEnvironmentFromLock(name, language, lock, checksum)
+    ).rejects.toThrow('different origin')
+    expect(readFileSync(bin, 'utf8')).toBe('interpreter')
+    expect(runArgv).toHaveBeenCalledTimes(2)
+  })
 
   it('uses the injected platform for the interpreter it verifies', async () => {
     const root = makeRoot()
@@ -1652,7 +1927,9 @@ describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
 
     await provisioner.createNamedEnvironment('r-stats', 'r')
 
-    expect(argvs[0]).toEqual(expect.arrayContaining(['r-base', 'r-jsonlite']))
+    expect(argvs[0]).toEqual(
+      expect.arrayContaining(['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2'])
+    )
   })
 
   it('holds the shared pkgs cache lock, so a concurrent exclusive repair cannot run mid-create', async () => {
@@ -1920,13 +2197,60 @@ describe('DefaultRuntimeProvisioner journals every prefix write', () => {
 })
 
 describe('DefaultRuntimeProvisioner.listEnvironments', () => {
-  it('returns [] when the envs dir does not exist', () => {
+  it('PERF-01 yields to the event loop while counting a large environment', async () => {
     const root = makeRoot()
-    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
-    expect(provisioner.listEnvironments()).toEqual([])
+    const prefix = envPrefix(root, 'large-env')
+    mkdirSync(dirname(pythonBin(prefix)), { recursive: true })
+    writeFileSync(pythonBin(prefix), 'x')
+    for (let i = 0; i < 1000; i++) writeFileSync(join(prefix, `file-${i}`), 'x')
+    let heartbeat = false
+    const tick = new Promise<void>((resolve) =>
+      setImmediate(() => {
+        heartbeat = true
+        resolve()
+      })
+    )
+    try {
+      const environments = await new DefaultRuntimeProvisioner(makeDeps(root)).listEnvironments()
+      expect(environments).toEqual([
+        { name: 'large-env', language: 'python', ready: true, isDefault: false, sizeBytes: 1001 }
+      ])
+      expect(heartbeat).toBe(true)
+    } finally {
+      await tick
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
-  it('classifies python/r/default/ready and skips dirs with neither interpreter', () => {
+  it('cancels a scan without publishing partial results', async () => {
+    const root = makeRoot()
+    const prefix = envPrefix(root, 'cancel-env')
+    mkdirSync(dirname(pythonBin(prefix)), { recursive: true })
+    writeFileSync(pythonBin(prefix), 'x')
+    const controller = new AbortController()
+    const tick = new Promise<void>((resolve) =>
+      setImmediate(() => {
+        controller.abort(new Error('scan cancelled'))
+        resolve()
+      })
+    )
+    try {
+      await expect(
+        new DefaultRuntimeProvisioner(makeDeps(root)).listEnvironments(controller.signal)
+      ).rejects.toThrow('scan cancelled')
+    } finally {
+      await tick
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns [] when the envs dir does not exist', async () => {
+    const root = makeRoot()
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
+    expect(await provisioner.listEnvironments()).toEqual([])
+  })
+
+  it('classifies python/r/default/ready and skips dirs with neither interpreter', async () => {
     const root = makeRoot()
     // default-python: has a python bin -> python, isDefault.
     const pyDefaultPrefix = envPrefix(root, DEFAULT_PY_ENV)
@@ -1944,7 +2268,7 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
     mkdirSync(envPrefix(root, 'half-baked'), { recursive: true })
 
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
-    const infos = provisioner.listEnvironments()
+    const infos = await provisioner.listEnvironments()
 
     expect(infos.map((i) => i.name).sort()).toEqual(['default-python', 'my-analysis', 'r-stats'])
     const byName = Object.fromEntries(infos.map((i) => [i.name, i]))
@@ -1961,7 +2285,7 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
     expect(byName['r-stats']).toMatchObject({ language: 'r', ready: true, isDefault: false })
   })
 
-  it('maps short Windows default directories to logical names and ignores legacy duplicates', () => {
+  it('maps short Windows default directories to logical names and ignores legacy duplicates', async () => {
     const root = makeRoot()
     const shortPrefix = join(root, 'envs', '.p')
     mkdirSync(join(pythonBin(shortPrefix, 'win32'), '..'), { recursive: true })
@@ -1970,7 +2294,7 @@ describe('DefaultRuntimeProvisioner.listEnvironments', () => {
     mkdirSync(join(pythonBin(legacyPrefix, 'win32'), '..'), { recursive: true })
     writeFileSync(pythonBin(legacyPrefix, 'win32'), 'legacy')
 
-    const infos = new DefaultRuntimeProvisioner(
+    const infos = await new DefaultRuntimeProvisioner(
       makeDeps(root, { platform: 'win32' })
     ).listEnvironments()
 
@@ -1991,14 +2315,14 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     expect(() => provisioner.removeEnvironment(DEFAULT_R_ENV)).toThrow(/Refusing to remove/)
   })
 
-  it('removes a named env without rediscovering the remaining environments', () => {
+  it('removes a named env without rediscovering the remaining environments', async () => {
     const root = makeRoot()
     const namedPrefix = envPrefix(root, 'my-analysis')
     mkdirSync(join(pythonBin(namedPrefix), '..'), { recursive: true })
     writeFileSync(pythonBin(namedPrefix), 'x')
 
     const provisioner = new DefaultRuntimeProvisioner(makeDeps(root))
-    expect(provisioner.listEnvironments()).toHaveLength(1)
+    expect(await provisioner.listEnvironments()).toHaveLength(1)
 
     const listEnvironments = vi.spyOn(provisioner, 'listEnvironments')
     const result = provisioner.removeEnvironment('my-analysis')
@@ -2006,6 +2330,26 @@ describe('DefaultRuntimeProvisioner.removeEnvironment', () => {
     expect(result).toBeUndefined()
     expect(listEnvironments).not.toHaveBeenCalled()
     expect(existsSync(namedPrefix)).toBe(false)
+  })
+
+  it('removes the durable lock material owned by an imported environment', () => {
+    const root = makeRoot()
+    const checksum = 'a'.repeat(64)
+    const namedPrefix = envPrefix(root, 'imported-analysis')
+    const lockDirectory = join(root, 'imported-locks')
+    const nativeLocksRoot = join(lockDirectory, checksum)
+    mkdirSync(join(pythonBin(namedPrefix), '..'), { recursive: true })
+    mkdirSync(nativeLocksRoot, { recursive: true })
+    writeFileSync(pythonBin(namedPrefix), 'x')
+    writeFileSync(importedEnvironmentLockMarkerPath(namedPrefix), `${checksum}\n`)
+    writeFileSync(join(lockDirectory, `${checksum}.txt`), '@EXPLICIT\n')
+    writeFileSync(join(nativeLocksRoot, 'requirements.lock'), 'numpy==2.0\n')
+
+    new DefaultRuntimeProvisioner(makeDeps(root)).removeEnvironment('imported-analysis')
+
+    expect(existsSync(namedPrefix)).toBe(false)
+    expect(existsSync(join(lockDirectory, `${checksum}.txt`))).toBe(false)
+    expect(existsSync(nativeLocksRoot)).toBe(false)
   })
 })
 
@@ -2884,6 +3228,7 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const status = provisioner.status()
     expect(status.pythonRecoveryBlocked).toBe(true)
     expect(status.rRecoveryBlocked).toBe(false)
+    expect(status.pythonRepairRequired).not.toBe(true)
     expect(isPrefixBlocked).toHaveBeenCalledWith(blockedPrefix)
   })
 
@@ -2894,6 +3239,7 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     const status = new DefaultRuntimeProvisioner(makeDeps(root)).status()
 
     expect(status.pythonRecoveryBlocked).toBe(true)
+    expect(status.pythonRepairRequired).toBe(true)
     expect(status.rRecoveryBlocked).not.toBe(true)
   })
 

@@ -1,3 +1,4 @@
+import { Notice } from '@/components/notice'
 import { Check } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useEffect, useState } from 'react'
@@ -22,8 +23,8 @@ const AppIconSection = (): React.JSX.Element | null => {
   const listAppIcons = window.api.settings.listAppIcons
   const labels = { light: t('Light'), dark: t('Dark') }
   const descriptions = {
-    light: t('The light Open Science logo.'),
-    dark: t('The dark Open Science logo.')
+    light: t('The light Open-Science logo.'),
+    dark: t('The dark Open-Science logo.')
   }
 
   useEffect(() => {
@@ -66,19 +67,18 @@ const AppIconSection = (): React.JSX.Element | null => {
         </p>
       ) : null}
       {loadState === 'error' ? (
-        <p role="alert" className="flex items-baseline gap-2 text-xs text-danger-000">
-          <span>{t('Could not load app icons.')}</span>
-          <button
-            type="button"
-            className="shrink-0 underline underline-offset-2 focus-visible:outline-auto"
-            onClick={() => {
+        <Notice
+          level="error"
+          role="alert"
+          description={t('Could not load app icons.')}
+          primaryButton={{
+            label: t('Retry'),
+            onClick: () => {
               setLoadState('loading')
               setAttempt((value) => value + 1)
-            }}
-          >
-            {t('Retry')}
-          </button>
-        </p>
+            }
+          }}
+        />
       ) : null}
       {loadState === 'ready' && previews.length === 0 ? (
         <p role="status" className="text-sm text-muted-foreground">

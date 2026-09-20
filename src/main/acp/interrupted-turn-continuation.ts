@@ -11,6 +11,7 @@ import {
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
 import { sessionPdfContextToFileReferences } from '../../shared/session-pdf-context'
 import {
   isHiddenControlMessage,
@@ -25,6 +26,8 @@ const INTERRUPTED_TURN_CONTINUATION_PROMPT =
 const SAVE_AS_SKILL_PROMPT = `[System] Distill this session into a reusable Skill.
 
 Review the active conversation branch: what was the goal, which agents and tools were used, what were the key steps, and what steering or corrections did the user provide along the way? Capture the reusable pattern, not a verbatim transcript.
+
+If the recorded evidence is missing, incomplete, or omitted, inspect available Session or Notebook history before inferring execution steps. Do not infer a procedure from a completion notice alone. If the evidence cannot be recovered, explain the limitation and stop.
 
 First decide whether the branch contains a settled procedure the user is likely to run again. If it does not, briefly explain why and stop. If it does, load Customize and follow its Skill Creator workflow.`
 
@@ -57,9 +60,14 @@ type InterruptedTurnContinuationDependencies = {
 const expectedFrameworkForReplayTarget = (
   target: NonNullable<AcpContinueInterruptedTurnRequest['contextReset']>['historyReplayTarget']
 ): NonNullable<PersistedChatSession['agentFrameworkId']> => {
-  if (target === 'opencode') return 'opencode'
-  if (target === 'codex-response' || target === 'codex-bridge') return 'codex'
-  return 'claude-code'
+  const frameworks: Record<typeof target, NonNullable<PersistedChatSession['agentFrameworkId']>> = {
+    'claude-code': 'claude-code',
+    opencode: 'opencode',
+    codebuddy: 'codebuddy',
+    'codex-response': 'codex',
+    'codex-bridge': 'codex'
+  }
+  return frameworks[target]
 }
 
 const requireInterruptedTurn = (
@@ -185,17 +193,27 @@ const buildContinuationRequest = (
             : message
         )
     : undefined
+  const replayDescriptor = contextReset
+    ? {
+        target: contextReset.historyReplayTarget,
+        contextWindow: contextReset.contextWindow
+      }
+    : undefined
   const replay =
-    contextReset && replayMessages
-      ? buildSessionHistoryReplay(
-          replayMessages,
-          {
-            target: contextReset.historyReplayTarget,
-            contextWindow: contextReset.contextWindow
-          },
-          session.projectId,
-          contextReset.supportsImageInput
-        )
+    contextReset && replayMessages && replayDescriptor
+      ? prompt.turnIntent === 'save-as-skill'
+        ? buildSaveAsSkillHistoryReplay(
+            session,
+            replayMessages,
+            replayDescriptor,
+            contextReset.supportsImageInput
+          )
+        : buildSessionHistoryReplay(
+            replayMessages,
+            replayDescriptor,
+            session.projectId,
+            contextReset.supportsImageInput
+          )
       : undefined
   if (contextReset && !replay) {
     throw new Error('Interrupted conversation history could not be replayed after context reset.')

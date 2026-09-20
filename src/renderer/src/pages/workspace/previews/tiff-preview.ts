@@ -2,6 +2,7 @@ import { decode, type TiffIfd } from 'tiff'
 
 import {
   DEFAULT_TIFF_PREVIEW_LIMITS,
+  TiffPageDecodeError,
   type DecodedTiffPage,
   type TiffPreviewLimits
 } from './tiff-preview-types'
@@ -10,7 +11,7 @@ import { assertTiffCompressionSafe, inspectTiffStructure } from './tiff-preview-
 const MAX_TIFF_DIMENSION = 16_384
 const TIFF_DECOMPRESSOR_SCRATCH_BYTES = 64 * 1024 * 1024
 
-type SampleRange = { minimum: number; maximum: number }
+type SampleRange = { minimum: number; maximum: number; autoContrast?: boolean }
 
 const sampleToByte = (value: number, range: SampleRange): number => {
   if (!Number.isFinite(value)) return 0
@@ -57,10 +58,10 @@ const getSampleRange = (ifd: TiffIfd, componentIndices: number[]): SampleRange =
 
   if (observedMinimum >= 0 && observedMaximum <= 1) return { minimum: 0, maximum: 1 }
   if (observedMaximum > observedMinimum) {
-    return { minimum: observedMinimum, maximum: observedMaximum }
+    return { minimum: observedMinimum, maximum: observedMaximum, autoContrast: true }
   }
-  if (observedMaximum > 0) return { minimum: 0, maximum: observedMaximum }
-  if (observedMinimum < 0) return { minimum: observedMinimum, maximum: 0 }
+  if (observedMaximum > 0) return { minimum: 0, maximum: observedMaximum, autoContrast: true }
+  if (observedMinimum < 0) return { minimum: observedMinimum, maximum: 0, autoContrast: true }
   return { minimum: 0, maximum: 1 }
 }
 
@@ -81,6 +82,17 @@ const assertSupportedColorLayout = (ifd: TiffIfd): void => {
   // precision before returning the decoded data. Reject this layout instead of rendering it wrong.
   if (ifd.type === 0 && ifd.sampleFormat === 3) {
     throw new Error('Unsupported TIFF floating-point WhiteIsZero layout')
+  }
+  if (ifd.sampleFormat === 3 && ifd.associatedAlpha) {
+    throw new Error('Unsupported TIFF floating-point associated alpha layout')
+  }
+  const extraSamples = ifd.extraSamples ?? []
+  const baseComponents = ifd.type === 2 ? 3 : 1
+  if (
+    extraSamples.length > ifd.components - baseComponents ||
+    extraSamples.some((value) => value !== 0 && value !== 1 && value !== 2)
+  ) {
+    throw new Error('Unsupported TIFF extra sample layout')
   }
   const grayscale =
     (ifd.type === 0 || ifd.type === 1) && (ifd.components === 1 || ifd.components === 2)
@@ -126,14 +138,9 @@ const assertSafeDecodedLayout = (
   }
 }
 
-const convertToRgba = (ifd: TiffIfd): Uint8ClampedArray => {
+const convertToRgba = (ifd: TiffIfd, range: SampleRange): Uint8ClampedArray => {
   const rgba = new Uint8ClampedArray(ifd.size * 4)
-  const hasAlpha = ifd.components === 2 || ifd.components === 4
-  const colorComponentCount = ifd.components - (hasAlpha ? 1 : 0)
-  const range = getSampleRange(
-    ifd,
-    Array.from({ length: colorComponentCount }, (_, index) => index)
-  )
+  const hasAlpha = ifd.extraSamples?.[0] === 1 || ifd.extraSamples?.[0] === 2
   const alphaRange = hasAlpha ? getSampleRange(ifd, [ifd.components - 1]) : range
 
   if ((ifd.type === 0 || ifd.type === 1) && (ifd.components === 1 || ifd.components === 2)) {
@@ -146,7 +153,7 @@ const convertToRgba = (ifd: TiffIfd): Uint8ClampedArray => {
       rgba[target + 2] = value
       // tiff@7.1.3 applies WhiteIsZero inversion to the entire sample array, including
       // ExtraSamples. Photometric inversion does not apply to alpha, so undo it here.
-      if (ifd.components === 2) {
+      if (hasAlpha) {
         const alphaSample =
           ifd.type === 0 ? ifd.maxSampleValue - ifd.data[source + 1] : ifd.data[source + 1]
         rgba[target + 3] = sampleToByte(alphaSample, alphaRange)
@@ -185,7 +192,7 @@ const convertToRgba = (ifd: TiffIfd): Uint8ClampedArray => {
     rgba[target] = sampleToByte(ifd.data[source], range)
     rgba[target + 1] = sampleToByte(ifd.data[source + 1], range)
     rgba[target + 2] = sampleToByte(ifd.data[source + 2], range)
-    rgba[target + 3] = ifd.components === 4 ? sampleToByte(ifd.data[source + 3], alphaRange) : 255
+    rgba[target + 3] = hasAlpha ? sampleToByte(ifd.data[source + 3], alphaRange) : 255
   }
 
   return rgba
@@ -201,22 +208,43 @@ const decodeTiffPage = (
   }
 
   const { pageCount } = inspectTiffStructure(data)
-  const [metadata] = decode(data, { pages: [pageIndex], ignoreImageData: true })
+  try {
+    const [metadata] = decode(data, { pages: [pageIndex], ignoreImageData: true })
 
-  if (!metadata) throw new RangeError(`TIFF page ${pageIndex + 1} is unavailable`)
-  assertSafeDecodedLayout(metadata, data.byteLength, limits)
-  assertTiffCompressionSafe(data, metadata)
+    if (!metadata) throw new RangeError(`TIFF page ${pageIndex + 1} is unavailable`)
+    assertSafeDecodedLayout(metadata, data.byteLength, limits)
+    assertTiffCompressionSafe(data, metadata)
 
-  const [ifd] = decode(data, { pages: [pageIndex] })
+    const [ifd] = decode(data, { pages: [pageIndex] })
 
-  if (!ifd) throw new RangeError(`TIFF page ${pageIndex + 1} is unavailable`)
+    if (!ifd) throw new RangeError(`TIFF page ${pageIndex + 1} is unavailable`)
 
-  return {
-    width: ifd.width,
-    height: ifd.height,
-    pageIndex,
-    pageCount,
-    rgba: convertToRgba(ifd)
+    const range = getSampleRange(ifd, ifd.type === 2 ? [0, 1, 2] : [0])
+    return {
+      width: ifd.width,
+      height: ifd.height,
+      pageIndex,
+      pageCount,
+      ...(ifd.sampleFormat === 3
+        ? {
+            displayRange: { minimum: range.minimum, maximum: range.maximum },
+            sampleFormat: ifd.sampleFormat,
+            bitsPerSample: ifd.bitsPerSample,
+            autoContrast: range.autoContrast === true
+          }
+        : {}),
+      rgba: convertToRgba(ifd, range)
+    }
+  } catch (error) {
+    // Only known unsupported layouts and per-page safety limits are navigable failures.
+    // Read, structure, corrupt-strip and unexpected decoder failures remain resource errors.
+    if (
+      error instanceof Error &&
+      (error.message.startsWith('Unsupported ') || error.message.startsWith('TIFF page '))
+    ) {
+      throw new TiffPageDecodeError(error.message, pageCount)
+    }
+    throw error
   }
 }
 

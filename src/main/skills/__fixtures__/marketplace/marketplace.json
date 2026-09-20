@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "protocol": "openscience-skill-marketplace",
+  "marketplace": {
+    "id": "openscience-skills",
+    "name": "OpenScience Skill Marketplace"
+  },
+  "skills": [
+    {
+      "id": "abstract-trimmer",
+      "version": "1.0.0",
+      "display_name": "abstract-trimmer",
+      "summary": "Precision editing tool that reduces abstract word count through intelligent compression techniques, maintaining scientific rigor while meeting strict journal and conference requirements.",
+      "category": "Academic Writing",
+      "source": {
+        "repository": "https://github.com/aipoch/medical-research-skills",
+        "commit": "d92441066ea6259967469be8e0c8c7b6587928ab",
+        "path": "scientific-skills/Academic Writing/abstract-trimmer"
+      },
+      "publisher": {
+        "id": "aipoch",
+        "name": "AIPOCH",
+        "url": "https://aipoch.com/agent-skills"
+      },
+      "authors": [
+        {
+          "name": "AIPOCH"
+        }
+      ],
+      "license": "MIT",
+      "evaluation": {
+        "kind": "upstream-self-assessment",
+        "score": 85,
+        "max_score": 100,
+        "report_url": "https://github.com/aipoch/medical-research-skills/blob/d92441066ea6259967469be8e0c8c7b6587928ab/scientific-skills/Academic%20Writing/abstract-trimmer/abstract-trimmer_audit_result_v1.json",
+        "evaluated_on": "2026-03-23",
+        "evaluator_version": "skill-auditor@1.0",
+        "static_score": {
+          "score": 88,
+          "max_score": 100
+        },
+        "dynamic_score": {
+          "score": 83.6,
+          "max_score": 100
+        }
+      },
+      "release": {
+        "path": "releases/abstract-trimmer/1.0.0.json",
+        "sha256": "d9b854785d267477571e3f5bc29bffe68652605706e10b1abbe1c4da3a1e96e2"
+      },
+      "artifact": {
+        "path": "shards/748ca9045c11c5b9a28cf741a3e6788f25493a156c7d5bd663dc19d768415684.zip",
+        "sha256": "748ca9045c11c5b9a28cf741a3e6788f25493a156c7d5bd663dc19d768415684",
+        "bytes": 10353,
+        "skill_path": "abstract-trimmer"
+      },
+      "content_sha256": "65668b0f0783c953868200f5b2bb0061a55e1a788f693f0fb131949e0a3a438c"
+    }
+  ],
+  "release_index": {
+    "path": "indexes/5156d4017c34a7cc4736da0e5cbc46dcc7a24937fb0d40f1d937385493df203f.json",
+    "sha256": "5156d4017c34a7cc4736da0e5cbc46dcc7a24937fb0d40f1d937385493df203f"
+  },
+  "previous_revision": null,
+  "revision": "bcf1f3b21973c41dae4a8af6f756676562477143a2e269b94b5c7c1dece95519"
+}

@@ -91,7 +91,7 @@ type NotebookPackageOperationsOptions = {
     'inspectPackages' | 'markPackageMutationDirty' | 'refreshAfterPackageMutation'
   >
   installPackages: (request: InstallRequest, deps?: Partial<InstallDeps>) => Promise<InstallResult>
-  packageSpawn?: (target: NotebookPackageAdmittedTarget) => InstallSpawn
+  packageSpawn?: (target: NotebookPackageAdmittedTarget, mirror: PackageMirror) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   retainWorkingCache?: MicromambaWorkingCacheRetainer
   createEnvironmentCaptureTarget: (
@@ -146,6 +146,13 @@ class NotebookPackageOperations {
       micromambaRunner: options.micromambaRunner,
       retainWorkingCache: options.retainWorkingCache,
       recheckRepair: (target) => this.admission.recheckRepair(target),
+      recheckAuthorization: (target) => this.admission.recheckAuthorization(target),
+      canSkipInstall: (target) =>
+        !options.repairPolicy.requirement(
+          target.request.language,
+          target.environmentName,
+          target.binding
+        ).required,
       runtimeRepair: options.runtimeRepair,
       blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }) => {
         options.recovery.markRuntimeLiveUnconfirmed(repairRuntimeId)
@@ -241,16 +248,38 @@ class NotebookPackageOperations {
     const resolution = await this.admission.resolveTarget(request)
     try {
       await this.options.ensureRecovered()
-      const mirror = await effectiveMirrorAsync(
-        await this.resolvePackageMirror(),
-        this.options.locale,
-        this.options.mirrorProbe
-      )
       const admission = await this.admission.admit(request, resolution)
       if (admission.status === 'refused') return admission.result
-      const result = await this.mutation.mutate({ target: admission.target, mirror }, signal)
+      const result = await this.mutation.mutate(
+        {
+          target: admission.target,
+          mirror: async () =>
+            effectiveMirrorAsync(
+              await this.resolvePackageMirror(),
+              this.options.locale,
+              this.options.mirrorProbe
+            )
+        },
+        signal
+      )
       if (result.needsRestart && request.language === 'r') {
-        this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
+        if (admission.target.binding?.source === 'external') {
+          const runtimeId = admission.target.binding.runtimeId
+          for (const session of this.options.sessions()) {
+            const binding = session.runtimeBinding('r')
+            if (binding?.source !== 'external' || binding.runtimeId !== runtimeId) continue
+            this.options.environmentOperations.recommendRestart(
+              'r',
+              admission.target.environmentName,
+              {
+                runtimeId,
+                sessionId: session.id
+              }
+            )
+          }
+        } else {
+          this.options.environmentOperations.recommendRestart('r', admission.target.environmentName)
+        }
         for (const session of this.options.sessions()) this.options.notifyChanged(session)
       }
       const environmentName =

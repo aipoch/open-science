@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
-import { access, chmod, mkdtemp, readdir, realpath, rm } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -40,7 +40,7 @@ const appImageVersion = (path) => {
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+    /Open-Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
   const url = new URL(match[1])
@@ -104,7 +104,7 @@ const findResourceRoot = async (executable, resolvedExecutable = executable) => 
     join(dirname(resolvedExecutable), 'resources'),
     join(bundleRoot, 'resources'),
     join(bundleRoot, 'usr', 'lib', 'open-science', 'resources'),
-    join(bundleRoot, 'usr', 'lib', 'Open Science', 'resources')
+    join(bundleRoot, 'usr', 'lib', 'Open-Science', 'resources')
   ]
   for (const candidate of [...new Set(candidates)]) {
     if (await pathExists(join(candidate, 'app.asar'))) return candidate
@@ -133,10 +133,16 @@ const assertPackagedResources = async (
 }
 
 const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  const child = spawn(executable, ['--open-science-headless', '--serve=0', '--no-sandbox'], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  // Headless packaged launches have no Secret Service desktop, so OS credential mode fails closed;
+  // the file backend is the supported headless mode on Linux (matching the CLI smoke launch).
+  const child = spawn(
+    executable,
+    ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+    {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  )
   let output = ''
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')
@@ -162,7 +168,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
     if (!response.ok) throw new Error(`Packaged Linux bootstrap returned HTTP ${response.status}.`)
     const bootstrap = await response.json()
     if (
-      bootstrap.appName !== 'Open Science' ||
+      bootstrap.appName !== 'Open-Science' ||
       bootstrap.appVersion !== expectedVersion ||
       bootstrap.platform !== 'linux'
     ) {
@@ -209,6 +215,104 @@ const smokeExecutable = async ({
   return sqliteVersions
 }
 
+// Exercise the installed public command with an empty user profile and no display server.
+// Tokens are inspected in memory only; certification output must never print them.
+const smokeInstalledCli = async ({ executable, expectedVersion, root, env }) => {
+  const cliEnv = {
+    ...env,
+    HOME: join(root, 'cli home 数据'),
+    XDG_CONFIG_HOME: join(root, 'cli config 数据')
+  }
+  for (const name of [
+    'DISPLAY',
+    'WAYLAND_DISPLAY',
+    'OPEN_SCIENCE_APP_PATH',
+    'ELECTRON_RUN_AS_NODE',
+    'OPEN_SCIENCE_CONFIG_ROOT',
+    'OPEN_SCIENCE_STORAGE_ROOT',
+    'OPEN_SCIENCE_E2E_STORAGE_ROOT'
+  ]) {
+    delete cliEnv[name]
+  }
+  await mkdir(cliEnv.HOME, { recursive: true })
+  const invoke = (args) => runProcess(executable, args, { env: cliEnv })
+  const initialized = JSON.parse((await invoke(['init', '--json'])).stdout)
+  if (initialized.configRoot !== join(cliEnv.HOME, '.open-science')) {
+    throw new Error('Installed CLI did not initialize the isolated production profile.')
+  }
+  let failure
+  try {
+    const started = await invoke([
+      'start',
+      '--no-open',
+      '--port',
+      '44109',
+      '--credential-store=file'
+    ])
+    const statePath = join(initialized.configRoot, 'web-service.json')
+    const firstState = JSON.parse(await readFile(statePath, 'utf8'))
+    const reused = await invoke(['start', '--no-open'])
+    const secondState = JSON.parse(await readFile(statePath, 'utf8'))
+    if (firstState.pid !== secondState.pid || firstState.port !== 44109) {
+      throw new Error('Installed CLI failed daemon reuse or custom-port selection.')
+    }
+    const browserUrl = new URL((await invoke(['url'])).stdout.trim())
+    const token = browserUrl.searchParams.get('token')
+    if (browserUrl.hostname !== '127.0.0.1' || browserUrl.port !== '44109' || !token) {
+      throw new Error('Installed CLI did not return an authenticated loopback URL.')
+    }
+    const response = await fetch(new URL('/api/bootstrap', browserUrl), {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000)
+    })
+    const bootstrap = await response.json()
+    if (
+      !response.ok ||
+      bootstrap.appVersion !== expectedVersion ||
+      bootstrap.platform !== 'linux'
+    ) {
+      throw new Error('Installed CLI started an unexpected or unhealthy application.')
+    }
+    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8')
+    if (
+      [started.stdout, started.stderr, reused.stdout, reused.stderr, logs].some((text) =>
+        text.includes(token)
+      )
+    ) {
+      throw new Error('A CLI startup output or daemon log disclosed the browser token.')
+    }
+    console.log(
+      'Installed CLI: init, headless start, custom port, daemon reuse and authenticated URL passed (token redacted).'
+    )
+  } catch (error) {
+    failure = error
+  } finally {
+    try {
+      await invoke(['stop'])
+    } catch (error) {
+      failure ??= error
+    }
+  }
+  if (failure) {
+    const token = await readFile(join(initialized.configRoot, 'web-token'), 'utf8')
+      .then((text) => text.trim())
+      .catch(() => '')
+    const logs = await readFile(join(initialized.configRoot, 'cli-daemon.log'), 'utf8').catch(
+      () => '(daemon log unavailable)'
+    )
+    const diagnostic = `${failure.message}\n${logs}`
+    throw new Error(token ? diagnostic.replaceAll(token, '<REDACTED>') : diagnostic)
+  }
+  const stoppedUrl = await invoke(['url']).then(
+    () => false,
+    () => true
+  )
+  if (!stoppedUrl) throw new Error('The URL command succeeded after the daemon was stopped.')
+  console.log(
+    'Installed CLI: stop and unavailable URL passed; no desktop or display server was used.'
+  )
+}
+
 const parseArguments = (argv) => {
   const valueFor = (name) => {
     const index = argv.indexOf(name)
@@ -216,6 +320,7 @@ const parseArguments = (argv) => {
   }
   const artifactDirectory = valueFor('--artifact-dir')
   const installedExecutable = valueFor('--installed-executable')
+  const installedCli = valueFor('--installed-cli')
   if (!artifactDirectory || !installedExecutable) {
     throw new Error(
       'Usage: --artifact-dir <path> --installed-executable <path-to-installed-open-science>'
@@ -223,7 +328,8 @@ const parseArguments = (argv) => {
   }
   return {
     artifactDirectory: resolve(artifactDirectory),
-    installedExecutable: resolve(installedExecutable)
+    installedExecutable: resolve(installedExecutable),
+    installedCli: resolve(installedCli ?? '/usr/bin/open-science')
   }
 }
 
@@ -244,6 +350,12 @@ const main = async () => {
   ]
 
   try {
+    await smokeInstalledCli({
+      executable: options.installedCli,
+      expectedVersion,
+      root,
+      env: baseEnv
+    })
     const sqliteVersions = []
     const debProfiles = launchProfiles('deb')
     await seedLegacyDatabase(debProfiles[0].storageRoot)
@@ -304,5 +416,6 @@ export {
   findResourceRoot,
   packagedResourcePaths,
   parseArguments,
-  parsePackagedAppEndpoint
+  parsePackagedAppEndpoint,
+  smokeInstalledCli
 }

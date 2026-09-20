@@ -1,5 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+import cancellationSource from './pdf-worker-cancellation.js?raw'
 
 // pdf_viewer.mjs expects the core library on this global. Its import is deferred by PdfPreview
 // until after this module has initialized, which also keeps test collection from evaluating the
@@ -8,6 +9,17 @@ import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
 // Vite rewrites this to the bundled worker URL, so pdfjs runs off the main thread in dev and prod.
 // Configured once here and shared by the full preview and the thumbnail renderer.
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  typeof window !== 'undefined' && typeof Worker !== 'undefined'
+    ? URL.createObjectURL(
+        new Blob(
+          [
+            `export { WorkerMessageHandler } from ${JSON.stringify(new URL(pdfWorkerUrl, window.location.href).href)};\n`,
+            cancellationSource
+          ],
+          { type: 'text/javascript' }
+        )
+      )
+    : pdfWorkerUrl
 
 export { pdfjsLib }

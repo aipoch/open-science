@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/react'
+import { createElement } from 'react'
 
 import { installStreamdown } from './install-streamdown'
+import { PresentedAgentMarkdown } from './AgentMarkdown'
 
 let uninstall: (() => void) | undefined
 let saveBlobFile: ReturnType<typeof vi.fn>
@@ -40,7 +43,16 @@ const createMermaidDownload = (
   return { button, diagram }
 }
 
-const clickInlineTableCsvDownload = (): void => {
+const activateButton = (button: HTMLButtonElement, input: 'pointer' | 'click'): void => {
+  if (input === 'pointer') {
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+      button.dispatchEvent(new MouseEvent(type, { button: 0, bubbles: true, cancelable: true }))
+    }
+  }
+  button.click()
+}
+
+const createInlineTable = (): HTMLDivElement => {
   const root = document.createElement('div')
   root.className = 'agent-markdown-root'
   root.innerHTML = `
@@ -56,18 +68,22 @@ const clickInlineTableCsvDownload = (): void => {
     </div>
   `
   document.body.appendChild(root)
+  return root
+}
+
+const clickInlineTableCsvDownload = (
+  trigger: 'pointer' | 'click' = 'pointer',
+  item: 'pointer' | 'click' = 'pointer'
+): void => {
+  const root = createInlineTable()
   const downloadButton = root.querySelectorAll<HTMLButtonElement>('.relative > button').item(1)
-  downloadButton.dispatchEvent(
-    new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true })
-  )
+  activateButton(downloadButton, trigger)
 
   const csvButton = [
     ...document.querySelectorAll<HTMLButtonElement>('[data-sd-table-format-menu] button')
   ].find((button) => button.textContent === 'CSV')
   if (!csvButton) throw new Error('CSV table format action was not rendered')
-  csvButton.dispatchEvent(
-    new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true })
-  )
+  activateButton(csvButton, item)
 }
 
 beforeEach(() => {
@@ -77,13 +93,36 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
   uninstall?.()
   uninstall = undefined
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('Streamdown blob download bridge', () => {
+  it('downloads an approved Markdown image through the existing save bridge', async () => {
+    const fetchImage = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      blob: async () => new Blob(['image bytes'], { type: 'image/png' })
+    } as Response)
+    const view = render(
+      createElement(PresentedAgentMarkdown, {
+        content: '![Figure](https://image.invalid/figure.png)'
+      })
+    )
+    expect(fetchImage).not.toHaveBeenCalled()
+    fireEvent.click(view.getByRole('button', { name: /image.invalid/ }))
+    fireEvent.load(view.container.querySelector('img')!)
+    fireEvent.click(view.getByRole('button', { name: 'Download image' }))
+    await vi.waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+    expect(fetchImage).toHaveBeenCalledWith('https://image.invalid/figure.png')
+    expect(saveBlobFile.mock.calls[0]?.[0]).toMatchObject({
+      suggestedName: 'figure.png',
+      mimeType: 'image/png'
+    })
+  })
+
   it('saves a blob created synchronously by the current Streamdown button action', async () => {
     const root = document.createElement('div')
     root.className = 'agent-markdown-root'
@@ -235,4 +274,69 @@ describe('Streamdown table download bridge', () => {
     )
     expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
   })
+})
+
+describe('table format semantic activation', () => {
+  it('opens and saves from semantic button clicks', async () => {
+    clickInlineTableCsvDownload('click', 'click')
+    await vi.waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+    expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
+  })
+
+  it('activates a format by click after opening with a pointer', async () => {
+    clickInlineTableCsvDownload('pointer', 'click')
+    await vi.waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
+    expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
+  })
+})
+
+it('moves menu focus, dismisses with Escape, and restores the trigger', () => {
+  const root = createInlineTable()
+  const trigger = root.querySelectorAll<HTMLButtonElement>('.relative > button')[1]
+  trigger.focus()
+  trigger.click()
+  const items = [
+    ...document.querySelectorAll<HTMLButtonElement>('[data-sd-table-format-menu] button')
+  ]
+  expect(document.activeElement).toBe(items[0])
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  expect(document.activeElement).toBe(items[1])
+  items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+  expect(document.activeElement).toBe(items[0])
+  items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
+  expect(document.activeElement).toBe(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  expect(saveBlobFile).not.toHaveBeenCalled()
+})
+
+it('copies once for a complete pointer click sequence and restores focus', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+  const root = createInlineTable()
+  const trigger = root.querySelector<HTMLButtonElement>('.relative > button')!
+  activateButton(trigger, 'pointer')
+  const item = document.querySelector<HTMLButtonElement>('[data-sd-table-format-menu] button')!
+  activateButton(item, 'pointer')
+  await vi.waitFor(() => expect(writeText).toHaveBeenCalledOnce())
+  expect(writeText.mock.calls[0][0]).toContain('alpha')
+  expect(document.activeElement).toBe(trigger)
+  expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
+})
+
+it('dismisses on outside focus without stealing focus and disposes an open menu', () => {
+  const root = createInlineTable()
+  const trigger = root.querySelector<HTMLButtonElement>('.relative > button')!
+  const outside = document.createElement('button')
+  document.body.appendChild(outside)
+  trigger.click()
+  outside.focus()
+  expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
+  expect(document.activeElement).toBe(outside)
+  trigger.click()
+  uninstall?.()
+  expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
+  trigger.click()
+  expect(document.querySelector('[data-sd-table-format-menu]')).toBeNull()
 })

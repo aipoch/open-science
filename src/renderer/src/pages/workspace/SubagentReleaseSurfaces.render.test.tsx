@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -754,7 +755,8 @@ describe('release-gate Subagent surfaces', () => {
     completedFrame.completedAt = completed.updatedAt
     Object.assign(completedAttempt, {
       status: 'completed',
-      endedAt: completed.updatedAt
+      endedAt: completed.updatedAt,
+      terminalMessageId: 'child-a-durable-answer'
     })
     completedBranch.headMessageId = 'child-a-durable-answer'
     completed.conversationGraph.messages.push({
@@ -777,7 +779,122 @@ describe('release-gate Subagent surfaces', () => {
     })
 
     expect(screen.getByText('Durable child evidence')).toBeTruthy()
+    expect(screen.getByText('Saved result available below.')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Execution completed. Check the Main Agent conversation to confirm it received the result.'
+      )
+    ).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
+  })
+
+  it('does not read hidden restored tabs, then hydrates only the activated Session once', async () => {
+    const durable = createSession()
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...durable,
+          contentLoaded: false,
+          conversationGraph: undefined,
+          runtimeContext: undefined
+        }
+      ]
+    })
+    let finish!: (value: ChatSession) => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<ChatSession>((resolve) => {
+          finish = resolve
+        })
+    )
+    const loadAll = vi.fn()
+    vi.stubGlobal('api', { ...window.api, sessions: { ...window.api.sessions, loadOne, loadAll } })
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: durable.id,
+      projectId: durable.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+    const surface = (active: boolean): React.JSX.Element => (
+      <StrictMode>
+        <SubagentPreview item={item} isActive={active} />
+        {Array.from({ length: 20 }, (_, index) => (
+          <SubagentPreview
+            key={index}
+            item={{ ...item, id: `hidden-${index}`, sessionId: `hidden-session-${index}` }}
+            isActive={false}
+          />
+        ))}
+      </StrictMode>
+    )
+    const view = renderSurface(surface(false))
+    expect(loadOne).not.toHaveBeenCalled()
+    expect(loadAll).not.toHaveBeenCalled()
+    view.rerender(surface(true))
+    expect(loadOne).toHaveBeenCalledExactlyOnceWith({
+      projectId: durable.projectId,
+      sessionId: durable.id
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    view.rerender(surface(false))
+    view.rerender(surface(true))
+    expect(loadOne).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finish(durable)
+    })
+    view.rerender(surface(false))
+    view.rerender(surface(true))
+    expect(loadOne).toHaveBeenCalledTimes(1)
+    expect(loadAll).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('automatically loads an initially visible restored tab and retries only on request after failure', async () => {
+    const durable = createSession()
+    useSessionStore.setState({ sessions: [] })
+    const loadOne = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValue(durable)
+    const loadAll = vi.fn()
+    vi.stubGlobal('api', { ...window.api, sessions: { ...window.api.sessions, loadOne, loadAll } })
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: durable.id,
+      projectId: durable.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+    const view = renderSurface(
+      <StrictMode>
+        <SubagentPreview item={item} />
+      </StrictMode>
+    )
+    await act(async () => {})
+    expect(loadOne).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('alert').textContent).toContain('could not be read')
+    view.rerender(
+      <StrictMode>
+        <SubagentPreview item={item} isActive={false} />
+      </StrictMode>
+    )
+    view.rerender(
+      <StrictMode>
+        <SubagentPreview item={item} />
+      </StrictMode>
+    )
+    expect(loadOne).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry Subagent preview' }))
+    })
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(loadAll).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('recovers the selected Frame without waiting for unrelated Session history', async () => {
@@ -872,7 +989,7 @@ describe('release-gate Subagent surfaces', () => {
 
     expect(screen.getByRole('alert').textContent).toContain('could not be read')
     expect(screen.getByRole('button', { name: 'Retry Subagent preview' }).className).toContain(
-      'focus-visible:ring-[3px]'
+      'focus-visible:ring-3'
     )
   })
 

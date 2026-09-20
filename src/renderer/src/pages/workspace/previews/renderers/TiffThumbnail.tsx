@@ -10,7 +10,7 @@ import {
   type DecodedTiffPage
 } from '../tiff-preview-types'
 import { createTiffDecodeSession } from '../tiff-preview-worker-client'
-import { useManagedPreviewResource } from '../useManagedPreviewResource'
+import { createManagedPreviewRequest } from '../preview-file-reader'
 import { TiffCanvas } from './TiffCanvas'
 
 type TiffThumbnailResult = { status: 'ready'; page: DecodedTiffPage } | { status: 'error' }
@@ -44,62 +44,60 @@ const EnabledTiffThumbnail = ({
   managedFileId,
   selectedVersionId,
   mimeType,
-  size,
-  mtimeMs,
   fallback
 }: EnabledTiffThumbnailProps): React.JSX.Element => {
   const [result, setResult] = useState<TiffThumbnailResult | null>(null)
-  const resourceState = useManagedPreviewResource(
-    {
-      projectId,
-      sessionId,
-      managedFileId,
-      selectedVersionId,
-      source,
-      path,
-      mimeType,
-      size,
-      mtimeMs,
-      maxBytes: TIFF_THUMBNAIL_LIMITS.maxFileBytes
-    },
-    result === null
-  )
-
   useEffect(() => {
-    if (resourceState.status !== 'ready' || result !== null) return
-
-    const resource = resourceState.resource
     const controller = new AbortController()
     let disposed = false
 
     void tiffThumbnailScheduler
       .schedule(controller.signal, async () => {
-        if (resource.size > TIFF_THUMBNAIL_LIMITS.maxFileBytes) {
-          throw new Error('TIFF file is too large to preview safely')
-        }
-
-        const response = await fetch(resource.url, {
-          cache: 'no-store',
-          signal: controller.signal
-        })
-        if (!response.ok) {
-          throw new Error(`TIFF thumbnail read failed with status ${response.status}`)
-        }
-
-        const data = await response.arrayBuffer()
-        if (data.byteLength !== resource.size) {
-          throw new Error('TIFF file changed during the thumbnail read')
-        }
-        if (controller.signal.aborted) throw controller.signal.reason
-
-        const session = createTiffDecodeSession(data, {
-          limits: TIFF_THUMBNAIL_LIMITS,
-          maxOutputDimension: TIFF_THUMBNAIL_MAX_DIMENSION
-        })
+        const resource = await window.api.previewResources.acquire(
+          createManagedPreviewRequest({
+            projectId,
+            sessionId,
+            managedFileId,
+            selectedVersionId,
+            source,
+            path,
+            mimeType,
+            maxBytes: TIFF_THUMBNAIL_LIMITS.maxFileBytes
+          })
+        )
         try {
-          return await session.decodePage(0, controller.signal)
+          if (controller.signal.aborted) throw controller.signal.reason
+          if (resource.size > TIFF_THUMBNAIL_LIMITS.maxFileBytes) {
+            throw new Error('TIFF file is too large to preview safely')
+          }
+
+          const response = await fetch(resource.url, {
+            cache: 'no-store',
+            signal: controller.signal
+          })
+          if (!response.ok) {
+            throw new Error(`TIFF thumbnail read failed with status ${response.status}`)
+          }
+
+          const data = await response.arrayBuffer()
+          if (data.byteLength !== resource.size) {
+            throw new Error('TIFF file changed during the thumbnail read')
+          }
+          if (controller.signal.aborted) throw controller.signal.reason
+
+          const session = createTiffDecodeSession(data, {
+            limits: TIFF_THUMBNAIL_LIMITS,
+            maxOutputDimension: TIFF_THUMBNAIL_MAX_DIMENSION
+          })
+          try {
+            return await session.decodePage(0, controller.signal)
+          } finally {
+            session.dispose()
+          }
         } finally {
-          session.dispose()
+          await window.api.previewResources
+            .release({ resourceId: resource.id })
+            .catch(() => undefined)
         }
       })
       .then((page) => {
@@ -113,7 +111,7 @@ const EnabledTiffThumbnail = ({
       disposed = true
       controller.abort()
     }
-  }, [requestKey, resourceState, result])
+  }, [requestKey, projectId, sessionId, managedFileId, selectedVersionId, source, path, mimeType])
 
   const handleDrawError = useCallback(() => setResult({ status: 'error' }), [])
 

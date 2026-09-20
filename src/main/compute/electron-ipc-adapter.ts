@@ -84,11 +84,15 @@ const changeComputeHostAuthenticationRequestSchema = z
     operationId: z.string(),
     authenticationMode: z.enum(['ssh_config', 'password']),
     username: z.string().optional(),
-    port: finiteNumberSchema,
+    port: finiteNumberSchema.optional(),
     identityFile: z.string().optional(),
     password: z.string().optional()
   })
-  .strict() satisfies z.ZodType<ChangeComputeHostAuthenticationRequest>
+  .strict()
+  .refine((request) => request.authenticationMode === 'ssh_config' || request.port !== undefined, {
+    path: ['port'],
+    message: 'Port is required for password authentication.'
+  }) satisfies z.ZodType<ChangeComputeHostAuthenticationRequest>
 
 const deleteComputeHostRequestSchema = z
   .object({ providerId: z.string() })
@@ -109,7 +113,8 @@ const computeApprovalResponseSchema = z
 
 const computeJobsListFilterSchema = z.union([
   z.object({ sessionId: z.string(), status: stringArraySchema.optional() }).strict(),
-  z.object({ nonTerminal: z.literal(true) }).strict()
+  z.object({ nonTerminal: z.literal(true) }).strict(),
+  z.object({ projectId: z.string(), since: finiteNumberSchema }).strict()
 ]) satisfies z.ZodType<ComputeJobsListFilter>
 
 const computeJobsPendingNotificationFilterSchema = z.union([
@@ -172,6 +177,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:approval-replay-pending': z.tuple([]),
   'compute:jobs:list': z.tuple([computeJobsListFilterSchema]),
   'compute:jobs:cancel': z.tuple([cancelComputeJobRequestSchema]),
+  'compute:jobs:retry-harvest': z.tuple([cancelComputeJobRequestSchema]),
   'compute:jobs:set-remote-cleanup': z.tuple([setComputeJobRemoteCleanupRequestSchema]),
   'compute:jobs:pending-notification': z.tuple([computeJobsPendingNotificationFilterSchema]),
   'compute:jobs:mark-consumed': z.tuple([z.string(), stringArraySchema]),
@@ -297,6 +303,9 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   handleComputeIpc('compute:approval-replay-pending', () => handlers.approvalReplayPending())
   // Returns a Session job feed or the global non-terminal activity projection.
   handleComputeIpc(COMPUTE_JOBS_LIST_CHANNEL, (_event, filter) => handlers.jobsList(filter))
+  handleComputeIpc('compute:jobs:retry-harvest', (_event, request) =>
+    handlers.jobsRetryHarvest(request)
+  )
   handleComputeIpc('compute:jobs:cancel', (_event, request) => handlers.jobsCancel(request))
   handleComputeIpc('compute:jobs:set-remote-cleanup', (_event, request) =>
     handlers.jobsSetRemoteCleanup(request)

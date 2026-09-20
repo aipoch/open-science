@@ -1,3 +1,7 @@
+import {
+  rebaseTaskSessionBinding,
+  rebaseTaskTurnOntoLatestSession
+} from '../session-persistence/task-admission'
 import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -46,7 +50,7 @@ const taskSettings = {
   codexManaged: false,
   providers: [],
   agentFrameworkId: 'claude-code',
-  agentFrameworks: [],
+  agentFrameworks: [] as { id: string; displayName: string }[],
   reasoningEffort: 'default',
   notificationsEnabled: true,
   conversationSkillImportEnabled: true,
@@ -76,14 +80,20 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
 })
 
 const commandsFrom = (
-  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>
+  invoke: (channel: string, callerContext: CallerContext, args: unknown[]) => Promise<unknown>,
+  settings = taskSettings
 ): ApplicationCommandByNameDispatcher => {
   const sessions = new Map<string, PersistedChatSession>()
   return {
     commandNames: () => [],
     invoke: async (channel, invocation) => {
       const args = [...invocation.args]
-      if (channel === 'settings:get-settings') return taskSettings
+      if (channel === 'settings:get-settings') return settings
+      if (channel === 'settings:bootstrap' && (args[0] as { action: string }).action === 'status')
+        return {
+          ok: true,
+          next: { runtime: ['runtime', 'install', 'codex', '--json'], provider: ['codex', 'login'] }
+        }
       try {
         const result = await invoke(channel, invocation.callerContext, args)
         if (channel === 'sessions:load-all') {
@@ -99,6 +109,8 @@ const commandsFrom = (
         if (
           !channel.startsWith('sessions:') ||
           ![
+            'sessions:bind-task-session',
+            'sessions:admit-task-turn',
             'sessions:stage-task-completion',
             'sessions:settle-task-completion',
             'sessions:fail-task-run'
@@ -109,6 +121,28 @@ const commandsFrom = (
         }
       }
 
+      if (channel === 'sessions:bind-task-session') {
+        const request = args[0] as Parameters<TaskSessionPort['bindSession']>[0]
+        const current = structuredClone(sessions.get(request.session.id)!)
+        const candidate = rebaseTaskSessionBinding(current, request)
+        const result = await invoke('sessions:save-session', invocation.callerContext, [candidate])
+        const saved = (result ?? candidate) as PersistedChatSession
+        sessions.set(saved.id, structuredClone(saved))
+        return saved
+      }
+      if (channel === 'sessions:admit-task-turn') {
+        const request = args[0] as Parameters<TaskSessionPort['admitTurn']>[0]
+        const current = structuredClone(sessions.get(request.session.id)!)
+        const candidate = rebaseTaskTurnOntoLatestSession(
+          current,
+          request.session,
+          request.contextReset
+        )
+        const result = await invoke('sessions:save-session', invocation.callerContext, [candidate])
+        const saved = (result ?? candidate) as PersistedChatSession
+        sessions.set(saved.id, structuredClone(saved))
+        return saved
+      }
       if (channel === 'sessions:stage-task-completion') {
         const request = args[0] as Parameters<TaskSessionPort['stageCompletion']>[0]
         const current = structuredClone(sessions.get(request.sessionId)!)
@@ -237,6 +271,155 @@ const createComputePreferenceHarness = (
 }
 
 describe('HeadlessTaskApi adapter', () => {
+  it('projects the registered Agent runtimes without exposing executable paths', async () => {
+    const settings = {
+      ...taskSettings,
+      claude: { resolvedPath: '/private/claude', version: '2.1.0' },
+      opencode: { resolvedPath: '/private/opencode', version: '1.0.200' },
+      codex: { resolvedPath: '/private/codex-acp', version: '1.6.2', nativeVersion: '0.145.0' },
+      claudeManaged: true,
+      codexManaged: true,
+      agentFrameworkId: 'codex',
+      agentFrameworks: [
+        { id: 'claude-code', displayName: 'Claude Code' },
+        { id: 'opencode', displayName: 'OpenCode' },
+        { id: 'codex', displayName: 'Codex' },
+        { id: 'codebuddy', displayName: 'CodeBuddy' }
+      ]
+    }
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: true,
+          agentFrameworkId: 'codex',
+          agentReady: true,
+          activeProviderReady: true,
+          runtimeReadiness: { status: 'ready' },
+          providerReadiness: { status: 'ready' }
+        }
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(invoke, settings),
+      agent: createAgent()
+    })
+
+    await expect(api.listRuntimes()).resolves.toEqual([
+      { framework: 'claude-code', status: 'ready', version: '2.1.0', source: 'managed' },
+      { framework: 'opencode', status: 'not_ready', version: '1.0.200', source: 'external' },
+      { framework: 'codex', status: 'ready', version: '0.145.0', source: 'external' },
+      { framework: 'codebuddy', status: 'missing' }
+    ])
+    expect(JSON.stringify(await api.listRuntimes())).not.toContain('/private/')
+  })
+
+  it('projects read-only readiness checks and stable next-action codes', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: true,
+          opencodeReady: true,
+          codebuddyReady: true,
+          codexReady: false,
+          agentFrameworkId: 'codex',
+          agentReady: false,
+          activeProviderReady: false,
+          runtimeReadiness: { status: 'missing' },
+          providerReadiness: { status: 'missing' }
+        }
+      }
+      if (channel === 'settings:list-skills') {
+        return [
+          {
+            id: 'writing',
+            name: 'writing',
+            displayName: 'Writing',
+            description: 'Write reports.',
+            source: 'featured',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true
+          },
+          {
+            id: 'literature-review',
+            name: 'literature-review',
+            displayName: 'Literature Review',
+            description: 'Review literature.',
+            source: 'featured',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true,
+            available: true
+          },
+          {
+            id: 'unavailable',
+            name: 'unavailable',
+            displayName: 'Unavailable',
+            description: 'Unavailable skill.',
+            source: 'personal',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            enabled: true,
+            available: false,
+            availability: 'identity-conflict'
+          }
+        ]
+      }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(api.doctor()).resolves.toEqual({
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'missing', framework: 'codex' },
+        provider: { status: 'missing' },
+        skills: { status: 'ready', enabled: ['literature-review', 'writing'] }
+      },
+      next: [
+        { code: 'runtime_missing', argv: ['runtime', 'install', 'codex', '--json'] },
+        { code: 'provider_missing', argv: ['codex', 'login'] }
+      ]
+    })
+  })
+
+  it('distinguishes configured but unusable runtime and provider state', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'settings:get-preflight') {
+        return {
+          claudeReady: false,
+          opencodeReady: false,
+          codebuddyReady: false,
+          codexReady: false,
+          agentFrameworkId: 'codex',
+          agentReady: false,
+          activeProviderReady: false,
+          runtimeReadiness: { status: 'not_ready' },
+          providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+        }
+      }
+      if (channel === 'settings:list-skills') return []
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+
+    await expect(api.doctor()).resolves.toEqual({
+      ready: false,
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: { status: 'not_ready', framework: 'codex' },
+        provider: { status: 'not_ready', reason: 'credential_invalid' },
+        skills: { status: 'ready', enabled: [] }
+      },
+      next: [
+        { code: 'runtime_not_ready', argv: ['runtime', 'install', 'codex', '--json'] },
+        { code: 'provider_not_ready', argv: ['codex', 'login'] }
+      ]
+    })
+  })
+
   it('routes Project Session defaults through the Task-only persistence command', async () => {
     const invoke = vi.fn(
       async (channel: string, _callerContext: CallerContext, args: unknown[]) => {
@@ -892,6 +1075,7 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'sessions:load-all') {
         return { sessions: [session], manifest: { version: 1 } }
       }
+      if (channel === 'artifacts:resolve-version-descriptors') return []
       if (channel === 'preview-resources:acquire') {
         return {
           id: 'resource-query',
@@ -929,6 +1113,11 @@ describe('HeadlessTaskApi adapter', () => {
     })
     await api.releaseArtifact('resource-query')
 
+    expect(invoke).toHaveBeenCalledWith(
+      'artifacts:resolve-version-descriptors',
+      taskCallerContext(),
+      [{ projectId: project.id, appSessionId: session.id, versionIds: ['artifact-query'] }]
+    )
     expect(invoke).toHaveBeenCalledWith('preview-resources:acquire', taskCallerContext(), [
       {
         source: 'artifact',
@@ -1547,4 +1736,67 @@ describe('HeadlessTaskApi adapter', () => {
     authorizationCurrent = true
     await api.runWithCallerContext(context, () => api.cancelRun(run.id))
   })
+})
+
+describe('Connector management through Task API', () => {
+  const snapshot = {
+    connectors: [{ id: 'bundled', enabled: true }],
+    customServers: [{ id: 'custom', enabled: false, transport: 'stdio', command: 'node' }],
+    ncbi: { hasApiKey: false }
+  }
+  it('shares Connector reads and mutations with Settings command owners', async () => {
+    const invoke = vi.fn(async () => snapshot)
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    expect(await api.listConnectors()).toEqual(snapshot)
+    expect(await api.getConnector('custom')).toEqual(snapshot.customServers[0])
+    await api.setConnectorEnabled('custom', true)
+    expect(invoke).toHaveBeenCalledWith('settings:set-custom-server-enabled', taskCallerContext(), [
+      { id: 'custom', enabled: true }
+    ])
+    await api.setConnectorEnabled('bundled', false)
+    expect(invoke).toHaveBeenCalledWith('settings:set-connector-enabled', taskCallerContext(), [
+      { id: 'bundled', enabled: false }
+    ])
+    await api.updateConnector('custom', { transport: 'stdio', args: [] })
+    expect(invoke).toHaveBeenCalledWith('settings:update-custom-server', taskCallerContext(), [
+      { id: 'custom', transport: 'stdio', args: [] }
+    ])
+    await api.removeConnector('custom')
+    expect(invoke).toHaveBeenCalledWith('settings:remove-custom-server', taskCallerContext(), [
+      { id: 'custom' }
+    ])
+  })
+
+  it('rejects remote mutation before accessing configuration', async () => {
+    const invoke = vi.fn(async () => snapshot)
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    await expect(
+      api.runWithCallerContext(createTaskCallerContext({ location: 'remote' }), () =>
+        api.updateConnector('custom', { transport: 'stdio' })
+      )
+    ).rejects.toThrow('local')
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('does not forward secret-bearing failure messages', async () => {
+    const invoke = vi.fn(async () => {
+      throw new Error('bad secret=do-not-print')
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    await expect(
+      api.createCredential({ kind: 'token', displayName: 'A', secret: 'do-not-print' })
+    ).rejects.toThrow('Credential operation failed')
+  })
+})
+
+it('preserves the safe saved-but-refresh-failed outcome for credential updates', async () => {
+  const message =
+    'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+  const api = new HeadlessTaskApi({
+    commands: commandsFrom(async () => {
+      throw new Error(message)
+    }),
+    agent: createAgent()
+  })
+  await expect(api.updateCredential('credential', { secret: 'private' })).rejects.toThrow(message)
 })

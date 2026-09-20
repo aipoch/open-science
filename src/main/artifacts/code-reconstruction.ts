@@ -18,12 +18,16 @@ import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import type { ArtifactVersionReconstructionProvenance } from './provenance-read-model'
 import { readArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
+import { resolveArtifactReproducibilityExecutionPlan } from './artifact-reproducibility-recipe'
+import { canonicalJson, type CanonicalJson } from './provenance-canonical'
+import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
 
 const CONTEXT_MAX_BYTES = 256 * 1024
 const PRODUCER_SCRIPT_MAX_BYTES = 160 * 1024
 const OUTPUT_MAX_BYTES = 4 * 1024
 const RESPONSE_MAX_BYTES = 1024 * 1024
-const PROMPT_VERSION = 'artifact-code-reconstruction-v2'
+// Reconstruction now selects only the sealed end-to-end dependency closure.
+const PROMPT_VERSION = 'artifact-code-reconstruction-v4'
 
 type CodeReconstructionRepository = Pick<
   import('./provenance-repository').ArtifactProvenanceRepository,
@@ -54,6 +58,7 @@ type ReconstructionSource = {
   language: NotebookKernelKind
   sourceChecksum: string
   sourceTruncated: boolean
+  replayRuns?: ProvenanceNotebookRun[]
 }
 
 type ReconstructionCacheBase = {
@@ -198,6 +203,48 @@ const projectRun = (run: ProvenanceNotebookRun, maxScriptBytes: number): Reconst
   }
 }
 
+// The immutable snapshot reader already validates the recipe against the frozen
+// graph and inputs. Recheck target/source identities here before narrowing history.
+const sealedReplayRuns = (
+  provenance: ArtifactVersionReconstructionProvenance,
+  producer: ProvenanceNotebookRun
+): ProvenanceNotebookRun[] | undefined => {
+  const execution = provenance.execution
+  const recipe = execution?.reproducibilityRecipe
+  const graph = execution?.provenanceGraph
+  if (
+    !execution ||
+    !recipe ||
+    !artifactProvenanceGraphValue(graph) ||
+    recipe.targetVersionId !== provenance.evidence.version_id ||
+    recipe.targetChecksum !== provenance.evidence.checksum ||
+    recipe.graphChecksum !== sha256(canonicalJson(graph as unknown as CanonicalJson))
+  )
+    return undefined
+  const plan = resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+  if (!plan || plan.frontier.claimScope !== 'end-to-end') return undefined
+  const byId = new Map(execution.runs.map((run) => [run.runId, run]))
+  const runs: ProvenanceNotebookRun[] = []
+  for (const step of plan.steps) {
+    if (step.kind !== 'notebook-run') return undefined
+    const run = byId.get(step.runId)
+    if (
+      !run ||
+      run.status !== 'completed' ||
+      run.scriptTruncated ||
+      run.kernelKind !== producer.kernelKind ||
+      run.kernelKind !== step.kernelKind ||
+      run.runIndex !== step.runIndex ||
+      run.runIndex > producer.runIndex ||
+      sha256(run.script) !== step.sourceChecksum ||
+      run.kernelEpochId !== producer.kernelEpochId
+    )
+      return undefined
+    runs.push(run)
+  }
+  return runs.at(-1)?.runId === producer.runId ? runs : undefined
+}
+
 const sourceState = (
   provenance: ArtifactVersionReconstructionProvenance
 ): ReconstructionSource | ArtifactCodeReconstructionState => {
@@ -213,6 +260,25 @@ const sourceState = (
   )
   if (!producerRun?.script.trim()) {
     return { state: 'unavailable', reason: 'producer-script-missing' }
+  }
+  const replayRuns = sealedReplayRuns(provenance, producerRun)
+  // Without a sealed end-to-end plan, failed cells may still contribute state.
+  // Keep the legacy guard before cache lookup and both reconstruction paths.
+  if (
+    !replayRuns &&
+    producerRun.kernelKind !== 'bash' &&
+    provenance.execution.runs.some(
+      (run) =>
+        run.runIndex <= producerRun.runIndex &&
+        run.kernelKind === producerRun.kernelKind &&
+        (!producerRun.kernelEpochId ||
+          !run.kernelEpochId ||
+          run.kernelEpochId === producerRun.kernelEpochId) &&
+        run.status !== 'completed' &&
+        (run.runId === producerRun.runId || run.kernelDispatched !== false)
+    )
+  ) {
+    return { state: 'unavailable', reason: 'supporting-code-incomplete' }
   }
   const hasHelperKeys = provenance.execution.runs.some(
     (run) => (run.helperModuleKeys?.length ?? 0) > 0
@@ -246,6 +312,7 @@ const sourceState = (
     producerRun,
     language: producer.kernel_kind,
     sourceChecksum: provenance.evidence.execution_snapshot_checksum,
+    ...(replayRuns ? { replayRuns } : {}),
     sourceTruncated: Boolean(
       provenance.execution.truncation ||
       producerRun.scriptTruncated ||
@@ -288,6 +355,14 @@ const orderedHelpers = (
 const buildFreshReplayCode = (source: ReconstructionSource): string | undefined => {
   const producer = source.producerRun
   const allHelpers = source.provenance.execution?.helperModules
+  if (source.replayRuns && source.replayRuns.every((run) => !run.helperModuleKeys?.length)) {
+    const code = source.replayRuns
+      .map((run) => `# === Captured Notebook run: ${run.runId} ===\n${run.script}`)
+      .join('\n\n')
+    if (byteLength(code) > RESPONSE_MAX_BYTES)
+      throw new Error('Replay source exceeds the reconstruction limit.')
+    return code
+  }
   if (!allHelpers?.length || source.language !== 'python') return undefined
   const producerKeys = new Set(producer.helperModuleKeys ?? [])
   if (producerKeys.size === 0) return undefined
@@ -295,8 +370,8 @@ const buildFreshReplayCode = (source: ReconstructionSource): string | undefined 
   if (helpers.length !== producerKeys.size) {
     throw new Error('Producer helper evidence is incomplete.')
   }
-  const replayRuns = source.provenance
-    .execution!.runs.filter(
+  const replayRuns = (source.replayRuns ?? source.provenance.execution!.runs)
+    .filter(
       (run) =>
         run.runIndex <= producer.runIndex &&
         run.kernelKind === producer.kernelKind &&
@@ -383,8 +458,8 @@ const buildContext = (
   source: ReconstructionSource
 ): { serialized: string; checksum: string; truncated: boolean } => {
   const { provenance, producerRun } = source
-  const earlierRuns = provenance
-    .execution!.runs.filter(
+  const earlierRuns = (source.replayRuns ?? provenance.execution!.runs)
+    .filter(
       (run) =>
         run.runId !== producerRun.runId &&
         run.runIndex <= producerRun.runIndex &&
@@ -440,32 +515,44 @@ const buildContext = (
     }
   }
 
+  const omitRun = (run: ReconstructionRun): void => {
+    context.omissions.omittedRuns += 1
+    context.omissions.omittedOutputs += run.outputs.length
+    context.omissions.omittedBytes += byteLength(escapePromptEvidence(JSON.stringify(run)))
+    if (!context.omissions.reasons.includes('context-byte-limit')) {
+      context.omissions.reasons.push('context-byte-limit')
+    }
+  }
   for (const run of earlierRuns) {
     const projected = projectRun(run, PRODUCER_SCRIPT_MAX_BYTES)
     context.execution.runs.push(projected)
-    if (byteLength(JSON.stringify(context)) > CONTEXT_MAX_BYTES) {
+    if (byteLength(buildPrompt(JSON.stringify(context))) > CONTEXT_MAX_BYTES) {
       context.execution.runs.pop()
-      context.omissions.omittedRuns += 1
-      context.omissions.omittedOutputs += run.outputs.length
-      context.omissions.omittedBytes += byteLength(JSON.stringify(projected))
-      if (!context.omissions.reasons.includes('context-byte-limit')) {
-        context.omissions.reasons.push('context-byte-limit')
-      }
+      omitRun(projected)
     }
   }
 
   let serialized = JSON.stringify(context)
-  if (byteLength(serialized) > CONTEXT_MAX_BYTES) {
-    const producerWithoutOutputs = { ...producer, outputs: [] }
+  // Omission metadata also consumes space; discard the oldest retained history until it fits.
+  while (
+    byteLength(buildPrompt(serialized)) > CONTEXT_MAX_BYTES &&
+    context.execution.runs.length > 1
+  ) {
+    omitRun(context.execution.runs.pop()!)
+    serialized = JSON.stringify(context)
+  }
+  if (byteLength(buildPrompt(serialized)) > CONTEXT_MAX_BYTES && producer.outputs.length > 0) {
     context.omissions.omittedOutputs += producer.outputs.length
-    context.omissions.omittedBytes += byteLength(JSON.stringify(producer.outputs))
+    context.omissions.omittedBytes += byteLength(
+      escapePromptEvidence(JSON.stringify(producer.outputs))
+    )
     if (!context.omissions.reasons.includes('context-byte-limit')) {
       context.omissions.reasons.push('context-byte-limit')
     }
-    context.execution.runs = [producerWithoutOutputs]
+    producer.outputs = []
     serialized = JSON.stringify(context)
   }
-  if (byteLength(serialized) > CONTEXT_MAX_BYTES) {
+  if (byteLength(buildPrompt(serialized)) > CONTEXT_MAX_BYTES) {
     throw new Error('The producer script is too large to reconstruct safely.')
   }
   return {

@@ -1,6 +1,29 @@
+import { ClassificationSettingsOwner } from './classification-settings'
+import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
+import type { SpecialistListItem } from '../../shared/specialist'
 import { homedir } from 'node:os'
+import { z } from 'zod'
+import { MarketplaceInstallConflict } from '../skills/user-skill-repository'
+import { SkillMarketplaceService } from '../skills/marketplace-service'
+import { SkillMarketplaceInstallQueue } from '../skills/marketplace-install-queue'
+import type {
+  SkillMarketplaceCatalog,
+  SkillMarketplaceCatalogRequest,
+  SkillMarketplaceBatchRequest,
+  SkillMarketplaceDetail,
+  SkillMarketplaceDetailRequest,
+  SkillMarketplaceInstallRequest,
+  SkillMarketplaceInstallResult,
+  SkillMarketplaceResult
+} from '../../shared/skill-marketplace'
 import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import {
+  BootstrapError,
+  bootstrapRequestSchema,
+  type BootstrapResult
+} from '../../shared/bootstrap'
 
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
@@ -32,7 +55,7 @@ import type {
   InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  Preflight,
+  ReadinessPreflight,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
   ResolveSkillDocumentRequest,
@@ -77,6 +100,7 @@ import type {
   UpdateSkillRequest,
   UpsertProviderRequest,
   ValidateProviderRequest,
+  SaveValidatedProviderResult,
   ValidateProviderResult
 } from '../../shared/settings'
 import { createLogger, type Logger } from '../logger'
@@ -84,6 +108,23 @@ import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from '../../shared/notebook-network'
+import type {
+  InstallMissingWslDependenciesRequest,
+  InstallWslDistroRequest,
+  OpenWslTerminalRequest,
+  SelectWslProfileRequest,
+  SwitchToPowerShellResult,
+  LocalShellRuntimePreference,
+  UseWsl2BashResult,
+  WslSelection,
+  WslPlatformInstallResult,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSetupConversationBootstrap,
+  WslSupportHandoff
+} from '../../shared/wsl-setup'
+import type { Wsl2BashPreviewStatus } from '../../shared/wsl-setup'
+import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
@@ -103,9 +144,11 @@ import type { CodexDetectDeps } from './codex-detect'
 import type { InstallManagedOpencodeOptions } from './managed-opencode'
 import type { InstallManagedCodexOptions, ManagedCodexInstallOutcome } from './managed-codex'
 import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './managed-claude'
-import { isEncryptionAvailable } from './crypto'
+import { isEncryptionAvailable, isCredentialStorageAvailable } from './crypto'
+import { getCredentialStore } from './credential-store-mode'
 import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
+import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
 import { SettingsPreferencesModule, type SetDataRootOptions } from './preferences'
 import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
@@ -118,6 +161,7 @@ import type {
 import { DeviceCredentialStore, type ResolvedOAuthDeviceCredential } from './device-credentials'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
@@ -157,6 +201,7 @@ export type UninstallResult = {
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   configRoot?: string
+  installCoordinator?: SettingsInstallCoordinator
   // Packaged main entry reused as the isolated stdio Skill runtime MCP child.
   skillRuntimeMcpEntryPath?: string
   log?: Logger
@@ -179,7 +224,10 @@ export type SettingsServiceOptions = {
   userSkills?: UserSkillRepository
   withUserSkillRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   githubFetch?: FetchLike
+  readMarketplaceSpecialists?: () => Promise<SpecialistListItem[]>
+  withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
+  onProviderHealthChanged?: () => Promise<void>
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -209,6 +257,21 @@ export type SettingsServiceOptions = {
   getNotebookNetworkStatus?: () => Promise<NotebookNetworkStatus>
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
+  wslSetup?: {
+    getStatus?(): WslSetupStatus
+    reconcileInterruptedOperation?(): Promise<WslSetupStatus>
+    probe(): Promise<WslSetupSnapshot>
+    installPlatform(): Promise<WslPlatformInstallResult>
+    installMissingDependencies(expectedRevision: number): Promise<WslSetupSnapshot>
+    select(request: SelectWslProfileRequest): Promise<WslSetupSnapshot>
+    installRecommendedDistro(distro?: string): Promise<WslSetupSnapshot>
+    openTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot>
+    createSupportHandoff(): Promise<WslSupportHandoff>
+    requireLatestReadySelection(): Promise<WslSelection>
+  }
+  wslSetupSessions?: { mintLocalToken(): string }
+  ensureDefaultWslSetupWorkspace?: () => Promise<void>
+  wsl2PreviewStatus?: () => Wsl2BashPreviewStatus
   // Encrypted-token controller for claude-isolated; default-constructed against this.configRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -222,6 +285,152 @@ export type SettingsServiceOptions = {
 // object shared by the settings IPC handlers and the ACP runtime. Secrets are decrypted here only
 // transiently; nothing that leaves this object (views, spawn config aside) carries plaintext.
 class SettingsService {
+  private readonly skillMarketplace = new SkillMarketplaceService()
+  private readonly skillMarketplaceQueue = new SkillMarketplaceInstallQueue({
+    retainSnapshot: (request) => this.skillMarketplace.retainSnapshot(request),
+    install: (request, signal) => this.performSkillMarketplaceInstall(request, false, signal),
+    refresh: () => this.skills.refreshMarketplace()
+  })
+
+  startSkillMarketplaceBatch(
+    request: SkillMarketplaceBatchRequest,
+    notifyChanged: () => void
+  ): ReturnType<SkillMarketplaceInstallQueue['start']> {
+    return this.skillMarketplaceQueue.start(request, notifyChanged)
+  }
+
+  getSkillMarketplaceBatch(): ReturnType<SkillMarketplaceInstallQueue['get']> {
+    return this.skillMarketplaceQueue.get()
+  }
+
+  stopSkillMarketplaceBatch(id: string): boolean {
+    return this.skillMarketplaceQueue.stop(id)
+  }
+
+  async listSkillMarketplace(
+    request?: SkillMarketplaceCatalogRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceCatalog>> {
+    const result = await this.skillMarketplace.list(request)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        installations: await this.skills.marketplaceInstallations(result.value.entries)
+      }
+    }
+  }
+
+  async getSkillMarketplaceDetail(
+    request: SkillMarketplaceDetailRequest
+  ): Promise<SkillMarketplaceResult<SkillMarketplaceDetail>> {
+    const parsed = z
+      .strictObject({
+        snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+        id: z
+          .string()
+          .max(128)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        previewUpdate: z.boolean().optional()
+      })
+      .safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'snapshot-unavailable' }
+    const identity = { snapshotId: parsed.data.snapshotId, id: parsed.data.id }
+    const result = await this.skillMarketplace.detail(identity)
+    if (!result.ok) return result
+    let updatePreview: SkillMarketplaceDetail['updatePreview']
+    if (parsed.data.previewUpdate) {
+      const downloaded = await this.skillMarketplace.download(identity)
+      if (!downloaded.ok) return downloaded
+      try {
+        updatePreview = await this.skills.previewMarketplaceUpdate(downloaded.value)
+      } catch (error) {
+        return {
+          ok: true,
+          value: {
+            ...result.value,
+            installation: {
+              kind: 'conflict',
+              reason:
+                error instanceof MarketplaceInstallConflict
+                  ? error.reason
+                  : 'installation-unverifiable'
+            }
+          }
+        }
+      }
+    }
+    return {
+      ok: true,
+      value: {
+        ...result.value,
+        ...(updatePreview ? { updatePreview } : {}),
+        installation: await this.skills.marketplaceInstallation(
+          result.value.entry.id,
+          result.value.entry.version
+        )
+      }
+    }
+  }
+
+  async installSkillMarketplace(
+    request: SkillMarketplaceInstallRequest
+  ): Promise<SkillMarketplaceInstallResult> {
+    return this.performSkillMarketplaceInstall(request, true)
+  }
+
+  private async performSkillMarketplaceInstall(
+    request: SkillMarketplaceInstallRequest,
+    refresh: boolean,
+    signal?: AbortSignal
+  ): Promise<SkillMarketplaceInstallResult> {
+    const parsed = z
+      .strictObject({
+        snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+        id: z
+          .string()
+          .max(128)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+        expectedVersion: z.string().max(128).nullable(),
+        updateToken: z.string().uuid().optional()
+      })
+      .safeParse(request)
+    if (!parsed.success) return { ok: false, error: 'conflict' }
+    const { expectedVersion, updateToken, ...identity } = parsed.data
+    const downloaded = await this.skillMarketplace.download(identity, signal)
+    if (!downloaded.ok) return downloaded
+    try {
+      signal?.throwIfAborted()
+      const result: {
+        id: string
+        status: 'imported' | 'unchanged' | 'updated'
+        refreshFailed?: boolean
+      } = refresh
+        ? await this.skills.installMarketplace(downloaded.value, expectedVersion, updateToken)
+        : await this.skills.installMarketplacePackage(
+            downloaded.value,
+            expectedVersion,
+            updateToken
+          )
+      return {
+        ok: true,
+        value: {
+          id: result.id,
+          status: result.status,
+          version: downloaded.value.receipt.version,
+          ...(result.refreshFailed ? { refreshFailed: true } : {})
+        }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof MarketplaceInstallConflict ? 'conflict' : 'installation-failed',
+        ...(error instanceof MarketplaceInstallConflict ? { reason: error.reason } : {})
+      }
+    }
+  }
+
+  readonly classification: ClassificationSettingsOwner
   private readonly repository: SettingsRepository
   private readonly preferences: SettingsPreferencesModule
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
@@ -229,6 +438,7 @@ class SettingsService {
   private readonly connectors: ConnectorSettingsModule
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
+  private readonly installCoordinator: SettingsInstallCoordinator
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
   private readonly configRoot: string
@@ -238,6 +448,10 @@ class SettingsService {
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
+  private readonly wslSetup?: SettingsServiceOptions['wslSetup']
+  private readonly wslSetupSessions?: SettingsServiceOptions['wslSetupSessions']
+  private readonly ensureDefaultWslSetupWorkspace?: SettingsServiceOptions['ensureDefaultWslSetupWorkspace']
+  private readonly wsl2PreviewStatus: () => Wsl2BashPreviewStatus
   private readonly userClaudeDir: string
   private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
@@ -246,22 +460,23 @@ class SettingsService {
   private deviceCredentialAuthenticator?: (credentialId: string) => Promise<void>
   private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
   private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
-  private skillDeletionGuard?: (skillId: string) => Promise<void>
+  private skillDeletionGuard?: (request: DeleteSkillRequest) => Promise<void>
 
   hasActiveInstall(): boolean {
-    return this.runtimeManager.hasActiveInstall()
+    return this.installCoordinator.getActiveId() !== undefined
   }
 
   getActiveInstallId(): string | undefined {
-    return this.runtimeManager.getActiveInstallId()
+    return this.installCoordinator.getActiveId()
   }
 
   holdInstallAdmission(): () => void {
-    return this.runtimeManager.holdInstallAdmission()
+    return this.installCoordinator.holdAdmission()
   }
 
   async dispose(): Promise<void> {
     const outcomes = await Promise.allSettled([
+      this.skillMarketplaceQueue.dispose(),
       this.providers.dispose(),
       this.runtimeManager.dispose()
     ])
@@ -272,7 +487,9 @@ class SettingsService {
 
   constructor(options: SettingsServiceOptions = {}) {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
+    this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
+    this.classification = new ClassificationSettingsOwner(this.repository)
     this.networkProxy = new NetworkProxySettingsOwner({
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
@@ -300,6 +517,10 @@ class SettingsService {
       (async () => {
         throw new Error('Notebook network sandbox removal is unavailable.')
       })
+    this.wslSetup = options.wslSetup
+    this.wslSetupSessions = options.wslSetupSessions
+    this.ensureDefaultWslSetupWorkspace = options.ensureDefaultWslSetupWorkspace
+    this.wsl2PreviewStatus = options.wsl2PreviewStatus ?? wsl2BashPreviewStatus
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
@@ -319,6 +540,8 @@ class SettingsService {
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
       userSkills: options.userSkills,
       withUserSkillRecoveryBarrier: options.withUserSkillRecoveryBarrier,
+      readMarketplaceSpecialists: options.readMarketplaceSpecialists,
+      withMarketplaceImpactLock: options.withMarketplaceImpactLock,
       githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
@@ -328,6 +551,7 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       skills: this.skills,
       connectors: this.connectors,
+      installCoordinator: this.installCoordinator,
       allocateSettingsIdSequence,
       detectDeps: options.detectDeps,
       opencodeDetectDeps: options.opencodeDetectDeps,
@@ -355,7 +579,12 @@ class SettingsService {
       claudeIsolatedAuth: options.claudeIsolatedAuth,
       claudeSharedAuth: options.claudeSharedAuth
     })
+    const providerHealth = new ProviderRuntimeHealthOwner(
+      this.repository,
+      options.onProviderHealthChanged
+    )
     this.backendResolver = new AgentBackendResolver({
+      onProviderFailure: (target, failure) => providerHealth.observe(target, failure),
       readSettings: () => this.repository.getSettings(),
       providers: this.providers,
       runtime: this.runtimeManager,
@@ -387,7 +616,10 @@ class SettingsService {
       operation.phase('migrate-legacy-key-refs')
       const settings = await this.migrateLegacyKeyRefs(stored)
       operation.phase('build-renderer-view')
-      const snapshot = buildSettingsSnapshot(settings, this.runtimeManager, this.providers)
+      const snapshot = {
+        ...buildSettingsSnapshot(settings, this.runtimeManager, this.providers),
+        credentialStore: getCredentialStore()
+      }
       operation.complete({ providerCount: settings.providers.length })
       return snapshot
     } catch (error) {
@@ -419,14 +651,15 @@ class SettingsService {
   }
 
   // Sets one env's high-risk package-install authorization (keyed by envId) for a language, returning
-  // the refreshed enablement. This is the separate opt-in that lets Open Science write packages into an
+  // the refreshed enablement. This is the separate opt-in that lets Open-Science write packages into an
   // external env; it does not affect whether the env is enabled for execution.
   async setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement> {
-    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized)
+    return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized, library)
   }
 
   async getAgentEnvironmentCreationEnabled(): Promise<boolean> {
@@ -483,8 +716,143 @@ class SettingsService {
     return this.getNotebookNetworkStatusImpl()
   }
 
+  probeWslSetup(): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.probe()
+  }
+
+  async getWslSetupStatus(): Promise<WslSetupStatus> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    let status: WslSetupStatus
+    if (this.wslSetup.reconcileInterruptedOperation) {
+      status = await this.wslSetup.reconcileInterruptedOperation()
+    } else if (this.wslSetup.getStatus) {
+      status = this.wslSetup.getStatus()
+    } else {
+      throw new Error('WSL setup status is unavailable.')
+    }
+    if (!status.snapshot) return status
+
+    // Readiness is intentionally cached until the user checks again, but Shell activation is a
+    // separate persisted setting and can change without another WSL probe. Project the current
+    // activation into the cached readiness snapshot so reopening Settings never revives the prior
+    // runtime label.
+    const settings = await this.repository.getSettings()
+    const readiness = { ...status.snapshot }
+    delete readiness.activeRuntime
+    delete readiness.activatedSelection
+    const snapshot = Object.freeze({
+      ...readiness,
+      ...(settings.localShellRuntime ? { activeRuntime: settings.localShellRuntime } : {}),
+      ...(settings.activatedWslSelection
+        ? { activatedSelection: Object.freeze({ ...settings.activatedWslSelection }) }
+        : {})
+    })
+    return Object.freeze({ ...status, snapshot })
+  }
+
+  installWslPlatform(): Promise<WslPlatformInstallResult> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installPlatform()
+  }
+
+  installMissingWslDependencies(
+    request: InstallMissingWslDependenciesRequest
+  ): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installMissingDependencies(request.expectedRevision)
+  }
+
+  selectWslProfile(request: SelectWslProfileRequest): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.select(request)
+  }
+
+  installRecommendedWslDistro(request: InstallWslDistroRequest): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.installRecommendedDistro(request.distro)
+  }
+
+  openWslTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    return this.wslSetup.openTerminal(request)
+  }
+
+  async createWslSupportHandoff(): Promise<WslSetupConversationBootstrap> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    if (!this.wslSetupSessions) throw new Error('WSL setup Session capability is unavailable.')
+    await this.ensureDefaultWslSetupWorkspace?.()
+    await this.wslSetup.probe()
+    const handoff = await this.wslSetup.createSupportHandoff()
+    return Object.freeze({
+      handoff,
+      setupSessionToken: this.wslSetupSessions.mintLocalToken()
+    })
+  }
+
+  async switchLocalShellToPowerShell(): Promise<{
+    result: SwitchToPowerShellResult
+    mutation: LocalShellRuntimeMutation
+  }> {
+    const write = await this.repository.setLocalShellRuntime('powershell')
+    return Object.freeze({
+      result: Object.freeze({
+        runtimeBinding: Object.freeze({ kind: 'powershell', version: '5.1' }),
+        appliesTo: 'subsequent-executions',
+        wslProfilePreserved:
+          write.settings.wslSelection !== undefined ||
+          write.settings.activatedWslSelection !== undefined
+      }),
+      mutation: write.mutation
+    })
+  }
+
+  async useWsl2Bash(): Promise<{
+    result: UseWsl2BashResult
+    mutation: LocalShellRuntimeMutation
+  }> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    const selection = await this.wslSetup.requireLatestReadySelection()
+    const write = await this.repository.setLocalShellRuntime('wsl2-bash', selection)
+    return Object.freeze({
+      result: Object.freeze({
+        runtime: 'wsl2-bash',
+        selection: Object.freeze({ ...selection }),
+        appliesTo: 'subsequent-executions'
+      }),
+      mutation: write.mutation
+    })
+  }
+
+  getWsl2BashPreviewStatus(): Wsl2BashPreviewStatus {
+    return this.wsl2PreviewStatus()
+  }
+
+  private requireWsl2Preview(): void {
+    if (!this.wsl2PreviewStatus().available) {
+      throw new Error('Notebook WSL2 Bash Preview is unavailable.')
+    }
+  }
+
+  async getLocalShellRuntimePreference(): Promise<LocalShellRuntimePreference | undefined> {
+    return (await this.repository.getSettings()).localShellRuntime
+  }
+
+  restoreLocalShellRuntimePreference(mutation: LocalShellRuntimeMutation): Promise<boolean> {
+    return this.repository.restoreLocalShellRuntime(mutation)
+  }
+
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
-    if (!isEncryptionAvailable()) return settings
+    if (getCredentialStore() === 'file' || !isEncryptionAvailable()) return settings
     let changed = await this.providers.migrateLegacyKeyRefs(settings.providers)
     changed = (await this.connectors.migrateLegacyNcbiKeyRef(settings.connectors)) || changed
     return changed ? this.repository.getSettings() : settings
@@ -750,6 +1118,43 @@ class SettingsService {
     )
   }
 
+  // Attempt-owned projection: never changes Main toggles or the admitted provider/model.
+  async prepareDelegatedSkills(
+    configRoot: string,
+    skillIds: readonly string[]
+  ): Promise<{
+    skillIds: string[]
+    catalog: SkillCatalogEntry[]
+    dispose(): Promise<void>
+  }> {
+    const forced = new Set(skillIds)
+    const dispose = (): Promise<void> =>
+      new ClaudeCodeSkillMaterializer().sync(configRoot, [], { directoryLayout: 'agent-facing' })
+    try {
+      await this.runtimeManager.materializeAgentSkills(
+        await this.repository.getSettings(),
+        configRoot,
+        forced,
+        { directoryLayout: 'agent-facing' }
+      )
+      const catalog = await this.skills.delegatedSkillCatalog(
+        join(configRoot, 'skills'),
+        forced,
+        (settings) => this.connectors.connectorSkillCatalogEntries(settings.connectors)
+      )
+      const names = new Set(catalog.map((entry) => entry.name))
+      const prepared = (await this.skills.listSpecialistSkillCatalog())
+        .filter((entry) => names.has(entry.frameworkName))
+        .map((entry) => entry.id)
+      if (skillIds.some((id) => !prepared.includes(id)))
+        throw new Error('A bound Specialist Skill could not be prepared for the delegated Attempt.')
+      return { skillIds: prepared, catalog, dispose }
+    } catch (error) {
+      await dispose()
+      throw error
+    }
+  }
+
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     return this.skills.getSkillDetail(id)
   }
@@ -838,7 +1243,7 @@ class SettingsService {
     return this.skills.deleteSkill(request, this.skillDeletionGuard)
   }
 
-  setSkillDeletionGuard(guard: (skillId: string) => Promise<void>): void {
+  setSkillDeletionGuard(guard: (request: DeleteSkillRequest) => Promise<void>): void {
     this.skillDeletionGuard = guard
   }
 
@@ -927,12 +1332,75 @@ class SettingsService {
     return this.skills.importAgentHomeSkills(request)
   }
   // Computes the startup gates from a fresh or immediate startup-chain runtime probe.
-  async getPreflight(): Promise<Preflight> {
+  async getPreflight(): Promise<ReadinessPreflight> {
     return this.runtimeManager.getPreflight(this.providers)
   }
 
+  async bootstrap(
+    input: unknown,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<BootstrapResult> {
+    const parsed = bootstrapRequestSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, code: 'invalid_request' }
+    const request = parsed.data
+    try {
+      if (request.action === 'status') {
+        const settings = await this.repository.getSettings()
+        const canPrepareCodex =
+          settings.agentFrameworkId === 'codex' ||
+          (!settings.agentFrameworkId && settings.providers.length === 0)
+        const provider =
+          settings.providers.find(({ id }) => id === settings.activeProviderId) ??
+          settings.providers[0]
+        const providerArgv = !provider
+          ? ['codex', 'login']
+          : provider.type === 'codex-isolated' && provider.codexAuthMode === 'isolated'
+            ? ['codex', 'login', '--force']
+            : provider.id === 'cli-openai' &&
+                provider.type === 'official' &&
+                provider.vendorId === 'openai' &&
+                provider.model
+              ? [
+                  'provider',
+                  'add',
+                  '--type',
+                  'official',
+                  '--vendor',
+                  'openai',
+                  '--model',
+                  settings.activeModel ?? provider.model,
+                  '--api-key-env',
+                  'OPENAI_API_KEY',
+                  '--json'
+                ]
+              : undefined
+        return {
+          ok: true,
+          next: canPrepareCodex
+            ? { runtime: ['runtime', 'install', 'codex', '--json'], provider: providerArgv }
+            : {}
+        }
+      }
+      if (request.action === 'runtime' || request.action === 'codex-prepare') {
+        await this.runtimeManager.bootstrapCodex(onEvent)
+        if (request.action === 'codex-prepare') await this.providers.prepareBootstrapCodex()
+      } else if (request.action === 'codex-complete') {
+        return { ok: true, providerId: await this.providers.completeBootstrapCodex() }
+      } else if (request.action === 'provider') {
+        return {
+          ok: true,
+          providerId: await this.providers.bootstrapOpenAi(request.key, request.model)
+        }
+      } else await this.connectors.bootstrapOpenAlex(request.key)
+      return { ok: true }
+    } catch (error) {
+      // Installer/provider exceptions can contain secret inputs. Only return our closed codes.
+      return { ok: false, code: error instanceof BootstrapError ? error.code : 'bootstrap_failed' }
+    }
+  }
+
   // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so
-  // a runtime installed outside Open Science between launches is picked up and onboarding can be
+  // a runtime installed outside Open-Science between launches is picked up and onboarding can be
   // completed with Claude or OpenCode alone.
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     return this.runtimeManager.checkEnvironment()
@@ -1040,6 +1508,19 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  async saveValidatedProvider(
+    request: UpsertProviderRequest
+  ): Promise<SaveValidatedProviderResult> {
+    const result = await this.providers.saveValidatedProvider(request)
+    if (!result.providerId && result.validation.applied !== true) return result
+    try {
+      return { ...result, snapshot: await this.getSettingsView() }
+    } catch {
+      // The operation completed; preserve configuration/health outcomes if projection is unavailable.
+      return result
+    }
+  }
+
   async rememberCodexAutoHttpsFallback(): Promise<boolean> {
     return this.repository.rememberCodexAutoHttpsFallback()
   }
@@ -1126,7 +1607,8 @@ class SettingsService {
 
   // Reports whether the OS keychain is usable so the UI can warn before a save is attempted.
   isEncryptionAvailable(): boolean {
-    return isEncryptionAvailable()
+    // Legacy RPC name: this reports whether Settings can save credentials.
+    return isCredentialStorageAvailable()
   }
 
   // Reads the connector enablement/config block, read fresh so callers see the latest saved state.

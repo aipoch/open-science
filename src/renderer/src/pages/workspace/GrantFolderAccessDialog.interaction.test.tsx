@@ -799,3 +799,47 @@ describe('GrantFolderAccessDialog', () => {
     expect(winListDir).toHaveBeenCalledWith('D:\\')
   })
 })
+
+it('regression: disables granting after the candidate fails directory listing', async () => {
+  renderDialog()
+  await flush()
+  listDir.mockRejectedValueOnce(new Error('ENOTDIR: not a directory'))
+  await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+  await typeInto(pathInput()!, `${HOME}/audit.txt`)
+  await keyOn(pathInput()!, 'Enter')
+  await flush()
+  expect(document.body.textContent).toContain('Not a folder:')
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-testid="grant-access-grant"]')?.disabled
+  ).toBe(true)
+  expect(grantRoot).not.toHaveBeenCalled()
+})
+
+it('regression: displays a dialog roots initialization failure', async () => {
+  window.api.localFs.getRoots = vi.fn().mockRejectedValue(new Error('Roots unavailable'))
+  renderDialog()
+  await flush()
+  expect(document.body.textContent).toContain('Roots unavailable')
+})
+
+it('retries dialog initialization and lists Home', async () => {
+  vi.mocked(window.api.localFs.getRoots).mockRejectedValueOnce(new Error('Roots unavailable'))
+  renderDialog()
+  await flush()
+  await click(
+    Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Retry')
+  )
+  await flush()
+  expect(listDir).toHaveBeenCalledWith(HOME)
+  expect(document.body.textContent).not.toContain('Roots unavailable')
+})
+
+it('disables granting while the current directory has not finished loading', async () => {
+  renderDialog()
+  await flush()
+  listDir.mockReturnValueOnce(new Promise(() => undefined))
+  await click(document.querySelector('[data-testid="grant-access-folder-Projects"]'))
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-testid="grant-access-grant"]')?.disabled
+  ).toBe(true)
+})

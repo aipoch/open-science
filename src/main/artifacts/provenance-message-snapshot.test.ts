@@ -9,7 +9,7 @@ import {
   projectConversationMessage,
   synchronizeActiveConversationActivities
 } from '../../shared/conversation-graph'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { normalizeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ReviewRepository } from '../reviewer/repository'
 import { createPngInlineSource } from './artifact-test-fixtures'
@@ -43,7 +43,7 @@ describe('Provenance Message snapshots', () => {
     })
     const graph = synchronizeActiveConversationActivities(
       createLinearConversationGraph({
-        sessionId: 'session-1',
+        sessionId: 'pending-session-123-1',
         messages: [
           {
             id: 'prompt-1',
@@ -165,6 +165,12 @@ describe('Provenance Message snapshots', () => {
       getClient: () => Promise.resolve(client)
     })
     const findVersions = vi.spyOn(client.artifactVersion, 'findMany')
+
+    const restoredSession = normalizeSessionFile({ version: 1, session })
+    if (!restoredSession) throw new Error('Expected a restored Session.')
+    await expect(
+      snapshots.validateFinalizedMessageBindings(restoredSession)
+    ).resolves.toBeUndefined()
 
     const staleSession = structuredClone(session)
     if (!staleSession.conversationGraph) {

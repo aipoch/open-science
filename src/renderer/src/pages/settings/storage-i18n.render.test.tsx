@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { StoragePanel } from './StoragePanel'
 import { StorageMigrationModal } from './StorageMigrationModal'
 
@@ -39,6 +40,14 @@ const USAGE = {
 }
 
 beforeEach(() => {
+  useStorageInfoStore.setState({
+    status: null,
+    info: null,
+    scannedAt: null,
+    isLoading: false,
+    isRefreshing: false,
+    loadError: undefined
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -82,6 +91,39 @@ afterEach(() => {
 })
 
 describe('StoragePanel copy', () => {
+  it('shows shared content and literature checkpoint usage in English and Chinese', async () => {
+    vi.mocked(window.api.storage.getInfo).mockResolvedValue({
+      dataRoot: '/home/u/OpenScience',
+      defaultDataRoot: '/home/u/OpenScience',
+      defaultParent: '/home/u',
+      isDefault: true,
+      dataRootMissing: false,
+      legacyDataMovePrompt: false,
+      cleanupPending: false,
+      canAutoSelectDataDrive: false,
+      availableBytes: 500_000_000_000,
+      usage: {
+        categories: [
+          { key: 'content', bytes: 125_000_000 },
+          { key: 'literature', bytes: 60_000 }
+        ],
+        totalBytes: 125_060_000
+      }
+    })
+    await act(async () => root.render(<StoragePanel />))
+    await flush()
+    expect(container.textContent).toContain('Shared content')
+    expect(container.textContent).toContain('Literature settings and tasks')
+    expect(container.textContent).toContain('125.0 MB')
+    expect(container.textContent).toContain('60.0 KB')
+    switchTo('zh-Hans')
+    expect(container.textContent).toContain('共享内容')
+    expect(container.textContent).toContain('文献配置与任务')
+    switchTo('zh-Hant')
+    expect(container.textContent).toContain('共用內容')
+    expect(container.textContent).toContain('文獻設定與任務')
+  })
+
   it('translates the data-location section and re-renders on language change', async () => {
     act(() => {
       root.render(<StoragePanel />)

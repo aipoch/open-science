@@ -1,8 +1,17 @@
-import { type Dirent, existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  type Dirent,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import type { NotebookEnvironmentLock, NotebookLanguage } from '../../shared/notebook'
 import {
   bootTokenProvesReboot,
   listOperationChildren,
@@ -65,7 +74,9 @@ import {
 } from './windows-micromamba-runner'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
 import { sandboxedPackageSpawn } from './package-process-sandbox'
-import type { InstallRequest } from './package-manager'
+import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
+import { nativeLockRestoreState, restoreNativeEnvironmentLock } from './native-lock-restoration'
+import { discardImportedEnvironmentLock } from './imported-environment-lock'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import {
@@ -82,6 +93,7 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  importedEnvironmentLockMarkerPath,
   legacyDefaultEnvPrefix,
   logicalEnvNameFromDirectory,
   isRepairRequired,
@@ -155,7 +167,7 @@ export const DEFAULT_R_SPEC: EnvSpec = {
   name: DEFAULT_R_ENV,
   language: 'r',
   version: DEFAULT_MANAGED_VERSION.r,
-  packages: [`r-base=${DEFAULT_MANAGED_VERSION.r}`, 'r-jsonlite']
+  packages: [`r-base=${DEFAULT_MANAGED_VERSION.r}`, 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
 }
 
 // Named-env base floor (design D2/OQ2): the minimal exec-loop-protocol requirement, distinct from the
@@ -163,7 +175,7 @@ export const DEFAULT_R_SPEC: EnvSpec = {
 // implements the R loop's line-based JSON framing. Deliberately lean — convenience packages (numpy,
 // pandas, …) are left to a follow-up manage_packages call.
 export const BASE_PYTHON_PACKAGES: string[] = ['python=3.12', 'matplotlib-base', 'nomkl']
-export const BASE_R_PACKAGES: string[] = ['r-base', 'r-jsonlite']
+export const BASE_R_PACKAGES: string[] = ['r-base', 'r-jsonlite', 'r-biocmanager', 'r-ggplot2']
 
 // Injected dependencies so the orchestration unit-tests without network or real subprocesses
 // (mirrors globalenv.rs::provision_with).
@@ -192,6 +204,10 @@ export type ProvisionerDeps = {
     maxCacheRelativePath?: number,
     sandboxRequest?: InstallRequest
   ) => Promise<void>
+  nativeSpawn?: (
+    request: InstallRequest,
+    interpreter: Readonly<{ command: string; condaPrefix: string }>
+  ) => InstallSpawn
   // Runs micromamba's supported unused-package cleanup with MAMBA_ROOT_PREFIX bound to this provisioner's
   // root. Tarballs remain available for offline data-root relocation. The existing prefix-operation
   // journal hooks supervise the cleanup child; no separate persisted operation kind is needed. Optional
@@ -717,18 +733,15 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
   }
 
-  // Refuses to write a prefix crash-recovery flagged possibly-live (see ProvisionerDeps.isPrefixBlocked).
-  // Called at every prefix-write site so an unknown-liveness orphan blocks the write this session —
+  // Refuses to write a prefix with unfinished crash recovery (see ProvisionerDeps.isPrefixBlocked).
+  // Called at every prefix-write site so retained recovery evidence blocks the write this session —
   // covering the startup gate's restore/upgrade/repair, not just the UI provision/repair handlers.
   private assertPrefixWritable(prefix: string): void {
     if (this.deps.isPrefixBlocked?.(prefix)) {
       throw new Error(
-        `RUNTIME_RECOVERY_BLOCKED: a previous operation on "${prefix}" was interrupted and its worker ` +
-          'process could not be confirmed stopped, so writing this environment now could corrupt it. ' +
-          // Honest: a probeable worker clears itself once it exits (re-checked each restart); an
-          // unprobeable/uncertain block will NOT clear on its own, so point the user at Reset.
-          'On restart it clears automatically once its worker is confirmed stopped; if it persists, ' +
-          'use Reset in Settings → Runtimes to recover this environment.'
+        `RUNTIME_RECOVERY_BLOCKED: recovery of a previous operation on "${prefix}" has not completed. ` +
+          'Writing this environment is blocked. Use Recheck in Settings → Runtimes to retry safe ' +
+          'recovery and review the remaining recovery requirements.'
       )
     }
   }
@@ -892,6 +905,8 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       bundleSource: this.deps.bundleSource,
       // Surface both in-memory recovery quarantine and the durable explicit-repair marker so the UI
       // offers Reset whether the interpreter still reads ready or the failed rebuild removed it.
+      ...(isRepairRequired(this.deps.root, DEFAULT_PY_ENV) ? { pythonRepairRequired: true } : {}),
+      ...(isRepairRequired(this.deps.root, DEFAULT_R_ENV) ? { rRepairRequired: true } : {}),
       pythonRecoveryBlocked: recoveryBlocked(DEFAULT_PY_ENV),
       rRecoveryBlocked: recoveryBlocked(DEFAULT_R_ENV)
     }
@@ -1378,18 +1393,147 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
   }
 
+  async createNamedEnvironmentFromLock(
+    name: string,
+    language: NotebookLanguage,
+    lock: NotebookEnvironmentLock,
+    lockChecksum: string,
+    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>
+  ): Promise<{ environment: EnvironmentInfo; reused: boolean }> {
+    if (!/^[a-f0-9]{64}$/u.test(lockChecksum)) {
+      throw new Error('Imported Environment lock checksum is invalid.')
+    }
+    const prefix = envPrefix(this.deps.root, name, this.platform)
+    if (
+      this.platform === 'win32' &&
+      prefix.length + DEFAULT_MAX_ENV_RELATIVE_PATH > WINDOWS_MAX_USABLE_PATH
+    ) {
+      throw new Error('Imported environment exceeds the Windows environment path budget.')
+    }
+    const bin =
+      language === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform)
+    const conda = lock.components.find((component) => component.ecosystem === 'conda')
+    if (lock.kernelKind !== language || !conda || conda.ecosystem !== 'conda') {
+      throw new Error('Imported Environment lock does not match the requested runtime.')
+    }
+    if (nativeLockRestoreState(lock).state === 'unsupported') {
+      throw new Error('Imported Environment lock has no exact restorable native package component.')
+    }
+    const markerPath = importedEnvironmentLockMarkerPath(prefix)
+    this.assertPrefixWritable(prefix)
+    if (existsSync(bin)) {
+      const marker = existsSync(markerPath) ? readFileSync(markerPath, 'utf8').trim() : undefined
+      if (marker !== lockChecksum) {
+        throw new Error(`Environment "${name}" already exists with a different origin.`)
+      }
+      await this.deps.verify(bin, prefix)
+      return {
+        environment: { name, language, ready: true, isDefault: false },
+        reused: true
+      }
+    }
+
+    const lockDirectory = join(this.deps.root, 'imported-locks')
+    const lockPath = join(lockDirectory, `${lockChecksum}.txt`)
+    mkdirSync(lockDirectory, { recursive: true })
+    writeFileSync(lockPath, conda.explicitLock, { mode: 0o600 })
+    const nativeLocksRoot = join(lockDirectory, lockChecksum)
+    await this.withJournaledPrefixWrite(
+      'materialize',
+      name,
+      prefix,
+      `import-${language}`,
+      async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
+        let prefixWriteStarted = false
+        try {
+          await this.maintainCacheBeforeMutation(
+            this.cache,
+            onBeforeSpawn,
+            onChild,
+            onCacheMaintenanceSettled
+          )
+          await this.runWithMaxPathRecovery(() =>
+            withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
+              prefixWriteStarted = true
+              this.clearIncompletePrefix(prefix, bin)
+              await this.deps.runArgv(
+                createFromLockArgv(this.deps.mm, this.deps.root, prefix, lockPath, {
+                  offline: false
+                }),
+                undefined,
+                onChild,
+                onBeforeSpawn,
+                this.cache,
+                DEFAULT_MAX_CACHE_RELATIVE_PATH,
+                { language, packages: [], environment: name, ...request }
+              )
+            })
+          )
+          const nativeRequest: InstallRequest = {
+            language,
+            packages: [],
+            environment: name,
+            ...request,
+            workspaceCwd: nativeLocksRoot
+          }
+          await restoreNativeEnvironmentLock({
+            lock,
+            prefix,
+            locksRoot: nativeLocksRoot,
+            platform: this.platform,
+            inheritedEnv: prepareNotebookWorkloadCache(this.deps.root),
+            spawn:
+              this.deps.nativeSpawn?.(nativeRequest, { command: bin, condaPrefix: prefix }) ??
+              defaultSpawn,
+            onBeforeSpawn,
+            onChild
+          })
+          await this.deps.verify(bin, prefix)
+          writeFileSync(markerPath, `${lockChecksum}\n`, { mode: 0o600 })
+          return [
+            {
+              workingRoot: this.cache.path,
+              authorizations: archiveAuthorizationsFromExplicitLock(conda.explicitLock)
+            }
+          ]
+        } catch (error) {
+          // The interpreter alone is not a completed import: native restore or verification may
+          // still fail. Remove only this attempt's partial prefix, before its journal is cleared,
+          // so a transient failure can retry the same lock. Unknown workers retain their files
+          // and the existing recovery barrier; pre-existing environments returned above.
+          if (prefixWriteStarted && !isChildUnconfirmedError(error)) {
+            rmSync(prefix, { recursive: true, force: true })
+          }
+          throw error
+        }
+      }
+    )
+    await this.deps.verify(bin, prefix)
+    return {
+      environment: {
+        name,
+        language,
+        ready: existsSync(bin),
+        isDefault: false
+      },
+      reused: false
+    }
+  }
+
   // Scans the physical env directory and maps reserved Windows default directories back to their
   // logical names. Dirs with neither interpreter are skipped. Tolerant of a missing envs dir.
-  listEnvironments(): EnvironmentInfo[] {
+  async listEnvironments(signal?: AbortSignal): Promise<EnvironmentInfo[]> {
+    signal?.throwIfAborted()
     const envsDir = join(this.deps.root, 'envs')
     let entries: Dirent[]
     try {
-      entries = readdirSync(envsDir, { withFileTypes: true })
+      entries = await readdir(envsDir, { withFileTypes: true })
     } catch {
       return []
     }
     const infos: EnvironmentInfo[] = []
     for (const entry of entries) {
+      signal?.throwIfAborted()
       if (!entry.isDirectory()) continue
       const platform = this.platform
       const name = logicalEnvNameFromDirectory(entry.name)
@@ -1398,12 +1542,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       const isPython = existsSync(pythonBin(prefix, platform))
       const isR = !isPython && existsSync(rBin(prefix, platform))
       if (!isPython && !isR) continue
+      const before = await stat(prefix).catch(() => undefined)
+      if (!before) continue
+      const sizeBytes = await dirSizeBytes(prefix, signal)
+      const after = await stat(prefix).catch(() => undefined)
+      signal?.throwIfAborted()
+      // Discard scans of environments removed or replaced while filesystem I/O yielded.
+      if (!after || before.dev !== after.dev || before.ino !== after.ino) continue
+      if (!existsSync(isPython ? pythonBin(prefix, platform) : rBin(prefix, platform))) continue
       infos.push({
         name,
         language: isPython ? 'python' : 'r',
         ready: true,
         isDefault: name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV,
-        sizeBytes: dirSizeBytes(prefix)
+        sizeBytes
       })
     }
     return infos
@@ -1415,7 +1567,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (name === DEFAULT_PY_ENV || name === DEFAULT_R_ENV) {
       throw new Error(`Refusing to remove the default environment "${name}"`)
     }
-    rmSync(envPrefix(this.deps.root, name, this.platform), { recursive: true, force: true })
+    const prefix = envPrefix(this.deps.root, name, this.platform)
+    discardImportedEnvironmentLock(this.deps.root, prefix)
+    rmSync(prefix, { recursive: true, force: true })
   }
 
   // Keeps a healthy legacy R prefix additive, but replaces an invalid partial prefix from the lock.
@@ -1728,7 +1882,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       event: { code: 'verifying-interpreter', environment: spec.name },
       progress: 0.9
     })
-    await this.deps.verify(bin, prefix)
+    // Creation can select a different R layout than the pre-install fallback path.
+    await this.deps.verify(
+      spec.language === 'python' ? pythonBin(prefix, this.platform) : rBin(prefix, this.platform),
+      prefix
+    )
     onProgress({
       phase: `${spec.language}-ready`,
       event: { code: 'environment-ready', environment: spec.name },
@@ -1796,19 +1954,22 @@ class MaxPathRetryError extends Error {
 
 // Best-effort recursive directory size (OQ5: surface disk usage in `list`). Tolerates any error
 // (permission, race with a concurrent remove, etc.) by returning undefined rather than throwing.
-const dirSizeBytes = (path: string): number | undefined => {
+const dirSizeBytes = async (path: string, signal?: AbortSignal): Promise<number | undefined> => {
   try {
     let total = 0
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const walk = async (dir: string): Promise<void> => {
+      signal?.throwIfAborted()
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        signal?.throwIfAborted()
         const full = join(dir, entry.name)
-        if (entry.isDirectory()) walk(full)
-        else if (entry.isFile()) total += statSync(full).size
+        if (entry.isDirectory()) await walk(full)
+        else if (entry.isFile()) total += (await stat(full)).size
       }
     }
-    walk(path)
+    await walk(path)
     return total
   } catch {
+    signal?.throwIfAborted()
     return undefined
   }
 }
@@ -1996,6 +2157,16 @@ export const createProductionProvisioner = (
         onBeforeSpawn
       )
     },
+    nativeSpawn: (request, interpreter) =>
+      opts.processSandbox
+        ? sandboxedPackageSpawn({
+            processSandbox: opts.processSandbox,
+            request,
+            runtimeRoot: opts.root,
+            storageRoot: dirname(opts.root),
+            interpreter
+          })
+        : defaultSpawn,
     maintainCache:
       deps.maintainCache ??
       (async (runCache, onBeforeSpawn, onChild, signal) => {

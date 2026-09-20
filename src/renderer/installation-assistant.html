@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'"
+    />
+    <title>Open-Science</title>
+  </head>
+  <body>
+    <main class="assistant">
+      <div class="titlebar" aria-hidden="true">Open-Science</div>
+      <section class="content">
+        <header class="heading">
+          <h1 id="title"></h1>
+          <p id="description"></p>
+          <p id="status" role="status" aria-live="polite"></p>
+        </header>
+
+        <div id="motion-stage" class="motion-stage">
+          <div class="install-item source-item">
+            <div id="source-icon" class="app-icon" draggable="true">
+              <img class="open-science-icon" alt="" />
+            </div>
+            <span>Open-Science</span>
+          </div>
+
+          <svg class="motion-path" viewBox="0 0 216 44" aria-hidden="true">
+            <path d="M 3 30 C 56 30, 69 8, 108 8 S 163 30, 213 30" />
+          </svg>
+          <span class="trail-dot"></span>
+          <span class="trail-dot"></span>
+          <span class="trail-dot"></span>
+          <span class="trail-dot"></span>
+
+          <div class="dragged-icon" aria-hidden="true">
+            <img class="open-science-icon" alt="" />
+          </div>
+          <span class="cursor" aria-hidden="true">
+            <svg viewBox="0 0 24 30">
+              <path d="M2.2 1.8v21.4l5.35-5.08 3.52 8.58 4.06-1.7-3.48-8.42h7.53L2.2 1.8Z" />
+            </svg>
+          </span>
+
+          <div id="target-item" class="install-item target-item">
+            <div class="folder-wrap"><div class="folder"></div></div>
+            <span id="applications-label"></span>
+          </div>
+          <span class="drop-check" aria-hidden="true">✓</span>
+        </div>
+
+        <footer class="actions">
+          <button id="continue-button" class="action" type="button"></button>
+          <button id="install-button" class="action primary" type="button"></button>
+        </footer>
+      </section>
+    </main>
+    <script type="module" src="/src/installation-assistant.ts"></script>
+  </body>
+</html>

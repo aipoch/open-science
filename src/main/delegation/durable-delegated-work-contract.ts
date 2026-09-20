@@ -1,5 +1,9 @@
 import type { ArtifactFile } from '../../shared/artifacts'
-import type { AcpAgentRuntimeUpdate, AcpPermissionScope } from '../../shared/acp'
+import type {
+  AcpAgentRuntimeUpdate,
+  AcpPermissionScope,
+  AcpPermissionRequest
+} from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import type { SpecialistView } from '../../shared/specialist'
@@ -70,6 +74,9 @@ type RootDelegatePermissionRequest = Readonly<{
   attemptId: string
   childTitle: string
   action: string
+  providerToolName?: string
+  isMcp?: boolean
+  toolKind?: AcpPermissionRequest['toolKind']
   riskScope: string
   options: readonly Readonly<{
     optionId: string

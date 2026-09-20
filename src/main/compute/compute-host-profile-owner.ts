@@ -1,4 +1,9 @@
-import type { ComputeHostDetails, DetailsAuthor, ProbeResult } from '../../shared/compute'
+import type {
+  ComputeHost,
+  ComputeHostDetails,
+  DetailsAuthor,
+  ProbeResult
+} from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import {
   classifyConnectionFailure,
@@ -6,7 +11,7 @@ import {
   type ComputeConnectionBrokerAcquirer
 } from './connection-broker'
 import type { ComputeHostRepository } from './repository'
-import { assertSafeScratchRoot } from './remote-path-security'
+import { assertSafeScratchRoot, quoteRemotePath } from './remote-path-security'
 
 const PROBE_TIMEOUT_MS = 30_000
 const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
@@ -22,6 +27,21 @@ const PROBE_SCRIPT = [
   'echo "scratch=$SCRATCH"'
 ].join('\n')
 
+// Probe only a newly allocated file and remove that exact file; never change the configured root.
+const healthProbeScript = (host: ComputeHost): string => {
+  const scratch =
+    host.scratchPinned && host.scratchRoot
+      ? quoteRemotePath(assertSafeScratchRoot(host.scratchRoot))
+      : '"${SCRATCH:-$HOME}"'
+  return [
+    PROBE_SCRIPT,
+    `probe_scratch=${scratch}`,
+    'printf "scratch_path=%s\\n" "$probe_scratch"',
+    'if probe_file=$(mktemp "$probe_scratch/.open-science-probe.XXXXXX" 2>/dev/null); then probe_ok=no; if printf test > "$probe_file"; then probe_ok=yes; fi; rm -f -- "$probe_file" || probe_ok=no; echo scratch_writable=$probe_ok; else echo scratch_writable=no; fi',
+    'if command -v sbatch >/dev/null 2>&1 && command -v sacct >/dev/null 2>&1 && command -v scancel >/dev/null 2>&1 && squeue --noheader --user="$(id -un)" --format="%i" >/dev/null 2>&1; then echo scheduler_available=yes; else echo scheduler_available=no; fi'
+  ].join('\n')
+}
+
 export type ProbeScriptOutput = {
   os?: string
   cpus?: number
@@ -29,6 +49,9 @@ export type ProbeScriptOutput = {
   gpus?: Array<{ type: string; count: number }>
   detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
   scratchEnv?: string
+  scratchPath?: string
+  scratchWritable?: boolean
+  schedulerAvailable?: boolean
 }
 
 const aggregateGpus = (raw: string): Array<{ type: string; count: number }> => {
@@ -59,7 +82,9 @@ export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
         ? 'pbs'
         : values['bsub'] === 'yes'
           ? 'lsf'
-          : 'none'
+          : ['sbatch', 'qsub', 'bsub'].every((key) => values[key] === 'no')
+            ? 'none'
+            : undefined
 
   return {
     os: values['os'] || undefined,
@@ -67,7 +92,20 @@ export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
     memMib: Number.isFinite(memMib) && memMib > 0 ? memMib : undefined,
     gpus: aggregateGpus(values['gpus'] ?? ''),
     detectedScheduler,
-    scratchEnv: values['scratch'] || undefined
+    scratchEnv: values['scratch'] || undefined,
+    scratchPath: values['scratch_path'] || undefined,
+    scratchWritable:
+      values['scratch_writable'] === 'yes'
+        ? true
+        : values['scratch_writable'] === 'no'
+          ? false
+          : undefined,
+    schedulerAvailable:
+      values['scheduler_available'] === 'yes'
+        ? true
+        : values['scheduler_available'] === 'no'
+          ? false
+          : undefined
   }
 }
 
@@ -91,24 +129,6 @@ const waitForRetry = (delayMs: number, signal?: AbortSignal): Promise<void> => {
   })
 }
 
-const buildDetailsSkeleton = (probe: ProbeResult): string => {
-  const lines: string[] = ['## Resources', '']
-  if (probe.detectedScheduler && probe.detectedScheduler !== 'none') {
-    lines.push(
-      'The CPU, memory and GPU values below describe the SSH login host, not a scheduler allocation.',
-      'Inspect scheduler partitions and provider guidance before requesting compute resources.',
-      ''
-    )
-  }
-  if (probe.cpus != null) lines.push(`cpus: ${probe.cpus}`)
-  if (probe.memMib != null) lines.push(`mem: ${Math.round(probe.memMib / 1024)} GB`)
-  if (probe.gpus && probe.gpus.length > 0) {
-    lines.push(`gpus: ${probe.gpus.map((gpu) => `${gpu.count}x ${gpu.type}`).join(', ')}`)
-  }
-  if (probe.detectedScheduler) lines.push(`scheduler: ${probe.detectedScheduler}`)
-  return lines.join('\n')
-}
-
 const hostNotFound = (providerId: string): Error =>
   new Error(`No compute host found with provider id "${providerId}".`)
 
@@ -122,6 +142,7 @@ export class ComputeHostProfileOwner {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
 
+    const script = healthProbeScript(host)
     const probedAt = new Date().toISOString()
     const authenticationRevision = host.authentication?.revision ?? 0
     const persistFailure = async (error: unknown): Promise<ProbeResult> => {
@@ -135,10 +156,20 @@ export class ComputeHostProfileOwner {
         probedAt,
         exitCode: null,
         errorTail: failure.message,
+        sshConnected: [
+          'authentication_failed',
+          'host_unreachable',
+          'host_key_unknown',
+          'host_key_changed'
+        ].includes(failure.code)
+          ? false
+          : undefined,
         authenticationCode: failure.code,
         authenticationRevision
       }
-      await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
+      if (!(await this.repository.updateProbeResult(providerId, result, host.shape, host.id))) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
       return result
     }
     let connection
@@ -154,7 +185,7 @@ export class ComputeHostProfileOwner {
 
     let runResult
     try {
-      runResult = await connection.run(PROBE_SCRIPT, {
+      runResult = await connection.run(script, {
         timeoutMs: PROBE_TIMEOUT_MS,
         loginShell: true,
         maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
@@ -163,7 +194,7 @@ export class ComputeHostProfileOwner {
       if (error instanceof ComputeConnectionError && error.code === 'host_unreachable') {
         await waitForRetry(3000, signal)
         try {
-          runResult = await connection.run(PROBE_SCRIPT, {
+          runResult = await connection.run(script, {
             timeoutMs: PROBE_TIMEOUT_MS,
             loginShell: true,
             maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
@@ -185,7 +216,7 @@ export class ComputeHostProfileOwner {
       if (errorText.includes('no route to host') || errorText.includes('network is unreachable')) {
         await waitForRetry(3000, signal)
         try {
-          runResult = await connection.run(PROBE_SCRIPT, {
+          runResult = await connection.run(script, {
             timeoutMs: PROBE_TIMEOUT_MS,
             loginShell: true,
             maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
@@ -209,20 +240,58 @@ export class ComputeHostProfileOwner {
         probedAt,
         exitCode: runResult.exitCode,
         errorTail: failure.message,
+        sshConnected: [
+          'authentication_failed',
+          'host_unreachable',
+          'host_key_unknown',
+          'host_key_changed'
+        ].includes(failure.code)
+          ? false
+          : undefined,
         authenticationCode: failure.code,
         authenticationRevision
       }
-      await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
+      if (!(await this.repository.updateProbeResult(providerId, result, host.shape, host.id))) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
       return result
     }
 
     const parsed = parseProbeOutput(runResult.stdout)
+    if (
+      runResult.exitCode !== 0 ||
+      runResult.truncated ||
+      !parsed.os ||
+      !parsed.detectedScheduler
+    ) {
+      const result: ProbeResult = {
+        ok: false,
+        probedAt,
+        exitCode: runResult.exitCode,
+        authenticationRevision,
+        sshConnected: runResult.exitCode !== null ? true : undefined,
+        commandExecutable: runResult.exitCode !== null ? false : undefined,
+        errorTail:
+          runResult.stderr.trim().slice(-2048) || 'Resource probe did not return complete output.'
+      }
+      if (!(await this.repository.updateProbeResult(providerId, result, host.shape, host.id))) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
+      return result
+    }
     const shape =
       parsed.detectedScheduler && parsed.detectedScheduler !== 'none'
         ? 'scheduler_cluster'
         : 'direct_ssh'
     const result: ProbeResult = {
-      ok: true,
+      ok:
+        parsed.scratchWritable !== false &&
+        (host.executionMode !== 'slurm' || parsed.schedulerAvailable !== false),
+      sshConnected: true,
+      commandExecutable: true,
+      scratchPath: parsed.scratchPath,
+      scratchWritable: parsed.scratchWritable,
+      schedulerAvailable: parsed.schedulerAvailable,
       probedAt,
       exitCode: runResult.exitCode,
       errorTail: null,
@@ -234,17 +303,24 @@ export class ComputeHostProfileOwner {
       detectedScheduler: parsed.detectedScheduler
     }
 
-    await this.repository.updateProbeResult(providerId, result, shape)
-    if (!host.scratchPinned && parsed.scratchEnv) {
-      let safeScratchRoot: string | undefined
+    let safeScratchRoot: string | undefined
+    if (parsed.scratchEnv) {
       try {
         safeScratchRoot = assertSafeScratchRoot(parsed.scratchEnv)
       } catch {
-        // Ignore an unusable remote value without hiding persistence failures for valid paths.
+        // Invalid remote paths do not invalidate otherwise usable resource information.
       }
-      if (safeScratchRoot !== undefined) {
-        await this.repository.updateScratchRoot(providerId, safeScratchRoot)
-      }
+    }
+    if (
+      !(await this.repository.updateProbeResult(
+        providerId,
+        result,
+        shape,
+        host.id,
+        safeScratchRoot
+      ))
+    ) {
+      throw new ComputeConnectionError('credential_conflict')
     }
     return result
   }
@@ -252,17 +328,7 @@ export class ComputeHostProfileOwner {
   async getDetails(providerId: string): Promise<ComputeHostDetails> {
     const host = await this.repository.get(providerId)
     if (!host) throw hostNotFound(providerId)
-    if (host.detailsDoc) {
-      return { doc: host.detailsDoc, isSkeleton: false, probeResult: host.probeResult }
-    }
-    if (!host.probeResult?.ok) {
-      return { doc: '', isSkeleton: false, probeResult: host.probeResult }
-    }
-    return {
-      doc: buildDetailsSkeleton(host.probeResult),
-      isSkeleton: true,
-      probeResult: host.probeResult
-    }
+    return { doc: host.detailsDoc, probeResult: host.probeResult }
   }
 
   async replaceDetails(
@@ -281,22 +347,42 @@ export class ComputeHostProfileOwner {
         `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (got ${text.length}).`
       )
     }
-    await this.repository.updateDetails(providerId, text, author)
+    if (!(await this.repository.updateDetails(providerId, text, author, host.id, oldText))) {
+      throw new Error(
+        'details_conflict: old_text does not match the current details document. Reload and merge your draft.'
+      )
+    }
   }
 
   async appendDetails(
     providerId: string,
     { text, author }: { text: string; author: DetailsAuthor }
   ): Promise<void> {
-    const host = await this.repository.get(providerId)
-    if (!host) throw hostNotFound(providerId)
-    const newDoc = host.detailsDoc ? `${host.detailsDoc}\n${text}` : text
-    if (newDoc.length > DETAILS_DOC_MAX_LENGTH) {
-      throw new Error(
-        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (appended doc would be ${newDoc.length}).`
+    const initialHost = await this.repository.get(providerId)
+    if (!initialHost) throw hostNotFound(providerId)
+    let host = initialHost
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const newDoc = host.detailsDoc ? `${host.detailsDoc}\n${text}` : text
+      if (newDoc.length > DETAILS_DOC_MAX_LENGTH) {
+        throw new Error(
+          `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (appended doc would be ${newDoc.length}).`
+        )
+      }
+      if (
+        await this.repository.updateDetails(
+          providerId,
+          newDoc,
+          author,
+          initialHost.id,
+          host.detailsDoc
+        )
       )
+        return
+      const current = await this.repository.get(providerId)
+      if (!current || current.id !== initialHost.id) throw hostNotFound(providerId)
+      host = current
     }
-    await this.repository.updateDetails(providerId, newDoc, author)
+    throw new Error('details_conflict: concurrent edits prevented appending. Retry the append.')
   }
 
   async setScratchRoot(providerId: string, path: string): Promise<void> {

@@ -136,7 +136,7 @@ describe('flagStaleReviews', () => {
     expect(result.stale).toBeUndefined()
   })
 
-  it('fails closed when active-session Artifact evidence cannot be recomputed', async () => {
+  it('reports unavailable verification without claiming a content change when evidence cannot be read', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'flag-stale-unavailable-'))
     const session = buildSession()
     await writeArtifact(storageRoot, 'a,b\n1,2\n')
@@ -146,7 +146,11 @@ describe('flagStaleReviews', () => {
 
     const [result] = await flagStaleReviews([review], session, storageRoot)
 
-    expect(result.stale).toBe(true)
+    expect(result.stale).toBeUndefined()
+    expect(result.verificationUnavailable).toBe(true)
+    await writeArtifact(storageRoot, 'a,b\n1,2\n')
+    const [retried] = await flagStaleReviews([result], session, storageRoot)
+    expect(retried).toMatchObject({ stale: false, verificationUnavailable: false })
   })
 
   it('recomputes against scope.turnMessageId, so a fix-loop review is not falsely stale', async () => {

@@ -78,6 +78,34 @@ const ownerHarness = (
 }
 
 describe('NotebookPackageAdmissionOwner', () => {
+  it('pins external R installation to the authorized library and rechecks revocation', async () => {
+    const binding = externalBinding('r')
+    let authorized = true
+    const { owner } = ownerHarness(binding, {
+      resolveRuntimeEnablement: vi.fn(async () => ({
+        enabled: {},
+        installAuthorized: { [binding.runtimeId]: authorized },
+        installLibraries: { [binding.runtimeId]: '/user/R/library' }
+      }))
+    })
+    const request = {
+      language: 'r' as const,
+      packages: ['glue'],
+      sessionId: 's',
+      workspaceCwd: '/workspace'
+    }
+    const admission = await owner.admit(request)
+    expect(admission).toMatchObject({
+      status: 'admitted',
+      target: { interpreter: { command: '/usr/local/bin/r', library: '/user/R/library' } }
+    })
+    if (admission.status !== 'admitted') throw new Error('Expected admitted target')
+    expect(await owner.recheckAuthorization(admission.target)).toBeUndefined()
+    authorized = false
+    expect(await owner.recheckAuthorization(admission.target)).toMatchObject({ status: 'refused' })
+    expect(await owner.admit(request)).toMatchObject({ status: 'refused' })
+  })
+
   it('admits the managed default and pins every mutation target to it', async () => {
     const { owner } = ownerHarness(undefined)
 
@@ -248,7 +276,7 @@ describe('NotebookPackageAdmissionOwner', () => {
       binding: externalBinding('r'),
       operation: 'install' as const,
       authorized: true,
-      error: 'external R runtime is not supported'
+      error: 'Select and authorize a personal R package library'
     }
   ])('preserves $name refusal ordering', async ({ binding, operation, authorized, error }) => {
     const { owner } = ownerHarness(binding, {

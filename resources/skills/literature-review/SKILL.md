@@ -55,7 +55,7 @@ After the first sweep, take the two or three most relevant hits and walk one ste
 
 ## Retractions and the null result
 
-Sensational papers are findable because they were sensational, and some were later retracted or failed to replicate. CrossRef's `update-to` field flags retractions; for any high-profile or surprising finding, a check takes seconds. The related trap is the question whose honest answer is "no such paper exists": when someone asks for "the paper showing X" and X fell apart or was never established, the right answer names the claim, says what happened to it, and points to what the actual evidence shows — not the closest-matching citation.
+Sensational papers are findable because they were sensational, and some were later retracted or failed to replicate. CrossRef's `updated-by` field links a paper to notices updating it; `update-to` links a notice to the works it updates. `verify_dois` checks both directions and retains title/subtype checks. Its `retracted: true` flags retraction-related metadata, so inspect the relationship direction to distinguish a retracted paper from a retraction notice. `false` means no checked marker was found, not confirmation that the paper has never been retracted. For any high-profile or surprising finding, inspect the available notices. The related trap is the question whose honest answer is "no such paper exists": when someone asks for "the paper showing X" and X fell apart or was never established, the right answer names the claim, says what happened to it, and points to what the actual evidence shows — not the closest-matching citation.
 
 ## Synthesis is comparison, not summary
 

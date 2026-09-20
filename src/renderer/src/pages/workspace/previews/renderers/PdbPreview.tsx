@@ -3,6 +3,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GLViewer } from '3dmol'
 
+import { ErrorNotice } from '@/components/error-notice'
+
 import { cn } from '@/lib/utils'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -59,10 +61,6 @@ const PDB_STYLE_SPECS = {
   line: { line: { colorscheme: 'Jmol' } }
 }
 
-const countPdbAtoms = (content: string): number =>
-  content.split(/\r?\n/).filter((line) => line.startsWith('ATOM') || line.startsWith('HETATM'))
-    .length
-
 const hasCartoonBackbone = (content: string): boolean => {
   const polymerResidues = new Set<string>()
 
@@ -93,7 +91,8 @@ const applyPdbStyle = (
   threeDmol: ThreeDmolModule,
   style: PdbStyle,
   shouldZoom: boolean,
-  shouldRenderSurface?: () => boolean
+  shouldRenderSurface: () => boolean,
+  onSurfaceState: (state: 'pending' | 'error' | undefined) => void
 ): void => {
   viewer.removeAllSurfaces()
 
@@ -105,21 +104,24 @@ const applyPdbStyle = (
         stick: { colorscheme: 'Jmol', opacity: 0.12, radius: 0.025 }
       }
     )
-    const surface = viewer.addSurface(
-      threeDmol.SurfaceType.VDW,
-      { opacity: 0.72, colorscheme: 'Jmol' },
-      {}
-    )
-
-    if (surface && typeof (surface as PromiseLike<unknown>).then === 'function') {
-      void (surface as PromiseLike<unknown>).then(
-        () => {
-          if (!shouldRenderSurface || shouldRenderSurface()) viewer.render()
-        },
-        (error) => {
-          console.error('Failed to render PDB surface', error)
-        }
+    onSurfaceState('pending')
+    const failed = (error: unknown): void => {
+      console.error('Failed to render PDB surface', error)
+      if (shouldRenderSurface()) onSurfaceState('error')
+    }
+    try {
+      const surface = viewer.addSurface(
+        threeDmol.SurfaceType.VDW,
+        { opacity: 0.72, colorscheme: 'Jmol' },
+        {}
       )
+      void Promise.resolve(surface).then(() => {
+        if (!shouldRenderSurface()) return
+        onSurfaceState(undefined)
+        viewer.render()
+      }, failed)
+    } catch (error) {
+      failed(error)
     }
   } else {
     viewer.setStyle({}, PDB_STYLE_SPECS[style])
@@ -148,8 +150,17 @@ const PdbPreviewViewer = ({
   const cartoonUnavailableDescriptionId = useId()
   const [selectedStyle, setSelectedStyle] = useState<PdbStyle | undefined>(undefined)
   const [viewerError, setViewerError] = useState<string | undefined>(undefined)
-  const atomCount = useMemo(() => countPdbAtoms(content), [content])
-  const supportsCartoon = useMemo(() => hasCartoonBackbone(content), [content])
+  const [atomCount, setAtomCount] = useState<number | undefined>(undefined)
+  const modelCount = useMemo(
+    () => Math.max(1, (content.match(/^MODEL\s/gm) ?? []).length),
+    [content]
+  )
+  const [surfaceState, setSurfaceState] = useState<'pending' | 'error' | undefined>(undefined)
+  const renderGenerationRef = useRef(0)
+  const supportsCartoon = useMemo(
+    () => hasCartoonBackbone(content.split(/^ENDMDL.*$/m)[0]),
+    [content]
+  )
   const defaultStyle: PdbStyle = supportsCartoon ? 'cartoon' : 'stick'
   const style =
     selectedStyle && (supportsCartoon || selectedStyle !== 'cartoon') ? selectedStyle : defaultStyle
@@ -167,13 +178,21 @@ const PdbPreviewViewer = ({
       return false
     }
 
+    const generation = ++renderGenerationRef.current
     viewerState.viewer.resize()
     applyPdbStyle(
       viewerState.viewer,
       viewerState.threeDmol,
       styleRef.current,
       shouldZoom,
-      () => viewerStateRef.current?.viewer === viewerState.viewer && styleRef.current === 'surface'
+      () =>
+        viewerStateRef.current?.viewer === viewerState.viewer &&
+        styleRef.current === 'surface' &&
+        generation === renderGenerationRef.current,
+      (state) => {
+        setSurfaceState(state)
+        if (state === 'error') setSelectedStyle('stick')
+      }
     )
     pendingRenderRef.current = false
     if (shouldZoom) pendingZoomRef.current = false
@@ -194,6 +213,8 @@ const PdbPreviewViewer = ({
     if (!viewerElement) return
 
     setViewerError(undefined)
+    setAtomCount(undefined)
+    setSurfaceState(undefined)
     pendingRenderRef.current = true
     pendingZoomRef.current = true
     viewerElement.replaceChildren()
@@ -203,10 +224,14 @@ const PdbPreviewViewer = ({
         if (canceled) return
 
         const viewer = threeDmol.createViewer(viewerElement, { backgroundColor: 'white' })
-        viewer.addModel(content, 'pdb', {
+        const model = viewer.addModel(content, 'pdb', {
+          multimodel: false,
+          keepH: false,
+          altLoc: 'A',
           assignBonds: true,
           noComputeSecondaryStructure: false
         })
+        setAtomCount(model.selectedAtoms({}).length)
         viewerStateRef.current = { viewer, threeDmol }
         renderCurrentStyle(true)
       })
@@ -261,7 +286,7 @@ const PdbPreviewViewer = ({
           </span>
         </div>
         <div className="shrink-0 text-[12px] text-text-300">
-          {t('{{count}} atoms', { count: atomCount })}
+          {atomCount !== undefined ? t('{{count}} atoms', { count: atomCount }) : null}
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 border-b border-border-300 bg-bg-000 px-3 py-2">
@@ -292,7 +317,8 @@ const PdbPreviewViewer = ({
                     'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-text-300'
                 )}
                 onClick={() => {
-                  if (isDisabled) return
+                  if (isDisabled || option.id === style) return
+                  setSurfaceState(undefined)
                   setSelectedStyle(option.id)
                 }}
               >
@@ -302,6 +328,25 @@ const PdbPreviewViewer = ({
           })}
         </div>
       </div>
+      <div className="shrink-0 px-3 py-2 text-[11px] text-text-300">
+        {t('Previewing model 1 of {{total}}.', { total: modelCount })}{' '}
+        {t(
+          'Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.'
+        )}
+      </div>
+      {surfaceState === 'pending' ? (
+        <div role="status" className="px-3 py-2 text-[12px]">
+          {t('Generating surface…')}
+        </div>
+      ) : null}
+      {surfaceState === 'error' ? (
+        <ErrorNotice
+          role="alert"
+          tone="amber"
+          title={t('Surface could not be generated. Showing sticks.')}
+          primaryButton={{ label: t('Retry'), onClick: () => setSelectedStyle('surface') }}
+        />
+      ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-bg-000">
         {viewerError ? (
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-[12px] text-danger-000">

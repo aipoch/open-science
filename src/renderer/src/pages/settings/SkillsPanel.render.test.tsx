@@ -1,3 +1,7 @@
+import {
+  marketplaceCatalog,
+  marketplaceDetail
+} from '../../../../shared/__fixtures__/skill-marketplace'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -216,6 +220,51 @@ const pasteValue = (label: string, value: string): void => {
   act(() => field?.dispatchEvent(event))
 }
 
+it('navigates to the conflicting Skill detail even when the retained search hides it', async () => {
+  const onNavigate = vi.fn()
+  await act(async () =>
+    root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+  )
+  const input = container.querySelector<HTMLInputElement>('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+      input,
+      'no-matching-skill'
+    )
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  Object.assign(window.api.settings, {
+    listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: marketplaceCatalog }),
+    getSkillMarketplaceBatch: vi.fn().mockResolvedValue(null),
+    getSkillMarketplaceDetail: vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...marketplaceDetail,
+        installation: { kind: 'conflict', reason: 'name-taken', localSkillId: 'personal-mine' }
+      }
+    })
+  })
+  await act(async () =>
+    root.render(
+      <SkillsPanel
+        view={{
+          kind: 'marketplace-detail',
+          id: marketplaceDetail.entry.id,
+          displayName: marketplaceDetail.entry.displayName,
+          snapshotId: marketplaceCatalog.snapshotId
+        }}
+        onNavigate={onNavigate}
+      />
+    )
+  )
+  const target = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'View installed Skill'
+  )!
+  expect(target).toBeDefined()
+  await act(async () => target.click())
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'personal-mine' })
+})
+
 describe('SkillsPanel (list view)', () => {
   it('renders skills grouped by source with one toggle each and an Add skill control', () => {
     act(() => {
@@ -232,8 +281,9 @@ describe('SkillsPanel (list view)', () => {
     const betaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Beta"]')
     expect(alphaSwitch?.getAttribute('data-state')).toBe('checked')
     expect(alphaSwitch?.className).toContain('data-[state=checked]:bg-primary')
-    expect(alphaSwitch?.className).toContain('ml-1')
-    expect(alphaSwitch?.className).toContain('mr-3')
+    // No per-toggle hit-area margins: the row's control column owns right alignment.
+    expect(alphaSwitch?.className).not.toContain('ml-1')
+    expect(alphaSwitch?.className).not.toContain('mr-3')
     expect(betaSwitch?.getAttribute('data-state')).toBe('unchecked')
     expect(
       alphaSwitch?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
@@ -249,7 +299,40 @@ describe('SkillsPanel (list view)', () => {
     expect(alphaSwitch?.className).toContain('motion-reduce:transition-none')
   })
 
-  it('keeps filters and search above right-aligned list actions', () => {
+  it('shows an inoperable checked toggle with an explanation for application-required Skills', async () => {
+    useSettingsStore.setState({
+      skills: seedSkills.map((skill) =>
+        skill.id === 'a' ? { ...skill, activationPolicy: 'always-on' as const } : skill
+      )
+    })
+
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    expect(toggle?.disabled).toBe(true)
+    expect(toggle?.className).toContain('data-disabled:opacity-50')
+    expect(toggle?.className).toContain('pointer-events-none')
+    expect(document.body.textContent).not.toContain('Application required')
+    expect(document.body.textContent).not.toContain('Always enabled')
+
+    await act(async () => {
+      const trigger = document.body.querySelector<HTMLElement>(
+        '[data-testid="required-skill-toggle-tooltip"]'
+      )
+      const hover = new MouseEvent('pointermove', { bubbles: true })
+      Object.defineProperty(hover, 'pointerType', { value: 'mouse' })
+      trigger?.dispatchEvent(hover)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain(
+      'This built-in Skill supports core application features and is always enabled.'
+    )
+  })
+
+  it('promotes the Marketplace entry alongside installed Skills above the filters', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
@@ -267,13 +350,21 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.querySelector('[aria-label="Filter Skills by agent"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter by Tag"]')).not.toBeNull()
     const search = filters?.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
-    expect(search?.parentElement?.className).toContain('min-w-56')
+    expect(search?.parentElement?.className).toContain('min-w-48')
     expect(filters?.contains(manage ?? null)).toBe(false)
     expect(filters?.contains(addSkill ?? null)).toBe(false)
     expect(actions?.contains(manage ?? null)).toBe(true)
     expect(actions?.contains(addSkill ?? null)).toBe(true)
-    expect(actions?.className).toContain('justify-end')
-    expect(filters?.compareDocumentPosition(actions!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(actions?.className).toContain('flex-wrap')
+    expect(actions?.compareDocumentPosition(filters!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    const marketplace = [...actions!.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Browse Marketplace'
+    )!
+    expect(marketplace.dataset.variant).toBe('default')
+    expect(marketplace.querySelector('svg')?.getAttribute('data-icon')).toBe('inline-start')
+    expect(document.querySelector('[data-slot="skills-header"] h3')?.textContent).toContain(
+      'Installed'
+    )
   })
 
   it('keeps matching import menus in Add skill and the Imported group', () => {
@@ -285,7 +376,7 @@ describe('SkillsPanel (list view)', () => {
     const importedGroup = document.body.querySelector<HTMLElement>(
       '[data-slot="skills-source-group"][data-source="imported"]'
     )
-    expect(importedGroup?.textContent).toContain('Skills you imported into Open Science.')
+    expect(importedGroup?.textContent).toContain('Skills you imported into Open-Science.')
     expect(importedGroup?.textContent).toContain('No imported skills yet.')
 
     const importButton = Array.from(
@@ -340,7 +431,7 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Conversation imports')
     expect(document.body.textContent).toContain(
-      'Choose what conversations can import into Open Science.'
+      'Choose what conversations can import into Open-Science.'
     )
     expect(document.body.textContent).toContain('Skill packages')
     expect(document.body.textContent).toContain('ask before importing them')
@@ -348,7 +439,10 @@ describe('SkillsPanel (list view)', () => {
       '[data-slot="settings-section"][aria-label="Conversation imports"]'
     )
     const row = section?.querySelector<HTMLElement>('[data-slot="settings-row"]')
-    expect(section?.className).toContain('mb-4')
+    expect(section?.className).toContain('border-t')
+    expect(
+      document.querySelector('[data-slot="skills-source-group"]')?.compareDocumentPosition(section!)
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(row?.className).toContain('min-h-0')
     expect(row?.querySelector('.line-clamp-2')).not.toBeNull()
     const toggle = document.body.querySelector<HTMLButtonElement>(
@@ -380,7 +474,7 @@ describe('SkillsPanel (list view)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'a' })
   })
 
-  it('shows identity-conflicting Skills without exposing ambiguous actions', () => {
+  it('keeps identity-conflicting user Skills deletable without exposing runtime actions', () => {
     const onNavigate = vi.fn()
     useSettingsStore.setState({
       skills: [
@@ -405,7 +499,9 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Conflicting Skill')
     expect(document.body.textContent).toContain('Identity conflict')
-    expect(document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')).toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')
+    ).not.toBeNull()
     const toggle = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Toggle Conflicting Skill"]'
     )
@@ -446,7 +542,7 @@ describe('SkillsPanel (list view)', () => {
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Open Science could not load Skills.'
+      'Open-Science could not load Skills.'
     )
     const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Retry'
@@ -595,7 +691,11 @@ describe('SkillsPanel (list view)', () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.trim() === 'Delete')
     clickRadixMenuItem(remove)
-    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
+    expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith(
+      'personal-mine',
+      'personal',
+      undefined
+    )
   })
 
   it('exports imported and personal Skills but never built-in Skills', async () => {

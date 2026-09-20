@@ -128,3 +128,18 @@ describe('artifact preview rendering', () => {
     expect(html).not.toContain('NWK')
   })
 })
+
+it('SC03: bounds multi-sequence FASTA thumbnails to 48 cells', () => {
+  const content =
+    '>long\n' +
+    'A'.repeat(4000) +
+    '\n' +
+    Array.from({ length: 5 }, (_, i) => `>short${i}\nA`).join('\n')
+  const html = renderToStaticMarkup(
+    <ArtifactPreview
+      artifact={createArtifact({ name: 'sequences.fasta' })}
+      preview={createPreview(content)}
+    />
+  )
+  expect((html.match(/<rect/g) ?? []).length).toBeLessThanOrEqual(48)
+})

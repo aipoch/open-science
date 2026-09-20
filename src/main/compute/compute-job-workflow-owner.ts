@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 import { readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
@@ -19,7 +20,7 @@ import {
 } from '../notebook/working-file-observer'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { projectJobStatus } from './compute-job-status'
+import { isComputeJobResultFinal, projectJobStatus } from './compute-job-status'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { validateComputeEnvironmentName } from './compute-environment'
 import { parseSlurmSchedulerJobId } from './remote-job-handle'
@@ -81,7 +82,7 @@ export const createComputeArtifactResolver = (
 const assertBareName = (name: string, label: string): void => {
   if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
     throw new Error(
-      `dst_filename must be a bare filename with no path separators (got "${name}" for ${label})`
+      `dstFilename must be a bare filename with no path separators (got "${name}" for ${label})`
     )
   }
 }
@@ -108,7 +109,7 @@ export const resolveInputs = async (
   const reserveDestination = (dstFilename: string): void => {
     assertSafeInputDestination(dstFilename)
     if (destinations.has(dstFilename)) {
-      throw new Error(`dst_filename must be unique within a Compute Job (got "${dstFilename}")`)
+      throw new Error(`dstFilename must be unique within a Compute Job (got "${dstFilename}")`)
     }
     destinations.add(dstFilename)
   }
@@ -117,18 +118,16 @@ export const resolveInputs = async (
     if ('remote_path' in raw) {
       const remotePath = raw.remote_path
       if (!remotePath.startsWith('/')) {
-        throw new Error(`remote_path must be an absolute path (got "${remotePath}")`)
+        throw new Error(`remotePath must be an absolute path (got "${remotePath}")`)
       }
       if (GLOB_CHARS.test(remotePath)) {
-        throw new Error(`remote_path must not contain glob characters (got "${remotePath}")`)
+        throw new Error(`remotePath must not contain glob characters (got "${remotePath}")`)
       }
       if (SHELL_UNSAFE_CHARS.test(remotePath)) {
-        throw new Error(
-          `remote_path must not contain shell-unsafe characters (got "${remotePath}")`
-        )
+        throw new Error(`remotePath must not contain shell-unsafe characters (got "${remotePath}")`)
       }
       const dstFilename = raw.dst_filename ?? basename(remotePath)
-      assertBareName(dstFilename, `remote_path "${remotePath}"`)
+      assertBareName(dstFilename, `remotePath "${remotePath}"`)
       reserveDestination(dstFilename)
       entries.push({
         kind: 'symlink',
@@ -211,6 +210,8 @@ export class ComputeJobWorkflowOwner {
     context: { sessionId: string; projectId: string; producerRunId?: string },
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
+    if (this.storageRoot)
+      await assertResearchSessionWritable(this.storageRoot, context.projectId, context.sessionId)
     if (!this.jobRepository) {
       throw new Error('ComputeJobRepository is required to call submitJob.')
     }
@@ -262,33 +263,33 @@ export class ComputeJobWorkflowOwner {
     if (rawTimeout !== undefined) {
       if (!Number.isFinite(rawTimeout)) {
         const error = new Error(
-          `timeout_seconds must be a finite number (got ${rawTimeout}).`
+          `timeoutSeconds must be a finite number (got ${rawTimeout}).`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: 'timeout_seconds must be a finite number.',
+          message: 'timeoutSeconds must be a finite number. The Compute Job was not submitted.',
           retry_after_user_action: false
         }
         throw error
       }
       if (!Number.isInteger(rawTimeout) || rawTimeout <= 0) {
         const error = new Error(
-          `timeout_seconds must be a positive integer (got ${rawTimeout}).`
+          `timeoutSeconds must be a positive integer (got ${rawTimeout}).`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: 'timeout_seconds must be a positive integer.',
+          message: 'timeoutSeconds must be a positive integer. The Compute Job was not submitted.',
           retry_after_user_action: false
         }
         throw error
       }
       if (rawTimeout > JOB_MAX_TIMEOUT_SECONDS) {
         const error = new Error(
-          `timeout_seconds ${rawTimeout} exceeds the 7-day maximum. Use a scheduler driver for multi-day jobs.`
+          `timeoutSeconds ${rawTimeout} exceeds the 7-day maximum. The Compute Job was not submitted.`
         ) as Error & { computeCallError: ComputeCallError }
         error.computeCallError = {
           error_code: 'timeout',
-          message: `timeout_seconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum.`,
+          message: `timeoutSeconds exceeds the 7-day (${JOB_MAX_TIMEOUT_SECONDS}s) maximum. The Compute Job was not submitted.`,
           retry_after_user_action: false
         }
         throw error
@@ -315,6 +316,7 @@ export class ComputeJobWorkflowOwner {
       const preview = await this.concurrencyManager.enqueue({
         jobId,
         sessionId: context.sessionId,
+        projectId: context.projectId,
         providerId
       })
       if (preview === 'queue_full') throw queueFullError()
@@ -473,7 +475,7 @@ export class ComputeJobWorkflowOwner {
         try {
           if (this.concurrencyManager) {
             const admitted = await this.concurrencyManager.admit(
-              { sessionId: context.sessionId, providerId },
+              { sessionId: context.sessionId, projectId: context.projectId, providerId },
               createRow
             )
             if (admitted === 'queue_full') throw queueFullError()
@@ -532,13 +534,24 @@ export class ComputeJobWorkflowOwner {
       job_id: jobId,
       provider_id: host.providerId,
       status: initialStatus,
-      remote_workdir: remoteWorkdir
+      remote_workdir: remoteWorkdir,
+      ...(initialStatus === 'queued' && this.concurrencyManager
+        ? {
+            queue_blocked_reason: await this.concurrencyManager.getQueueBlockedReason(
+              context.sessionId,
+              context.projectId
+            )
+          }
+        : {})
     }
   }
 
   async getJobStatus(jobId: string, scope?: ComputeJobReadScope): Promise<JobStatusResult> {
     const job = await this.getJob(jobId, scope)
-    return projectJobStatus(job, job.cancellation_status)
+    return {
+      ...projectJobStatus(job, job.cancellation_status),
+      ...(job.queue_blocked_reason ? { queue_blocked_reason: job.queue_blocked_reason } : {})
+    }
   }
 
   async getJob(jobId: string, scope?: ComputeJobReadScope): Promise<ComputeJob> {
@@ -558,7 +571,15 @@ export class ComputeJobWorkflowOwner {
     ) {
       throw new ComputeHostUnavailableError()
     }
-    return job
+    return job.status === 'queued' && this.concurrencyManager
+      ? {
+          ...job,
+          queue_blocked_reason: await this.concurrencyManager.getQueueBlockedReason(
+            job.session_id,
+            job.project_id
+          )
+        }
+      : job
   }
 
   async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
@@ -636,6 +657,7 @@ const jobResultWithFiles = (
   hiddenFiles: string[],
   leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }>
 ): JobResult => ({
+  ...(job.queue_blocked_reason ? { queue_blocked_reason: job.queue_blocked_reason } : {}),
   job_id: job.job_id,
   ...(job.producer_run_id ? { producer_run_id: job.producer_run_id } : {}),
   ...(parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir)
@@ -644,6 +666,7 @@ const jobResultWithFiles = (
   status: job.status,
   ...(job.error_code ? { error_code: job.error_code } : {}),
   ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
+  result_final: isComputeJobResultFinal(job),
   cancellation_status: job.cancellation_status,
   exit_code: job.exit_code,
   ...(localOutputRoot ? { local_output_root: localOutputRoot } : {}),

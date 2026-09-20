@@ -1,3 +1,4 @@
+import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { errorLogFields, type Logger } from '../logger'
 
 const MAX_RUNTIME_DIAGNOSTIC_CHARS = 7_800
@@ -12,8 +13,8 @@ type BoundedRuntimeDiagnostic = {
 }
 
 const redactRuntimeDiagnosticText = (value: string): string =>
-  value
-    .replace(/https?:\/\/[^\s"'<>]+/gi, (rawUrl) => {
+  redactSensitiveText(
+    value.replace(/https?:\/\/[^\s"'<>]+/gi, (rawUrl) => {
       try {
         const url = new URL(rawUrl)
         url.username = ''
@@ -29,9 +30,7 @@ const redactRuntimeDiagnosticText = (value: string): string =>
         return rawUrl
       }
     })
-    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
-    .replace(/\b(api[_-]?key|token|secret|password)\b(\s*[:=]\s*)[^\s,"'&]+/gi, '$1$2[redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+  )
 
 const redactRuntimeDiagnosticValue = (value: unknown): unknown => {
   if (typeof value === 'string') return redactRuntimeDiagnosticText(value)

@@ -66,7 +66,7 @@ const normalizeRemoteItPublicUrl = (value: string): string => {
 const configurationLoadError = (error: unknown): Error => {
   const detail = toErrorMessage(error)
   return new Error(
-    `Remote access configuration could not be loaded. Fix or remove remote-access.json, then restart Open Science. ${detail}`
+    `Remote access configuration could not be loaded. Fix or remove remote-access.json, then restart Open-Science. ${detail}`
   )
 }
 
@@ -435,12 +435,32 @@ export class RemoteAccessService {
     })
   }
 
+  async revokeBrowsers(
+    browserIds: string[],
+    canManage = true,
+    canManagePairing = canManage
+  ): Promise<RemoteAccessSnapshot> {
+    return this.serialize(async () => {
+      this.assertConfigurationAvailable()
+      const revocation = this.pairing.revokeBrowsers(browserIds)
+      for (const browserId of new Set(browserIds)) {
+        this.webController?.closeExternalConnections(browserId)
+      }
+      // The accepted batch must finish even when it revokes the calling browser.
+      await revocation
+      return this.snapshot(canManage, canManagePairing)
+    })
+  }
+
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise
     this.shutdownStarted = true
     this.detachWebController?.()
     this.detachWebController = undefined
     const invalidation = this.invalidateExternalAccess()
+    // Observe failures immediately while the queued shutdown waits for an active operation.
+    // Await the original promise below so cleanup errors still reach the shutdown caller.
+    void invalidation.catch(() => undefined)
     this.activeMode = 'off'
     this.lifecycle = 'disabled'
     this.error = undefined

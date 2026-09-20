@@ -36,12 +36,13 @@ const createViewer = vi.fn(() => ({
   clear: clearViewer
 }))
 
-vi.mock('3dmol', () => ({
-  createViewer,
-  SurfaceType: {
-    VDW: 'VDW'
-  }
-}))
+vi.mock('3dmol', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('3dmol')>()
+  addModel.mockImplementation((content: string, _format: string, options: object) => ({
+    selectedAtoms: () => actual.Parsers.pdb(content, options)[0] ?? []
+  }))
+  return { createViewer, SurfaceType: { VDW: 'VDW' } }
+})
 
 vi.mock('@/components/streamdown/code-highlighter-runtime', () => ({
   code: {
@@ -296,6 +297,10 @@ describe('PreviewFileContent', () => {
     root = createRoot(container)
     await act(async () => {
       root.render(<PreviewFileContent item={item} {...options} />)
+    })
+    // React.lazy starts imports during the first render; drain them inside act before assertions.
+    await act(async () => {
+      await vi.dynamicImportSettled()
     })
   }
 
@@ -576,13 +581,12 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'canonical-artifact-id',
-      maxBytes: expect.any(Number)
+      fileId: 'canonical-artifact-id'
     })
     consoleError.mockRestore()
   })
 
-  it('formats valid JSON previews with indentation', async () => {
+  it('preserves the original JSON source', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
       encoding: 'utf8',
@@ -595,11 +599,10 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'file-1',
-      maxBytes: 1024 * 1024
+      fileId: 'file-1'
     })
-    expect(container.querySelector('pre')?.textContent).toContain('"name": "sample"')
-    expect(container.querySelector('pre')?.textContent).toContain('"values": [')
+    expect(container.querySelector('pre')?.textContent).toContain('"name":"sample"')
+    expect(container.querySelector('pre')?.textContent).toContain('"values":[')
   })
 
   it('renders line numbers next to text previews', async () => {
@@ -734,6 +737,12 @@ describe('PreviewFileContent', () => {
 
     await renderFile(createFileItem({ format: 'code', name: 'large.py' }))
 
+    expect(container.querySelectorAll('[data-testid="source-line-number"]')).toHaveLength(2000)
+    for (let page = 0; page < 6; page += 1) {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="Next preview page"]')?.click()
+      })
+    }
     expect(container.textContent).toContain('import pandas as pd # 13999')
     expect(highlightSpy).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="source-code-token"]')).toBeNull()
@@ -845,25 +854,38 @@ describe('PreviewFileContent', () => {
     expect(window.api.artifacts.openFile).not.toHaveBeenCalled()
   })
 
-  it('keeps the unavailable classification when a managed fetch returns 404 after acquire', async () => {
+  it('reacquires an expired preview after a protocol 404 without reporting a missing file', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }))
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 404 }))
+    vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
+      content: 'Recovered preview',
+      encoding: 'utf8',
+      size: 17,
+      truncated: false
+    })
 
     await renderFile(
       createFileItem({ format: 'text', name: 'gone.txt', path: '/workspace/gone.txt' })
     )
 
-    expect(container.textContent).toContain('This file is no longer available')
+    expect(container.textContent).not.toContain('This file is no longer available')
+    expect(container.textContent).toContain("File couldn't be read")
     expect(container.querySelector('pre')).toBeNull()
-    expect(consoleError).not.toHaveBeenCalledWith('Failed to read file preview', expect.anything())
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
       resourceId: 'resource-1'
     })
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => retry!.click())
+    await vi.waitFor(() => expect(container.textContent).toContain('Recovered preview'))
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
 
     consoleError.mockRestore()
   })
 
-  it('renders line numbers next to formatted JSON previews', async () => {
+  it('renders line numbers next to original JSON previews', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
       encoding: 'utf8',
@@ -874,7 +896,7 @@ describe('PreviewFileContent', () => {
     await renderFile(createFileItem({ format: 'json', name: 'data.json' }))
 
     expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
-    expect(container.textContent).toContain('"name": "sample"')
+    expect(container.textContent).toContain('"name":"sample"')
   })
 
   it('uses paged source instead of parsing truncated JSON', async () => {
@@ -1061,7 +1083,8 @@ describe('PreviewFileContent', () => {
   })
 
   describe('PDB previews', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+      await import('3dmol')
       restorePdbLayoutMocks = installPdbLayoutMocks()
     })
 
@@ -1111,6 +1134,9 @@ describe('PreviewFileContent', () => {
       expect(container.textContent).toContain('Scroll to zoom')
       expect(createViewer).toHaveBeenCalledTimes(1)
       expect(addModel).toHaveBeenCalledWith(pdbContent, 'pdb', {
+        multimodel: false,
+        keepH: false,
+        altLoc: 'A',
         assignBonds: true,
         noComputeSecondaryStructure: false
       })
@@ -1340,8 +1366,7 @@ describe('PreviewFileContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'project-1',
-      fileId: 'file-1',
-      maxBytes: 1024 * 1024
+      fileId: 'file-1'
     })
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
     expect(container.textContent).toContain('uploaded content')

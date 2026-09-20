@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import { customProviderRequiresKey } from './provider-base-url'
 import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
@@ -133,6 +134,15 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
 export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
+// Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
+// (they must match a gateway's own documentation); only the surrounding copy is localized per
+// surface. Main and renderer share this one map so no surface keeps a private copy.
+export const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
+  anthropic: '/v1/messages',
+  openai: '/v1/chat/completions',
+  responses: '/v1/responses'
+}
+
 // The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
 // the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
 export const providerEndpoints = (provider: {
@@ -149,10 +159,15 @@ export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
   apiEndpoints?: readonly ChatApiEndpoint[]
   key?: string
+  baseUrl?: string
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
   providerEndpoints(provider).includes('anthropic') &&
-  (provider.type !== 'custom' || Boolean(provider.key))
+  // A custom gateway needs credentials unless it is a loopback local model server, which serves the
+  // Anthropic route without one; the transport adapters already treat the key as optional.
+  (provider.type !== 'custom' ||
+    Boolean(provider.key) ||
+    !customProviderRequiresKey(provider.baseUrl))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
@@ -252,6 +267,8 @@ export type CodexInfo = {
   resolvedPath?: string
   version?: string
   nativeVersion?: string
+  // Read-only ownership projection; never persisted in Settings.
+  nativeManaged?: boolean
 }
 
 // Result of probing the machine for a runnable claude executable.
@@ -291,10 +308,15 @@ export type ProviderValidationFailure = {
   status?: number
   message?: string
   target?: ProviderValidationTarget
+  // Additional independently unavailable models/routes, only for model-not-found failures.
+  // Includes target; omitted for a single failure and for provider-wide failures.
+  targets?: ProviderValidationTarget[]
 }
 
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
+  // Human configuration revision; legacy records start at zero.
+  configRevision?: number
   id: string
   type: ProviderType
   codexAuthMode?: CodexSubscriptionAuthMode
@@ -367,9 +389,17 @@ export const providerValidationFailed = (
   target?: ProviderValidationTarget
 ): boolean =>
   provider.lastValidationFailure !== undefined &&
+  // A legacy 'incompatible' verdict is a derivable (provider, framework) relationship, not endpoint
+  // health; validation no longer records it, and stored copies must not hide the provider either.
+  provider.lastValidationFailure.category !== 'incompatible' &&
   (provider.lastValidationFailure.target === undefined ||
     (target !== undefined &&
-      providerValidationTargetMatches(provider.lastValidationFailure.target, target))) &&
+      [
+        provider.lastValidationFailure.target,
+        ...(provider.lastValidationFailure.category === 'model-not-found'
+          ? (provider.lastValidationFailure.targets ?? [])
+          : [])
+      ].some((failed) => providerValidationTargetMatches(failed, target)))) &&
   (provider.lastValidatedAt === undefined ||
     (target !== undefined &&
       provider.lastValidatedTarget !== undefined &&
@@ -507,8 +537,8 @@ export type AppIconVariantInfo = {
 
 // The ordered icon variants shown in Settings. The default (light) leads.
 export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
-  { id: 'light', label: 'Light', description: 'The light Open Science logo.' },
-  { id: 'dark', label: 'Dark', description: 'The dark Open Science logo.' }
+  { id: 'light', label: 'Light', description: 'The light Open-Science logo.' },
+  { id: 'dark', label: 'Dark', description: 'The dark Open-Science logo.' }
 ]
 
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).
@@ -526,6 +556,8 @@ export type AgentFrameworkView = {
 
 // Full renderer snapshot of settings state.
 export type SettingsSnapshot = {
+  // Effective Settings credential backend; startup-only, not a stored preference.
+  credentialStore?: 'os' | 'file'
   // Volatile Main-authority projection order. It is not persisted; older peers may omit it.
   // Renderer stores use it to reject an RPC response that arrives after a newer settings event.
   revision?: number
@@ -665,9 +697,16 @@ export type AppIconPreview = AppIconVariantInfo & {
   previewDataUrl: string
 }
 
-// The hard startup gates. Kept as plain booleans so the wizard can target the first unmet step.
-// Per-framework readiness is exposed alongside `agentReady`, which reflects the currently-selected
-// framework — the gate a session actually depends on.
+export type ReadinessStatus = 'ready' | 'missing' | 'not_ready'
+
+export type ProviderReadinessReason =
+  'credential_invalid' | Exclude<ValidationCategory, 'ok' | 'auth'>
+
+export type ProviderReadiness =
+  { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+
+// The hard startup gates. The booleans keep the wizard's existing gate contract; the structured
+// projections distinguish absent resources from configured resources that cannot currently run.
 export type Preflight = {
   claudeReady: boolean
   opencodeReady: boolean
@@ -677,6 +716,11 @@ export type Preflight = {
   agentFrameworkId: AgentFrameworkId
   agentReady: boolean
   activeProviderReady: boolean
+}
+
+export type ReadinessPreflight = Preflight & {
+  runtimeReadiness: { status: ReadinessStatus }
+  providerReadiness: ProviderReadiness
 }
 
 // A provider draft as entered in the renderer form. The plaintext `key` is present only when the user
@@ -713,6 +757,7 @@ export type UpsertProviderRequest = ProviderDraft & {
   // Edit flows set this so a stale draft cannot recreate a provider that was removed after the
   // renderer loaded it. It affects command semantics only and is never persisted.
   requireExisting?: boolean
+  expectedConfigRevision?: number
   // Explicitly refreshes an existing imported Codex subscription from the user's CLI profile.
   // Ordinary edits remain app-owned and never cross that external profile boundary.
   reimportCodexAuthentication?: boolean
@@ -737,6 +782,9 @@ export type SetActiveProviderRequest = {
 
 // Validation may target a saved provider (key resolved from storage) or an unsaved draft.
 export type ValidateProviderRequest = {
+  // Test prospective form values; existing credentials are merged only in main.
+  // A definitive failure of the unchanged saved connection updates its health, not its config.
+  edit?: UpsertProviderRequest
   providerId?: string
   draft?: ProviderDraft
   // Optional model override for validating a saved provider before that model becomes active.
@@ -758,6 +806,8 @@ export type ValidationCategory =
   | 'unknown'
 
 export type ValidateProviderResult = {
+  // Exact prospective model and route tested by the edit/save operation.
+  testedTarget?: ProviderValidationTarget
   ok: boolean
   category: ValidationCategory
   status?: number
@@ -766,11 +816,26 @@ export type ValidateProviderResult = {
   // (`ok: true`) yet discarded — the provider was switched, deleted, or superseded by a newer test
   // while an async sign-in/probe was in flight. Callers that gate navigation on success (onboarding)
   // must treat `applied === false` as "do not advance": the stored provider does not reflect it.
-  // Absent means applied (the ordinary synchronous path).
+  // For prospective edits, absence makes no claim about persisted health; only true confirms it.
   applied?: boolean
   // Set when the user explicitly cancelled a browser sign-in. Distinct from applied:false (provider
   // changed): the login was intentionally stopped, not invalidated by a concurrent edit.
   cancelled?: boolean
+  // True when the endpoint itself was probed (ok carries endpoint health) but the active agent
+  // framework cannot drive this provider. A derivable (provider, framework) relationship surfaced
+  // for immediate UI feedback — never persisted as a validation failure, because it goes stale the
+  // moment the framework changes.
+  frameworkIncompatible?: boolean
+}
+
+export type SaveValidatedProviderResult = {
+  runtimeReconnectFailed?: boolean
+  validation: ValidateProviderResult
+  // Present only after the atomic configuration and health write has completed.
+  providerId?: string
+  // May also reflect a health-only update after rejected validation, without providerId.
+  // Snapshot refresh can fail after a committed write; providerId still records that outcome.
+  snapshot?: SettingsSnapshot
 }
 
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
@@ -1055,6 +1120,7 @@ export type EnvironmentCheckPresentation =
     }
   | { kind: 'storage-writable' }
   | { kind: 'storage-unwritable' }
+  | { kind: 'file-credential-storage' }
   | { kind: 'secure-storage-available' }
   | { kind: 'secure-storage-unavailable' }
   | {
@@ -1097,6 +1163,27 @@ export type EnvironmentCheckResult = {
 
 // A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.
 export type SkillSource = 'featured' | 'imported' | 'personal'
+export type SkillActivationPolicy = 'always-on' | 'user-controlled'
+
+// Stable machine codes for failed Settings writes. The renderer display layer translates by code,
+// so no English message text ever crosses the store boundary or gets string-compared to decide a
+// translation. Codes are single hyphenated tokens with no spaces: concurrent failures are joined
+// with spaces in the visible error string and split back apart by the display layer.
+export type SettingsWriteErrorCode =
+  | 'active-provider'
+  | 'agent-framework'
+  | 'reasoning-effort'
+  | 'reviewer-model'
+  | 'session-details-model'
+  | 'subagent-model'
+  | 'vision-model'
+  | 'notifications'
+  | 'notification-content'
+  | 'conversation-skill-import'
+  | 'close-preference'
+  | 'default-permission-profile'
+  | 'app-icon'
+  | 'project-files-filter'
 
 // Renderer-safe view of one bundled skill (no file contents).
 export type SkillView = {
@@ -1107,6 +1194,7 @@ export type SkillView = {
   availability?: 'identity-conflict'
   // Ephemeral row identity for conflicting packages that reuse the same durable id.
   catalogEntryKey?: string
+  directoryName?: string
   // Stable invocation name from SKILL.md.
   name: string
   // Presentation label supplied by the catalog source, falling back to name.
@@ -1115,6 +1203,7 @@ export type SkillView = {
   source: SkillSource
   updatedAt: string
   enabled: boolean
+  activationPolicy?: SkillActivationPolicy
   // From the SKILL.md frontmatter; shown in the detail view's "Details" section when present.
   author?: string
   license?: string
@@ -1203,6 +1292,8 @@ export type UpdateSkillRequest = {
 
 export type DeleteSkillRequest = {
   id: string
+  source?: Extract<SkillSource, 'imported' | 'personal'>
+  directoryName?: string
 }
 
 // Import a single skill from a public GitHub URL.
@@ -1238,7 +1329,17 @@ export type PreviewSkillZipRequest = {
 // Read-only SKILL.md content shown before import. Every source adapter returns this renderer-safe
 // shape: sourceLabel is a display path/URL (never an absolute host path), metadata contains parsed
 // frontmatter fields other than name/description, and files contains relative names only.
+export type SkillReplacementPreview = {
+  targetId: string
+  sourceLabel?: string
+  added: string[]
+  modified: string[]
+  removed: string[]
+  comparisonUnavailable?: boolean
+}
+
 export type SkillImportPreviewContent = {
+  replacement?: SkillReplacementPreview
   name: string
   description: string
   sourceLabel: string
@@ -1277,6 +1378,7 @@ export type ImportSkillZipBatchResult = {
 // exactly one existing imported skill of different content — the id of that skill, offered as a
 // replace target.
 export type SkillBundlePreview = {
+  replacement?: SkillReplacementPreview
   subPath: string
   name: string
   description: string
@@ -1335,6 +1437,7 @@ export type ConversationSkillImportResult = {
     status: 'imported' | 'unchanged' | 'updated'
   }>
   errors?: Array<{ name: string; error: string }>
+  warnings?: string[]
 }
 
 // Search GitHub by keyword, or scan a direct repo reference for skill directories.

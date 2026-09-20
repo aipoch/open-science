@@ -22,6 +22,7 @@ type PrismaOwnerModel = Readonly<{
 }>
 
 type ProjectDeletionPath =
+  | 'background-result-delivery-target-delete'
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
@@ -90,6 +91,32 @@ const optionalOwner = (name: ProjectOwnerFieldName): ProjectOwnerField => ({
 })
 
 const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
+  {
+    id: 'bookmarks',
+    medium: 'sqlite',
+    resources: ['Bookmark'],
+    prismaModels: [
+      {
+        name: 'Bookmark',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Private Bookmarks are removed before the Project metadata row is retained as history.'
+    }
+  },
   {
     id: 'project-memory',
     medium: 'sqlite',
@@ -238,6 +265,24 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'background-result-delivery',
+    medium: 'sqlite',
+    resources: ['BackgroundResultDelivery'],
+    prismaModels: [
+      {
+        name: 'BackgroundResultDelivery',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'background-result-delivery-target-delete',
+      operation: 'BackgroundResultDeliveryOwner.commitProjectDeletion',
+      note: 'Delivery obligations and replay tombstones are removed only after Project authority deletion.'
+    }
+  },
+  {
     id: 'notification-inbox-history',
     medium: 'sqlite',
     resources: ['NotificationInboxItem'],
@@ -259,11 +304,15 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'literature-inbox-provenance',
     medium: 'sqlite',
-    resources: ['LiteratureInboxCandidate'],
+    resources: ['LiteratureInboxCandidate', 'LiteratureCandidateDiscovery'],
     prismaModels: [
       {
         name: 'LiteratureInboxCandidate',
         ownerFields: [optionalOwner('sourceProjectId'), optionalOwner('sourceSessionId')]
+      },
+      {
+        name: 'LiteratureCandidateDiscovery',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sessionId')]
       }
     ],
     policy: {
@@ -293,8 +342,11 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       }
     ],
     policy: {
-      kind: 'foreign-key-cascade',
-      note: 'Project Literature membership is removed if its owning Project row is hard-deleted.'
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Remove active Literature membership in the Project soft-delete transaction; retain global references and discovery provenance.'
     }
   },
   {

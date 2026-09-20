@@ -1,4 +1,6 @@
 import { useTranslation } from 'react-i18next'
+import { useSettingsStore } from '@/stores/settings-store'
+import { Notice } from '@/components/notice'
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
 
@@ -319,9 +321,53 @@ const NotebookRunFigureOutputs = ({
   )
 }
 
+// A Windows protection preflight can fail before the R process receives any code. Keep this
+// classification local to the renderer so historical runs gain a useful recovery path without
+// changing the durable run schema or exposing the English sandbox error as the primary guidance.
+const requiresNotebookNetworkRecovery = (run: NotebookRunRecord): boolean => {
+  if (run.kernelKind !== 'r' || run.status !== 'failed' || run.kernelDispatched !== false) {
+    return false
+  }
+
+  const diagnostics = [
+    run.text.stderr,
+    run.text.traceback,
+    ...run.outputs.flatMap((output) =>
+      output.type === 'error' ? [output.message ?? '', output.traceback ?? ''] : []
+    )
+  ].join('\n')
+
+  return /(?:enable protected mode before (?:authorizing|verifying) r access\.|windows protected mode is not ready for r:|windows protection ownership is inconsistent\.|notebook appcontainer (?:profile|loopback|resources|gateway)|windows sandbox gateway port)/iu.test(
+    diagnostics
+  )
+}
+
+const NotebookNetworkRecoveryNotice = (): React.JSX.Element => {
+  const { t } = useTranslation()
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
+
+  return (
+    <Notice
+      role="alert"
+      level="warning"
+      data-testid="notebook-network-recovery-notice"
+      className="mt-3 border-status-warning-foreground/30 bg-status-warning-surface/20 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20"
+      title={t('Notebook execution was blocked')}
+      description={t(
+        'This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.'
+      )}
+      primaryButton={{
+        label: t('Network settings'),
+        onClick: () => openSettingsToPanel('network')
+      }}
+    />
+  )
+}
+
 // Composes the two independent output surfaces used by the notebook panel and session dialog.
 const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const networkRecovery = requiresNotebookNetworkRecovery(run)
   const hasText =
     run.outputs.some((output) => {
       if (output.type === 'stream' || output.type === 'text') return output.text.trim().length > 0
@@ -334,10 +380,38 @@ const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Elem
       ))
   const hasFigures = resolveNotebookRunFigures(run).length > 0
 
-  if (!hasText && !hasFigures && !run.truncated) return null
+  const active = run.status === 'queued' || run.status === 'running'
+  const notice =
+    active && run.cancellationRequestedAt !== undefined
+      ? t('Cancellation requested. Waiting for the executor to confirm the outcome.')
+      : run.status === 'queued'
+        ? t('Request accepted and queued. Code has not started.')
+        : run.status === 'running'
+          ? t('Execution is in progress. Background execution still depends on this app process.')
+          : run.kernelDispatched === false && !networkRecovery
+            ? t('Code was not dispatched to the kernel.')
+            : run.interruptionReason === 'app-terminated'
+              ? t(
+                  'The app stopped before a final outcome was saved. Execution may have had effects; check before retrying.'
+                )
+              : run.status === 'completed' &&
+                  run.environmentCapture?.state === 'unavailable' &&
+                  run.environmentCapture.reason !== 'environment-not-supported'
+                ? t(
+                    'Code completed, but environment evidence could not be saved. This does not mean the code failed.'
+                  )
+                : undefined
+
+  if (!hasText && !hasFigures && !run.truncated && !notice && !networkRecovery) return null
 
   return (
     <div data-testid="notebook-run-outputs">
+      {networkRecovery ? <NotebookNetworkRecoveryNotice /> : null}
+      {notice ? (
+        <p className="mt-2 text-xs text-text-300" data-testid="notebook-run-outcome">
+          {notice}
+        </p>
+      ) : null}
       <NotebookRunTextOutputs run={run} />
       <NotebookRunFigureOutputs run={run} />
       {run.truncated ? (

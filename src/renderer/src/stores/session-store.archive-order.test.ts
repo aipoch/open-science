@@ -222,3 +222,48 @@ describe('session deletion fallback', () => {
     }
   )
 })
+
+describe('Compute Host authority across session projections', () => {
+  it.each([
+    'replace-persisted-if-current',
+    'merge-upload-identities',
+    'archive-authority',
+    'runtime-context-authority',
+    'permission-authority',
+    'session-details-authority',
+    'delegated-authority'
+  ] as const)('receives current host fields when %s advances the revision', (mode) => {
+    const store = createSessionStore()
+    store.getState().hydrateSessions([{ ...session, revision: 1 }])
+    const source = store.getState().sessions[0]
+    const committed = {
+      ...session,
+      revision: 3,
+      enabledComputeHosts: ['ssh:current'],
+      selectedComputeHosts: [],
+      computeConcurrencyLimit: 2
+    }
+    store.getState().applyDurableSessionProjection({ source, session: committed, mode })
+    store.getState().renameSession(session.id, 'Unsaved title')
+    store.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...session,
+        revision: 2,
+        enabledComputeHosts: ['ssh:old'],
+        selectedComputeHosts: ['ssh:old'],
+        computeConcurrencyLimit: 9
+      },
+      mode: 'compute-host-access-authority'
+    })
+    expect(store.getState().sessions[0]).toMatchObject({
+      revision: 3,
+      title: 'Unsaved title',
+      unsavedTitle: true,
+      messages: session.messages,
+      enabledComputeHosts: ['ssh:current'],
+      selectedComputeHosts: [],
+      computeConcurrencyLimit: 2
+    })
+  })
+})

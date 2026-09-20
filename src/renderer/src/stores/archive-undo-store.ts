@@ -15,8 +15,7 @@ type ArchiveUndoText =
   | { messageKey: 'Archived session “{{title}}”.'; messageParams: { title: string } }
   | { message: string }
 
-type ArchiveUndo = ArchiveUndoText &
-  (
+type ArchiveUndo = ArchiveUndoText & { pausedAt?: number } & (
     | {
         key: string
         kind: 'project'
@@ -44,6 +43,7 @@ type ArchiveUndoStore = {
   enqueueProject: (project: Project) => void
   enqueueSession: (session: PersistedChatSession) => void
   dismiss: (key: string) => void
+  setPaused: (key: string, paused: boolean) => void
   dismissProject: (projectId: string) => void
   dismissSession: (sessionId: string) => void
   reconcileProject: (project: Project) => void
@@ -54,8 +54,11 @@ type ArchiveUndoStore = {
 const archiveKey = (kind: ArchiveUndo['kind'], id: string, revision: number): string =>
   `${kind}:${id}:${revision}`
 
-const prune = (notices: ArchiveUndo[]): ArchiveUndo[] =>
-  notices.filter((notice) => notice.expiresAt > Date.now())
+export const isArchiveUndoActive = (notice: ArchiveUndo, now = Date.now()): boolean =>
+  notice.pausedAt !== undefined || notice.expiresAt > now
+
+const prune = (notices: ArchiveUndo[], restoringKey?: string): ArchiveUndo[] =>
+  notices.filter((notice) => notice.key === restoringKey || isArchiveUndoActive(notice))
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Archive state changed elsewhere.'
@@ -78,7 +81,10 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
       expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS
     }
     set((state) => ({
-      notices: [notice, ...prune(state.notices).filter((item) => item.projectId !== project.id)]
+      notices: [
+        notice,
+        ...prune(state.notices, state.restoringKey).filter((item) => item.projectId !== project.id)
+      ]
     }))
   },
 
@@ -99,12 +105,31 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
     set((state) => ({
       notices: [
         notice,
-        ...prune(state.notices).filter(
+        ...prune(state.notices, state.restoringKey).filter(
           (item) => !(item.kind === 'session' && item.sessionId === session.id)
         )
       ]
     }))
   },
+
+  setPaused: (key, paused) =>
+    set((state) => {
+      const target = state.notices.find((notice) => notice.key === key)
+      if (
+        !target ||
+        paused === (target.pausedAt !== undefined) ||
+        (paused && !isArchiveUndoActive(target) && state.restoringKey !== key)
+      )
+        return state
+      return {
+        notices: state.notices.map((notice) => {
+          if (notice.key !== key) return notice
+          if (paused) return { ...notice, pausedAt: Date.now() }
+          const { pausedAt, ...rest } = notice
+          return { ...rest, expiresAt: notice.expiresAt + (Date.now() - pausedAt!) }
+        })
+      }
+    }),
 
   dismiss: (key) => set((state) => ({ notices: state.notices.filter((item) => item.key !== key) })),
 
@@ -135,7 +160,7 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
 
   reconcileProject: (project) =>
     set((state) => ({
-      notices: prune(state.notices).filter((notice) => {
+      notices: prune(state.notices, state.restoringKey).filter((notice) => {
         if (notice.projectId !== project.id) return true
         // An archived parent supersedes child undo actions. Once it is restored, however, a
         // previously archived child session remains independently restorable.
@@ -149,7 +174,7 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
 
   reconcileSession: (session) =>
     set((state) => ({
-      notices: prune(state.notices).filter(
+      notices: prune(state.notices, state.restoringKey).filter(
         (notice) =>
           notice.kind !== 'session' ||
           notice.sessionId !== session.id ||
@@ -159,7 +184,7 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
 
   undo: async (key) => {
     const notice = get().notices.find((item) => item.key === key)
-    if (!notice) return
+    if (!notice || get().restoringKey !== undefined || !isArchiveUndoActive(notice)) return
     set({ restoringKey: key })
     try {
       if (notice.kind === 'project') {
@@ -186,7 +211,12 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
           if (item.key !== key) return item
           // A failure replaces the localized archive text with the backend's own message, so the
           // key/params pair is dropped to keep exactly one text source on the notice.
-          const failed = { ...item, retry: true, expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS }
+          const failed = {
+            ...item,
+            retry: true,
+            expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS,
+            ...(item.pausedAt !== undefined ? { pausedAt: Date.now() } : {})
+          }
           if ('messageKey' in failed) {
             delete (failed as { messageKey?: unknown }).messageKey
             delete (failed as { messageParams?: unknown }).messageParams

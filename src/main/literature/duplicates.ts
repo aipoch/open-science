@@ -18,7 +18,7 @@ const normalize = (value: string): string =>
 
 const identitySchemes = new Set<string>(LITERATURE_IDENTITY_SCHEMES)
 
-// Indexed exact matches keep the scan linear in the number of records and identifiers.
+// Index exact matches by key, retaining incompatible components for later candidates.
 // Deliberately leave fuzzy titles and publication-year differences for manual review.
 export const findLiteratureDuplicateGroups = (
   candidates: DuplicateCandidate[]
@@ -41,7 +41,7 @@ export const findLiteratureDuplicateGroups = (
     }
     return index
   }
-  const keys = new Map<string, number>()
+  const keys = new Map<string, Set<number>>()
   const join = (left: number, right: number): void => {
     left = root(left)
     right = root(right)
@@ -54,7 +54,7 @@ export const findLiteratureDuplicateGroups = (
     parents[right] = left
     for (const [scheme, values] of identifiers[right]) identifiers[left].set(scheme, values)
   }
-  candidates.forEach((item, index) => {
+  const candidateKeys = candidates.map((item, index) => {
     const itemKeys = item.identifiers
       .filter(({ scheme }) => identifiers[index].has(scheme))
       .map(({ scheme, normalizedValue }) => `${item.itemType}:${scheme}:${normalizedValue}`)
@@ -67,10 +67,35 @@ export const findLiteratureDuplicateGroups = (
         JSON.stringify([item.itemType, normalize(item.title), item.issuedYear, authorKey])
       )
     }
+    return itemKeys
+  })
+  // An identity scheme present in every original member of a key can never change during
+  // compatible joins. Partition by those values before scanning representatives. This also
+  // works when components acquire additional schemes through other keys.
+  const commonSchemes = new Map<string, string[]>()
+  candidateKeys.forEach((itemKeys, index) => {
     for (const key of itemKeys) {
-      const previous = keys.get(key)
-      if (previous !== undefined) join(previous, index)
-      else keys.set(key, index)
+      const previous = commonSchemes.get(key)
+      commonSchemes.set(
+        key,
+        previous
+          ? previous.filter((scheme) => identifiers[index].has(scheme))
+          : [...identifiers[index].keys()].sort()
+      )
+    }
+  })
+  candidateKeys.forEach((itemKeys, index) => {
+    for (const originalKey of itemKeys) {
+      const key = JSON.stringify([
+        originalKey,
+        commonSchemes
+          .get(originalKey)!
+          .map((scheme) => [scheme, [...identifiers[index].get(scheme)!].sort()])
+      ])
+      const representatives = new Set([...(keys.get(key) ?? [])].map(root))
+      for (const previous of representatives) join(previous, index)
+      representatives.add(index)
+      keys.set(key, new Set([...representatives].map(root)))
     }
   })
   const groups = new Map<number, DuplicateCandidate[]>()

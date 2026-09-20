@@ -71,6 +71,7 @@ export type ReviewerFileEvidenceDescriptor =
 
 export type ReviewerTurnPlanDescriptor = {
   versionId: string
+  checksum?: string
   status: 'approved' | 'active' | 'completed' | 'superseded'
   content: unknown
   binding: 'current-turn'
@@ -179,6 +180,7 @@ export type ReviewCheck = {
   // Latest terminal fix-loop reason when this finding is unaddressed. Optional for legacy rows and
   // in-memory callers that predate durable disposition projection.
   unaddressedTrigger?: Exclude<ReviewFindingDispositionTrigger, 'review_submission'>
+  unaddressedNote?: string
 }
 
 // The normalized content submitted for one Review Check assessment. Tracked re-review checks keep
@@ -234,6 +236,8 @@ export type Review = {
   // scope this review was run against — e.g. an artifact was edited after the review completed. The UI
   // uses it to stop presenting a stale "No issues found" as current. Computed by re-resolving the scope.
   stale?: boolean
+  // Transient evidence-read failure, independent of a confirmed content change.
+  verificationUnavailable?: boolean
 }
 
 // A Review with its checks eagerly loaded, as returned by getReviewsForSession.
@@ -350,6 +354,8 @@ export type ReviewRunRequest = {
   // the original turn (turnMessageId), but its scope belongs to the correction turn (scopeTurnMessageId)
   // — re-running must re-audit that correction turn, not the original.
   scopeTurnMessageId?: string
+  // Keep historical reruns on the branch captured by their Review scope.
+  scopeMessageBranchId?: string
   // Who requested the run. 'auto' (post-turn auto-review) is idempotent per turn: main refuses to start
   // a second review for a turn that already has one, which is the atomic guarantee against duplicate
   // runs from concurrent entry points. 'manual' (Request review / stale/error Re-run) intentionally
@@ -435,3 +441,7 @@ export const REVIEWER_IPC = {
   // Renderer → main: abort the running fix loop for a session.
   ABORT_FIX_LOOP: 'reviewer:abort-fix-loop'
 } as const
+
+// Stored in the existing disposition note; no new durable trigger is required.
+export const REVIEW_CORRECTION_CONTEXT_CHANGED =
+  'Automatic correction stopped because the active conversation changed.'

@@ -1,4 +1,14 @@
+import { pdfStructureCommandContracts } from '../shared/pdf-structure'
+import type {
+  ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
+  ReadPdfStructureThumbnailRequest,
+  PdfStructureResult
+} from '../shared/pdf-structure'
+import type { PdfStructureReader } from './literature/pdf-structure/reader'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
+import type { LocalModelSnapshot } from '../shared/local-models'
+import type { LocalModelOwner } from './local-models/owner'
 import type { CliLauncherStatus } from '../shared/cli'
 import type {
   GrantLocalRootRequest,
@@ -22,6 +32,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
+  RevokeRemoteBrowsersRequest,
   SetRemoteAccessModeRequest
 } from '../shared/remote-access'
 import { remoteAccessApplicationCommandContracts } from '../shared/remote-access'
@@ -217,6 +228,11 @@ const remoteAccessCommands = Object.freeze({
     readonly [request: RevokeRemoteBrowserRequest],
     RemoteAccessSnapshot
   >('remote-access:revoke-browser', remoteAccessApplicationCommandContracts.revokeBrowser),
+  revokeBrowsers: defineApplicationCommand<
+    'remote-access:revoke-browsers',
+    readonly [request: RevokeRemoteBrowsersRequest],
+    RemoteAccessSnapshot
+  >('remote-access:revoke-browsers', remoteAccessApplicationCommandContracts.revokeBrowsers),
   setMode: defineApplicationCommand<
     'remote-access:set-mode',
     readonly [request: SetRemoteAccessModeRequest],
@@ -334,7 +350,53 @@ const updateCommands = Object.freeze({
   )
 })
 
+const pdfStructureCommands = {
+  readCached: defineApplicationCommand<
+    'pdf-structure:read-cached',
+    readonly [ReadCachedPdfStructureRequest],
+    PdfStructureResult | undefined
+  >('pdf-structure:read-cached', pdfStructureCommandContracts.readCached),
+  parse: defineApplicationCommand<
+    'pdf-structure:parse',
+    readonly [ParsePdfStructureRequest],
+    PdfStructureResult
+  >('pdf-structure:parse', pdfStructureCommandContracts.parse),
+  cancel: defineApplicationCommand<'pdf-structure:cancel', readonly [string], void>(
+    'pdf-structure:cancel',
+    pdfStructureCommandContracts.cancel
+  ),
+  readThumbnail: defineApplicationCommand<
+    'pdf-structure:read-thumbnail',
+    readonly [ReadPdfStructureThumbnailRequest],
+    string | undefined
+  >('pdf-structure:read-thumbnail', pdfStructureCommandContracts.readThumbnail),
+  clearCache: defineApplicationCommand<
+    'pdf-structure:clear-cache',
+    readonly [],
+    { removedBytes: number; retainedEntries: number }
+  >('pdf-structure:clear-cache', pdfStructureCommandContracts.clearCache)
+}
+
+const localModelCommands = Object.freeze({
+  getSnapshot: defineApplicationCommand<
+    'local-models:get-snapshot',
+    readonly [],
+    LocalModelSnapshot
+  >('local-models:get-snapshot'),
+  install: defineApplicationCommand<'local-models:install', readonly [], LocalModelSnapshot>(
+    'local-models:install'
+  ),
+  cancel: defineApplicationCommand<'local-models:cancel', readonly [], LocalModelSnapshot>(
+    'local-models:cancel'
+  ),
+  remove: defineApplicationCommand<'local-models:remove', readonly [], LocalModelSnapshot>(
+    'local-models:remove'
+  )
+})
+
 const hostApplicationCommands = Object.freeze({
+  localModels: localModelCommands,
+  pdfStructure: pdfStructureCommands,
   cli: cliCommands,
   github: githubCommands,
   localFs: localFsCommands,
@@ -355,10 +417,17 @@ const hostApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('remote-access', Object.values(remoteAccessCommands)),
   defineApplicationCommandGroup('reviewer', Object.values(reviewerCommands)),
   defineApplicationCommandGroup('storage', Object.values(storageCommands)),
-  defineApplicationCommandGroup('update', Object.values(updateCommands))
+  defineApplicationCommandGroup('update', Object.values(updateCommands)),
+  defineApplicationCommandGroup('local-models', Object.values(localModelCommands)),
+  defineApplicationCommandGroup('pdf-structure', Object.values(pdfStructureCommands))
 ] as const)
 
 type HostApplicationCommandDependencies = Readonly<{
+  pdfStructure: Pick<
+    PdfStructureReader,
+    'parse' | 'cancel' | 'readThumbnail' | 'clearCache' | 'readCached'
+  >
+  localModels: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
   cli: CliCommandOwner
   github: GithubCommandOwner
   localFs: Pick<
@@ -387,7 +456,15 @@ type HostApplicationCommandDependencies = Readonly<{
   }>
   remoteAccess: Pick<
     RemoteAccessService,
-    'snapshot' | 'probe' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
+    | 'snapshot'
+    | 'probe'
+    | 'detect'
+    | 'setMode'
+    | 'disable'
+    | 'approve'
+    | 'reject'
+    | 'revoke'
+    | 'revokeBrowsers'
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
@@ -561,6 +638,14 @@ const registerHostApplicationCommands = (
           canManagePairing(callerContext)
         )
       },
+      'remote-access:revoke-browsers': ({ args, callerContext }) => {
+        requirePairingManager(callerContext)
+        return dependencies.remoteAccess.revokeBrowsers(
+          args[0].browserIds,
+          isDesktopCaller(callerContext),
+          canManagePairing(callerContext)
+        )
+      },
       'remote-access:set-mode': ({ args, callerContext }) => {
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.setMode(args[0].mode)
@@ -642,6 +727,42 @@ const registerHostApplicationCommands = (
         localCommand(callerContext, 'update:download', () => dependencies.update.download(args[0])),
       'update:get-app-info': () => dependencies.update.getAppInfo(),
       'update:get-status': () => dependencies.update.getStatus()
+    })
+    scope.registerGroup(hostApplicationCommandGroups[9], {
+      'local-models:get-snapshot': ({ callerContext }) =>
+        localCommand(callerContext, 'local-models:get-snapshot', () =>
+          dependencies.localModels.getSnapshot()
+        ),
+      'local-models:install': ({ callerContext }) =>
+        localCommand(callerContext, 'local-models:install', () =>
+          dependencies.localModels.install()
+        ),
+      'local-models:cancel': ({ callerContext }) =>
+        localCommand(callerContext, 'local-models:cancel', () => dependencies.localModels.cancel()),
+      'local-models:remove': ({ callerContext }) =>
+        localCommand(callerContext, 'local-models:remove', () => dependencies.localModels.remove())
+    })
+    scope.registerGroup(hostApplicationCommandGroups[10], {
+      'pdf-structure:read-cached': ({ callerContext, callerLease, args: [request] }) =>
+        localCommand(callerContext, 'pdf-structure:read-cached', () =>
+          dependencies.pdfStructure.readCached(request, callerContext, callerLease)
+        ),
+      'pdf-structure:parse': ({ callerContext, callerLease, args: [request] }) =>
+        localCommand(callerContext, 'pdf-structure:parse', () =>
+          dependencies.pdfStructure.parse(request, callerContext, callerLease)
+        ),
+      'pdf-structure:cancel': ({ callerContext, callerLease, args: [requestId] }) =>
+        localCommand(callerContext, 'pdf-structure:cancel', () =>
+          dependencies.pdfStructure.cancel(requestId, callerContext, callerLease)
+        ),
+      'pdf-structure:read-thumbnail': ({ callerContext, callerLease, args: [request] }) =>
+        localCommand(callerContext, 'pdf-structure:read-thumbnail', () =>
+          dependencies.pdfStructure.readThumbnail(request, callerContext, callerLease)
+        ),
+      'pdf-structure:clear-cache': ({ callerContext, callerLease }) =>
+        localCommand(callerContext, 'pdf-structure:clear-cache', () =>
+          dependencies.pdfStructure.clearCache(callerContext, callerLease)
+        )
     })
     return scope.complete()
   } catch (error) {

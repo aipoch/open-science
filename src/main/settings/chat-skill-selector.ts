@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
 import { createLogger } from '../logger'
 import type { OfficialVendorId } from '../../shared/provider-registry'
@@ -81,12 +82,19 @@ export async function selectChatSkills(input: {
       'none',
       target.reasoningEffortTransport
     )
+    // Each classifier invocation is an independent, stateless auxiliary conversation.
+    // Its function-call attempt and JSON fallback must use the same routing identity.
+    const goSession =
+      target.vendorId === 'opencode-go' ? `open-science-selector-${randomUUID()}` : undefined
     const request = (withTool: boolean): Promise<Response> =>
       fetchProviderRequest(fetchImpl, target.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(target.key ? { authorization: `Bearer ${target.key}` } : {})
+          ...(target.key ? { authorization: `Bearer ${target.key}` } : {}),
+          ...(goSession
+            ? { 'x-opencode-session': goSession, 'user-agent': 'open-science/skill-selector' }
+            : {})
         },
         body: JSON.stringify({
           model: target.model,

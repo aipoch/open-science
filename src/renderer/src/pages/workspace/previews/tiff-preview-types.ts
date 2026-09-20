@@ -3,6 +3,10 @@ type DecodedTiffPage = {
   height: number
   pageIndex: number
   pageCount: number
+  displayRange?: { minimum: number; maximum: number }
+  sampleFormat?: number
+  bitsPerSample?: number
+  autoContrast?: boolean
   rgba: Uint8ClampedArray
 }
 
@@ -28,3 +32,12 @@ const TIFF_THUMBNAIL_MAX_DIMENSION = 512
 
 export { DEFAULT_TIFF_PREVIEW_LIMITS, TIFF_THUMBNAIL_LIMITS, TIFF_THUMBNAIL_MAX_DIMENSION }
 export type { DecodedTiffPage, TiffPreviewLimits }
+
+export class TiffPageDecodeError extends Error {
+  constructor(
+    message: string,
+    readonly pageCount: number
+  ) {
+    super(message)
+  }
+}

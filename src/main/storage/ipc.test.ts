@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync, rmSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -9,7 +9,7 @@ import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
 // Capture ipcMain.handle registrations; stub dialog/BrowserWindow/app so handlers can be invoked
-// directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'OpenScience'.
+// directly without a real Electron runtime. isPackaged: true means dataFolderName() === 'Open-Science'.
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showOpenDialog = vi.fn()
 const sentWindows: {
@@ -22,7 +22,7 @@ const appQuit = vi.fn()
 const openPath = vi.fn<(path: string) => Promise<string>>().mockResolvedValue('')
 // Home is mutable so a few tests can point it at a real temp dir (legacy-in-place detection reads
 // the config root under home); it defaults to /home/user so every other test is unaffected.
-const electronHome = { path: '/home/user' }
+const electronHome = { path: '/home/user', packaged: true }
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -35,7 +35,9 @@ vi.mock('electron', () => ({
   shell: { openPath: (path: string) => openPath(path) },
   app: {
     getPath: () => electronHome.path,
-    isPackaged: true,
+    get isPackaged() {
+      return electronHome.packaged
+    },
     relaunch: appRelaunch,
     exit: appExit,
     quit: appQuit
@@ -151,7 +153,7 @@ const diagnosticRecords = (logger: Logger): Record<string, unknown>[] =>
   )
 
 // Data folder name mirrors dataFolderName() for a packaged build (see the electron mock above).
-const dataRootFor = (parent: string): string => join(parent, 'OpenScience')
+const dataRootFor = (parent: string): string => join(parent, 'Open-Science')
 
 let currentParent: string
 let dataRoot: string
@@ -159,6 +161,12 @@ let targetParent: string
 let target: string
 
 beforeEach(async () => {
+  for (const key of [
+    'OPEN_SCIENCE_CONFIG_ROOT',
+    'OPEN_SCIENCE_STORAGE_ROOT',
+    'OPEN_SCIENCE_E2E_STORAGE_ROOT'
+  ])
+    vi.stubEnv(key, '')
   handlers.clear()
   showOpenDialog.mockReset()
   appRelaunch.mockClear()
@@ -174,16 +182,211 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  electronHome.packaged = true
+  electronHome.path = '/home/user'
+  vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', '')
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '')
+  vi.stubEnv('OPEN_SCIENCE_STORAGE_ROOT', '')
   initDataRoot(undefined)
   // migration-state is a module singleton; reset it so a pending write-gate can't leak between tests.
   clearMigrationPending()
   initializeDataRootWriteAvailability(false)
+  vi.unstubAllEnvs()
   clearApplicationShutdownTrigger()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
 })
 
 describe('storage IPC handlers', () => {
+  it.each(['legacy-sibling', 'both-siblings', 'adopt-disappears', 'move-becomes-adopt'])(
+    'requires confirmation again when a preview changes before the command (%s)',
+    async (change) => {
+      initDataRoot(dataRoot)
+      if (change === 'adopt-disappears') {
+        await mkdir(join(target, 'workspaces'), { recursive: true })
+        await writeFile(join(target, 'workspaces/history.json'), '{}')
+      }
+      const deps = fakeDeps()
+      const owner = createStorageCommandOwner(deps)
+      const preview = await owner.inspectDataRoot({ parent: targetParent })
+      expect(preview.selection).toBeDefined()
+      if (change === 'adopt-disappears') await rm(target, { recursive: true })
+      else {
+        const changed = change === 'move-becomes-adopt' ? target : join(targetParent, 'OpenScience')
+        await mkdir(join(changed, 'workspaces'), { recursive: true })
+        await writeFile(join(changed, 'workspaces/history.json'), '{}')
+        if (change === 'both-siblings') {
+          await mkdir(join(target, 'workspaces'), { recursive: true })
+          await writeFile(join(target, 'workspaces/history.json'), '{}')
+        }
+      }
+      const result = await owner.setDataRootAndRelaunch({
+        parent: preview.dataRoot,
+        selection: preview.selection
+      })
+      expect(result.ok).toBe(false)
+      expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+      expect(deps.prepareDataRootHandoff).not.toHaveBeenCalled()
+      expect(isMigrationPending()).toBe(false)
+    }
+  )
+
+  it('refuses a changed move target after handoff preparation before entering the copy engine', async () => {
+    initDataRoot(dataRoot)
+    const copy = vi.fn()
+    const aborted = vi.fn()
+    const deps = fakeDeps({
+      runDataRootMigration: copy,
+      notifyDataRootHandoffAborted: aborted,
+      prepareDataRootHandoff: async () => {
+        await mkdir(join(targetParent, 'OpenScience/workspaces'), { recursive: true })
+        await writeFile(join(targetParent, 'OpenScience/workspaces/history.json'), '{}')
+        return true
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    const preview = await owner.inspectDataRoot({ parent: targetParent })
+    expect(
+      await owner.migrate({ parent: preview.dataRoot, selection: preview.selection })
+    ).toMatchObject({ ok: false })
+    expect(copy).not.toHaveBeenCalled()
+    expect(aborted).toHaveBeenCalledOnce()
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('does not publish an inspection if the directory changes during the capacity probe', async () => {
+    initDataRoot(dataRoot)
+    const owner = createStorageCommandOwner(
+      fakeDeps({
+        availableBytes: async () => {
+          await mkdir(join(target, 'workspaces'), { recursive: true })
+          await writeFile(join(target, 'workspaces/history.json'), '{}')
+          return 1000
+        }
+      })
+    )
+    expect(await owner.inspectDataRoot({ parent: targetParent })).toMatchObject({ kind: 'invalid' })
+  })
+
+  it('preserves the old pointer when a staged target disappears during queued commit', async () => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { SettingsPreferencesModule } = await import('../settings/preferences')
+    const repository = new SettingsRepository(join(currentParent, 'isolated-config'))
+    await repository.setDataRoot({ dataRoot: dataRoot })
+    const preferences = new SettingsPreferencesModule(repository)
+    initDataRoot(dataRoot)
+    const deps = fakeDeps()
+    deps.settingsService.setDataRoot = async (path, options) => {
+      const pending = preferences.setDataRoot(path, options)
+      rmSync(target, { recursive: true })
+      await pending
+    }
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.migrate({ parent: targetParent })).toMatchObject({ ok: true })
+    expect(await owner.commitAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the selection inside the queued settings publication', async () => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { SettingsPreferencesModule } = await import('../settings/preferences')
+    const repository = new SettingsRepository(join(currentParent, 'isolated-config'))
+    await repository.setDataRoot({ dataRoot: dataRoot })
+    const preferences = new SettingsPreferencesModule(repository)
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'workspaces'), { recursive: true })
+    await writeFile(join(target, 'workspaces/history.json'), '{}')
+    const deps = fakeDeps()
+    deps.settingsService.setDataRoot = async (path, options) => {
+      const pending = preferences.setDataRoot(path, options)
+      rmSync(target, { recursive: true })
+      await pending
+    }
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
+    expect(isMigrationPending()).toBe(false)
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rejects lost workspace ownership after the final adoption classification', async () => {
+    initDataRoot(dataRoot)
+    const custom = join(targetParent, 'custom-research')
+    const workspace = join(custom, 'workspaces/session')
+    await mkdir(workspace, { recursive: true })
+    const { initializeManagedWorkspaceOwnership } = await import('./managed-workspace-ownership')
+    await initializeManagedWorkspaceOwnership(workspace, 'project', 1, custom)
+    const { classifyDataRoot } = await import('./migration-service')
+    let calls = 0
+    const deps = fakeDeps({
+      classifyDataRoot: async (...args) => {
+        const result = await classifyDataRoot(...args)
+        if (++calls === 2) await rm(workspace, { recursive: true })
+        return result
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.setDataRootAndRelaunch({ parent: custom })).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+  })
+
+  it('does not switch to a legacy sibling that appears while writers are paused', async () => {
+    initDataRoot(dataRoot)
+    const legacy = join(targetParent, 'OpenScience')
+    const deps = fakeDeps({
+      pauseDataRootWriters: async () => {
+        await mkdir(join(legacy, 'workspaces'), { recursive: true })
+        await writeFile(join(legacy, 'workspaces/history.json'), '{}')
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    const preview = await owner.inspectDataRoot({ parent: targetParent })
+    expect(preview).toMatchObject({ kind: 'move', dataRoot: target })
+    const result = await owner.setDataRootAndRelaunch({ parent: targetParent })
+    expect(result).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('does not recreate an adoption target that disappears during writer pause', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'workspaces'), { recursive: true })
+    await writeFile(join(target, 'workspaces/history.json'), '{}')
+    const deps = fakeDeps({
+      pauseDataRootWriters: async () => {
+        await rm(target, { recursive: true })
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.inspectDataRoot({ parent: target })).toMatchObject({ kind: 'adopt' })
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(existsSync(target)).toBe(false)
+    expect(isMigrationPending()).toBe(false)
+  })
+
+  it('rejects an adoption target removed after final asynchronous validation', async () => {
+    initDataRoot(dataRoot)
+    await mkdir(join(target, 'workspaces'), { recursive: true })
+    await writeFile(join(target, 'workspaces/history.json'), '{}')
+    const { classifyDataRoot } = await import('./migration-service')
+    let calls = 0
+    const deps = fakeDeps({
+      classifyDataRoot: async (...args) => {
+        const result = await classifyDataRoot(...args)
+        if (++calls === 2) await rm(target, { recursive: true })
+        return result
+      }
+    })
+    const owner = createStorageCommandOwner(deps)
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
+  })
+
   it('shares migration state between legacy IPC and direct owner calls', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps()
@@ -200,6 +403,7 @@ describe('storage IPC handlers', () => {
     })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
@@ -290,6 +494,7 @@ describe('storage IPC handlers', () => {
     })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.runtime.disconnect).toHaveBeenCalledOnce()
@@ -383,9 +588,9 @@ describe('storage IPC handlers', () => {
     const status = await invoke('storage:get-status')
 
     expect(status).toEqual({
-      dataRoot: join('/home/user', 'OpenScience'),
+      dataRoot: join('/home/user', 'Open-Science'),
       isDefault: true,
-      defaultDataRoot: join('/home/user', 'OpenScience'),
+      defaultDataRoot: join('/home/user', 'Open-Science'),
       defaultParent: '/home/user',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
@@ -427,9 +632,9 @@ describe('storage IPC handlers', () => {
     }
 
     expect(info.isDefault).toBe(true)
-    // The default root is `<home>/OpenScience` (home mocked to /home/user), reproducible from home.
+    // The default root is `<home>/Open-Science` (home mocked to /home/user), reproducible from home.
     // Derive with join so the assertion holds on Windows (backslashes), not just POSIX.
-    expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
+    expect(info.defaultDataRoot).toBe(join('/home/user', 'Open-Science'))
     expect(info.defaultParent).toBe('/home/user')
     expect(info.canAutoSelectDataDrive).toBe(true)
   })
@@ -441,7 +646,7 @@ describe('storage IPC handlers', () => {
       await mkdir(
         join(
           home,
-          'OpenScience',
+          'Open-Science',
           UPLOADS_DIR,
           DEFAULT_UPLOAD_PROJECT_ID,
           STAGING_UPLOAD_SESSION_ID
@@ -467,14 +672,14 @@ describe('storage IPC handlers', () => {
     try {
       const staging = join(
         home,
-        'OpenScience',
+        'Open-Science',
         UPLOADS_DIR,
         DEFAULT_UPLOAD_PROJECT_ID,
         STAGING_UPLOAD_SESSION_ID
       )
       await mkdir(staging, { recursive: true })
       await writeFile(join(staging, 'transfer.part'), 'pending upload')
-      initDataRoot(undefined)
+      initDataRoot(join(home, 'Open-Science'))
       registerStorageIpcHandlers(fakeDeps())
 
       const info = (await invoke('storage:get-info')) as { canAutoSelectDataDrive: boolean }
@@ -482,7 +687,7 @@ describe('storage IPC handlers', () => {
       expect(info.canAutoSelectDataDrive).toBe(false)
     } finally {
       electronHome.path = '/home/user'
-      initDataRoot(undefined)
+      initDataRoot(join(home, 'Open-Science'))
       await rm(home, { recursive: true, force: true })
     }
   })
@@ -511,7 +716,7 @@ describe('storage IPC handlers', () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-runtime-home-'))
     electronHome.path = home
     try {
-      await mkdir(join(home, 'OpenScience', 'runtime'), { recursive: true })
+      await mkdir(join(home, 'Open-Science', 'runtime'), { recursive: true })
       initDataRoot(undefined)
       registerStorageIpcHandlers(fakeDeps())
 
@@ -525,14 +730,22 @@ describe('storage IPC handlers', () => {
     }
   })
 
-  it('get-info flags legacyDataMovePrompt for an unconfigured install with data in the config root', async () => {
+  it('get-info flags legacyDataMovePrompt for a saved install with data in the config root', async () => {
     const home = await mkdtemp(join(tmpdir(), 'ds-legacy-home-'))
     electronHome.path = home
     try {
-      // Legacy layout: user data sits directly in the hidden config root, no OpenScience folder yet.
+      // Legacy layout: user data sits directly in the hidden config root, no Open-Science folder yet.
       await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
-      initDataRoot(undefined) // unconfigured -> resolves to the legacy config root
-      registerStorageIpcHandlers(fakeDeps()) // getStoredSettings -> {} (unset, never dismissed)
+      await writeFile(join(home, '.open-science', 'artifacts', 'history.json'), '{}')
+      initDataRoot(join(home, '.open-science')) // explicitly saved legacy location
+      registerStorageIpcHandlers(
+        fakeDeps({
+          settingsService: {
+            ...fakeDeps().settingsService,
+            getStoredSettings: async () => ({ dataRoot: join(home, '.open-science') })
+          }
+        })
+      )
 
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
@@ -555,8 +768,16 @@ describe('storage IPC handlers', () => {
     electronHome.path = home
     try {
       await mkdir(join(home, '.open-science', 'workspaces', 'session-1'), { recursive: true })
-      initDataRoot(undefined)
-      registerStorageIpcHandlers(fakeDeps())
+      await writeFile(join(home, '.open-science', 'workspaces', 'session-1', 'history.json'), '{}')
+      initDataRoot(join(home, '.open-science'))
+      registerStorageIpcHandlers(
+        fakeDeps({
+          settingsService: {
+            ...fakeDeps().settingsService,
+            getStoredSettings: async () => ({ dataRoot: join(home, '.open-science') })
+          }
+        })
+      )
 
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
@@ -581,8 +802,19 @@ describe('storage IPC handlers', () => {
       await mkdir(join(home, '.open-science', 'notebook-file-evidence', 'project-1'), {
         recursive: true
       })
-      initDataRoot(undefined)
-      registerStorageIpcHandlers(fakeDeps())
+      await writeFile(
+        join(home, '.open-science', 'notebook-file-evidence', 'project-1', 'history.json'),
+        '{}'
+      )
+      initDataRoot(join(home, '.open-science'))
+      registerStorageIpcHandlers(
+        fakeDeps({
+          settingsService: {
+            ...fakeDeps().settingsService,
+            getStoredSettings: async () => ({ dataRoot: join(home, '.open-science') })
+          }
+        })
+      )
 
       const info = (await invoke('storage:get-info')) as {
         legacyDataMovePrompt: boolean
@@ -605,9 +837,11 @@ describe('storage IPC handlers', () => {
     electronHome.path = home
     try {
       await mkdir(join(home, '.open-science', 'artifacts'), { recursive: true })
-      initDataRoot(undefined)
+      await writeFile(join(home, '.open-science', 'artifacts', 'history.json'), '{}')
+      initDataRoot(join(home, '.open-science'))
       const deps = fakeDeps()
       vi.mocked(deps.settingsService.getStoredSettings).mockResolvedValue({
+        dataRoot: join(home, '.open-science'),
         legacyDataMovePromptDismissedAt: 123
       })
       registerStorageIpcHandlers(deps)
@@ -663,8 +897,8 @@ describe('storage IPC handlers', () => {
     expect(info.dataRoot).toBe(dataRoot)
     expect(info.isDefault).toBe(false)
     // Even from a custom root, the default and its parent are reported so Settings can offer a
-    // one-click return to `<home>/OpenScience` and show the destination.
-    expect(info.defaultDataRoot).toBe(join('/home/user', 'OpenScience'))
+    // one-click return to `<home>/Open-Science` and show the destination.
+    expect(info.defaultDataRoot).toBe(join('/home/user', 'Open-Science'))
     expect(info.defaultParent).toBe('/home/user')
     expect(info.usage.totalBytes).toBe(0)
     expect(info.availableBytes).toBeGreaterThan(0)
@@ -1529,6 +1763,48 @@ describe('storage IPC handlers', () => {
     expect(cleanupRuntimeCache).not.toHaveBeenCalled()
   })
 
+  it.each(['commit', 'failed-pointer', 'discard', 'cancel-copy'] as const)(
+    'runs source permission cleanup only after pointer commit (%s)',
+    async (action) => {
+      initDataRoot(dataRoot)
+      const order: string[] = []
+      const { deleteSources } = await import('./data-migration')
+      const cleanup = vi.fn<typeof deleteSources>(async (...args) => {
+        expect(order).toEqual(['commit'])
+        order.push('cleanup')
+        return deleteSources(...args)
+      })
+      const deps = fakeDeps({
+        deleteSources: cleanup,
+        ...(action === 'cancel-copy'
+          ? {
+              runDataRootMigration: async () => ({
+                ok: false as const,
+                error: 'migration cancelled',
+                cancelled: true
+              })
+            }
+          : {})
+      })
+      vi.mocked(deps.settingsService.setDataRoot).mockImplementation(async () => {
+        if (action === 'failed-pointer') throw new Error('settings write failed')
+        order.push('commit')
+      })
+      registerStorageIpcHandlers(deps)
+      await invoke('storage:migrate', { parent: targetParent })
+      expect(cleanup).not.toHaveBeenCalled()
+      if (action === 'cancel-copy') return
+      if (action === 'discard') {
+        await invoke('storage:discard-migrated-copy', { parent: targetParent })
+        expect(cleanup).not.toHaveBeenCalled()
+      } else {
+        const result = await invoke('storage:commit-and-relaunch', { parent: targetParent })
+        expect(result).toMatchObject({ ok: action === 'commit' })
+        expect(order).toEqual(action === 'commit' ? ['commit', 'cleanup'] : [])
+      }
+    }
+  )
+
   it('commit-and-relaunch invokes settingsService.setDataRoot as a method, preserving its `this`', async () => {
     initDataRoot(dataRoot)
     // Regression: the real settings service is a class whose setDataRoot reads `this.repository`.
@@ -1817,7 +2093,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     const first = invoke('storage:migrate', { parent: targetParent })
-    await tick()
+    await expect.poll(() => releaseDisconnect, { timeout: 10_000 }).toBeTypeOf('function')
 
     await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
       ok: false,
@@ -1848,7 +2124,7 @@ describe('storage IPC handlers', () => {
 
     try {
       const migratePromise = invoke('storage:migrate', { parent: targetParent })
-      await tick()
+      await expect.poll(() => releaseDisconnect, { timeout: 10_000 }).toBeTypeOf('function')
 
       await expect(
         invoke('storage:set-data-root-and-relaunch', { parent: alternateParent })
@@ -1909,6 +2185,7 @@ describe('storage IPC handlers', () => {
       ).resolves.toEqual({ ok: true })
       expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(dataRootFor(alternateParent), {
         completeOnboarding: false,
+        validateTarget: expect.any(Function),
         previousDataRoot: target
       })
       expect(deps.relaunch).toHaveBeenCalledOnce()
@@ -2012,7 +2289,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     const migratePromise = invoke('storage:migrate', { parent: targetParent })
-    await tick()
+    await expect.poll(() => releaseDisconnect, { timeout: 10_000 }).toBeTypeOf('function')
     await invoke('storage:cancel-migrate')
     releaseDisconnect?.()
 
@@ -2058,7 +2335,7 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(true)
   })
 
-  it("validate-data-root returns validateNewDataRoot's ok result for a parent with no OpenScience subdir", async () => {
+  it("validate-data-root returns validateNewDataRoot's ok result for a parent with no Open-Science subdir", async () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
 
@@ -2077,11 +2354,13 @@ describe('storage IPC handlers', () => {
     })
   })
 
-  it('inspect-data-root returns move and the derived dataRoot for a parent with no OpenScience subdir', async () => {
+  it('inspect-data-root returns move and the derived dataRoot for a parent with no Open-Science subdir', async () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true,
@@ -2094,7 +2373,9 @@ describe('storage IPC handlers', () => {
     await mkdir(join(target, 'runtime'), { recursive: true })
     registerStorageIpcHandlers(fakeDeps())
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: false,
@@ -2108,7 +2389,9 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ availableBytes })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true,
@@ -2117,7 +2400,9 @@ describe('storage IPC handlers', () => {
     expect(availableBytes).toHaveBeenCalledWith(targetParent)
 
     availableBytes.mockRejectedValueOnce(new Error('statfs unavailable'))
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true
@@ -2130,7 +2415,9 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps()
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'move',
       dataRoot: target,
       targetWasAbsent: true,
@@ -2141,6 +2428,7 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
@@ -2149,11 +2437,14 @@ describe('storage IPC handlers', () => {
   it('inspect-data-root returns adopt when the derived target already holds our data', async () => {
     initDataRoot(dataRoot)
     await mkdir(join(target, 'artifacts'), { recursive: true })
+    await writeFile(join(target, 'artifacts', 'research.txt'), 'research')
     const availableBytes = vi.fn().mockResolvedValue(654_321)
     const deps = fakeDeps({ availableBytes })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:inspect-data-root', { parent: targetParent })).resolves.toEqual({
+    await expect(
+      invoke('storage:inspect-data-root', { parent: targetParent })
+    ).resolves.toMatchObject({
       kind: 'adopt',
       dataRoot: target,
       targetAvailableBytes: 654_321
@@ -2193,6 +2484,7 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
@@ -2200,7 +2492,7 @@ describe('storage IPC handlers', () => {
 
   it('set-data-root-and-relaunch creates the derived target directory for a fresh empty folder', async () => {
     // Regression: onboarding to a brand-new empty folder persisted settings.dataRoot but never
-    // created `<parent>/OpenScience`, so the next launch's startup guard read the configured-but-
+    // created `<parent>/Open-Science`, so the next launch's startup guard read the configured-but-
     // absent root as deleted and wrongly showed "Data folder not found". The handler must mkdir the
     // target so the recorded root actually exists on disk.
     initDataRoot(dataRoot)
@@ -2215,6 +2507,7 @@ describe('storage IPC handlers', () => {
     expect(existsSync(target)).toBe(true)
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: true,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
   })
@@ -2252,6 +2545,7 @@ describe('storage IPC handlers', () => {
     ).resolves.toEqual({ ok: true })
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
     expect(deps.relaunch).toHaveBeenCalledTimes(1)
@@ -2633,6 +2927,7 @@ describe('storage IPC handlers', () => {
   it('diagnoses an adopted data root without retaining its path', async () => {
     initDataRoot(dataRoot)
     await mkdir(join(target, 'artifacts'), { recursive: true })
+    await writeFile(join(target, 'artifacts', 'research.txt'), 'research')
     const logger = fakeDiagnosticLogger()
     registerStorageIpcHandlers(fakeDeps({ logger }))
 
@@ -2662,6 +2957,7 @@ describe('storage IPC handlers', () => {
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: true,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
   })
@@ -2678,6 +2974,7 @@ describe('storage IPC handlers', () => {
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       completeOnboarding: false,
+      validateTarget: expect.any(Function),
       previousDataRoot: dataRoot
     })
   })
@@ -2735,3 +3032,243 @@ describe('storage IPC handlers', () => {
     )
   })
 })
+
+it('keeps the one-time legacy move prompt when startup reuses the saved config-root layout', async () => {
+  const { SettingsRepository } = await import('../settings/repository')
+  const { initializeDataLocation } = await import('./initialize-location')
+  const config = join(currentParent, 'legacy-config')
+  vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', config)
+  await mkdir(join(config, 'workspaces'), { recursive: true })
+  await writeFile(join(config, 'workspaces/history.json'), 'legacy research')
+  const repository = new SettingsRepository(config)
+  await repository.setDataRoot({ dataRoot: config })
+  await initializeDataLocation(repository)
+  expect((await repository.getSettings()).dataRoot).toBe(config)
+  registerStorageIpcHandlers(
+    fakeDeps({
+      settingsService: {
+        getStoredSettings: () => repository.getSettings(),
+        setDataRoot: async (path) => {
+          await repository.setDataRoot({ dataRoot: path })
+        },
+        dismissLegacyDataMovePrompt: async () => {
+          await repository.markLegacyDataMovePromptDismissed(123)
+        }
+      }
+    })
+  )
+  await expect(invoke('storage:get-status')).resolves.toMatchObject({
+    dataRoot: config,
+    legacyDataMovePrompt: true
+  })
+  await invoke('storage:dismiss-legacy-move-prompt')
+  await initializeDataLocation(repository)
+  await expect(invoke('storage:get-status')).resolves.toMatchObject({ legacyDataMovePrompt: false })
+  expect(await readFile(join(config, 'workspaces/history.json'), 'utf8')).toBe('legacy research')
+})
+
+it('inspects and adopts the legacy child without adopting unrelated parent models', async () => {
+  const { SettingsRepository } = await import('../settings/repository')
+  const old = join(targetParent, 'OpenScience')
+  await mkdir(join(old, 'workspaces'), { recursive: true })
+  await writeFile(join(old, 'workspaces/history.json'), 'old research')
+  await mkdir(join(targetParent, 'models'))
+  await writeFile(join(targetParent, 'models/weights.bin'), 'unrelated weights')
+  const repository = new SettingsRepository(join(currentParent, 'config'))
+  await repository.setDataRoot({ dataRoot })
+  initDataRoot(dataRoot)
+  registerStorageIpcHandlers(
+    fakeDeps({
+      settingsService: {
+        getStoredSettings: () => repository.getSettings(),
+        setDataRoot: async (path) => {
+          await repository.setDataRoot({ dataRoot: path })
+        },
+        dismissLegacyDataMovePrompt: async () => {}
+      }
+    })
+  )
+  await expect(
+    invoke('storage:inspect-data-root', { parent: targetParent })
+  ).resolves.toMatchObject({ kind: 'adopt', dataRoot: old })
+  await expect(
+    invoke('storage:set-data-root-and-relaunch', { parent: targetParent })
+  ).resolves.toMatchObject({ ok: true })
+  expect((await repository.getSettings()).dataRoot).toBe(old)
+  expect(await readFile(join(targetParent, 'models/weights.bin'), 'utf8')).toBe('unrelated weights')
+  expect(existsSync(join(targetParent, 'workspaces'))).toBe(false)
+})
+
+it.each(['models', 'uploads', 'runtime'])(
+  'does not adopt a branded folder based on unrelated %s content',
+  async (directory) => {
+    const picked = join(targetParent, 'Open-Science')
+    await mkdir(join(picked, directory), { recursive: true })
+    await writeFile(join(picked, directory, 'unrelated.bin'), 'outside data')
+    initDataRoot(dataRoot)
+    registerStorageIpcHandlers(fakeDeps())
+    await expect(invoke('storage:inspect-data-root', { parent: picked })).resolves.toMatchObject({
+      kind: 'invalid'
+    })
+    await expect(
+      invoke('storage:set-data-root-and-relaunch', { parent: picked })
+    ).resolves.toMatchObject({ ok: false })
+    expect(await readFile(join(picked, directory, 'unrelated.bin'), 'utf8')).toBe('outside data')
+  }
+)
+
+it('adopts a custom root with valid workspace ownership and rejects competing branded children', async () => {
+  const { initializeManagedWorkspaceOwnership } = await import('./managed-workspace-ownership')
+  const custom = join(targetParent, 'research')
+  await mkdir(join(custom, 'workspaces/project'), { recursive: true })
+  await initializeManagedWorkspaceOwnership(
+    join(custom, 'workspaces/project'),
+    'project',
+    1,
+    custom
+  )
+  initDataRoot(dataRoot)
+  registerStorageIpcHandlers(fakeDeps())
+  await expect(invoke('storage:inspect-data-root', { parent: custom })).resolves.toMatchObject({
+    kind: 'adopt',
+    dataRoot: custom
+  })
+  await mkdir(join(custom, 'OpenScience/workspaces'), { recursive: true })
+  await writeFile(join(custom, 'OpenScience/workspaces/history.json'), '{}')
+  await expect(invoke('storage:inspect-data-root', { parent: custom })).resolves.toMatchObject({
+    kind: 'invalid'
+  })
+})
+
+it.each([
+  [true, false],
+  [true, true],
+  [false, false],
+  [false, true]
+])(
+  'uses the exact displayed default through IPC inspection and user-triggered execution (packaged=%s, populated=%s)',
+  async (packaged, populated) => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { validateNewDataRoot } = await import('./migration-service')
+    const config = join(currentParent, 'config')
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', config)
+    electronHome.packaged = packaged
+    electronHome.path = currentParent
+    const old = join(config, packaged ? 'OpenScience' : 'OpenScience-DEV')
+    const expected = join(config, packaged ? 'Open-Science' : 'Open-Science-DEV')
+    await mkdir(join(old, 'workspaces'), { recursive: true })
+    await writeFile(join(old, 'workspaces', 'history.json'), 'original research')
+    if (populated) {
+      await mkdir(join(expected, 'workspaces'), { recursive: true })
+      await writeFile(join(expected, 'workspaces', 'history.json'), 'existing default research')
+    }
+    const repository = new SettingsRepository(config)
+    await repository.setDataRoot({ dataRoot: old })
+    initDataRoot(old)
+    const deps = fakeDeps({
+      validateNewDataRoot,
+      settingsService: {
+        getStoredSettings: () => repository.getSettings(),
+        setDataRoot: async (path) => {
+          await repository.setDataRoot({ dataRoot: path })
+        },
+        dismissLegacyDataMovePrompt: async () => {}
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    const status = (await invoke('storage:get-status')) as { defaultDataRoot: string }
+    expect(status.defaultDataRoot).toBe(expected)
+    await expect(
+      invoke('storage:inspect-data-root', { parent: status.defaultDataRoot })
+    ).resolves.toMatchObject({
+      kind: populated ? 'adopt' : 'move',
+      dataRoot: expected
+    })
+    // Inspection is read-only. Only the subsequent explicit command may change the pointer or data.
+    expect((await repository.getSettings()).dataRoot).toBe(old)
+    expect(await readFile(join(old, 'workspaces', 'history.json'), 'utf8')).toBe(
+      'original research'
+    )
+    if (populated) {
+      await expect(
+        invoke('storage:set-data-root-and-relaunch', { parent: status.defaultDataRoot })
+      ).resolves.toMatchObject({ ok: true })
+      expect(await readFile(join(old, 'workspaces', 'history.json'), 'utf8')).toBe(
+        'original research'
+      )
+      expect(await readFile(join(expected, 'workspaces', 'history.json'), 'utf8')).toBe(
+        'existing default research'
+      )
+    } else {
+      expect(existsSync(expected)).toBe(false)
+      await expect(
+        invoke('storage:migrate', { parent: status.defaultDataRoot })
+      ).resolves.toMatchObject({ ok: true })
+      expect((await repository.getSettings()).dataRoot).toBe(old)
+      await expect(
+        invoke('storage:commit-and-relaunch', { parent: status.defaultDataRoot })
+      ).resolves.toMatchObject({ ok: true })
+      expect(await readFile(join(expected, 'workspaces', 'history.json'), 'utf8')).toBe(
+        'original research'
+      )
+    }
+    expect((await repository.getSettings()).dataRoot).toBe(expected)
+  }
+)
+
+it.each(['fresh', 'moved', 'empty-legacy'] as const)(
+  'does not prompt for a %s location after real initialization',
+  async (state) => {
+    const { SettingsRepository } = await import('../settings/repository')
+    const { initializeDataLocation } = await import('./initialize-location')
+    const config = join(currentParent, 'prompt-config')
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', config)
+    const repository = new SettingsRepository(config)
+    if (state !== 'fresh') {
+      await mkdir(join(config, 'workspaces'), { recursive: true })
+      if (state === 'moved')
+        await writeFile(join(config, 'workspaces/history.json'), 'old research')
+      await repository.setDataRoot({ dataRoot: state === 'moved' ? dataRoot : config })
+    }
+    await initializeDataLocation(repository)
+    // Startup preparation pins settings, then the IPC owner reuses the completed selection.
+    await initializeDataLocation(repository)
+    registerStorageIpcHandlers(
+      fakeDeps({
+        settingsService: {
+          getStoredSettings: () => repository.getSettings(),
+          setDataRoot: async (path) => {
+            await repository.setDataRoot({ dataRoot: path })
+          },
+          dismissLegacyDataMovePrompt: async () => {
+            await repository.markLegacyDataMovePromptDismissed(123)
+          }
+        }
+      })
+    )
+    await expect(invoke('storage:get-status')).resolves.toMatchObject({
+      legacyDataMovePrompt: false
+    })
+  }
+)
+
+it.each([true, false])(
+  'treats a completed implicit legacy root as existing storage (missing=%s)',
+  async (missing) => {
+    electronHome.path = currentParent
+    const legacy = join(currentParent, 'OpenScience')
+    if (!missing) await mkdir(legacy)
+    initDataRoot(undefined, 1234)
+    const deps = fakeDeps()
+    vi.mocked(deps.settingsService.getStoredSettings).mockResolvedValue({
+      onboardingCompletedAt: 1234
+    })
+    registerStorageIpcHandlers(deps)
+    expect(await invoke('storage:get-info')).toMatchObject({
+      dataRoot: legacy,
+      dataRootMissing: missing,
+      canAutoSelectDataDrive: false
+    })
+    expect(existsSync(legacy)).toBe(!missing)
+  }
+)

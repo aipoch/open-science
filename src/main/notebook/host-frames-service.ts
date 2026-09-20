@@ -159,7 +159,7 @@ const normalizeListOptions = (value: unknown): NormalizedListOptions => {
   const cursor = optionalString(value, 'cursor', 4096, 'host.frames.list')
   const rootsOnly = value.roots_only === undefined ? true : value.roots_only
   if (typeof rootsOnly !== 'boolean') {
-    throw new Error('host.frames.list roots_only must be a boolean.')
+    throw new Error('host.frames.list rootsOnly must be a boolean.')
   }
   const kind = value.kind
   if (kind !== undefined && (typeof kind !== 'string' || !FRAME_KINDS.has(kind))) {
@@ -216,7 +216,9 @@ const decodeListCursor = (value: string, queryKey: string): ListCursor => {
   try {
     cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown
   } catch {
-    throw new Error('host.frames.list cursor is invalid.')
+    throw new Error(
+      'host.frames.list cursor is invalid. Restart host.frames.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+    )
   }
   if (
     !isRecord(cursor) ||
@@ -226,7 +228,9 @@ const decodeListCursor = (value: string, queryKey: string): ListCursor => {
     !Number.isInteger(cursor.offset) ||
     (cursor.offset as number) < 0
   ) {
-    throw new Error('host.frames.list cursor does not match the requested filters.')
+    throw new Error(
+      'host.frames.list cursor does not match the requested filters. Restart host.frames.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+    )
   }
   return cursor as ListCursor
 }
@@ -239,7 +243,9 @@ const decodeTranscriptCursor = (
   try {
     cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown
   } catch {
-    throw new Error('host.frames.get cursor is invalid.')
+    throw new Error(
+      'host.frames.get cursor is invalid. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
+    )
   }
   if (
     !isRecord(cursor) ||
@@ -252,7 +258,9 @@ const decodeTranscriptCursor = (
     !Number.isInteger(cursor.end) ||
     (cursor.end as number) < 0
   ) {
-    throw new Error('host.frames.get cursor does not match the requested Frame and Branch.')
+    throw new Error(
+      'host.frames.get cursor does not match the requested Frame and Branch. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
+    )
   }
   return cursor as TranscriptCursor
 }
@@ -426,10 +434,15 @@ class HostFramesService {
     const snapshotKey = fingerprint(frames)
     const cursor = normalized.cursor ? decodeListCursor(normalized.cursor, queryKey) : undefined
     if (cursor && cursor.snapshotKey !== snapshotKey) {
-      throw new Error('host.frames.list cursor is no longer valid.')
+      throw new Error(
+        'host.frames.list cursor is no longer valid. Restart host.frames.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+      )
     }
     const offset = cursor?.offset ?? 0
-    if (offset > frames.length) throw new Error('host.frames.list cursor is no longer valid.')
+    if (offset > frames.length)
+      throw new Error(
+        'host.frames.list cursor is no longer valid. Restart host.frames.list with the intended filters and omit cursor; use the new pagination cursor returned by that read.'
+      )
     const page = frames.slice(offset, offset + normalized.limit)
     const nextOffset = offset + page.length
     return {
@@ -499,7 +512,9 @@ class HostFramesService {
       return graph && frame ? [{ session, graph, frame }] : []
     })
     if (matches.length > 1) {
-      throw new Error(`Frame id is ambiguous in the current Project: ${frameId}`)
+      throw new Error(
+        `Frame id is ambiguous in the current Project: ${frameId}. Use host.frames.list to identify its Session, then call host.frames.get with the sessionId option.`
+      )
     }
     const match = matches[0]
     if (!match) throw new Error(`Frame not found in the current Project: ${frameId}`)
@@ -528,10 +543,15 @@ class HostFramesService {
       ? decodeTranscriptCursor(normalized.before, binding)
       : undefined
     if (cursor && cursor.snapshotKey !== snapshotKey) {
-      throw new Error('host.frames.get cursor is no longer valid.')
+      throw new Error(
+        'host.frames.get cursor is no longer valid. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
+      )
     }
     const end = cursor?.end ?? path.length
-    if (end > path.length) throw new Error('host.frames.get cursor is no longer valid.')
+    if (end > path.length)
+      throw new Error(
+        'host.frames.get cursor is no longer valid. Restart host.frames.get with the intended Frame and Branch and omit before; use the new pagination cursor returned by that read.'
+      )
     const start = Math.max(0, end - normalized.limit)
     const messages = path.slice(start, end)
     const artifactsById = new Map(

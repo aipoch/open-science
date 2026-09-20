@@ -158,6 +158,7 @@ export class LocalFsService {
         throw new Error('The home folder is already browsable; it cannot be granted.')
       throw new Error('Local path must be absolute.')
     }
+    if (!(await stat(resolvedPath)).isDirectory()) throw new Error('Grant path is not a directory.')
     await this.beforeGrantedRootsChange()
     // De-dupe on the resolved path: re-granting an already granted folder updates its access and
     // keeps the existing id (the store upserts by path).

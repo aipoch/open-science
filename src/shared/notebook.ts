@@ -17,6 +17,22 @@ export const NOTEBOOK_RUN_FILE = 'run.json'
 export const NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
 export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
 
+export type ShellRuntimeBinding =
+  | Readonly<{
+      kind: 'powershell'
+      version: '5.1'
+    }>
+  | Readonly<{
+      kind: 'native-posix'
+      shell: string
+    }>
+  | Readonly<{
+      kind: 'wsl2-bash'
+      profileId: string
+      distro: string
+      user: string
+    }>
+
 // Identifies whether a run was initiated by the agent or by the user terminal.
 export type NotebookRunSource = 'agent' | 'user'
 
@@ -33,6 +49,9 @@ export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
 export type RequestNotebookNetworkAccessResult = Readonly<{
   hostname: string
   status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
+  decisionSource?:
+    'missing-command-context' | 'aborted' | 'user-decision' | 'approval-surface-unavailable'
+  message?: string
 }>
 
 // Distinguishes regular notebook cells from terminal submissions in the same history.
@@ -43,6 +62,54 @@ export type NotebookRunInputKind = 'cell' | 'terminal'
 // next startup. 'cancelled' = the run was deliberately aborted (e.g. a force-stop disable).
 export type NotebookRunStatus =
   'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
+
+export type NotebookBackgroundRunReceipt = Readonly<{
+  runId: string
+  executionType: 'python-notebook-run' | 'r-notebook-run' | 'javascript-repl' | 'shell-command'
+  projectId: string
+  sessionId: string
+  status: NotebookRunStatus
+  acceptedAt: number
+  lifecycleScope: 'app-process'
+  submissionIdentity: string
+  shellConcurrency?: Readonly<{ limit: number; slot?: number }>
+}>
+
+export type NotebookBackgroundRunResult = Readonly<{
+  receipt: NotebookBackgroundRunReceipt
+  run: NotebookRunSummary
+  // Present on Agent queries. Terminal results report whether this query suppressed the fallback
+  // or automatic delivery was already committed; non-terminal snapshots remain `pending`.
+  followUpDelivery?: 'pending' | 'suppressed' | 'committed'
+}>
+
+export type NotebookBackgroundRunErrorDetail = Readonly<{
+  code: string
+  stage: 'pre-admission' | 'query' | 'cancel'
+  retryable: boolean
+  hint: string
+  runId?: string
+  submissionIdentity?: string
+}>
+
+export class NotebookBackgroundRunError extends Error {
+  readonly name = 'NotebookBackgroundRunError'
+
+  constructor(
+    readonly detail: NotebookBackgroundRunErrorDetail,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
+export type NotebookBackgroundRunLookupRequest = NotebookSessionRequest & {
+  runId?: string
+  submissionIdentity?: string
+  // The authenticated local RPC bridge overwrites this with its capability-bound Agent Frame.
+  // Renderer Session management supplies the frame recorded on the selected Run.
+  agentFrameId?: string
+}
 
 export type NotebookRunProvenanceContext = {
   rootFrameId: string
@@ -113,6 +180,7 @@ export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
 // Identifies which kernel produced a run: python/r are analysis cells, repl/bash are
 // control-plane/shell.
 export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
+export type NotebookPersistentKernelKind = Exclude<NotebookKernelKind, 'bash'>
 
 export type NotebookPackageSource =
   | {
@@ -120,6 +188,7 @@ export type NotebookPackageSource =
       repository: string
       ref?: string
       commit?: string
+      subdirectory?: string
     }
   | {
       type: 'bioconductor'
@@ -229,6 +298,7 @@ export const isNotebookEnvironmentOperationLogTruncation = (
 }
 
 export type NotebookEnvironmentManifest = {
+  executionContext?: import('./notebook-execution-context').NotebookExecutionContext
   schemaVersion: 1
   captureKind: 'completed-run'
   capturedAt: string
@@ -267,13 +337,99 @@ export type NotebookRunEnvironmentCapture =
         | 'legacy-environment-reference-unavailable'
     }
 
+export type NotebookEnvironmentLockPartialReason =
+  | 'external-interpreter-required'
+  | 'environment-manifest-partial'
+  | 'non-conda-package-detected'
+  | 'non-conda-installer-detected'
+  | 'native-lock-file-best-effort'
+  | 'native-lock-file-rejected'
+
+export type NotebookEnvironmentLockDiagnostic = {
+  reason:
+    | 'package-lock-missing'
+    | 'package-version-unresolved'
+    | 'package-version-mismatch'
+    | 'package-not-captured'
+    | 'source-unpinned'
+    | 'source-mismatch'
+    | 'project-selection-unresolved'
+  packageName?: string
+  observedVersion?: string
+  lockedVersion?: string
+}
+
+export type NotebookEnvironmentLockFile = {
+  path: string
+  checksum: string
+  content: string
+}
+
+export type NotebookEnvironmentLockComponent =
+  | {
+      ecosystem: 'conda'
+      format: 'conda-explicit-md5'
+      resolution: 'locked'
+      explicitLock: string
+      packages: string[]
+    }
+  | {
+      ecosystem: 'python'
+      format: 'uv-lock' | 'poetry-lock' | 'pip-requirements'
+      resolution: 'locked' | 'best-effort'
+      files: NotebookEnvironmentLockFile[]
+    }
+  | {
+      ecosystem: 'r'
+      format: 'renv-lock' | 'pak-lock'
+      resolution: 'locked'
+      files: NotebookEnvironmentLockFile[]
+    }
+
+export type NotebookEnvironmentLock = {
+  schemaVersion: 1 | 2
+  // v2 native-only locks restore packages conditionally; they do not provision this runtime.
+  externalRuntime?: { version: string; installerVersion: string }
+  format: 'environment-lock-bundle'
+  kernelKind: NotebookLanguage
+  environmentName: string
+  platform?: string
+  architecture?: string
+  components: NotebookEnvironmentLockComponent[]
+  untrackedPackages?: string[]
+  // Native distributions observed as unused by this run; retained in the full inventory.
+  omittedPackages?: string[]
+  nonCondaInstallers?: NotebookPackageInstaller[]
+}
+
+export type NotebookRunEnvironmentLockCapture =
+  | {
+      state: 'available' | 'partial'
+      format: NotebookEnvironmentLock['format']
+      lockChecksum: string
+      partialReasons?: NotebookEnvironmentLockPartialReason[]
+      diagnostics?: NotebookEnvironmentLockDiagnostic[]
+    }
+  | {
+      state: 'unavailable'
+      reason:
+        | 'environment-not-managed'
+        | 'conda-prefix-unavailable'
+        | 'micromamba-unavailable'
+        | 'environment-lock-capture-failed'
+        | 'environment-lock-invalid'
+        | 'environment-lock-publication-failed'
+    }
+
 export type NotebookLiveEnvironmentOverlay = {
+  executionContext?: import('./notebook-execution-context').NotebookExecutionContext
   runtimeVersion?: string
   packages: NotebookEnvironmentPackage[]
   warnings?: string[]
 }
 
 export type NotebookInputAssociation = 'turn-attached' | 'resolver-accessed'
+export type NotebookInputAccessEvidence = 'resolver' | 'file-evidence'
 
 // Path-independent immutable input identity captured from the trusted main-process registry. The
 // storage key is persisted only in run.json/evidence; summaries returned to agents and renderers omit
@@ -292,6 +448,7 @@ export type NotebookRunInputFile = {
   checksum: string
   storageKey: string
   association: NotebookInputAssociation
+  accessEvidence?: NotebookInputAccessEvidence
 }
 
 export type NotebookInputFileSummary = Omit<NotebookRunInputFile, 'storageKey'>
@@ -450,6 +607,49 @@ export type NotebookHelperEvidenceStatus =
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {
   runId: string
+  executionMode?: 'foreground' | 'background'
+  // Stable, lane-scoped identity for durable admission. Reusing it with the same fingerprint
+  // returns this canonical Run; reusing it for different submitted work is a conflict. Optional
+  // keeps historical run.json documents readable.
+  submissionIdentity?: string
+  submissionFingerprint?: string
+  admittedAt?: number
+  // Orthogonal durable intent. The primary status remains queued/running until the executor wins
+  // the cancellation race and commits a confirmed terminal outcome.
+  cancellationRequestedAt?: number
+  cancellationReason?: string
+  frozenRuntimeTarget?: {
+    language: NotebookPersistentKernelKind
+    environment: string
+    processKey: string
+    runtimeId?: string
+    source?: 'managed' | 'external'
+    interpreterPath?: string
+    command?: string
+    args?: string[]
+    condaPrefix?: string
+  }
+  frozenPermissionScope?: {
+    allowedHelperSkillIds: string[]
+  }
+  // Exact stateless-shell launch context captured before durable admission. Optional keeps legacy
+  // records readable; new bash Runs never re-read mutable Session paths or host environment at
+  // dispatch time.
+  frozenShellContext?: {
+    cwd: string
+    handoffDir: string
+    runtimeRoot: string
+    notebookSessionRoot: string
+    inputRoot: string
+    protectedDirs: string[]
+    environment: Record<string, string>
+    timeoutMs: number
+    platform: NodeJS.Platform
+  }
+  shellConcurrency?: {
+    limit: number
+    slot?: number
+  }
   // App-owned one-shot identity joining an authorized ACP tool call to the execution admitted by
   // the authenticated Notebook RPC bridge. Optional keeps existing run.json documents readable.
   executionInvocationId?: string
@@ -466,6 +666,9 @@ export type NotebookRunRecord = {
   // Stable identity of the external runtime used by this run. Managed runs are reproducible from
   // their environment; external runs need this identity to rebuild a missing derived sidecar.
   runtimeId?: string
+  // Exact shell capability captured before a stateless shell Run. Optional keeps legacy run.json
+  // documents readable without inventing a backend that was never recorded.
+  shellRuntime?: ShellRuntimeBinding
   cellId: string
   source: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -492,12 +695,21 @@ export type NotebookRunRecord = {
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]
   truncated?: boolean
+  // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
+  exitCode?: number | null
+  shellRuntimeStatus?: 'unavailable'
+  recovery?: import('./execution-recovery').NotebookExecutionRecovery
+  shellErrorCode?:
+    'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
   // Named env that produced this run (python/r only; omitted for repl/bash).
   environment?: string
   // Immutable completed-run environment evidence. The cache that helped build it is never referenced.
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
+  // Immutable package lock used to reconstruct this run's managed environment. Optional keeps
+  // historical run.json documents readable without fabricating restore coverage.
+  environmentLock?: NotebookRunEnvironmentLockCapture
   // Trusted turn/Branch attribution injected by the main-process RPC bridge. Legacy and user-run
   // records may omit it. An Artifact producer must share root/agent identity, belong to the trusted
   // Branch and message ancestry, and match the active Runtime Segment for the active prompt.
@@ -591,6 +803,37 @@ export type NotebookEnvironmentStatus = {
   restartRecommended?: boolean
 }
 
+// Lightweight, process-local projection for the Project Compute overview. Unlike state(), this
+// describes only live execution resources and never materializes a dormant Notebook or reads Run
+// history from disk.
+export type NotebookProjectKernelActivity = ProjectIdScope & {
+  sessionId: string
+  processKey: string
+  kind: 'python' | 'r' | 'repl'
+  environment?: string
+  status: Extract<
+    NotebookKernelMetadata['lastKnownStatus'],
+    'starting' | 'idle' | 'running' | 'restarting'
+  >
+  lastActivityAt: number
+}
+
+export type NotebookProjectBackgroundRunActivity = ProjectIdScope & {
+  sessionId: string
+  runId: string
+  executionType: 'python' | 'r' | 'repl' | 'shell'
+  processKey?: string
+  title: string
+  acceptedAt: number
+}
+
+export type NotebookProjectActivityRequest = ProjectIdScope
+
+export type NotebookProjectActivity = Readonly<{
+  kernels: readonly NotebookProjectKernelActivity[]
+  backgroundRuns: readonly NotebookProjectBackgroundRunActivity[]
+}>
+
 // Bounded, non-persisted discovery metadata for one Agent's complete durable history. The renderer
 // requests one summary at a time so old kernel kinds remain exportable without widening `runs`.
 export type NotebookRunHistorySummary = {
@@ -664,7 +907,15 @@ export type NotebookAvailableEvent = NotebookSessionReference
 export type NotebookChangedEvent = NotebookSessionReference
 
 // Extends a run record with workspace roots so the agent can decide what to do next.
-export type NotebookRunSummary = Omit<NotebookRunRecord, 'inputFiles'> & {
+export type NotebookRunSummary = Omit<
+  NotebookRunRecord,
+  | 'inputFiles'
+  | 'submissionIdentity'
+  | 'submissionFingerprint'
+  | 'admittedAt'
+  | 'frozenRuntimeTarget'
+  | 'frozenPermissionScope'
+> & {
   inputFiles: NotebookInputFileSummary[]
   notebookSessionRoot: string
   dataRoot: string
@@ -834,6 +1085,7 @@ export type AbortNotebookCodeCellRequest = FinishNotebookCodeCellRequest
 // Runs an existing cell in the shared interpreter.
 export type RunNotebookCellRequest = NotebookSessionRequest & {
   cellId: string
+  background?: boolean
   timeoutMs?: number
   source?: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -844,6 +1096,7 @@ export type RunNotebookCellRequest = NotebookSessionRequest & {
 // Convenience request that writes a cell and runs it in one command.
 export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
   code: string
+  background?: boolean
   // Stable IDs resolved by the host-owned registered Skill catalog. Callers cannot provide helper
   // implementation paths, source, or digests.
   helperModules?: string[]
@@ -865,6 +1118,7 @@ export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
 // Distinct from data cells: durable Run history uses kernelKind "repl", with no NotebookLanguage.
 export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
   code: string
+  background?: boolean
   timeoutMs?: number
 }
 
@@ -872,5 +1126,9 @@ export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
 // persistent process or NotebookLanguage, but each invocation is persisted as a "bash" Run.
 export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
+  background?: boolean
   timeoutMs?: number
+  // App-owned capability binding. MCP callers cannot choose this field; the stdio bridge injects
+  // the immutable binding it advertised when the capability was created.
+  shellRuntime?: ShellRuntimeBinding
 }

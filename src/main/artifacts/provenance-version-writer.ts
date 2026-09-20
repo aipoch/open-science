@@ -9,6 +9,7 @@ import type {
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import type { ArtifactDurability } from './durability'
+import { artifactFailureDiagnostic } from './pending-file-transaction'
 import type {
   ArtifactVersionProducerCapture,
   PreparedArtifactVersionPersistence
@@ -143,7 +144,7 @@ type ArtifactProvenanceVersionWriterOptions = {
   captureProducer: (
     request: CreateArtifactVersionRequest,
     createdAt: Date,
-    artifactChecksum: string,
+    target: { versionId: string; filename: string; checksum: string; sizeBytes: number },
     appGeneratedProducer?: AppGeneratedArtifactProducer
   ) => Promise<ArtifactVersionProducerCapture>
   prepareVersionPersistence: (input: {
@@ -194,7 +195,8 @@ class ArtifactProvenanceVersionWriter {
 
   async withSessionWrite<Result>(
     request: Pick<CreateArtifactVersionRequest, 'projectId' | 'appSessionId'>,
-    operation: (writeVersion: WriteVersionWithinSession) => Promise<Result>
+    operation: (writeVersion: WriteVersionWithinSession) => Promise<Result>,
+    signal?: AbortSignal
   ): Promise<Result> {
     const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
     const previous =
@@ -205,16 +207,35 @@ class ArtifactProvenanceVersionWriter {
     })
     const tail = previous.then(() => current)
     ArtifactProvenanceVersionWriter.sessionWrites.set(sessionKey, tail)
-    await previous
-
-    try {
-      return await operation((...args) => this.writeVersionWithinSession(...args))
-    } finally {
-      release()
-      if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
-        ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
+    let queuedOperation: typeof operation | undefined = operation
+    // Cancellation drops the queued payload immediately, but its place in the chain remains
+    // behind the running writer. Never release a predecessor's transaction early.
+    return new Promise<Result>((resolve, reject) => {
+      const abort = (): void => {
+        queuedOperation = undefined
+        reject(signal!.reason)
       }
-    }
+      if (signal?.aborted) abort()
+      else signal?.addEventListener('abort', abort, { once: true })
+      void previous.then(async () => {
+        const execute = queuedOperation
+        queuedOperation = undefined
+        signal?.removeEventListener('abort', abort)
+        try {
+          if (execute) {
+            signal?.throwIfAborted()
+            resolve(await execute((...args) => this.writeVersionWithinSession(...args)))
+          }
+        } catch (error) {
+          reject(error)
+        } finally {
+          release()
+          if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
+            ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
+          }
+        }
+      })
+    })
   }
 
   private async writeVersionWithinSession(
@@ -375,6 +396,7 @@ class ArtifactProvenanceVersionWriter {
     const stagingContentPath = join(stagingDirectory, 'content')
 
     let stagingRowPersisted = false
+    let versionCommitted = false
     try {
       await mkdir(stagingDirectory, { recursive: true })
       const pendingStat = await stat(pendingFile.path)
@@ -398,7 +420,7 @@ class ArtifactProvenanceVersionWriter {
       const producer = await this.options.captureProducer(
         request,
         createdAt,
-        checksum,
+        { versionId, filename: request.filename, checksum, sizeBytes },
         appGeneratedProducer
       )
       const literatureManifest = await this.options.prepareLiteratureManifest(request.literature, {
@@ -644,14 +666,22 @@ class ArtifactProvenanceVersionWriter {
           })
         )
       })
-      return this.options.projectVersionFile(finalized, projectId, appSessionId)
+      versionCommitted = true
+      return await this.options.projectVersionFile(finalized, projectId, appSessionId)
     } catch (error) {
       // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
       // transport retry. Removing them here would force a retry to reread a mutable pending source.
       if (!stagingRowPersisted) {
         await rm(stagingDirectory, { recursive: true, force: true })
+        throw error
       }
-      throw error
+      throw new Error(
+        `Artifact Version ${versionId}: ${artifactFailureDiagnostic(error)}. ` +
+          (versionCommitted
+            ? 'The Version was committed as pending before the response failed. It is not yet a finalized Artifact available through Host discovery; do not assume the write was rolled back or repeat it to recover this response.'
+            : 'A staging record and recovery copy were saved, but this write did not confirm a readable Version. Do not treat it as a completed Artifact or edit provenance metadata.'),
+        { cause: error }
+      )
     }
   }
 

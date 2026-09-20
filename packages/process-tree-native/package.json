@@ -1,0 +1,12 @@
+{
+  "name": "@aipoch/process-tree-native",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "scripts": {
+    "install": "node-gyp rebuild"
+  }
+}

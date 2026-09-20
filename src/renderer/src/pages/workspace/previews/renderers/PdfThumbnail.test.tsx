@@ -96,6 +96,62 @@ describe('PdfThumbnail', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([false, true])(
+    'retries a thumbnail once after re-entry (persistent failure=%s)',
+    async (persistent) => {
+      let callback!: IntersectionObserverCallback
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          constructor(cb: IntersectionObserverCallback) {
+            callback = cb
+          }
+          observe = vi.fn()
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+      const acquire = vi.mocked(window.api.previewResources.acquire)
+      if (persistent) acquire.mockRejectedValue(new Error('Temporary read failure'))
+      else acquire.mockRejectedValueOnce(new Error('Temporary read failure'))
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const tile = (
+        <PdfThumbnail
+          source="local"
+          path={`/audit/transient-${persistent}.pdf`}
+          name="transient.pdf"
+        />
+      )
+      const visible = async (value: boolean): Promise<void> =>
+        act(async () => {
+          callback(
+            [
+              {
+                target: container.firstElementChild!,
+                isIntersecting: value
+              } as IntersectionObserverEntry
+            ],
+            {} as IntersectionObserver
+          )
+          await flushMicrotasks()
+        })
+      await act(async () => {
+        root.render(tile)
+        await flushMicrotasks()
+      })
+      await visible(true)
+      expect(acquire).toHaveBeenCalledOnce()
+      expect(container.querySelector('img')).toBeNull()
+      await visible(false)
+      await visible(true)
+      expect(acquire).toHaveBeenCalledTimes(2)
+      expect(Boolean(container.querySelector('img'))).toBe(!persistent)
+      await visible(false)
+      await visible(true)
+      expect(acquire).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('loads a large PDF through the range resource and renders only page one', async () => {
     await act(async () => {
       root.render(

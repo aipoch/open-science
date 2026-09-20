@@ -471,11 +471,28 @@ function parseNetworkTsv(text: string): Array<Record<string, string>> {
   })
 }
 
-// Deterministically oriented, de-duplicated, trimmed edges (port of core.canonical_edges).
-function canonicalEdges(rows: Array<Record<string, string>>): Array<Record<string, unknown>> {
+type StringEdge = {
+  a: string
+  b: string
+  string_id_a: string
+  string_id_b: string
+  score: number
+  evidence: Record<string, number>
+}
+type StringNode = {
+  query: string | null
+  queries: string[]
+  is_query: boolean
+  name: string
+  string_id: string
+  degree: number
+}
+
+// Deterministically oriented, de-duplicated edges with stable endpoint identities.
+function canonicalEdges(rows: Array<Record<string, string>>): StringEdge[] {
   const tupleLt = (a: [string, string], b: [string, string]): boolean =>
     a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1]
-  const dedup = new Map<string, Record<string, unknown>>()
+  const dedup = new Map<string, StringEdge & { _sort: [string, string, string, string] }>()
   for (const row of rows) {
     let a: [string, string] = [row.preferredName_A, row.stringId_A]
     let b: [string, string] = [row.preferredName_B, row.stringId_B]
@@ -489,16 +506,18 @@ function canonicalEdges(rows: Array<Record<string, string>>): Array<Record<strin
       _sort: [a[0], b[0], a[1], b[1]] as [string, string, string, string],
       a: a[0],
       b: b[0],
+      string_id_a: a[1],
+      string_id_b: b[1],
       score: round3(Number(row.score)),
       evidence
     }
-    const key = [a[1], b[1]].sort().join(' ')
+    const key = [a[1], b[1]].sort().join('\u0000')
     const existing = dedup.get(key)
-    if (!existing || edge.score > (existing.score as number)) dedup.set(key, edge)
+    if (!existing || edge.score > existing.score) dedup.set(key, edge)
   }
   const ordered = [...dedup.values()].sort((x, y) => {
-    const sx = x._sort as [string, string, string, string]
-    const sy = y._sort as [string, string, string, string]
+    const sx = x._sort
+    const sy = y._sort
     for (let i = 0; i < 4; i++) if (sx[i] !== sy[i]) return sx[i] < sy[i] ? -1 : 1
     return 0
   })
@@ -509,48 +528,58 @@ function canonicalEdges(rows: Array<Record<string, string>>): Array<Record<strin
   })
 }
 
-function degreesByName(
-  mapped: StringMapped[],
-  edges: Array<Record<string, unknown>>
-): Map<string, number> {
-  const degree = new Map<string, number>()
-  for (const m of mapped) degree.set(m.preferred_name, 0)
-  for (const edge of edges)
-    for (const name of [edge.a as string, edge.b as string])
-      degree.set(name, (degree.get(name) ?? 0) + 1)
-  return degree
-}
-
-function nodeTable(
-  mapped: StringMapped[],
-  edges: Array<Record<string, unknown>>
-): Array<Record<string, unknown>> {
-  const degree = degreesByName(mapped, edges)
-  return mapped
-    .map((m) => ({
-      query: m.query,
-      name: m.preferred_name,
-      string_id: m.string_id,
-      degree: degree.get(m.preferred_name) ?? 0
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.string_id.localeCompare(b.string_id))
+// Include every returned edge endpoint, plus mapped inputs even when they have no edges.
+function nodeTable(mapped: StringMapped[], edges: StringEdge[]): StringNode[] {
+  const nodes = new Map<string, StringNode>()
+  for (const m of mapped) {
+    const existing = nodes.get(m.string_id)
+    if (existing) {
+      if (!existing.queries.includes(m.query)) existing.queries.push(m.query)
+    } else {
+      nodes.set(m.string_id, {
+        query: m.query,
+        queries: [m.query],
+        is_query: true,
+        name: m.preferred_name,
+        string_id: m.string_id,
+        degree: 0
+      })
+    }
+  }
+  for (const edge of edges) {
+    for (const [id, name] of [
+      [edge.string_id_a, edge.a],
+      [edge.string_id_b, edge.b]
+    ]) {
+      let node = nodes.get(id)
+      if (!node) {
+        node = { query: null, queries: [], is_query: false, name, string_id: id, degree: 0 }
+        nodes.set(id, node)
+      }
+      node.degree += 1
+    }
+  }
+  return [...nodes.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.string_id.localeCompare(b.string_id)
+  )
 }
 
 function summarizeNetwork(
   mapped: StringMapped[],
   unmapped: string[],
-  edges: Array<Record<string, unknown>>
+  nodes: StringNode[],
+  edges: StringEdge[]
 ): Record<string, unknown> {
-  const degree = degreesByName(mapped, edges)
-  const scores = edges.map((e) => e.score as number)
-  const nConnected = [...degree.values()].filter((d) => d > 0).length
+  const scores = edges.map((e) => e.score)
+  const nConnected = nodes.filter((node) => node.degree > 0).length
   return {
     n_input_symbols: mapped.length + unmapped.length,
     n_mapped: mapped.length,
     n_unmapped: unmapped.length,
-    n_nodes: mapped.length,
+    n_nodes: nodes.length,
+    n_expanded_nodes: nodes.filter((node) => !node.is_query).length,
     n_connected_nodes: nConnected,
-    n_isolated_nodes: mapped.length - nConnected,
+    n_isolated_nodes: nodes.filter((node) => node.degree === 0).length,
     n_edges: edges.length,
     mean_score: scores.length
       ? Math.round((scores.reduce((s, v) => s + v, 0) / scores.length) * 10000) / 10000
@@ -575,7 +604,7 @@ function parseHomologyRows(rows: Array<Record<string, unknown>>): Array<Record<s
       ;[idA, idB] = [idB, idA]
       ;[taxA, taxB] = [taxB, taxA]
     }
-    const key = `${idA} ${idB}`
+    const key = `${idA}\u0000${idB}`
     const rec = {
       id_a: idA,
       id_b: idB,
@@ -1088,7 +1117,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     id: 'get_string_network',
     connector: 'protein-annotation',
     description:
-      'STRING protein-protein interaction network for a gene list (v12.0) at a confidence threshold. Maps symbols first (unmapped reported), then retrieves nodes, edges, summary and provenance.',
+      'STRING protein-protein interaction network for a gene list (v12.0) at a confidence threshold. Maps symbols first (unmapped reported), then retrieves nodes, edges, summary and provenance. A single mapped input requests 10 interaction neighbors, matching STRING; multiple mapped inputs are not expanded.',
     input: {
       type: 'object',
       properties: {
@@ -1112,7 +1141,7 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
     },
     required: ['symbols'],
     returns:
-      '`{ "tool", "tool_version", "query", "string_version", "nodes": [ { "query", "name", "string_id", "degree" } ], "unmapped": [ str ], "edges": [ { "a": str, "b": str, "score": float, "evidence": { <channel>: float } } ], "summary": { node/edge counts, score stats }, "provenance": {...} }` — edges deterministically ordered; isolated nodes visible (degree 0).',
+      '`{ "tool", "tool_version", "query", "string_version", "nodes": [ { "query": str|null, "queries": [str], "is_query": bool, "name", "string_id", "degree" } ], "unmapped": [ str ], "edges": [ { "a": str, "b": str, "string_id_a": str, "string_id_b": str, "score": float, "evidence": { <channel>: float } } ], "summary": { node/edge counts, "n_expanded_nodes": int, score stats }, "provenance": {...} }` — edges deterministically ordered; nodes include all edge endpoints and isolated mapped inputs (degree 0). Counts and degrees use unique STRING IDs. Expanded nodes have query=null, queries=[], is_query=false; input nodes retain all mapped aliases in queries (query is the first). n_mapped counts input mappings, n_nodes counts the returned network, and n_expanded_nodes counts returned non-input nodes, not the requested expansion size.',
     example:
       'const result = await host.mcp("protein-annotation", "get_string_network", {"symbols": ["TP53", "BRCA1", "EGFR"], "required_score": 700})',
     run: async (ctx, a) => {
@@ -1127,39 +1156,43 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
       requests.push(ver.log)
       const m = await mapStringIds(ctx, symbols, species)
       requests.push(m.log)
-      let edges: Array<Record<string, unknown>> = []
+      let edges: StringEdge[] = []
+      // Preserve the mapped request entries: STRING also counts repeated IDs when expanding.
       const stringIds = m.mapped.map((x) => x.string_id)
+      const addNodes = stringIds.length === 1 ? 10 : 0
       if (stringIds.length) {
         const url = `${STRING_BASE}/tsv/network${qs([
           ['identifiers', stringIds.join('\r')],
           ['species', species],
           ['required_score', requiredScore],
+          ['add_nodes', addNodes],
           ['caller_identity', STRING_CALLER]
         ])}`
         const text = await ctx.fetchText(url)
         edges = canonicalEdges(parseNetworkTsv(text))
         requests.push({ endpoint: 'tsv/network', bytes: byteLen(text) })
       }
+      const nodes = nodeTable(m.mapped, edges)
       return {
         tool: 'string-network',
-        tool_version: '0.3.0',
+        tool_version: '0.4.0',
         query: { symbols, species, required_score: requiredScore },
         string_version: ver.version,
-        nodes: nodeTable(m.mapped, edges),
+        nodes,
         unmapped: m.unmapped,
         edges,
-        summary: summarizeNetwork(m.mapped, m.unmapped, edges),
+        summary: summarizeNetwork(m.mapped, m.unmapped, nodes, edges),
         provenance: {
           api_base_url: STRING_BASE,
           caller_identity: STRING_CALLER,
-          endpoints_used: ['json/version', 'json/get_string_ids', 'tsv/network'],
+          endpoints_used: requests.map((request) => request.endpoint),
           parameters: {
             species,
             required_score: requiredScore,
             network_type: 'functional',
             'get_string_ids.limit': 1,
             'get_string_ids.echo_query': 1,
-            'network.add_nodes': 0
+            'network.add_nodes': addNodes
           },
           retrieved_at: new Date().toISOString(),
           n_http_requests: requests.length,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import type { ArtifactFile, ArtifactWriteEncoding } from '../../shared/artifacts'
 import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import type {
@@ -31,6 +32,7 @@ type ArtifactTurnProvenanceContext = {
 
 type OpenExecutionArtifactTurnRequest = {
   executionId: string
+  workspaceCwd?: string
   appSessionId: string
   artifactStorageSessionId: string
   projectId: string
@@ -86,6 +88,10 @@ type NotebookArtifactSourceScopeProvider = (
 ) => NotebookArtifactSourceScope
 
 type ArtifactTurnProvenance = {
+  withSessionMutation?<Result>(
+    scope: { projectId: string; appSessionId: string },
+    operation: () => Promise<Result>
+  ): Promise<Result>
   listRunVersions: (request: {
     projectId: string
     appSessionId: string
@@ -130,6 +136,7 @@ type ArtifactTurnOwnerOptions = {
       sessionId: string,
       binding: {
         ownerExecutionId: string
+        artifactRunId?: string
         projectId: string
         provenanceContext: {
           rootFrameId: string
@@ -141,12 +148,13 @@ type ArtifactTurnOwnerOptions = {
         }
       }
     ) => void
-    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
+    clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
   }
 }
 
 type ArtifactTurn = {
   executionId: string
+  workspaceCwd?: string
   updatesSessionNotebookContext: boolean
   appSessionId: string
   artifactStorageSessionId: string
@@ -232,12 +240,18 @@ class ArtifactTurnOwner {
         ...(turn.notebookArtifactSourceScope
           ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
           : {}),
-        allowedMethods: [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
+        sourceScope: {
+          allowedImportRoots: [
+            ...(turn.workspaceCwd ? [turn.workspaceCwd] : []),
+            ...(turn.notebookArtifactSourceScope
+              ? [turn.notebookArtifactSourceScope.notebookSessionRoot]
+              : [])
+          ],
+          workspaceCwd: turn.workspaceCwd,
+          notebookDataDir: turn.notebookArtifactSourceScope?.notebookDataDir,
+          notebookSessionRoot: turn.notebookArtifactSourceScope?.notebookSessionRoot
+        },
+        allowedMethods: ['artifactSaveVersion']
       })
       if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
 
@@ -248,6 +262,7 @@ class ArtifactTurnOwner {
         if (turn.updatesSessionNotebookContext) {
           this.options.notebook?.setArtifactTurnBinding?.(turn.appSessionId, {
             ownerExecutionId: turn.executionId,
+            artifactRunId: turn.runId,
             projectId: turn.projectId,
             provenanceContext: {
               rootFrameId: turn.rootFrameId,
@@ -275,7 +290,10 @@ class ArtifactTurnOwner {
           }
           if (turn.updatesSessionNotebookContext) {
             try {
-              this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
+              await this.options.notebook?.clearArtifactTurnBinding?.(
+                turn.appSessionId,
+                turn.executionId
+              )
             } catch {
               // The original activation failure remains the caller-visible error.
             }
@@ -444,6 +462,7 @@ class ArtifactTurnOwner {
     )
     const turn: ArtifactTurn = {
       executionId: request.executionId,
+      workspaceCwd: request.workspaceCwd,
       updatesSessionNotebookContext: rootTransport,
       appSessionId: request.appSessionId,
       artifactStorageSessionId: request.artifactStorageSessionId,
@@ -520,7 +539,19 @@ class ArtifactTurnOwner {
 
   private async finalizeTurn(turn: ArtifactTurn): Promise<ArtifactTurnPublication | undefined> {
     await this.closeWrites(turn)
+    const prepare = (): Promise<ArtifactTurnPublication | undefined> =>
+      this.prepareFinalization(turn)
+    return this.options.provenance?.withSessionMutation
+      ? this.options.provenance.withSessionMutation(
+          { projectId: turn.projectId, appSessionId: turn.appSessionId },
+          prepare
+        )
+      : prepare()
+  }
 
+  private async prepareFinalization(
+    turn: ArtifactTurn
+  ): Promise<ArtifactTurnPublication | undefined> {
     let artifacts: ArtifactFile[]
     let artifactVersionIds: string[] | undefined
     if (this.options.provenance) {
@@ -601,6 +632,7 @@ class ArtifactTurnOwner {
 
   private async disposeTurn(turn: ArtifactTurn): Promise<void> {
     const cleanupErrors: unknown[] = []
+    let notebookStopFailure: NotebookExecutionStopError | undefined
     try {
       await this.closeWrites(turn)
     } catch (error) {
@@ -635,10 +667,16 @@ class ArtifactTurnOwner {
       }
       try {
         if (turn.updatesSessionNotebookContext) {
-          this.options.notebook?.clearArtifactTurnBinding?.(turn.appSessionId, turn.executionId)
+          await this.options.notebook?.clearArtifactTurnBinding?.(
+            turn.appSessionId,
+            turn.executionId
+          )
         }
       } catch (error) {
-        cleanupErrors.push(error)
+        // The Notebook binding is already removed when its drain reports a failed stop. Preserve
+        // that failure for the Task, while releasing the completed Artifact-side ownership.
+        if (error instanceof NotebookExecutionStopError) notebookStopFailure = error
+        else cleanupErrors.push(error)
       }
       if (cleanupErrors.length === 0) {
         if (this.activeTurnsByHandoffFile.get(turn.currentRunFile) === turn) {
@@ -651,6 +689,7 @@ class ArtifactTurnOwner {
         turn.phase = 'disposed'
       }
     })
+    if (notebookStopFailure) throw notebookStopFailure
     if (cleanupErrors.length > 0) throw cleanupErrors[0]
   }
 

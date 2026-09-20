@@ -241,11 +241,13 @@ vi.mock('./FilePreviewDialog', () => ({
 
 vi.mock('./PreviewPanel', () => ({
   PreviewPanel: ({
+    children,
     panelRef,
     defaultSize,
     minSize,
     onResize
   }: {
+    children?: React.ReactNode
     panelRef: React.Ref<PanelImperativeHandle>
     defaultSize: string
     minSize: string
@@ -264,7 +266,7 @@ vi.mock('./PreviewPanel', () => ({
       workspacePageHarness.previewPanelRef.current = workspacePageHarness.previewPanelHandle
     }
 
-    return <div data-testid="preview-panel" />
+    return <div data-testid="preview-panel">{children}</div>
   }
 }))
 
@@ -869,7 +871,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.isMobile = true
     await renderPage()
 
-    expect(container.querySelector('[data-testid="preview-panel"]')).toBeNull()
+    expect(container.querySelector('[data-testid="preview-panel"]')).not.toBeNull()
     expect(
       container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
     ).toBe('false')

@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { SkillImportCandidatePreview, SkillReplacementSummary } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
@@ -30,6 +30,41 @@ afterEach(() => {
 })
 
 describe('SkillImportCandidatePreview', () => {
+  it('shows replacement identity, file changes, and unknown comparison explicitly', () => {
+    act(() =>
+      root.render(
+        <SkillReplacementSummary
+          replacement={{
+            targetId: 'imported-citation',
+            added: ['new.txt'],
+            modified: ['SKILL.md'],
+            removed: ['local.txt']
+          }}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Replace imported-citation')
+    expect(container.textContent).toContain('including local edits')
+    expect(container.textContent).toContain('Installed source unknown')
+    expect(container.querySelector('summary')?.textContent).toContain('+1 / ~1 / −1')
+    expect(container.querySelector('ul')?.textContent).toContain('local.txt')
+    act(() =>
+      root.render(
+        <SkillReplacementSummary
+          replacement={{
+            targetId: 'imported-citation',
+            added: [],
+            modified: [],
+            removed: [],
+            comparisonUnavailable: true
+          }}
+        />
+      )
+    )
+    expect(container.textContent).toContain('could not be compared')
+    expect(container.querySelector('summary')).toBeNull()
+  })
+
   it('renders read-only candidate content and closes accessibly', () => {
     const onOpenChange = vi.fn()
     act(() => {

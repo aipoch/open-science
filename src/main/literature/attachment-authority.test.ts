@@ -34,7 +34,7 @@ describe('LiteratureAttachmentAuthority', () => {
     const authority = new LiteratureAttachmentAuthority({
       getClient: async () =>
         ({ literatureAttachmentVersion: { findUnique } }) as unknown as PrismaClient,
-      content: { verify }
+      content: { verify, openLease: vi.fn() }
     })
 
     await expect(authority.resolveVersion('attachment-version-1')).resolves.toEqual({
@@ -64,7 +64,7 @@ describe('LiteratureAttachmentAuthority', () => {
             }))
           }
         }) as unknown as PrismaClient,
-      content: { verify }
+      content: { verify, openLease: vi.fn() }
     })
 
     await expect(authority.resolveVersion('attachment-version-1')).resolves.toBeUndefined()

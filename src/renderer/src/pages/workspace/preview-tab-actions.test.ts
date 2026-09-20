@@ -237,14 +237,10 @@ describe('runPreviewTabAction', () => {
     })
   })
 
-  it('logs instead of throwing when a download fails', async () => {
-    const deps = createDeps({ saveManagedFile: vi.fn().mockRejectedValue(new Error('disk full')) })
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    runPreviewTabAction('download', createFileItem({}), deps)
-    await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
-
-    consoleError.mockRestore()
+  it('propagates a download rejection to the menu owner', async () => {
+    const failure = new Error('disk full')
+    const deps = createDeps({ saveManagedFile: vi.fn().mockRejectedValue(failure) })
+    await expect(runPreviewTabAction('download', createFileItem({}), deps)).rejects.toBe(failure)
   })
 
   it('copies a local file path to the clipboard', async () => {
@@ -315,4 +311,30 @@ describe('runPreviewTabAction', () => {
 
     expect(togglePdfContext).not.toHaveBeenCalled()
   })
+})
+
+it('offers a relationship-bound navigation action for Side chat tabs', () => {
+  const item = createToolItem({
+    toolKind: 'side-chat',
+    projectId: 'project-1',
+    sessionId: 'parent-1'
+  })
+  const viewSession = vi.fn()
+  const deps: PreviewTabActionDeps = {
+    viewSession,
+    closeTab: vi.fn(),
+    closeOtherTabs: vi.fn(),
+    saveManagedFile: vi.fn(),
+    copyText: vi.fn(),
+    stageLocalPath: undefined,
+    activeProjectId: 'project-1'
+  }
+  const context = { tabCount: 2 }
+  expect(commandsOf(getPreviewTabActionGroups(item, context))).toEqual([
+    'close',
+    'close-others',
+    'view-session'
+  ])
+  createPreviewTabActionBindings(context, deps)['view-session']!.execute!(item)
+  expect(viewSession).toHaveBeenCalledWith(item)
 })

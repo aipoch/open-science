@@ -1,9 +1,9 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/stores/project-store'
 
 type ProjectDeletionCleanupNoticeProps = {
@@ -35,14 +35,8 @@ const ProjectDeletionCleanupNotice = ({
   }
 
   return (
-    <section
-      aria-label={t('Project cleanup')}
-      className={cn(
-        'rounded-md border border-status-warning-foreground/30 bg-status-warning-surface/40 px-3 py-2 text-sm text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20 dark:text-status-warning-dark-foreground',
-        className
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
+    <InlineNotice aria-label={t('Project cleanup')} className={className}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div role="status" className="min-w-0 space-y-1">
           <p className="font-medium">{t('Project cleanup')}</p>
           <ul className="space-y-1">
@@ -73,7 +67,7 @@ const ProjectDeletionCleanupNotice = ({
           {isRetrying ? t('Retrying…') : t('Retry now')}
         </Button>
       </div>
-    </section>
+    </InlineNotice>
   )
 }
 

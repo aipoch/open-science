@@ -1,10 +1,12 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { findExecutable } from '../runtime/src/platform/executable.js'
 import { NotebookNetworkSandbox } from './index.js'
 import type { NotebookFilesystemPolicy, NotebookSandboxedProcess } from './types.js'
 
@@ -24,9 +26,322 @@ const run = (
     child.on('close', (code) => resolveRun({ code, stderr }))
   })
 
+const python3 =
+  process.platform === 'linux'
+    ? findExecutable('python3', '/usr/local/bin:/usr/bin:/bin')
+    : undefined
+
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
+const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`
 
 describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
+  it
+    .runIf(process.platform === 'linux' && Boolean(python3))
+    .each(['/tmp', '/var/tmp'].filter(existsSync))(
+    'starts a Python script explicitly granted under masked %s',
+    async (temporaryRoot) => {
+      const appRoot = await mkdtemp(join(temporaryRoot, '.mount_open-science-'))
+      const workspace = await mkdtemp(join(tmpdir(), 'open-science-appimage-workspace-'))
+      const script = join(
+        appRoot,
+        'resources',
+        'app.asar.unpacked',
+        'resources',
+        'notebook',
+        'python_loop.py'
+      )
+      const secret = join(appRoot, 'ungranted-secret.txt')
+      await mkdir(resolve(script, '..'), { recursive: true })
+      await writeFile(secret, 'private temporary data')
+      await writeFile(script, 'print("hello")\n')
+      // The host can open the exact script that the sandboxed interpreter must execute.
+      const direct = spawnSync(python3!, [script], { encoding: 'utf8' })
+      expect(direct.status, direct.stderr).toBe(0)
+      expect(direct.stdout).toBe('hello\n')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command:
+            '"$PYTHON_PATH" "$SCRIPT_PATH" > result.txt && ' +
+            'test ! -e "$SECRET_PATH" && ' +
+            'if printf changed > "$SCRIPT_PATH"; then exit 1; else exit 0; fi',
+          cwd: workspace,
+          env: {
+            PATH: '/usr/bin:/bin',
+            PYTHON_PATH: python3,
+            SCRIPT_PATH: script,
+            SECRET_PATH: secret
+          },
+          filesystem: {
+            readOnlyRoots: ['/bin', '/usr/bin', script],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, result.stderr).toBe(0)
+        await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('hello\n')
+        await expect(readFile(script, 'utf8')).resolves.toBe('print("hello")\n')
+      } finally {
+        await sandbox.dispose()
+        await rm(appRoot, { recursive: true, force: true })
+        await rm(workspace, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'restores an explicit read-only input beneath the hidden host temporary root',
+    async () => {
+      const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-private-'))
+      const inputRoot = await mkdtemp(join(tmpdir(), 'open-science-input-'))
+      const siblingInputRoot = await mkdtemp(join(tmpdir(), 'open-science-input-sibling-'))
+      const workspace = join(privateRoot, 'workspace')
+      const input = join(inputRoot, 'current.json')
+      const siblingInput = join(siblingInputRoot, 'current.json')
+      await mkdir(workspace)
+      await writeFile(input, 'input', 'utf8')
+      await writeFile(siblingInput, 'sibling', 'utf8')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command: [
+            `test "$(/bin/cat ${shellQuote(input)})" = input`,
+            `if printf changed > ${shellQuote(input)} 2>/dev/null; then exit 41; fi`,
+            `if /bin/cat ${shellQuote(siblingInput)} >/dev/null 2>&1; then exit 42; fi`
+          ].join(' && '),
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin' },
+          filesystem: {
+            privateRoot,
+            readOnlyRoots: ['/bin', '/usr/bin', inputRoot],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        const diagnostic = wrapped.annotateStderr(result.stderr)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, diagnostic).toBe(0)
+        await expect(readFile(input, 'utf8')).resolves.toBe('input')
+        await expect(readFile(siblingInput, 'utf8')).resolves.toBe('sibling')
+      } finally {
+        await sandbox.dispose()
+        await Promise.all([
+          rm(privateRoot, { recursive: true, force: true }),
+          rm(inputRoot, { recursive: true, force: true }),
+          rm(siblingInputRoot, { recursive: true, force: true })
+        ])
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'starts with an existing protected .bashrc in a hidden private root',
+    async () => {
+      const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-protected-home-'))
+      const workspace = join(privateRoot, 'workspace')
+      const bashrc = join(privateRoot, '.bashrc')
+      const ssh = join(privateRoot, '.ssh')
+      await mkdir(workspace)
+      await mkdir(ssh)
+      await writeFile(bashrc, 'private shell configuration\n')
+      await writeFile(join(ssh, 'key'), 'private credential')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command:
+            'test ! -e "$PROTECTED_PATH" && test ! -e "$SSH_PATH" && printf started > result.txt',
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin', PROTECTED_PATH: bashrc, SSH_PATH: ssh },
+          filesystem: {
+            privateRoot,
+            readOnlyRoots: ['/bin', '/usr/bin'],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: [bashrc, ssh]
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        const diagnostic = wrapped.annotateStderr(result.stderr)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, diagnostic).toBe(0)
+        expect(result.stderr).not.toContain('Ignoring extra certs')
+        await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('started')
+        await expect(readFile(bashrc, 'utf8')).resolves.toBe('private shell configuration\n')
+      } finally {
+        await sandbox.dispose()
+        await rm(privateRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux').each(['absent', 'file', 'directory'])(
+    'starts with a hidden %s provider configuration denied both read and write',
+    async (kind) => {
+      const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-provider-home-'))
+      const workspace = join(privateRoot, 'workspace')
+      const config = join(privateRoot, '.open-science', 'claude')
+      await mkdir(workspace)
+      const runtimeRoot = join(privateRoot, '.open-science', 'runtime')
+      await mkdir(runtimeRoot, { recursive: true })
+      if (kind === 'file') await writeFile(config, 'private provider configuration')
+      if (kind === 'directory') {
+        await mkdir(config)
+        await writeFile(join(config, 'credentials'), 'private provider configuration')
+      }
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command: 'test ! -e "$PROTECTED_PATH" && printf started > result.txt',
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin', PROTECTED_PATH: config },
+          filesystem: {
+            privateRoot,
+            readOnlyRoots: ['/bin', '/usr/bin', runtimeRoot],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [config],
+            deniedWriteRoots: [config]
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        const diagnostic = wrapped.annotateStderr(result.stderr)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, diagnostic).toBe(0)
+        await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('started')
+        if (kind === 'absent')
+          await expect(readFile(config)).rejects.toMatchObject({ code: 'ENOENT' })
+        else
+          await expect(
+            readFile(kind === 'file' ? config : join(config, 'credentials'), 'utf8')
+          ).resolves.toBe('private provider configuration')
+      } finally {
+        await sandbox.dispose()
+        await rm(privateRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux').each(['file', 'directory', 'ancestor'])(
+    'keeps an exposed protected %s unreadable',
+    async (kind) => {
+      const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-provider-grant-'))
+      const workspace = join(privateRoot, 'workspace')
+      const config = join(kind === 'ancestor' ? privateRoot : workspace, 'claude')
+      const secret = kind === 'file' ? config : join(config, 'credentials')
+      await mkdir(workspace)
+      if (kind !== 'file') await mkdir(config)
+      await writeFile(secret, 'private provider configuration')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command:
+            'test "$(cat "$SECRET_PATH" 2>/dev/null)" != "private provider configuration" && ' +
+            'printf started > result.txt',
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin', SECRET_PATH: secret },
+          filesystem: {
+            privateRoot,
+            readOnlyRoots: ['/bin', '/usr/bin', ...(kind === 'ancestor' ? [secret] : [])],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [config],
+            deniedWriteRoots: [config]
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+
+        expect(result.code, result.stderr).toBe(0)
+        await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('started')
+        await expect(readFile(secret, 'utf8')).resolves.toBe('private provider configuration')
+      } finally {
+        await sandbox.dispose()
+        await rm(privateRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'linux').each(['child', 'ancestor'])(
+    'keeps a denied-write %s of a writable grant protected without exposing hidden files',
+    async (relationship) => {
+      const privateRoot = await mkdtemp(join(tmpdir(), 'open-science-protected-grant-'))
+      const workspace = join(privateRoot, 'workspace')
+      const protectedDirectory = join(workspace, '.git')
+      const config = join(protectedDirectory, 'config')
+      const secret = join(privateRoot, 'secret.txt')
+      await mkdir(protectedDirectory, { recursive: true })
+      await writeFile(config, 'protected')
+      await writeFile(secret, 'private')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command:
+            'test ! -e "$SECRET_PATH" && test -r "$PROTECTED_PATH" && ' +
+            'if printf changed > "$PROTECTED_PATH"; then exit 1; else exit 0; fi',
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin', SECRET_PATH: secret, PROTECTED_PATH: config },
+          filesystem: {
+            privateRoot,
+            readOnlyRoots: ['/bin', '/usr/bin'],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [],
+            deniedWriteRoots: [relationship === 'child' ? protectedDirectory : privateRoot]
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+        expect(result.code, result.stderr).toBe(0)
+        await expect(readFile(config, 'utf8')).resolves.toBe('protected')
+      } finally {
+        await sandbox.dispose()
+        await rm(privateRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('keeps the standard null device writable', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'open-science-null-device-'))
     const sandbox = new NotebookNetworkSandbox({
@@ -50,7 +365,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const result = await run(wrapped, workspace)
       const diagnostic = wrapped.annotateStderr(result.stderr)
-      wrapped.cleanup()
+      await wrapped.cleanup('exit', { processesTerminated: true })
 
       expect(result.code, diagnostic).toBe(0)
     } finally {
@@ -97,7 +412,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const allowedResult = await run(allowed, workspace)
       expect(allowedResult.code, allowedResult.stderr).toBe(0)
-      allowed.cleanup()
+      await allowed.cleanup('exit', { processesTerminated: true })
       await expect(readFile(join(workspace, 'result.txt'), 'utf8')).resolves.toBe('allowed')
 
       const deniedRead = await sandbox.wrap({
@@ -112,7 +427,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       expect(deniedRead.annotateStderr(readResult.stderr)).toContain(
         'OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED'
       )
-      deniedRead.cleanup()
+      await deniedRead.cleanup('exit', { processesTerminated: true })
 
       const deniedSymlinkRead = await sandbox.wrap({
         command: `/bin/cat ${secretLink}`,
@@ -123,7 +438,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const symlinkResult = await run(deniedSymlinkRead, workspace)
       expect(symlinkResult.code).not.toBe(0)
-      deniedSymlinkRead.cleanup()
+      await deniedSymlinkRead.cleanup('exit', { processesTerminated: true })
 
       const deniedHostTempRead = await sandbox.wrap({
         command: `/bin/cat ${hostTempSecret}`,
@@ -134,7 +449,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const hostTempReadResult = await run(deniedHostTempRead, workspace)
       expect(hostTempReadResult.code).not.toBe(0)
-      deniedHostTempRead.cleanup()
+      await deniedHostTempRead.cleanup('exit', { processesTerminated: true })
 
       const deniedReadOnlyWrite = await sandbox.wrap({
         command: `printf blocked > ${join(readOnly, 'input.txt')}`,
@@ -145,7 +460,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const readOnlyWriteResult = await run(deniedReadOnlyWrite, workspace)
       expect(readOnlyWriteResult.code).not.toBe(0)
-      deniedReadOnlyWrite.cleanup()
+      await deniedReadOnlyWrite.cleanup('exit', { processesTerminated: true })
       await expect(readFile(join(readOnly, 'input.txt'), 'utf8')).resolves.toBe('input')
 
       const deniedWrite = await sandbox.wrap({
@@ -160,7 +475,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       expect(deniedWrite.annotateStderr(writeResult.stderr)).toContain(
         'OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED'
       )
-      deniedWrite.cleanup()
+      await deniedWrite.cleanup('exit', { processesTerminated: true })
       await expect(readFile(outsideWrite, 'utf8')).rejects.toThrow()
 
       const deniedHostTempWrite = await sandbox.wrap({
@@ -172,7 +487,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       })
       const hostTempWriteResult = await run(deniedHostTempWrite, workspace)
       expect(hostTempWriteResult.code).not.toBe(0)
-      deniedHostTempWrite.cleanup()
+      await deniedHostTempWrite.cleanup('exit', { processesTerminated: true })
     } finally {
       await sandbox.dispose()
       await rm(privateRoot, { recursive: true, force: true })

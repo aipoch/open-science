@@ -70,6 +70,18 @@ vi.mock('../projects/prisma-client', () => ({
 const sessionRepositoryRoots: string[] = []
 const sessionLoadAll = vi.fn().mockResolvedValue({ sessions: [] })
 const sessionLoadOne = vi.fn().mockResolvedValue({ id: 'session-1' })
+const sessionLoadAllDiagnostics = vi.fn(async (_options?: { mode?: string }) => {
+  void _options // Mock accepts options param for signature compatibility but doesn't use it
+  const sessions = await sessionLoadAll()
+  return { result: sessions, isComplete: true }
+})
+const sessionLoadOneDiagnostics = vi.fn(
+  async (projectId: string, sessionId: string, _options?: { mode?: string }) => {
+    void _options // Mock accepts options param for signature compatibility but doesn't use it
+    const session = await sessionLoadOne(projectId, sessionId)
+    return session ? { status: 'found' as const, session } : { status: 'missing' as const }
+  }
+)
 vi.mock('../session-persistence/repository', () => ({
   SessionRepository: class {
     constructor(root: string) {
@@ -77,6 +89,10 @@ vi.mock('../session-persistence/repository', () => ({
     }
     loadAll = sessionLoadAll
     loadSession = sessionLoadOne
+    // Fallback reader uses *WithDiagnostics variants with mode: 'read-only'. Expose spies so tests
+    // can verify the mode parameter is passed through.
+    loadAllWithDiagnostics = sessionLoadAllDiagnostics
+    loadSessionWithDiagnostics = sessionLoadOneDiagnostics
   },
   // storage-root imports these names from the same module in production; keep them defined.
   DEV_SESSION_DIR_NAME: 'dev',
@@ -136,6 +152,49 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('reviewer IPC handlers', () => {
+  it('rejects Session export conflicts before admitting a model or background review', async () => {
+    const modelRuntime = {
+      admit: vi.fn(async () => ({ model: 'reviewer', release: async () => undefined }))
+    }
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      modelRuntime,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(owner.run(createRequest())).rejects.toThrow('locked for export')
+    expect(modelRuntime.admit).not.toHaveBeenCalled()
+    expect(runReview).not.toHaveBeenCalled()
+  })
+  it('rejects manual review of imported history before resolving or admitting a model', async () => {
+    sessionLoadOne.mockResolvedValue({
+      id: 'session-1',
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const modelRuntime = {
+      admit: vi.fn(async () => ({ model: 'reviewer', release: async () => undefined }))
+    }
+    const resolveSessionAgentTarget = vi.fn()
+    const owner = createReviewerCommandOwner({
+      acpRuntime,
+      modelRuntime,
+      resolveSessionAgentTarget
+    })
+    await expect(owner.run({ ...createRequest(), origin: 'manual' })).resolves.toEqual({
+      started: false,
+      reason: 'run-failed'
+    })
+    expect(resolveSessionAgentTarget).not.toHaveBeenCalled()
+    expect(modelRuntime.admit).not.toHaveBeenCalled()
+    expect(runReview).not.toHaveBeenCalled()
+  })
   it('waits for startup recovery before exposing persisted reviews', async () => {
     let finishRecovery!: (count: number) => void
     recoverInterruptedReviews.mockImplementationOnce(
@@ -403,6 +462,22 @@ describe('reviewer IPC handlers', () => {
     }
     expect(passed.turnMessageId).toBe('original')
     expect(passed.scopeTurnMessageId).toBe('correction')
+  })
+
+  it('preserves the historical scope branch when starting a manual rerun', async () => {
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    const request = {
+      ...createRequest(),
+      scopeTurnMessageId: 'historical-answer',
+      scopeMessageBranchId: 'original-branch'
+    }
+    await expect(owner.run(request)).resolves.toEqual({ started: true })
+    expect(runReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopeTurnMessageId: 'historical-answer',
+        scopeMessageBranchId: 'original-branch'
+      })
+    )
   })
 
   it('passes a live session loader to the orchestrator instead of a review-start snapshot', async () => {
@@ -696,8 +771,38 @@ describe('reviewer IPC handlers', () => {
       expect(result).toBe(reviews)
     })
 
-    it('returns reviews unflagged when the session load throws', async () => {
-      const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
+    it('distinguishes unreadable current evidence from an ordinary historical pass', async () => {
+      const reviews = [
+        {
+          id: 'review-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          turnMessageId: 'message-1',
+          lifecycle: 'complete',
+          outcome: 'pass',
+          checks: [],
+          submittedChecks: []
+        }
+      ]
+      getReviewsForSession.mockResolvedValue(reviews)
+      sessionLoadOne.mockRejectedValueOnce(
+        Object.assign(new Error('Temporary session read failure'), { code: 'EIO' })
+      )
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      const result = await owner.getForSession({
+        projectId: 'project-1',
+        appSessionId: 'session-1'
+      })
+
+      expect(result).toEqual(expect.arrayContaining([expect.objectContaining(reviews[0])]))
+      expect(flagStaleReviews).not.toHaveBeenCalled()
+      expect(result[0].stale).not.toBe(true)
+      expect(result[0].verificationUnavailable).toBe(true)
+    })
+
+    it('retains history with an unavailable verification marker when the session load throws', async () => {
+      const reviews = [{ id: 'review-1', turnMessageId: 'message-1', lifecycle: 'complete' }]
       getReviewsForSession.mockResolvedValue(reviews)
       sessionLoadOne.mockRejectedValueOnce(new Error('session store unavailable'))
       registerReviewerIpcHandlers({ acpRuntime })
@@ -711,10 +816,33 @@ describe('reviewer IPC handlers', () => {
         }
       )
 
-      expect(result).toBe(reviews)
-      // Fail-open: a load failure must not hide stale findings by leaving the detector un-runnable.
+      expect(result).toEqual(
+        reviews.map((review) => ({ ...review, verificationUnavailable: true }))
+      )
+      // A read error is distinct from a missing Session and from a confirmed scope change.
       expect(flagStaleReviews).not.toHaveBeenCalled()
     })
+
+    it.each(['running', 'error'])(
+      'does not attach a historical verification marker to a %s review on a session read error',
+      async (lifecycle) => {
+        const review = { id: 'review-1', turnMessageId: 'message-1', lifecycle }
+        getReviewsForSession.mockResolvedValue([review])
+        sessionLoadOne.mockRejectedValueOnce(
+          Object.assign(new Error('Temporary session read failure'), { code: 'EIO' })
+        )
+        const owner = createReviewerCommandOwner({ acpRuntime })
+
+        const result = await owner.getForSession({
+          projectId: 'project-1',
+          appSessionId: 'session-1'
+        })
+
+        expect(result[0]).toEqual(review)
+        expect(result[0].verificationUnavailable).toBeUndefined()
+        expect(flagStaleReviews).not.toHaveBeenCalled()
+      }
+    )
   })
 
   describe('reviewer:abort-fix-loop handler', () => {
@@ -1097,6 +1225,41 @@ describe('reviewer IPC handlers', () => {
       expect(sessionLoadOne).not.toHaveBeenCalled()
       expect(loadAllSpy).toHaveBeenCalled()
       await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
+    })
+
+    it('fallback session reader pins mode: read-only to prevent quarantine', async () => {
+      // The fallback (used when no sessionReader is injected) must never quarantine corrupt files:
+      // reviewer is not the owner that repairs session files. Verify that both read paths call
+      // *WithDiagnostics variants with mode: 'read-only' explicitly set.
+      sessionLoadAllDiagnostics.mockClear()
+      sessionLoadOneDiagnostics.mockClear()
+      sessionLoadOne.mockResolvedValue({ id: 'session-1', projectId: 'project-1' })
+      sessionLoadAll.mockResolvedValue({ sessions: [{ id: 'session-1', projectId: 'project-1' }] })
+
+      runReview.mockClear()
+      registerReviewerIpcHandlers({ acpRuntime })
+
+      const runHandler = handlers.get(REVIEWER_IPC.RUN)
+
+      // Trigger the loadSession path (projectId present)
+      await runHandler?.(
+        {},
+        { projectId: 'project-1', sessionId: 'session-1', turnMessageId: 'message-1' }
+      )
+      expect(sessionLoadOneDiagnostics).toHaveBeenCalledWith(
+        'project-1',
+        'session-1',
+        expect.objectContaining({ mode: 'read-only' })
+      )
+
+      sessionLoadOneDiagnostics.mockClear()
+      sessionLoadAllDiagnostics.mockClear()
+
+      // Trigger the findSessionById path (projectId absent)
+      await runHandler?.({}, { sessionId: 'session-1', turnMessageId: 'message-2' })
+      expect(sessionLoadAllDiagnostics).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'read-only' })
+      )
     })
   })
 })

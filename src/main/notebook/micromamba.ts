@@ -89,7 +89,8 @@ export const createFromLockArgv = (
   mm: string,
   root: string,
   prefix: string,
-  lock: string
+  lock: string,
+  options: { offline?: boolean; compilePyc?: boolean } = { offline: true }
 ): string[] => [
   mm,
   '--no-rc',
@@ -98,7 +99,8 @@ export const createFromLockArgv = (
   prefix,
   '--file',
   lock,
-  '--offline',
+  ...(options.offline === false ? [] : ['--offline']),
+  ...(options.compilePyc === false ? ['--no-pyc'] : []),
   '-y',
   '--root-prefix',
   root

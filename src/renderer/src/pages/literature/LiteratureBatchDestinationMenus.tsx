@@ -1,7 +1,8 @@
-import { ChevronDown, FolderOpen, FolderPlus, LoaderCircle, Plus, Search } from 'lucide-react'
+import { ChevronDown, FolderOpen, FolderPlus, LoaderCircle, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -41,14 +42,12 @@ const LiteratureBatchDestinationMenus = ({
   const { t } = useTranslation()
   const [collectionCreateMode, setCollectionCreateMode] = useState(false)
   const [collectionName, setCollectionName] = useState('')
+  const [collectionQuery, setCollectionQuery] = useState('')
+  const visibleCollections = collections.filter((collection) =>
+    collection.name.toLocaleLowerCase().includes(collectionQuery.trim().toLocaleLowerCase())
+  )
   const [projectQuery, setProjectQuery] = useState('')
-  const normalizedProjectQuery =
-    projects.length > SEARCH_THRESHOLD ? projectQuery.trim().toLocaleLowerCase() : ''
-  const visibleProjects = normalizedProjectQuery
-    ? projects.filter((project) =>
-        project.name.toLocaleLowerCase().includes(normalizedProjectQuery)
-      )
-    : projects
+  const [projectOpen, setProjectOpen] = useState(false)
 
   return (
     <>
@@ -57,6 +56,7 @@ const LiteratureBatchDestinationMenus = ({
           if (!open) {
             setCollectionCreateMode(false)
             setCollectionName('')
+            setCollectionQuery('')
           }
         }}
       >
@@ -83,9 +83,24 @@ const LiteratureBatchDestinationMenus = ({
           <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
             {t('Collections')}
           </div>
+          {collections.length > SEARCH_THRESHOLD ? (
+            <Input
+              type="search"
+              aria-label={t('Search collections')}
+              placeholder={t('Search collections…')}
+              value={collectionQuery}
+              onChange={(event) => setCollectionQuery(event.target.value)}
+              className="mb-1 h-8 text-xs"
+            />
+          ) : null}
           {collections.length > 0 ? (
             <div className="max-h-56 overflow-y-auto">
-              {collections.map((collection) => (
+              {visibleCollections.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">
+                  {t('No matching collections')}
+                </p>
+              ) : null}
+              {visibleCollections.map((collection) => (
                 <PopoverClose key={collection.id} asChild>
                   <button
                     type="button"
@@ -133,6 +148,7 @@ const LiteratureBatchDestinationMenus = ({
               >
                 <Input
                   autoFocus
+                  disabled={disabled}
                   value={collectionName}
                   onChange={(event) => setCollectionName(event.target.value)}
                   placeholder={t('New collection')}
@@ -171,7 +187,13 @@ const LiteratureBatchDestinationMenus = ({
           </div>
         </PopoverContent>
       </Popover>
-      <Popover onOpenChange={(open) => !open && setProjectQuery('')}>
+      <Popover
+        open={projectOpen}
+        onOpenChange={(open) => {
+          setProjectOpen(open)
+          if (!open) setProjectQuery('')
+        }}
+      >
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -197,44 +219,18 @@ const LiteratureBatchDestinationMenus = ({
           <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
             {t('Projects')}
           </div>
-          {projectsLoaded && projects.length > SEARCH_THRESHOLD ? (
-            <div className="relative mb-1">
-              <Search
-                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <Input
-                type="search"
-                aria-label={t('Search projects')}
-                placeholder={t('Search projects…')}
-                value={projectQuery}
-                autoComplete="off"
-                className="h-8 pl-8 text-xs"
-                onChange={(event) => setProjectQuery(event.currentTarget.value)}
-              />
-            </div>
-          ) : null}
-          {projectsLoaded ? (
-            visibleProjects.length > 0 ? (
-              <div className="max-h-56 overflow-y-auto">
-                {visibleProjects.map((project) => (
-                  <PopoverClose key={project.id} asChild>
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      className={destinationButtonClassName}
-                      onClick={() => onSelectProject(project.id)}
-                    >
-                      <FolderOpen
-                        className="size-4 shrink-0 text-muted-foreground"
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                    </button>
-                  </PopoverClose>
-                ))}
-              </div>
-            ) : projects.length === 0 ? (
+          <ProjectPicker
+            projects={projects}
+            query={projectQuery}
+            onQueryChange={setProjectQuery}
+            loaded={projectsLoaded}
+            disabled={disabled}
+            onSelect={(id) => {
+              setProjectOpen(false)
+              setProjectQuery('')
+              onSelectProject(id)
+            }}
+            emptyContent={
               <div className="flex gap-2 px-2 py-3">
                 <FolderPlus
                   className="mt-0.5 size-4 shrink-0 text-muted-foreground"
@@ -247,14 +243,8 @@ const LiteratureBatchDestinationMenus = ({
                   </p>
                 </div>
               </div>
-            ) : (
-              <p className="px-2 py-3 text-sm text-muted-foreground">{t('No matching projects')}</p>
-            )
-          ) : (
-            <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
-              {t('Loading…')}
-            </p>
-          )}
+            }
+          />
           <div className="mt-1 border-t border-border pt-1">
             <PopoverClose asChild>
               <Button

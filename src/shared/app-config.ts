@@ -7,13 +7,14 @@ const GITHUB_REPO = 'open-science'
 const GITHUB_REPO_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
 
 export const APP = {
-  name: 'Open Science',
+  name: 'Open-Science',
   githubOwner: GITHUB_OWNER,
   githubRepo: GITHUB_REPO,
   links: {
     website: 'https://www.aipoch.com/open-science',
     docs: 'https://www.aipoch.com/docs/',
     githubRepo: GITHUB_REPO_URL,
+    license: `${GITHUB_REPO_URL}/blob/main/LICENSE`,
     githubReleases: `${GITHUB_REPO_URL}/releases`,
     githubApi: `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`,
     githubIssues: `${GITHUB_REPO_URL}/issues`,

@@ -269,4 +269,37 @@ describe('TagService', () => {
     expect(events.publish).toHaveBeenNthCalledWith(1, 'tags:changed', { revision: 1 })
     expect(events.publish).toHaveBeenNthCalledWith(2, 'tags:changed', { revision: 2 })
   })
+  it('queues committed assignment notifications with snapshots and ordinary mutations', async () => {
+    let release!: () => void
+    const repository = {
+      reorder: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          })
+      ),
+      snapshot: vi.fn(async (revision: number) => snapshot(revision)),
+      pruneStaleAssignments: vi.fn().mockResolvedValue(0)
+    }
+    const events = { publish: vi.fn() }
+    const resources = { snapshot: vi.fn().mockResolvedValue({}) }
+    const service = new TagService(
+      repository as unknown as TagRepository,
+      resources as unknown as TagResourceCatalog,
+      events
+    )
+    const mutation = service.reorder({ tagIds: [] })
+    await Promise.resolve()
+    const notification = service.notifyAssignmentsChanged()
+    const read = service.snapshot()
+    expect(events.publish).not.toHaveBeenCalled()
+    release()
+    await mutation
+    await notification
+    expect(await read).toEqual(snapshot(2))
+    expect(events.publish.mock.calls).toEqual([
+      ['tags:changed', { revision: 1 }],
+      ['tags:changed', { revision: 2 }]
+    ])
+  })
 })

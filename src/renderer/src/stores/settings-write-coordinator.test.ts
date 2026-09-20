@@ -20,18 +20,14 @@ describe('settings write coordinator', () => {
 
     const stale = writes.begin('reasoningEffort')
     const current = writes.begin('reasoningEffort')
-    stale.fail('stale reasoning failure')
-    current.fail('reasoning failure')
+    stale.fail('reasoning-effort')
+    current.fail('reasoning-effort')
 
     const clearsExisting = writes.begin('notifications')
-    writes.begin('appIcon').fail('app icon failure')
+    writes.begin('appIcon').fail('app-icon')
     clearsExisting.succeed()
 
-    expect(errors).toEqual([
-      'reasoning failure',
-      'reasoning failure app icon failure',
-      'app icon failure'
-    ])
+    expect(errors).toEqual(['reasoning-effort', 'reasoning-effort app-icon', 'app-icon'])
   })
 
   it('serializes one preference while unrelated preferences remain independent', async () => {
@@ -86,10 +82,10 @@ describe('settings write coordinator', () => {
     const first = createSettingsWriteCoordinator(firstError)
     const second = createSettingsWriteCoordinator(secondError)
 
-    first.begin('notifications').fail('first failure')
+    first.begin('notifications').fail('notifications')
     second.begin('notifications').succeed()
 
-    expect(firstError).toHaveBeenLastCalledWith('first failure')
+    expect(firstError).toHaveBeenLastCalledWith('notifications')
     expect(secondError).toHaveBeenLastCalledWith(undefined)
   })
 
@@ -98,14 +94,14 @@ describe('settings write coordinator', () => {
     const writes = createSettingsWriteCoordinator(onError)
     const pending = writes.begin('notifications')
 
-    writes.begin('appIcon').fail('app icon failure')
+    writes.begin('appIcon').fail('app-icon')
     writes.clearFailures()
-    pending.fail('notification failure')
+    pending.fail('notification-content')
 
     expect(onError.mock.calls.map(([error]) => error)).toEqual([
-      'app icon failure',
+      'app-icon',
       undefined,
-      'notification failure'
+      'notification-content'
     ])
   })
 })

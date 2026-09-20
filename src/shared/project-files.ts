@@ -1,3 +1,5 @@
+import type { SearchFileFormat, SearchSort } from './search-text'
+
 export type ProjectFileSource = 'artifact' | 'upload'
 
 export type ProjectFileOriginSession = {
@@ -24,6 +26,7 @@ export type ProjectFileItem = {
   mtimeMs?: number
   sortAtMs: number
   originSession?: ProjectFileOriginSession
+  contentMatch?: { offset: number; startingLineNumber: number }
 }
 
 export type ProjectFilesSearch = {
@@ -51,6 +54,12 @@ export type ListProjectFilesRequest = {
   limit: number
 }
 
+// One consistent selection for an export. Omit sessionId to include all Project sources.
+export type ReadProjectExportFilesRequest = {
+  projectId: string
+  sessionId?: string
+}
+
 export type ProjectFilesPage = {
   items: ProjectFileItem[]
   nextCursor?: string
@@ -71,6 +80,12 @@ export type ResolveProjectFileRequest = {
 // The primary Project set is one paged collection. Home searches all active Projects; Workspace
 // pages its current Project and requests a bounded sample from Other Projects.
 export type SearchArtifactsRequest = {
+  searchContent?: boolean
+  updatedAfter?: number
+  format?: SearchFileFormat
+  sort?: SearchSort
+  source?: ProjectFileSource | 'all'
+  sessionId?: string
   primaryProjectIds: string[]
   otherProjectIds: string[]
   filenameContains?: string

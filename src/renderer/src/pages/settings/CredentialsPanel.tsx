@@ -1,3 +1,6 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
@@ -60,6 +63,7 @@ export function CredentialsPanel({
   onOpenProvider
 }: CredentialsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const openAlex = useSettingsStore((state) => state.openAlex)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -334,9 +338,21 @@ export function CredentialsPanel({
           </div>
         ) : null}
         <div className="space-y-1.5">
-          <label htmlFor="service-api-key" className="text-sm font-medium">
-            {isOpenAlex ? t('API key') : t('NCBI API key')}
-          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label htmlFor="service-api-key" className="text-sm font-medium">
+              {isOpenAlex ? t('API key') : t('NCBI API key')}
+            </label>
+            <ExternalTextLink
+              href={
+                isOpenAlex
+                  ? 'https://openalex.org/settings/api'
+                  : 'https://account.ncbi.nlm.nih.gov/settings/'
+              }
+              className="whitespace-nowrap text-xs"
+            >
+              {t('Get an API key')}
+            </ExternalTextLink>
+          </div>
           <MaskedPasswordField
             id="service-api-key"
             value={apiKey}
@@ -349,15 +365,16 @@ export function CredentialsPanel({
             disabled={busy}
           />
           <p className="text-xs text-muted-foreground">
-            {t(
-              'Stored encrypted on this computer. Secret values are never returned to the interface.'
-            )}
+            {fileCredentialNotice ??
+              t(
+                'Stored encrypted on this computer. Secret values are never returned to the interface.'
+              )}
           </p>
         </div>
         {!encryptionAvailable ? (
-          <p className="text-xs text-danger-000">
+          <InlineNotice level="error" role="note">
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
-          </p>
+          </InlineNotice>
         ) : null}
         {message ? (
           <p role="status" className="text-xs text-muted-foreground">
@@ -468,9 +485,10 @@ export function CredentialsPanel({
       <section>
         <h2 className="text-base font-semibold">{t('Services')}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {t(
-            'API keys and credentials used by Open Science on your behalf, stored encrypted on this computer.'
-          )}
+          {fileCredentialNotice ??
+            t(
+              'API keys and credentials used by Open-Science on your behalf, stored encrypted on this computer.'
+            )}
         </p>
         <div className="mt-4 divide-y divide-border rounded-xl border border-border">
           {services.map(({ id, label, description, configured, desktopOnly, Icon }) => {
@@ -600,9 +618,9 @@ export function CredentialsPanel({
             <p className="text-sm text-muted-foreground">{t('No Connector credentials yet.')}</p>
           ) : null}
           {credentialMessage ? (
-            <p className="mt-3 text-sm text-destructive" role="alert">
+            <InlineNotice level="error" className="mt-3" role="alert">
               {credentialMessage}
-            </p>
+            </InlineNotice>
           ) : null}
         </SettingsSection>
       ) : null}
@@ -701,9 +719,9 @@ export function CredentialsPanel({
                 {t('This permanently removes the stored credential from this device.')}
               </AlertDialog.Description>
               {credentialMessage ? (
-                <p className="mt-4 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mt-4" role="alert">
                   {credentialMessage}
-                </p>
+                </InlineNotice>
               ) : null}
             </div>
             <div className={dialogFooterClassName}>

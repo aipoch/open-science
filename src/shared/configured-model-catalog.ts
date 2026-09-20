@@ -131,6 +131,13 @@ export const buildConfiguredModelCatalog = (
       { apiEndpoints },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
     )
+    const frameworkCompatible = isProviderUsableByFramework(
+      { apiEndpoints, type: provider.type },
+      { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
+    )
+    // The probe records its target against the provider's own best route when the framework cannot
+    // drive it (framework-agnostic probe), so the catalog must match validation records on the same
+    // endpoint — otherwise a verified entry still looks unvalidated and gets filtered out.
     const validationEndpoint = preferredEndpoint(
       apiEndpoints,
       provider.type === 'xai-subscription'
@@ -139,13 +146,11 @@ export const buildConfiguredModelCatalog = (
           ? (['anthropic', 'openai', 'responses'] as const)
           : usesCompatibilityTransport
             ? apiEndpoints
-            : input.frameworkEndpoints
+            : frameworkCompatible
+              ? input.frameworkEndpoints
+              : (['anthropic', 'openai', 'responses'] as const)
     )
     if (providerValidationFailed(provider, { model, endpoint: validationEndpoint })) return []
-    const frameworkCompatible = isProviderUsableByFramework(
-      { apiEndpoints, type: provider.type },
-      { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
-    )
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
     return [
       Object.freeze({

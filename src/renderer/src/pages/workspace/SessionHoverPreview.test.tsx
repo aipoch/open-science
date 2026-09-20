@@ -9,6 +9,47 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+it('shows the session number separately from the editable title', async () => {
+  vi.useFakeTimers()
+  render(
+    <SessionHoverPreviewProvider>
+      <SessionHoverPreview
+        session={{ id: 'a', title: 'Session', number: 123, description: 'Summary' }}
+        canRename
+      >
+        <button>Row</button>
+      </SessionHoverPreview>
+    </SessionHoverPreviewProvider>
+  )
+  fireEvent.pointerEnter(screen.getByText('Row'), { pointerType: 'mouse' })
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  const number = screen.getByText('#123')
+  expect(number.previousElementSibling?.textContent).toBe('Session')
+  expect(number.nextElementSibling?.textContent).toBe('Summary')
+  fireEvent.click(screen.getByRole('button', { name: 'Rename session title' }))
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Session title' }).value).toBe(
+    'Session'
+  )
+  expect(screen.getByText('#123')).toBe(number)
+})
+
+it.each([undefined, 0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
+  'omits an unavailable or invalid session number (%s)',
+  async (number) => {
+    vi.useFakeTimers()
+    render(
+      <SessionHoverPreviewProvider>
+        <SessionHoverPreview session={{ id: 'a', title: 'Session', number }}>
+          <button>Row</button>
+        </SessionHoverPreview>
+      </SessionHoverPreviewProvider>
+    )
+    fireEvent.pointerEnter(screen.getByText('Row'), { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(300))
+    expect(screen.getByRole('dialog').textContent).toBe('Session')
+  }
+)
+
 it.each(['resolve', 'reject'] as const)(
   'protects a draft across other-row hover before and during a %s save',
   async (outcome) => {

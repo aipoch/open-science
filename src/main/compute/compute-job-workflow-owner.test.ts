@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
-import { ArtifactRepository } from '../artifacts/repository'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { decodeDataPath } from '../storage/data-path'
 import {
@@ -470,7 +470,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     expect(result.status).toBe('submitted')
     expect(result.provider_id).toBe('ssh:biowulf')
     expect(result.job_id).toBeDefined()
-    expect(result.remote_workdir).toContain('.openscience/jobs/')
+    expect(result.remote_workdir).toContain('.open-science/jobs/')
     expect(createCalls).toHaveBeenCalledOnce()
   })
 
@@ -672,43 +672,59 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
         environment: 'protein-gpu',
         resources: '{"cpus":4}',
         timeout_seconds: 120,
-        remote_workdir: expect.stringContaining('/.openscience/jobs/')
+        remote_workdir: expect.stringContaining('/.open-science/jobs/')
       }),
       expect.objectContaining({ operation: 'submit_job' }),
       signal
     )
   })
 
-  it('rejects timeout_seconds > 7 days', async () => {
-    const runner = makeFakeRunner({
-      exitCode: 0,
-      stdout: '',
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
-    const { repo: jobRepo } = makeJobRepo()
-    const { repo } = makeRepo()
-    const broker = {
-      request: vi.fn(),
-      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
-      respond: vi.fn()
-    } as unknown as ComputeApprovalBroker
+  it.each([Infinity, 0, -1, 1.5, 8 * 24 * 3600])(
+    'rejects invalid timeoutSeconds %s before submission and accepts a correction',
+    async (timeoutSeconds) => {
+      const runner = makeFakeRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const { repo: jobRepo, createCalls } = makeJobRepo()
+      const { repo } = makeRepo()
+      const broker = {
+        request: vi.fn(),
+        requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+        respond: vi.fn()
+      } as unknown as ComputeApprovalBroker
 
-    const service = makeOwner(runner, repo, broker, jobRepo)
+      const service = makeOwner(runner, repo, broker, jobRepo)
 
-    const err = await service
-      .submitJob(
+      const err = await service
+        .submitJob(
+          'ssh:biowulf',
+          'test',
+          'echo hi',
+          { timeoutSeconds },
+          { sessionId: 's1', projectId: 'p1' }
+        )
+        .catch((e) => e)
+
+      expect(err.computeCallError?.error_code).toBe('timeout')
+      expect(err.computeCallError?.message).toContain('timeoutSeconds')
+      expect(err.computeCallError?.message).toContain('The Compute Job was not submitted.')
+      expect(createCalls).not.toHaveBeenCalled()
+      expect(broker.requestWithContext).not.toHaveBeenCalled()
+      expect(runner.run).not.toHaveBeenCalled()
+      await service.submitJob(
         'ssh:biowulf',
         'test',
         'echo hi',
-        { timeoutSeconds: 8 * 24 * 3600 },
+        { timeoutSeconds: 120 },
         { sessionId: 's1', projectId: 'p1' }
       )
-      .catch((e) => e)
-
-    expect(err.computeCallError?.error_code).toBe('timeout')
-  })
+      expect(createCalls).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('rejects an unsafe environment name before approval or persistence', async () => {
     const runner = makeFakeRunner({
@@ -859,7 +875,7 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
       output_manifest: undefined,
       harvest_config: undefined,
       timeout_seconds: 3600,
-      remote_workdir: '~/.openscience/jobs/job-42',
+      remote_workdir: '~/.open-science/jobs/job-42',
       remote_handle: undefined,
       exit_code: 0,
       stdout_tail: 'hi\n',
@@ -881,10 +897,17 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
     const status = await service.getJobStatus('job-42')
     expect(status.job_id).toBe('job-42')
     expect(status.status).toBe('success')
+    expect(status.result_final).toBe(false)
     expect(status.exit_code).toBe(0)
     expect(status.stdout_tail).toBe('hi\n')
-    expect(status.remote_workdir).toBe('~/.openscience/jobs/job-42')
+    expect(status.remote_workdir).toBe('~/.open-science/jobs/job-42')
     expect(status.harvest_error).toBe('harvest pending: authentication_failed')
+
+    job.harvested_at = 3
+    await expect(service.getJobStatus('job-42')).resolves.toMatchObject({
+      status: 'success',
+      result_final: true
+    })
 
     await expect(
       service.getJobStatus('job-42', {
@@ -1133,7 +1156,7 @@ describe('resolveInputs — dst_filename validation', () => {
         '/workspace',
         undefined
       )
-    ).rejects.toThrow(/dst_filename must be unique/)
+    ).rejects.toThrow(/dstFilename must be unique/)
   })
 })
 
@@ -1373,7 +1396,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     output_manifest: undefined,
     harvest_config: undefined,
     timeout_seconds: 3600,
-    remote_workdir: '~/.openscience/jobs/job-result-1',
+    remote_workdir: '~/.open-science/jobs/job-result-1',
     remote_handle: undefined,
     exit_code: 0,
     stdout_tail: 'hi\n',
@@ -1392,6 +1415,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
     expect(result.status).toBe('running')
+    expect(result.result_final).toBe(false)
     expect(result.featured_files).toEqual([])
     expect(result.hidden_files).toEqual([])
     expect(result.output_files).toEqual([])
@@ -1422,6 +1446,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
     expect(result.status).toBe('success')
+    expect(result.result_final).toBe(false)
     expect(result.featured_files).toEqual([])
     expect(result.output_files).toEqual([])
     expect(result.harvest_error).toBe('harvest pending: host_unreachable')
@@ -1439,6 +1464,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const result = await service.getJobResult('job-result-1')
 
     expect(result.status).toBe('success')
+    expect(result.result_final).toBe(true)
     expect(result.exit_code).toBe(0)
     expect(result.local_output_root).toBe(join(tmpDir, 'notebooks', 'proj-1', 'sess-1'))
     expect(result.featured_files).toContain('hpc/job-result-1/featured/out.result')
@@ -1472,29 +1498,35 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     expect(result.producer_run_id).toBe('notebook-run-submit')
     expect(result.featured_files).toEqual(['hpc/job-result-1/featured/results.bin'])
 
-    const currentRunFile = join(tmpDir, 'current-run.json')
-    await writeFile(currentRunFile, JSON.stringify({ runId: 'analysis-run-1' }), 'utf8')
-    const artifact = await writeArtifactFileForCurrentRun(
-      new ArtifactRepository(tmpDir),
-      {
-        storageRoot: tmpDir,
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        currentRunFile,
-        allowedImportRoots: [localOutputRoot!]
-      },
-      {
-        filename: 'results.bin',
-        mimeType: 'application/octet-stream',
-        source: {
-          kind: 'localPath',
-          path: join(localOutputRoot!, result.featured_files[0]!)
+    const artifacts = await createArtifactSaveFixture()
+    try {
+      const environment = await artifacts.environment(
+        { allowedImportRoots: [localOutputRoot!] },
+        {
+          projectId: 'proj-1',
+          appSessionId: 'sess-1',
+          artifactStorageSessionId: 'sess-1',
+          artifactRunId: 'analysis-run-1'
         }
-      }
-    )
-
-    await expect(readFile(artifact.path)).resolves.toEqual(bytes)
-  })
+      )
+      const artifact = await writeArtifactFileForCurrentRun(
+        artifacts.compatibilityRepository,
+        environment,
+        {
+          filename: 'results.bin',
+          mimeType: 'application/octet-stream',
+          source: {
+            kind: 'localPath',
+            path: join(localOutputRoot!, result.featured_files[0]!)
+          }
+        }
+      )
+      await expect(readFile(artifact.path)).resolves.toEqual(bytes)
+      expect(await artifacts.client.artifactVersion.count()).toBe(1)
+    } finally {
+      await artifacts.dispose()
+    }
+  }, 120_000)
 
   it('reads attach_job results from the data-root workspace when config and data roots differ', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'job-result-config-root-'))
@@ -1539,14 +1571,14 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
       harvested_at: Date.now(),
       harvest_error: 'scp failed: connection reset',
       left_on_remote: leftOnRemote,
-      remote_workdir: '~/.openscience/jobs/job-result-1'
+      remote_workdir: '~/.open-science/jobs/job-result-1'
     })
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
 
     expect(result.status).toBe('success')
     expect(result.featured_files).toEqual([])
-    expect(result.remote_workdir).toBe('~/.openscience/jobs/job-result-1')
+    expect(result.remote_workdir).toBe('~/.open-science/jobs/job-result-1')
     expect(result.left_on_remote).toHaveLength(1)
     expect(result.left_on_remote[0].uri).toBe('ssh://biowulf/tmp/big.bin')
   })

@@ -49,14 +49,19 @@ type HostSdkHelpOperationDescriptor = Readonly<{
   returns: Readonly<Record<string, unknown>>
   constraints: readonly string[]
   examples: readonly Readonly<{ title: string; code: string }>[]
+  backgroundSafety?: 'safe' | 'unsafe'
+  backgroundSafetyReason?: string
   resolveAvailability(context: HostSdkHelpContext): HostSdkAvailability
 }>
 
 type HostSdkHelpOperation = Omit<
   HostSdkHelpOperationDescriptor,
-  'resolveAvailability' | 'path' | 'aliases' | 'summary'
+  'resolveAvailability' | 'path' | 'aliases' | 'summary' | 'backgroundSafety'
 > &
-  Readonly<{ availability: HostSdkAvailability }>
+  Readonly<{
+    availability: HostSdkAvailability
+    backgroundSafety: 'safe' | 'unsafe'
+  }>
 
 type HostSdkHelpCatalog = Readonly<{
   kind: 'catalog'
@@ -701,6 +706,9 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.viewImage',
   aliases: ['viewImage'],
   summary: 'Attach an authorized existing image to the current repl_execute result.',
+  backgroundSafety: 'unsafe',
+  backgroundSafetyReason:
+    'Images are delivered only in the live foreground repl_execute response; use host.viewImage in foreground.',
   callForms: [{ signature: 'await host.viewImage(source, options?)', accepts: 'source_options' }],
   request: {
     fields: [
@@ -1150,6 +1158,10 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
         returns: descriptor.returns,
         constraints: descriptor.constraints,
         examples: descriptor.examples,
+        backgroundSafety: descriptor.backgroundSafety ?? 'safe',
+        ...(descriptor.backgroundSafetyReason
+          ? { backgroundSafetyReason: descriptor.backgroundSafetyReason }
+          : {}),
         availability: descriptor.resolveAvailability(context)
       },
       descriptor.id === 'host.delegate' ? MAX_DELEGATE_RESULT_CHARS : MAX_OPERATION_RESULT_CHARS

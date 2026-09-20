@@ -1,5 +1,7 @@
+import { waitFor } from '@testing-library/react'
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
+import { useArtifactEnvironmentLockStore } from './artifact-environment-lock-store'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,6 +12,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import type { ArtifactVersionProvenance } from '../../../../shared/artifact-provenance'
 
+const notebookEvidenceProbe = vi.hoisted(() => ({ enabled: false }))
 const reviewerCardSpy = vi.hoisted(() => vi.fn())
 const workspaceMessageItemSpy = vi.hoisted(() => vi.fn())
 const workspaceActivityGroupSpy = vi.hoisted(() => vi.fn())
@@ -39,11 +42,23 @@ vi.mock('@/components/ReviewerCard', () => ({
   }
 }))
 
-vi.mock('./SessionNotebookDialog', () => ({
-  NotebookDialogCell: ({ run }: { run: { runId: string } }) => (
-    <div data-testid="notebook-run">{run.runId}</div>
+vi.mock('./previews/PreviewFileContent', () => ({
+  PreviewFileContent: ({ item }: { item: PreviewFileItem }) => (
+    <div data-testid="preview-version">{item.selectedVersionId}</div>
   )
 }))
+
+vi.mock('./SessionNotebookDialog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SessionNotebookDialog')>()
+  return {
+    NotebookDialogCell: (props: React.ComponentProps<typeof actual.NotebookDialogCell>) =>
+      notebookEvidenceProbe.enabled ? (
+        <actual.NotebookDialogCell {...props} />
+      ) : (
+        <div data-testid="notebook-run">{props.run.runId}</div>
+      )
+  }
+})
 
 vi.mock('./WorkspaceMessageItem', () => ({
   WorkspaceMessageItem: (props: {
@@ -68,6 +83,8 @@ vi.mock('./WorkspaceActivityGroup', () => ({
 }))
 
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { PreviewFileSurface } from './PreviewFileSurface'
+import { buildBoundedExecutionSnapshot } from '../../../../main/artifacts/provenance-execution-evidence'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -187,7 +204,8 @@ const provenance = (): ArtifactVersionProvenance => ({
         size_bytes: 42,
         checksum: 'd'.repeat(64),
         storage_key: 'must-not-reach-rendered-input',
-        strongest_association: 'resolver-accessed'
+        strongest_association: 'turn-attached',
+        access_evidence: 'file-evidence'
       }
     ],
     producer: {
@@ -298,6 +316,12 @@ const provenance = (): ArtifactVersionProvenance => ({
         runtimeSegmentId: 'runtime-segment-1',
         promptMessageId: 'user-1',
         kernelKind: 'python',
+        environmentName: 'python',
+        environmentLock: {
+          state: 'available',
+          format: 'environment-lock-bundle',
+          lockChecksum: 'e'.repeat(64)
+        },
         script: 'import numpy as np\nnp.sin(0)',
         status: 'completed',
         executionCount: 1,
@@ -384,6 +408,9 @@ let getVersionMessages: ReturnType<typeof vi.fn>
 let getVersionReview: ReturnType<typeof vi.fn>
 let getCodeReconstruction: ReturnType<typeof vi.fn>
 let generateCodeReconstruction: ReturnType<typeof vi.fn>
+let describeEnvironmentLock: ReturnType<typeof vi.fn>
+let exportEnvironmentLock: ReturnType<typeof vi.fn>
+let createEnvironmentFromLock: ReturnType<typeof vi.fn>
 let saveBlobFile: ReturnType<typeof vi.fn>
 
 const flush = async (): Promise<void> => {
@@ -401,7 +428,9 @@ const clickTab = async (label: string): Promise<void> => {
 }
 
 beforeEach(async () => {
+  notebookEvidenceProbe.enabled = false
   Element.prototype.scrollIntoView = vi.fn()
+  useArtifactEnvironmentLockStore.setState({ entries: new Map() })
   reviewerCardSpy.mockClear()
   workspaceMessageItemSpy.mockClear()
   workspaceActivityGroupSpy.mockClear()
@@ -436,6 +465,23 @@ beforeEach(async () => {
       sourceTruncated: false
     }
   })
+  exportEnvironmentLock = vi.fn().mockResolvedValue({ saved: true })
+  describeEnvironmentLock = vi.fn().mockImplementation(async (request) => ({
+    schemaVersion: 1,
+    format: 'open-science-environment-lock-export',
+    lockChecksum: request.lockChecksum,
+    lockState: 'available',
+    kernelKind: 'python',
+    environmentName: 'default-python',
+    platform: 'darwin',
+    architecture: 'arm64',
+    packageManagers: ['conda', 'uv']
+  }))
+  createEnvironmentFromLock = vi.fn().mockResolvedValue({
+    environmentName: 'repro-eeeeeeeeeeee',
+    kernelKind: 'python',
+    reused: false
+  })
   saveBlobFile = vi.fn().mockResolvedValue({ saved: true, filePath: '/tmp/session.ipynb' })
   getVersionLiterature = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(window, 'api', {
@@ -447,6 +493,10 @@ beforeEach(async () => {
           .mockResolvedValue({ styles: [{ id: 'apa', title: 'APA', source: 'built-in' }] })
       },
       artifacts: {
+        cancelReproducibilityCheck: vi.fn().mockResolvedValue(undefined),
+        describeEnvironmentLock,
+        exportEnvironmentLock,
+        createEnvironmentFromLock,
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
           filename: 'sin.png',
@@ -459,7 +509,9 @@ beforeEach(async () => {
         getVersionMessages,
         getVersionReview,
         getCodeReconstruction,
-        generateCodeReconstruction
+        generateCodeReconstruction,
+        onReproducibilityCheckChanged: vi.fn().mockReturnValue(() => undefined),
+        startReproducibilityCheck: vi.fn()
       },
       reviewer: { onUpdated: vi.fn().mockReturnValue(() => undefined) },
       saveBlobFile
@@ -482,9 +534,193 @@ afterEach(() => {
   }
   act(() => root.unmount())
   container.remove()
+  vi.useRealTimers()
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it('moves provenance tab focus with ArrowRight', async () => {
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Code',
+      'Execution Log',
+      'Messages',
+      'Environment',
+      'Reproducibility',
+      'Review'
+    ])
+    act(() => tabs[0].focus())
+    await act(async () => {
+      tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    await waitFor(() => expect(document.activeElement).toBe(tabs[1]))
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+    expect(getVersionExecution).not.toHaveBeenCalled()
+    await act(async () => {
+      tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    await waitFor(() => expect(getVersionExecution).toHaveBeenCalledOnce())
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('links the selected provenance tab to its content panel', () => {
+    const tab = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!
+    const panelId = tab.getAttribute('aria-controls')
+    expect(panelId).toBeTruthy()
+    const panel = document.getElementById(panelId!)!
+    expect(panel.getAttribute('role')).toBe('tabpanel')
+    expect(panel.getAttribute('aria-labelledby')).toBe(tab.id)
+  })
+
+  it.each([1, 2])('renders the English package count for %i installed packages', async (count) => {
+    const snapshot = provenance()
+    const environment = snapshot.evidence!.environment as { packages: unknown[] }
+    environment.packages = environment.packages.slice(0, count)
+    getVersionProvenance.mockResolvedValue(snapshot)
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          initialTab="environment"
+        />
+      )
+    )
+    await flush()
+    const capture = [...container.querySelectorAll('dt')].find(
+      (node) => node.textContent === 'Capture'
+    )
+    expect(capture?.nextElementSibling?.textContent).toBe(
+      `partial · ${count} package${count === 1 ? '' : 's'}`
+    )
+  })
+
+  it('truncates the inline kernel warning and exposes the full reason on hover', async () => {
+    act(() => root.unmount())
+    getCodeReconstruction.mockResolvedValue({
+      state: 'unavailable',
+      reason: 'supporting-code-incomplete'
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    const reason = [...container.querySelectorAll('p')].find((p) =>
+      p.textContent?.includes('Failed or interrupted cells')
+    )
+    expect(reason?.textContent).toContain('may have changed kernel state before stopping')
+    expect(reason?.className).toContain('truncate')
+    expect(reason?.className).toContain('text-xs')
+    expect(reason?.className).toContain('leading-5')
+    const notice = reason?.closest('[role="status"]')
+    expect(notice?.hasAttribute('title')).toBe(false)
+    expect(notice?.getAttribute('tabindex')).toBe('0')
+    expect(notice?.className).toContain('text-status-warning-foreground')
+    expect(notice?.className).toContain('dark:text-status-warning-dark-foreground')
+    expect(notice?.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    expect(generate?.disabled).toBe(true)
+    expect(generate?.getAttribute('data-variant')).toBe('outline')
+    expect(generate?.parentElement?.className).not.toContain('flex-col')
+    expect(notice?.parentElement).toBe(generate?.parentElement)
+    vi.useFakeTimers()
+    await act(async () => notice?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true })))
+    await act(async () => vi.advanceTimersByTime(100))
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason?.textContent)
+    await act(async () => notice?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true })))
+    vi.useRealTimers()
+    expect(container.textContent).not.toContain('Download script')
+    expect(generateCodeReconstruction).not.toHaveBeenCalled()
+  })
+
+  it('retains generation after an incomplete model response and offers download only after retry succeeds', async () => {
+    generateCodeReconstruction.mockRejectedValueOnce(
+      new Error('Code reconstruction reached the model output limit. Try another model.')
+    )
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => generate?.click())
+    await flush()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('model output limit')
+    expect(container.textContent).not.toContain('Download script')
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => retry?.click())
+    await flush()
+    expect(generateCodeReconstruction).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Download script')
+  })
+
+  it('restores the selected subtab and reports subsequent user navigation', async () => {
+    const onTabChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          selectedTab="reproducibility"
+          onTabChange={onTabChange}
+        />
+      )
+    })
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Reproducibility'
+    )
+    await clickTab('Environment')
+    expect(onTabChange).toHaveBeenCalledWith('environment')
+    await act(async () => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          selectedTab="environment"
+          onTabChange={onTabChange}
+        />
+      )
+    })
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Environment'
+    )
+  })
+  it('notifies the preview owner when a restored Literature tab is unavailable', async () => {
+    const onTabChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          selectedTab="sources"
+          onTabChange={onTabChange}
+        />
+      )
+    })
+    await flush()
+    expect(onTabChange).toHaveBeenCalledWith('code')
+
+    await act(async () => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          selectedTab="code"
+          onTabChange={onTabChange}
+        />
+      )
+    })
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Code')
+  })
+
   it('navigates to the previous Artifact version outside the loaded history page', async () => {
     act(() => root.unmount())
     container.replaceChildren()
@@ -791,7 +1027,7 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Edited in Open-Science')
     expect(container.textContent).toContain('Frozen edited reference')
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1)
     expect(getVersionProvenance).not.toHaveBeenCalled()
@@ -864,7 +1100,7 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Edited in Open-Science')
     expect(container.textContent).toContain('View source provenance · v1')
     expect(container.textContent).toContain('This edited version has no new agent execution.')
     expect(container.querySelector('[role="tablist"]')).toBeNull()
@@ -952,7 +1188,7 @@ describe('ArtifactProvenancePanel', () => {
     expect(onVersionChange).toHaveBeenCalledWith(
       expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
     )
-    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Edited in Open-Science')
     expect(container.textContent).toContain('View source provenance · v1')
   })
 
@@ -1210,6 +1446,59 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('Corrective Retrieval Augmented Generation')
   })
 
+  it('keeps narrow provenance tabs on one line and truncates long labels', () => {
+    const tabList = container.querySelector('[role="tablist"]')
+    const executionTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (tab) => tab.textContent === 'Execution Log'
+    )
+
+    expect(tabList?.classList.contains('overflow-hidden')).toBe(true)
+    expect(executionTab?.classList.contains('whitespace-nowrap')).toBe(true)
+    expect(executionTab?.classList.contains('truncate')).toBe(true)
+    expect(executionTab?.title).toBe('Execution Log')
+  })
+
+  it('loads Reproducibility through the existing execution read and reuses its cache', async () => {
+    const complete = provenance().execution!
+    getVersionExecution.mockResolvedValue({
+      execution: {
+        ...complete,
+        reproducibility: {
+          completeness: 'complete',
+          reasonCodes: [],
+          targetEntityId: 'artifact-version:version-1',
+          activities: [],
+          entities: [],
+          edges: [],
+          startFrontiers: [
+            {
+              frontierId: 'original-inputs',
+              kind: 'original-inputs',
+              claimScope: 'end-to-end',
+              eligibility: 'available',
+              crossingEntityIds: [],
+              downstreamActivityIds: [],
+              reasonCodes: []
+            }
+          ],
+          executionRunCount: 1,
+          includedNotebookRunCount: 0,
+          skippedRunCount: 1
+        }
+      }
+    })
+
+    await clickTab('Reproducibility')
+    await flush()
+
+    expect(getVersionExecution).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Captured evidence')
+
+    await clickTab('Execution Log')
+    await flush()
+    expect(getVersionExecution).toHaveBeenCalledOnce()
+  })
+
   it('checks the reconstruction cache on Code open without calling the model', async () => {
     expect(getCodeReconstruction).toHaveBeenCalledOnce()
     expect(getCodeReconstruction).toHaveBeenCalledWith({
@@ -1444,7 +1733,7 @@ describe('ArtifactProvenancePanel', () => {
     await flush()
 
     expect(container.textContent).toContain(
-      'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
+      'This message snapshot was created by a newer version of Open-Science. Update the app to view it.'
     )
     expect(container.textContent).not.toContain('(message-snapshot-unsupported)')
   })
@@ -1811,8 +2100,65 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.querySelector('[data-testid="reviewer-card"]')).toBeNull()
   })
 
+  it('keeps cache reuse in collapsed diagnostics without reporting partial capture', async () => {
+    const complete = provenance()
+    complete.evidence.environment = {
+      ...complete.evidence.environment!,
+      capture_status: 'complete',
+      warnings: ['inventory-cache-best-effort']
+    }
+    getVersionProvenance.mockResolvedValue(complete)
+    await act(async () => root.render(null))
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await clickTab('Environment')
+    await flush()
+    expect(container.textContent).toContain('Complete lock')
+    expect(container.textContent).not.toContain('Partial capture details')
+    const capture = [...container.querySelectorAll('details')].find(
+      (element) => element.querySelector('summary')?.textContent === 'Capture details'
+    )
+    expect(capture?.open).toBe(false)
+    expect(capture?.textContent).toContain('Inventory cache was reused')
+    expect(capture?.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it('searches the full package inventory and recovers from an empty search result', async () => {
+    await clickTab('Environment')
+    await flush()
+    vi.useFakeTimers()
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Search packages"]')!
+    const details = input.closest('details')!
+    expect(details.open).toBe(false)
+    await act(async () => details.querySelector('summary')?.click())
+    expect(details.open).toBe(true)
+    const search = async (query: string): Promise<void> => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          input,
+          query
+        )
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    await search('LIBZ')
+    expect(input.value).toBe('LIBZ')
+    expect(details.querySelector('tbody')?.textContent).toContain('numpy')
+    await act(async () => vi.advanceTimersByTime(250))
+    expect(details.querySelector('tbody')?.textContent).toContain('libzlib')
+    expect(details.querySelector('tbody')?.textContent).not.toContain('numpy')
+    await search('no-such-package')
+    await act(async () => vi.advanceTimersByTime(250))
+    expect(details.textContent).toContain('No matching packages')
+    await search('')
+    expect(details.querySelector('tbody')?.textContent).toContain('numpy')
+    expect(details.querySelector('tbody')?.textContent).not.toContain('libzlib')
+  })
+
   it('shows a three-column relevant-package table and retains access to the full inventory', async () => {
     await clickTab('Environment')
+    await flush()
 
     expect(container.textContent).toContain('Package')
     expect(container.textContent).toContain('Version')
@@ -1827,6 +2173,13 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('Retained entries begin')
     expect(container.textContent).toContain('Inventory cache was reused without a full validation')
     expect(container.textContent).toContain('Live Kernel package state unavailable.')
+    expect(
+      [...container.querySelectorAll('[role="status"]')].some(
+        (notice) =>
+          notice.textContent?.includes('Live Kernel package state unavailable.') &&
+          notice.textContent?.includes('Inventory cache was reused')
+      )
+    ).toBe(true)
     expect(container.textContent).toContain('create')
     expect(container.textContent).toContain('numpy 2.4.6')
     expect(container.textContent).toContain(
@@ -1857,6 +2210,253 @@ describe('ArtifactProvenancePanel', () => {
     await act(async () => showAll?.click())
     expect(container.textContent).toContain('libzlib')
   })
+
+  it('downloads the exact captured Environment lock for this Artifact Version', async () => {
+    await clickTab('Environment')
+    await flush()
+
+    expect(container.textContent).toContain('Captured environment locks')
+    expect(container.textContent).toContain('Python lock')
+    expect(container.textContent).toContain('Complete lock')
+    expect(container.textContent).toContain(`sha256-${'e'.repeat(64)}`)
+    expect(container.textContent).toContain('macOS · arm64 · Conda, uv')
+    const download = [...container.querySelectorAll('button')].find(
+      (button) => button.getAttribute('aria-label') === 'Download Python lock'
+    )
+    expect(download?.className).toContain('whitespace-nowrap')
+    expect(download?.parentElement?.className).toContain('flex-wrap')
+    await act(async () => download?.click())
+
+    expect(exportEnvironmentLock).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      lockChecksum: 'e'.repeat(64)
+    })
+    expect(saveBlobFile).not.toHaveBeenCalled()
+  })
+
+  it('reuses pending and loaded lock details across tab switches and remounts', async () => {
+    let resolve!: (value: unknown) => void
+    const info = { platform: 'darwin', architecture: 'arm64', packageManagers: ['conda'] }
+    describeEnvironmentLock.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    await clickTab('Environment')
+    await clickTab('Code')
+    await clickTab('Environment')
+    expect(describeEnvironmentLock).toHaveBeenCalledTimes(1)
+    await act(async () => resolve(info))
+    await act(async () => root.render(null))
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          selectedTab="environment"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+    expect(describeEnvironmentLock).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('macOS · arm64')
+  })
+
+  it('retries failed lock details in place', async () => {
+    describeEnvironmentLock.mockRejectedValueOnce(new Error('temporary read failure'))
+    await clickTab('Environment')
+    await flush()
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => retry!.click())
+    expect(describeEnvironmentLock).toHaveBeenCalledTimes(2)
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Download Python lock"]')?.disabled
+    ).toBe(false)
+  })
+
+  it('retains reusable environment creation while its Preview is unmounted', async () => {
+    let resolve!: (value: unknown) => void
+    createEnvironmentFromLock.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
+    await clickTab('Environment')
+    await flush()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Create reusable environment"]')!
+        .click()
+    )
+    await act(async () => root.render(null))
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          selectedTab="environment"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+    const create = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Create reusable environment"]'
+    )!
+    expect(create.disabled).toBe(true)
+    expect(create.textContent).toBe('Creating…')
+    await act(async () =>
+      resolve({ environmentName: 'repro-eeeeeeeeeeee', kernelKind: 'python', reused: false })
+    )
+    expect(container.textContent).toContain('Reusable environment created as repro-eeeeeeeeeeee.')
+    expect(createEnvironmentFromLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates a reusable managed environment from the captured lock', async () => {
+    await clickTab('Environment')
+    await flush()
+    const createEnvironment = [...container.querySelectorAll('button')].find(
+      (button) => button.getAttribute('aria-label') === 'Create reusable environment'
+    )
+
+    await act(async () => createEnvironment?.click())
+
+    expect(createEnvironmentFromLock).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1',
+      lockChecksum: 'e'.repeat(64)
+    })
+    expect(container.textContent).toContain('Reusable environment created as repro-eeeeeeeeeeee.')
+  })
+
+  it('lists each relevant Python and R lock with its capture state', async () => {
+    const execution = provenance().execution!
+    const pythonRun = execution.runs[0]!
+    getVersionExecution.mockResolvedValue({
+      execution: {
+        ...execution,
+        runs: [
+          {
+            ...pythonRun,
+            environmentLock: {
+              state: 'partial',
+              format: 'environment-lock-bundle',
+              lockChecksum: 'f'.repeat(64),
+              partialReasons: ['native-lock-file-best-effort']
+            }
+          },
+          {
+            ...pythonRun,
+            runId: 'notebook-run-r',
+            runIndex: 1,
+            kernelKind: 'r',
+            environmentName: 'r',
+            environmentLock: {
+              state: 'available',
+              format: 'environment-lock-bundle',
+              lockChecksum: 'a'.repeat(64)
+            }
+          }
+        ]
+      }
+    })
+
+    await clickTab('Environment')
+    await flush()
+
+    expect(container.textContent).toContain('Partial lock')
+    expect(container.textContent).toContain('Complete lock')
+    expect(container.textContent).toContain(
+      'Inspection only; this partial lock cannot run a reproducibility check.'
+    )
+    expect(container.textContent).toContain(
+      'A native package lock was captured on a best-effort basis.'
+    )
+    expect(container.textContent).toContain('Download bundle')
+    expect(container.querySelector('[aria-label="Download Python lock"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Download R lock"]')).not.toBeNull()
+  })
+
+  it.each([false, true])(
+    'preserves partial lock diagnostics across runs sharing a checksum (reverse: %s)',
+    async (reverse) => {
+      const execution = provenance().execution!
+      const run = execution.runs[0]!
+      const runs = [
+        {
+          ...run,
+          environmentLock: {
+            state: 'partial' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64),
+            partialReasons: ['non-conda-package-detected' as const],
+            diagnostics: [
+              {
+                reason: 'package-lock-missing' as const,
+                packageName: 'scipy',
+                observedVersion: '1.16.0'
+              },
+              {
+                reason: 'package-version-mismatch' as const,
+                packageName: 'numpy',
+                observedVersion: '2.3.2',
+                lockedVersion: '2.2.6'
+              }
+            ]
+          }
+        },
+        {
+          ...run,
+          runId: 'second-run',
+          runIndex: 1,
+          environmentLock: {
+            state: 'available' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64)
+          }
+        },
+        {
+          ...run,
+          runId: 'third-run',
+          runIndex: 2,
+          environmentLock: {
+            state: 'partial' as const,
+            format: 'environment-lock-bundle' as const,
+            lockChecksum: 'e'.repeat(64),
+            partialReasons: ['environment-manifest-partial' as const],
+            diagnostics: [
+              {
+                reason: 'package-lock-missing' as const,
+                packageName: 'scipy',
+                observedVersion: '1.16.0'
+              }
+            ]
+          }
+        }
+      ]
+      getVersionExecution.mockResolvedValue({
+        execution: { ...execution, runs: reverse ? runs.reverse() : runs }
+      })
+      await clickTab('Environment')
+      await flush()
+      expect(container.textContent).toContain('Partial lock')
+      expect(container.textContent).not.toContain('Complete lock')
+      expect(container.textContent).toContain('Package inventory was incomplete.')
+      expect(container.textContent).toContain('No exact lock was captured for scipy (1.16.0).')
+      expect(container.textContent).toContain('numpy: installed 2.3.2, locked 2.2.6.')
+      expect(container.textContent?.match(/No exact lock was captured for scipy/g)).toHaveLength(1)
+      expect(container.querySelector('[aria-label="Create reusable environment"]')).toBeNull()
+    }
+  )
 
   it('downloads the exact captured producer block with the matching kernel extension', async () => {
     const download = [...container.querySelectorAll('button')].find(
@@ -1928,6 +2528,18 @@ describe('ArtifactProvenancePanel', () => {
       2,
       expect.objectContaining({ suggestedName: 'sin-v1-r.ipynb' })
     )
+    for (const [index, kernel] of ['python', 'r'].entries()) {
+      const notebook = JSON.parse(new TextDecoder().decode(saveBlobFile.mock.calls[index]![0].data))
+      expect(notebook.metadata.open_science).toMatchObject({
+        kernel_filter: kernel,
+        snapshot_scope: { retained_run_count: 2, kernels: ['python', 'r'] }
+      })
+      expect(notebook.cells[0].cell_type).toBe('markdown')
+      expect(notebook.cells[0].source.join('')).toContain(`only ${kernel} runs`)
+      const code = notebook.cells.filter((cell: { cell_type: string }) => cell.cell_type === 'code')
+      expect(code).toHaveLength(1)
+      expect(code[0].source.join('')).toContain(kernel === 'python' ? 'np.sin(0)' : 'plot(sin(0))')
+    }
   })
 
   it('discloses bounded execution evidence instead of presenting it as complete', async () => {
@@ -1980,4 +2592,309 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('save cancelled')
     expect(container.querySelector('[data-testid="notebook-run"]')).not.toBeNull()
   })
+})
+
+describe('Provenance selection and evidence completeness', () => {
+  it('follows an external version selection after accepting a panel navigation', async () => {
+    const renderPanel = (selectedItem: PreviewFileItem): boolean => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={selectedItem}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={renderPanel}
+        />
+      )
+      return true
+    }
+    await act(async () => renderPanel(item))
+    const next = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Next Artifact version"]')!
+    expect(next().disabled).toBe(false)
+    await act(async () => next().click())
+    await flush()
+    expect(getVersionProvenance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'version-2' })
+    )
+    expect(next().disabled).toBe(true)
+
+    await act(async () => renderPanel({ ...item }))
+    await flush()
+    expect
+      .soft(getVersionProvenance)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ versionId: 'version-1' }))
+    expect
+      .soft(window.api.artifacts.getLineage)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ versionId: 'version-1' }))
+    expect(next().disabled).toBe(false)
+  })
+
+  it('keeps the mounted provenance pane aligned with the owning preview selection', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {
+          /* jsdom does not measure layout. */
+        }
+        unobserve(): void {
+          /* jsdom does not measure layout. */
+        }
+        disconnect(): void {
+          /* jsdom does not measure layout. */
+        }
+      }
+    )
+    const Owner = (): React.JSX.Element => {
+      const [selected, setSelected] = useState(item)
+      return (
+        <>
+          <button onClick={() => setSelected({ ...item })}>Select original file version</button>
+          <PreviewFileSurface
+            item={selected}
+            onItemChange={setSelected}
+            onClose={vi.fn()}
+            provenanceEntry="leading"
+          />
+        </>
+      )
+    }
+    try {
+      await act(async () => root.render(<Owner />))
+      await flush()
+      const open = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Open Provenance for sin.png"]'
+      )!
+      expect(open).not.toBeNull()
+      await act(async () => open.click())
+      await flush()
+      const pane = container.querySelector('[data-testid="preview-provenance-pane"]')!
+      expect(pane).not.toBeNull()
+      const next = (): HTMLButtonElement =>
+        pane.querySelector<HTMLButtonElement>('[aria-label="Next Artifact version"]')!
+      await act(async () => next().click())
+      await flush()
+      expect(container.querySelector('[data-testid="preview-version"]')?.textContent).toBe(
+        'version-2'
+      )
+      expect(next().disabled).toBe(true)
+      await clickTab('Select original file version')
+      await flush()
+      expect(container.querySelector('[data-testid="preview-version"]')?.textContent).toBe(
+        'version-1'
+      )
+      expect(container.querySelector('[data-testid="preview-provenance-pane"]')).toBe(pane)
+      expect(next().disabled).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reads a pending message snapshot again after file metadata changes and the tab reopens', async () => {
+    getVersionMessages.mockResolvedValueOnce({
+      messages: { state: 'unavailable', reason: 'message-snapshot-pending' }
+    })
+    await clickTab('Messages')
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('message-snapshot-pending')
+    await clickTab('Code')
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, mtimeMs: 2, versionNumber: 1 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await clickTab('Messages')
+    await flush()
+    expect.soft(getVersionMessages).toHaveBeenCalledTimes(2)
+    expect.soft(container.textContent).toContain('The plot is ready.')
+
+    // Remounting proves the same version's available response can be read and displayed.
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          key="reopened"
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          initialTab="messages"
+        />
+      )
+    )
+    await flush()
+    expect(container.textContent).toContain('The plot is ready.')
+  })
+
+  it('rechecks pending messages explicitly without polling and retains a ready snapshot on refresh', async () => {
+    const pending = { messages: { state: 'unavailable', reason: 'message-snapshot-pending' } }
+    getVersionMessages.mockResolvedValueOnce(pending).mockResolvedValueOnce(pending)
+    await clickTab('Messages')
+    await flush()
+    const recheck = (): HTMLButtonElement | undefined =>
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Recheck message snapshot'
+      )
+    expect(recheck()).toBeDefined()
+    await act(async () => recheck()!.click())
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(2)
+    expect(recheck()).toBeDefined()
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(2)
+    await act(async () => recheck()!.click())
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(3)
+    expect(container.textContent).toContain('The plot is ready.')
+    expect(recheck()).toBeUndefined()
+    await clickTab('Code')
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, mtimeMs: 3 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await clickTab('Messages')
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(3)
+    expect(container.textContent).toContain('The plot is ready.')
+  })
+
+  it('rechecks pending messages when file metadata changes while Messages stays open', async () => {
+    getVersionMessages.mockResolvedValueOnce({
+      messages: { state: 'unavailable', reason: 'message-snapshot-pending' }
+    })
+    await clickTab('Messages')
+    await flush()
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, mtimeMs: 3 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('The plot is ready.')
+  })
+
+  it('preserves known execution omissions in the downloaded notebook', async () => {
+    const truncation = {
+      reason: 'payload-limit',
+      omittedLeadingRunCount: 3,
+      omittedOutputCount: 17,
+      omittedInputCount: 2
+    }
+    getVersionExecution.mockResolvedValue({ execution: { ...provenance().execution!, truncation } })
+    await clickTab('Execution Log')
+    await flush()
+    expect(container.textContent).toContain('omitted 3 earlier runs, 17 outputs, and 2 inputs')
+    await clickTab('Download notebook')
+    expect(saveBlobFile).toHaveBeenCalledOnce()
+    const notebook = JSON.parse(new TextDecoder().decode(saveBlobFile.mock.calls[0]![0].data))
+    expect.soft(notebook.metadata.open_science.truncation).toEqual(truncation)
+    expect(notebook.cells[0]).toMatchObject({ cell_type: 'markdown' })
+    expect(notebook.cells[0].source.join('')).toContain(
+      'omitted 3 earlier runs, 17 outputs, and 2 inputs'
+    )
+  })
+
+  const capturedTable = (): NonNullable<ArtifactVersionProvenance['execution']> => {
+    const base = provenance().execution!
+    const snapshot = buildBoundedExecutionSnapshot(
+      {
+        schemaVersion: 2,
+        rootFrameId: base.rootFrameId,
+        agentFrameId: base.agentFrameId,
+        messageBranchId: base.messageBranchId,
+        terminalPromptMessageId: base.terminalPromptMessageId,
+        producerRunId: base.producerRunId,
+        producerRunIndex: base.producerRunIndex,
+        createdAt: base.createdAt
+      },
+      [
+        {
+          runIndex: 0,
+          run: {
+            runId: base.producerRunId,
+            cellId: 'cell-1',
+            source: 'agent',
+            kernelKind: 'python',
+            script: 'samples',
+            status: 'completed',
+            startedAt: 1,
+            endedAt: 2,
+            text: { stdout: '', stderr: '', traceback: '', plain: [] },
+            outputs: [
+              {
+                type: 'json',
+                data: Array.from({ length: 1000 }, (_, i) => ({
+                  sample: `S-${i}`,
+                  concentration: 3.2
+                }))
+              }
+            ],
+            artifacts: [],
+            workingFiles: []
+          }
+        }
+      ]
+    )
+    expect(snapshot.truncation).toBeUndefined()
+    expect(snapshot.runs[0]!.outputs[0]).toMatchObject({
+      type: 'table',
+      columns: ['sample', 'concentration'],
+      rowCount: 1000
+    })
+    expect(snapshot.inputFiles).toEqual([])
+    expect(snapshot.helperModules ?? []).toEqual([])
+    return { ...snapshot, inputFiles: [], helperModules: [] }
+  }
+
+  it('exports captured table columns and original row count along with preview rows', async () => {
+    const execution = capturedTable()
+    getVersionExecution.mockResolvedValue({ execution })
+    await clickTab('Execution Log')
+    await clickTab('Download notebook')
+    expect(saveBlobFile).toHaveBeenCalledOnce()
+    const notebook = JSON.parse(new TextDecoder().decode(saveBlobFile.mock.calls[0]![0].data))
+    const data = notebook.cells.find((cell: { cell_type: string }) => cell.cell_type === 'code')
+      .outputs[0].data
+    expect.soft(data['application/json']).toMatchObject({
+      columns: ['sample', 'concentration'],
+      rowCount: 1000,
+      previewRows: expect.any(Array)
+    })
+    expect(data['text/plain'].join('')).toContain('concentration')
+    expect(data['text/plain'].join('')).toContain('first 100 of 1000 rows')
+    expect(data['application/json'].previewRows).toHaveLength(100)
+    expect(data['application/json'].previewRows[0]).toEqual(['S-0', 3.2])
+  })
+
+  it('discloses the displayed and original row counts for a sampled execution table', async () => {
+    getVersionExecution.mockResolvedValue({ execution: capturedTable() })
+    await clickTab('Execution Log')
+    await flush()
+    expect(container.querySelector('[data-testid="notebook-run"]')).not.toBeNull()
+    expect(container.textContent).toMatch(/100[\s\S]*1[,]?000/)
+  })
+})
+
+it('preserves saved run identity without describing provenance evidence as a historical gap', async () => {
+  notebookEvidenceProbe.enabled = true
+  await clickTab('Execution Log')
+  await flush()
+  expect(container.querySelector('[data-testid="session-notebook-cell"]')).not.toBeNull()
+  const evidence = container.querySelector('[data-testid="notebook-run-evidence"]')
+  expect(evidence?.textContent ?? '').toContain('notebook-run-2')
+  expect(container.textContent).not.toContain(
+    'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'
+  )
 })

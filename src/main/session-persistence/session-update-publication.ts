@@ -1,7 +1,7 @@
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 
-type SessionUpdateOwner = 'delegated-work' | 'runtime-context'
+type SessionUpdateOwner = 'delegated-work' | 'runtime-context' | 'runtime-transcript'
 type SessionUpdatePublisher = (session: PersistedChatSession, owner: SessionUpdateOwner) => void
 
 const createSafeSessionUpdatePublisher =

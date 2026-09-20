@@ -52,6 +52,9 @@ const ENCODE_CTX: ToolContext = {
   fetchJsonWithHeaders: async () => {
     throw new Error('unused')
   },
+  postForm: async () => {
+    throw new Error('unused multipart transport')
+  },
   postJson: async () => {
     throw new Error('unused')
   }

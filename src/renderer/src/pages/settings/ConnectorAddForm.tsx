@@ -1,3 +1,6 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { ErrorNotice } from '@/components/error-notice'
 import { ChevronDown, Copy } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -23,6 +26,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import { localizeConnectorError } from './connector-error-message'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
 import { ConnectorNamedCredentialEditor } from './ConnectorNamedCredentialEditor'
@@ -140,6 +144,7 @@ export function ConnectorAddForm({
   const { t: tCommon } = useTranslation()
   const addCustomServer = useSettingsStore((s) => s.addCustomServer)
   const updateCustomServer = useSettingsStore((s) => s.updateCustomServer)
+  const fileCredentialNotice = useFileCredentialNotice()
   const encryptionAvailable = useSettingsStore((s) => s.encryptionAvailable)
   const connectors = useSettingsStore((s) => s.connectors)
   const customServers = useSettingsStore((s) => s.customServers)
@@ -708,19 +713,19 @@ export function ConnectorAddForm({
     <div className="p-5">
       <div className="flex w-full flex-col gap-4">
         {initialTemplate ? (
-          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          <InlineNotice level="info">
             {t(
               'Imported configuration is prefilled below. Select or create required credentials on this device, review every field, then confirm that you trust the Connector.'
             )}
-          </div>
+          </InlineNotice>
         ) : null}
         {editTargetMissing ? (
-          <p
-            className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          <ErrorNotice
+            inline
             role="alert"
-          >
-            {t('This Connector no longer exists. Your draft has not been saved.')}
-          </p>
+            tone="amber"
+            description={t('This Connector no longer exists. Your draft has not been saved.')}
+          />
         ) : null}
         <RadioGroup.Root
           aria-label={t('Connector type')}
@@ -848,7 +853,7 @@ export function ConnectorAddForm({
                 />
                 <p
                   id="connector-name-id-help"
-                  className={nameError ? 'text-xs leading-5 text-destructive' : helperClassName}
+                  className={nameError ? fieldErrorClassName : helperClassName}
                 >
                   {nameError ??
                     t(
@@ -887,7 +892,7 @@ export function ConnectorAddForm({
                 />
                 <p
                   id="connector-id-help"
-                  className={idError ? 'text-xs leading-5 text-destructive' : helperClassName}
+                  className={idError ? fieldErrorClassName : helperClassName}
                   role={idError ? 'alert' : undefined}
                 >
                   {idError ??
@@ -1175,7 +1180,7 @@ export function ConnectorAddForm({
                             {authorizationServerError ? (
                               <p
                                 id="connector-oauth-server-error"
-                                className="text-xs leading-5 text-destructive"
+                                className={fieldErrorClassName}
                                 role="alert"
                               >
                                 {t(
@@ -1249,7 +1254,7 @@ export function ConnectorAddForm({
                               {clientIdError ? (
                                 <p
                                   id="connector-oauth-client-id-error"
-                                  className="text-xs leading-5 text-destructive"
+                                  className={fieldErrorClassName}
                                   role="alert"
                                 >
                                   {t('Client ID is required when a client secret is configured.')}
@@ -1283,7 +1288,7 @@ export function ConnectorAddForm({
                               </div>
                               <p className={helperClassName}>
                                 {t(
-                                  'Register this callback URI with your OAuth provider. Open Science adds an available port at runtime.'
+                                  'Register this callback URI with your OAuth provider. Open-Science adds an available port at runtime.'
                                 )}
                               </p>
                               {!customRedirectUriOpen ? (
@@ -1349,18 +1354,19 @@ export function ConnectorAddForm({
                                 }}
                               />
                               {!encryptionAvailable ? (
-                                <p className="text-xs leading-5 text-destructive">
+                                <InlineNotice level="error" role="note">
                                   {t(
                                     'Secure credential storage is unavailable. Unlock the system keychain and retry.'
                                   )}
-                                </p>
+                                </InlineNotice>
                               ) : null}
                               {isEdit && editServer?.oauth?.hasClientSecret ? (
                                 <div className="flex items-center justify-between gap-3">
                                   <p className={helperClassName}>
                                     {removeClientSecret
                                       ? t('The saved client secret will be removed.')
-                                      : t('A client secret is saved securely.')}
+                                      : (fileCredentialNotice ??
+                                        t('A client secret is saved securely.'))}
                                   </p>
                                   <Button
                                     type="button"
@@ -1491,9 +1497,9 @@ export function ConnectorAddForm({
         </div>
 
         {error ? (
-          <p className="text-xs text-destructive" role="alert">
+          <InlineNotice level="error" role="alert">
             {error}
-          </p>
+          </InlineNotice>
         ) : null}
 
         <div className="flex items-center justify-end gap-2">

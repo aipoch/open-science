@@ -36,7 +36,7 @@ describe('database startup owner', () => {
         if (attempt === 1) {
           throw new DatabaseMigrationError(
             'database_open_failed',
-            'Open Science could not open its database.',
+            'Open-Science could not open its database.',
             true
           )
         }
@@ -77,7 +77,7 @@ describe('database startup owner', () => {
       phase: 'blocked',
       error: {
         code: 'database_startup_unavailable',
-        message: 'Open Science could not finish checking its database.',
+        message: 'Open-Science could not finish checking its database.',
         retryable: true
       }
     })
@@ -113,7 +113,7 @@ describe('database startup owner', () => {
     const verifyDatabase = vi.fn(async () => {
       throw new DatabaseMigrationError(
         'database_newer_than_app',
-        'The database was updated by a newer version of Open Science.',
+        'The database was updated by a newer version of Open-Science.',
         false,
         '0002_future_schema'
       )
@@ -136,7 +136,7 @@ describe('database startup owner', () => {
     const verifyDatabase = vi.fn(async () => {
       throw new DatabaseMigrationError(
         'database_open_failed',
-        'Open Science could not open its database.',
+        'Open-Science could not open its database.',
         true
       )
     })
@@ -167,7 +167,7 @@ describe('database startup owner', () => {
     const verifyDatabase = vi.fn(async () => {
       throw new DatabaseMigrationError(
         'database_open_failed',
-        'Open Science could not open its database.',
+        'Open-Science could not open its database.',
         true
       )
     })

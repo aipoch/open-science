@@ -3,6 +3,7 @@ import { FileWarning } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
+import { resolveLocaleFromTags } from '../../../../../../shared/locale'
 import type {
   OfficePreviewErrorCode,
   OfficePreviewHostMessage,
@@ -166,7 +167,7 @@ const RemoteOfficePreviewContent = ({
   item: PreviewFileItem
   source: OfficePreviewSource
 }): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const hostId = useId()
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const { openContextMenu } = usePreviewActions()
@@ -353,7 +354,10 @@ const RemoteOfficePreviewContent = ({
           channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
           version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
           type: 'start',
-          start: result.start
+          start: {
+            ...result.start,
+            locale: resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
+          }
         }
         frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
       })
@@ -370,7 +374,7 @@ const RemoteOfficePreviewContent = ({
       active = false
       window.removeEventListener('message', handleMessage)
     }
-  }, [frame, frameLoadGeneration])
+  }, [frame, frameLoadGeneration, i18n])
 
   const visibleState: OfficeHostState =
     ownsLease && !hasSourceIdentity ? { kind: 'error', error: 'FILE_READ_FAILED' } : state

@@ -14,7 +14,6 @@ import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWebEventConnection } from '@/hooks/useWebEventConnection'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
-import { useOpenSideChatParentSessionIds } from '@/pages/workspace/use-side-chat-controller'
 import type { StartupView } from '@/pages/onboarding/startup-gate'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
@@ -31,6 +30,14 @@ type NotificationOpenIntent = {
   generation: number
   userNavigationRevision: number
 }
+
+const PENDING_NOTIFICATION_HANDLER_RETRY_MS = 100
+
+const isPendingNotificationCommandUnavailable = (error: unknown): boolean =>
+  error instanceof Error &&
+  /(?:No handler registered for|Unknown application command:|Unknown Web RPC channel:).*notifications:(?:peek|take)-pending-open-session/i.test(
+    error.message
+  )
 
 type ApplicationEventBindingsInput = Readonly<{
   startupView: StartupView | undefined
@@ -66,6 +73,7 @@ type ApplicationEventProjection = Readonly<{
   }>
   settings: Readonly<{
     close: () => void
+    openRuntimes: () => void
     openSession: (sessionId: string) => void
   }>
 }>
@@ -79,16 +87,12 @@ const useApplicationEventBindings = ({
   hasLegacyDataMove,
   closeActiveSettingsPane
 }: ApplicationEventBindingsInput): ApplicationEventProjection => {
-  const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   const view = useNavigationStore((state) => state.view)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
-  const hasConnectorApproval = useSettingsStore((state) =>
-    state.pendingApprovals.some(
-      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
-    )
-  )
+  const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
   const hasSessionlessCredentialRequest = useSettingsStore((state) =>
@@ -98,16 +102,10 @@ const useApplicationEventBindings = ({
   const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
-  const hasComputeApproval = useComputeStore((state) =>
-    state.pendingApprovals.some(
-      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
-    )
-  )
+  const hasComputeApproval = useComputeStore((state) => state.pendingApprovals.length > 0)
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
   const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
-  const hasSkillImportApproval = useSkillImportStore((state) =>
-    state.pending.some((candidate) => !openSideChatParentSessionIds.has(candidate.sessionId))
-  )
+  const hasSkillImportApproval = useSkillImportStore((state) => state.pending.length > 0)
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
@@ -122,6 +120,11 @@ const useApplicationEventBindings = ({
   const [unavailableNotificationToken, setUnavailableNotificationToken] = useState<number>()
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
+  const pendingNotificationRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const pendingNotificationRetryEpoch = useRef(0)
+  const openPendingNotificationSessionRef = useRef<
+    (intent?: NotificationOpenIntent) => Promise<void>
+  >(async () => undefined)
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
     generation: 0,
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
@@ -273,6 +276,7 @@ const useApplicationEventBindings = ({
       if (
         event.defaultPrevented ||
         event.isComposing ||
+        event.repeat ||
         event.key.toLowerCase() !== 'k' ||
         !(event.metaKey || event.ctrlKey) ||
         !presentation.allowsShortcut('globalSearch')
@@ -339,7 +343,26 @@ const useApplicationEventBindings = ({
     (intent: NotificationOpenIntent = notificationOpenIntent.current): Promise<void> => {
       const attempt = async (): Promise<void> => {
         if (intent.generation !== notificationOpenIntent.current.generation) return
-        const pending = await window.api.notifications.peekPendingOpenSession()
+        const retryEpoch = pendingNotificationRetryEpoch.current
+        if (pendingNotificationRetryTimer.current !== undefined) {
+          clearTimeout(pendingNotificationRetryTimer.current)
+          pendingNotificationRetryTimer.current = undefined
+        }
+        let pending: OpenSessionFromNotificationRequest | null
+        try {
+          pending = await window.api.notifications.peekPendingOpenSession()
+        } catch (error) {
+          // The startup window mounts before full IPC adapters are installed (index.ts).
+          if (!isPendingNotificationCommandUnavailable(error)) throw error
+          if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+          pendingNotificationRetryTimer.current = setTimeout(() => {
+            pendingNotificationRetryTimer.current = undefined
+            if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+            if (intent.generation !== notificationOpenIntent.current.generation) return
+            void openPendingNotificationSessionRef.current(intent)
+          }, PENDING_NOTIFICATION_HANDLER_RETRY_MS)
+          return
+        }
         if (!pending || intent.generation !== notificationOpenIntent.current.generation) return
 
         const sessionExists =
@@ -392,7 +415,9 @@ const useApplicationEventBindings = ({
         const deferred = deferredNotification.current
         if (!deferred) return
         deferredNotification.current = undefined
-        void window.api.notifications.takePendingOpenSession(deferred.token)
+        void window.api.notifications.takePendingOpenSession(deferred.token).catch((error) => {
+          if (!isPendingNotificationCommandUnavailable(error)) throw error
+        })
       }),
     []
   )
@@ -409,7 +434,17 @@ const useApplicationEventBindings = ({
     [openPendingNotificationSession]
   )
   useEffect(() => {
+    const epoch = ++pendingNotificationRetryEpoch.current
+    openPendingNotificationSessionRef.current = openPendingNotificationSession
     void openPendingNotificationSession()
+    return () => {
+      if (pendingNotificationRetryEpoch.current === epoch)
+        pendingNotificationRetryEpoch.current += 1
+      if (pendingNotificationRetryTimer.current !== undefined) {
+        clearTimeout(pendingNotificationRetryTimer.current)
+        pendingNotificationRetryTimer.current = undefined
+      }
+    }
   }, [openPendingNotificationSession])
 
   useEffect(() => {
@@ -441,9 +476,9 @@ const useApplicationEventBindings = ({
   }, [hydrateNonTerminalJobs, sessionPersistence.isHydrated, startupView])
 
   return {
+    blockedApprovalSessionIds: new Set<string>(),
     presentation,
     webEventConnectionPhase,
-    blockedApprovalSessionIds: openSideChatParentSessionIds,
     lifecycle,
     notification: {
       unavailableToken: unavailableNotificationToken,
@@ -453,7 +488,11 @@ const useApplicationEventBindings = ({
     navigation: { view },
     globalSearch: { open: openGlobalSearch, setOpen: setGlobalSearchOpen },
     closeConfirmation: { setOpen: setCloseConfirmationOpen },
-    settings: { close: closeSettings, openSession: openPermissionSession }
+    settings: {
+      close: closeSettings,
+      openRuntimes: () => openSettingsToPanel('runtimes'),
+      openSession: openPermissionSession
+    }
   }
 }
 

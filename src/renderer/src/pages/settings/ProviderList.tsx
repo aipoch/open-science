@@ -23,8 +23,10 @@ import type {
 } from '../../../../shared/settings'
 import {
   codexSubscriptionProviderIdentity,
+  ENDPOINT_PATHS,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isProviderUsableByFramework,
   isXaiSubscriptionProvider,
   preferredEndpoint,
   providerEndpoints,
@@ -40,6 +42,7 @@ import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsIconAction } from './SettingsLayout'
+import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 import { localizeProviderResourceMessage } from './validation-message'
 
 type ProviderListProps = {
@@ -50,6 +53,9 @@ type ProviderListProps = {
   activeModel?: string
   agentFrameworkId?: AgentFrameworkId
   frameworkEndpoints?: readonly ChatApiEndpoint[]
+  // Display name of the active agent framework, for the per-card "not usable" tag. Falls back to
+  // the framework id when omitted.
+  frameworkName?: string
   claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
   busyProviderId?: string
   onEdit: (provider: ProviderView) => void
@@ -119,16 +125,6 @@ const describeValidationFailure = (failure: ProviderValidationFailure, t: TFunct
   }
 }
 
-// Endpoint route + full description for the chat API a provider speaks. Rendered as a route-icon badge
-// showing the raw /v1 path (not a vendor name) so the user reads it as "which API shape", distinct from
-// the provider's own name/brand: Claude Code needs the Anthropic /v1/messages route, while OpenCode also
-// accepts the OpenAI /v1/chat/completions route.
-const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
-  anthropic: '/v1/messages',
-  openai: '/v1/chat/completions',
-  responses: '/v1/responses'
-}
-
 const DEFAULT_FRAMEWORK_ENDPOINTS = ['anthropic'] as const
 
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
@@ -154,6 +150,7 @@ const ProviderList = ({
   activeModel,
   agentFrameworkId = 'claude-code',
   frameworkEndpoints = DEFAULT_FRAMEWORK_ENDPOINTS,
+  frameworkName,
   claudeSubscriptionProviderId,
   busyProviderId,
   onEdit,
@@ -213,6 +210,8 @@ const ProviderList = ({
       ? [{ ...selectedClaudeProvider, name: t('Claude subscription') }]
       : [])
   ]
+  const frameworkLabel = frameworkName ?? agentFrameworkId
+  const activeFramework = { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -229,7 +228,7 @@ const ProviderList = ({
           const effectiveModel =
             activeModel ??
             provider.model ??
-            (provider.vendorId ? defaultVendorModel(provider.vendorId) : undefined)
+            (provider.vendorId ? defaultVendorModel(provider.vendorId, provider.region) : undefined)
           const activeValidationTarget = {
             model: effectiveModel,
             endpoint: preferredEndpoint(
@@ -238,10 +237,7 @@ const ProviderList = ({
                 ? (['responses'] as const)
                 : agentFrameworkId === 'codex'
                   ? (['anthropic', 'openai', 'responses'] as const)
-                  : requiresChatCompletionsBridge(
-                        { apiEndpoints: providerRoutes },
-                        { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-                      )
+                  : requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
                     ? providerRoutes
                     : frameworkEndpoints
             )
@@ -263,7 +259,7 @@ const ProviderList = ({
             : undefined
           // The provider sourcing the selected model (and the last remaining one) can't be deleted:
           // removing it would leave no model to run, so its delete action stays disabled.
-          const canDelete = !isActiveSource && displayedProviders.length > 1
+          const canDelete = true
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
           const endpoint = {
             path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' · '),
@@ -271,6 +267,16 @@ const ProviderList = ({
               providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' and ') +
               (providerRoutes.length > 1 ? ' endpoints' : ' endpoint')
           }
+          // A pairing the active framework cannot drive stays visible with a tag (and the route
+          // mismatch on hover): hiding the card would look like data loss, and the tag is the
+          // discoverable path to "switch the framework to use this provider".
+          const frameworkIncompatible = !isProviderUsableByFramework(
+            { apiEndpoints: provider.apiEndpoints, type: provider.type },
+            activeFramework
+          )
+          const incompatibilityMessage = frameworkIncompatible
+            ? incompatibilityReason(provider, frameworkLabel, frameworkEndpoints, t)
+            : undefined
 
           return (
             <li
@@ -307,6 +313,20 @@ const ProviderList = ({
                         </TooltipContent>
                       </Tooltip>
                     ) : null}
+                    {frameworkIncompatible ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                            aria-label={incompatibilityMessage}
+                          >
+                            <TriangleAlert className="size-3" strokeWidth={2} aria-hidden="true" />
+                            {t('Not usable with {{framework}}', { framework: frameworkLabel })}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>{incompatibilityMessage}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     {isBusy ? (
                       <span className="shrink-0 text-[10px] text-muted-foreground">
                         {t('Testing…')}
@@ -315,7 +335,7 @@ const ProviderList = ({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
-                            className="inline-flex shrink-0 text-amber-500"
+                            className="inline-flex shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                             aria-label={describeValidationFailure(failure, t)}
                           >
                             <TriangleAlert
@@ -343,9 +363,9 @@ const ProviderList = ({
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     {codexSubscriptionType === 'codex-shared' ? (
-                      <div>{t('Authentication imported into Open Science')}</div>
+                      <div>{t('Authentication imported into Open-Science')}</div>
                     ) : codexSubscriptionType === 'codex-isolated' ? (
-                      <div>{t('Codex login stored separately by Open Science')}</div>
+                      <div>{t('Codex login stored separately by Open-Science')}</div>
                     ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
                       // Browser sign-in in flight. `claude setup-token` opens the browser itself and
                       // waits on a localhost callback; when the browser fails to open it stays silent
@@ -417,7 +437,7 @@ const ProviderList = ({
                       </>
                     )}
                     {failure ? (
-                      <div className="text-amber-600 dark:text-amber-500">
+                      <div className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
                         {describeValidationFailure(failure, t)}
                       </div>
                     ) : null}
@@ -557,7 +577,7 @@ const ProviderList = ({
                   ) : null}
                   {provider.type === 'claude-shared' && isVerified ? (
                     <SettingsIconAction
-                      label={t('Disconnect from Open Science')}
+                      label={t('Disconnect from Open-Science')}
                       icon={LogOut}
                       onClick={() => onLogoutSharedClaude?.()}
                       className="border border-border text-foreground"

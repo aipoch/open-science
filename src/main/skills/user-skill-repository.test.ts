@@ -294,6 +294,15 @@ describe('UserSkillRepository', () => {
     expect(await repo.list()).toEqual([])
   })
 
+  it('deletes ordinary skills when the row includes its source and directory name', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const id = await repo.createPersonal({ name: 'ordinary', description: 'a', body: 'x' })
+
+    await repo.delete(id, 'personal', 'ordinary')
+
+    expect(await repo.list()).toEqual([])
+  })
+
   it('round-trips a description with newlines and YAML fences without corrupting the body', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 
@@ -315,6 +324,14 @@ describe('UserSkillRepository', () => {
     expect(body).toContain('keep me')
     // The injected fence/field must not have leaked into the body.
     expect(body).not.toContain('not: a-key')
+  })
+
+  it('rejects an untrusted delete source before resolving a filesystem path', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+
+    await expect(repo.delete('anything', '../../outside' as never)).rejects.toThrow(
+      'Invalid user Skill source.'
+    )
   })
 
   it('rejects colliding personal skill names', async () => {
@@ -1101,6 +1118,94 @@ describe('UserSkillRepository', () => {
         content: Buffer.from(`---\nname: Shared\ndescription: d\n---\n${body}`)
       }
     ])
+
+  it('compares actual local files without modifying them, then replaces with the previewed archive', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    await repo.importFromZip(sharedBundle('v1'))
+    const installed = join(storage, 'skills', 'imported', 'shared')
+    await writeFile(join(installed, 'local.txt'), 'keep until confirmed')
+    const localDocument = '---\nname: shared\n---\nlocal edits'
+    await writeFile(join(installed, 'SKILL.md'), localDocument)
+    const zip = buildZip([
+      { path: 'pack/SKILL.md', content: Buffer.from('---\nname: Shared\n---\nv2') },
+      { path: 'pack/new.txt', content: Buffer.from('new resource') }
+    ])
+    const [preview] = (await repo.previewZip(zip)).previews
+    expect(preview.replacement).toEqual({
+      targetId: 'imported-shared',
+      added: ['new.txt'],
+      modified: ['SKILL.md'],
+      removed: ['local.txt']
+    })
+    expect(await readFile(join(installed, 'SKILL.md'), 'utf8')).toBe(localDocument)
+    expect(await readFile(join(installed, 'local.txt'), 'utf8')).toBe('keep until confirmed')
+    await repo.importFromZip(zip, { replaceId: preview.replaceableId })
+    expect(await repo.body('imported-shared')).toContain('v2')
+    expect(await readFile(join(installed, 'new.txt'), 'utf8')).toBe('new resource')
+    await expect(stat(join(installed, 'local.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await repo.previewZip(zip)).previews[0].alreadyImported).toBe(true)
+  })
+
+  it('marks an unsafe installed comparison unknown instead of claiming no changes', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    await repo.importFromZip(sharedBundle('v1'))
+    await symlink('/does-not-exist', join(storage, 'skills', 'imported', 'shared', 'local.txt'))
+    const [preview] = (await repo.previewZip(sharedBundle('v2'))).previews
+    expect(preview.replacement).toMatchObject({
+      targetId: 'imported-shared',
+      comparisonUnavailable: true,
+      added: [],
+      modified: [],
+      removed: []
+    })
+  })
+
+  it('compares Agent Home updates without rewriting source or installed bytes', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const source = join(storage, 'external', 'citation')
+    await mkdir(source, { recursive: true })
+    const old = '---\nname: Original Name\n---\nold'
+    await writeFile(join(source, 'SKILL.md'), old)
+    const ref = { source: 'agents' as const, slug: 'citation' }
+    await repo.importAgentHomeSkill(source, ref)
+    const installed = join(storage, 'skills', 'imported', 'citation')
+    await writeFile(join(installed, 'local.txt'), 'local')
+    await writeFile(join(source, 'SKILL.md'), old.replace('old', 'new'))
+    const preview = await repo.previewAgentHomeSkill(source, ref)
+    expect(preview.replacement).toEqual({
+      targetId: 'imported-citation',
+      sourceLabel: '~/.agents/skills/citation',
+      added: [],
+      modified: ['SKILL.md'],
+      removed: ['local.txt']
+    })
+    expect(await readFile(join(installed, 'SKILL.md'), 'utf8')).toBe(old)
+    await repo.importAgentHomeSkill(source, ref)
+    expect(await readFile(join(installed, 'SKILL.md'), 'utf8')).toBe(old.replace('old', 'new'))
+    await expect(stat(join(installed, 'local.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('compares GitHub updates with the canonical installed copy and retains source identity', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const url = 'https://github.com/acme/skills/tree/main/pack/foo'
+    await repo.importFromGitHub(url, fakeFetch('---\nname: Foo\n---\nold'))
+    const unchanged = await repo.previewGitHubSkill(url, fakeFetch('---\nname: Foo\n---\nold'))
+    expect(unchanged.replacement).toMatchObject({
+      targetId: 'imported-foo',
+      added: [],
+      modified: [],
+      removed: []
+    })
+    const changed = await repo.previewGitHubSkill(url, fakeFetch('---\nname: Foo\n---\nnew'))
+    expect(changed.replacement).toMatchObject({
+      sourceLabel: 'github.com/acme/skills@main/pack/foo',
+      modified: ['SKILL.md']
+    })
+    expect(await repo.body('imported-foo')).toContain('old')
+  })
 
   it('offers a replace target when the name matches one imported skill of different content', async () => {
     const repo = new UserSkillRepository(await makeStorage())

@@ -27,7 +27,7 @@ import {
   type PersistedChatSession,
   type PersistedToolActivity
 } from '../../shared/session-persistence'
-import { DurableJsonReadLimitError } from '../storage/durable-json-file'
+import { DurableJsonReadLimitError, readFileWithinLimit } from '../storage/durable-json-file'
 import {
   DEV_SESSION_DIR_NAME,
   SessionRepository,
@@ -35,11 +35,14 @@ import {
   loadSessionMutationAuthority
 } from './repository'
 
+import { initDataRoot } from '../storage-root'
+
 let storageRoot: string | undefined
 let externalRoot: string | undefined
 
 const createStorageRoot = async (): Promise<string> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-sessions-'))
+  initDataRoot(storageRoot)
   return storageRoot
 }
 
@@ -94,6 +97,227 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it.each([false, true])(
+    'deletes binding repair backups when the primary is missing: %s',
+    async (missingPrimary) => {
+      const root = await createStorageRoot()
+      const repository = new SessionRepository(root)
+      const original = await repository.saveSession(createSession())
+      await repository.saveSessionWithBindingRepair(original, original.revision!)
+      const projectDir = join(root, 'sessions', original.projectId)
+      const primaryPath = join(projectDir, `${original.id}.json`)
+      const backup = (await readdir(projectDir)).find((name) =>
+        name.includes('.pre-artifact-binding-')
+      )!
+      expect(backup).toBeDefined()
+      const unrelated = `${primaryPath}.pre-artifact-binding-not-a-checksum.backup`
+      await writeFile(unrelated, 'unowned file')
+      const otherSession = join(projectDir, backup.replace('session-1.json', 'session-2.json'))
+      await writeFile(otherSession, 'another session backup')
+      if (missingPrimary) await rm(primaryPath)
+
+      await repository.deleteSession(original.projectId, original.id)
+
+      await expect(readFile(join(projectDir, backup))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(unrelated, 'utf8')).resolves.toBe('unowned file')
+      await expect(readFile(otherSession, 'utf8')).resolves.toBe('another session backup')
+      await expect(
+        repository.deleteSession(original.projectId, original.id)
+      ).resolves.toBeUndefined()
+    }
+  )
+
+  it('keeps the primary and retries when binding repair backup deletion fails', async () => {
+    const root = await createStorageRoot()
+    const remove = vi.fn(rm)
+    const repository = new SessionRepository(root, { remove })
+    const original = await repository.saveSession(createSession())
+    await repository.saveSessionWithBindingRepair(original, original.revision!)
+    const projectDir = join(root, 'sessions', original.projectId)
+    const primary = join(projectDir, `${original.id}.json`)
+    const before = await readFile(primary, 'utf8')
+    const backup = (await readdir(projectDir)).find((name) =>
+      name.includes('.pre-artifact-binding-')
+    )!
+    const failure = new Error('backup is locked')
+    remove.mockRejectedValueOnce(failure)
+
+    await expect(repository.deleteSession(original.projectId, original.id)).rejects.toBe(failure)
+    await expect(readFile(primary, 'utf8')).resolves.toBe(before)
+    await expect(lstat(join(projectDir, backup))).resolves.toBeDefined()
+
+    await repository.deleteSession(original.projectId, original.id)
+    await expect(lstat(primary)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(join(projectDir, backup))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('binding repair checks the revision before creating a backup', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    const original = await repository.saveSession(createSession())
+    const current = await repository.saveSession(
+      { ...original, title: 'A newer edit' },
+      original.revision
+    )
+    const filePath = join(root, 'sessions', 'project-a', 'session-1.json')
+    const before = await readFile(filePath, 'utf8')
+
+    await expect(
+      repository.saveSessionWithBindingRepair(original, original.revision!)
+    ).rejects.toMatchObject({
+      name: 'SessionRevisionConflictError'
+    })
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(before)
+    await expect(repository.loadSession('project-a', 'session-1')).resolves.toMatchObject({
+      title: 'A newer edit',
+      revision: current.revision
+    })
+    expect(
+      (await readdir(join(root, 'sessions', 'project-a'))).filter((name) =>
+        name.includes('.pre-artifact-binding-')
+      )
+    ).toEqual([])
+  })
+
+  it('binding repair retains original bytes across a failed replacement and reuses the backup on retry', async () => {
+    const root = await createStorageRoot()
+    const renameFile = vi.fn(rename)
+    const repository = new SessionRepository(root, { renameFile })
+    const original = await repository.saveSession(createSession())
+    const projectDir = join(root, 'sessions', 'project-a')
+    const filePath = join(projectDir, 'session-1.json')
+    const before = await readFile(filePath, 'utf8')
+    renameFile.mockRejectedValueOnce(
+      Object.assign(new Error('repair replacement failed'), { code: 'EIO' })
+    )
+    const repaired = { ...original, title: 'Repaired' }
+
+    await expect(
+      repository.saveSessionWithBindingRepair(repaired, original.revision!)
+    ).rejects.toThrow('repair replacement failed')
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(before)
+    const backups = (await readdir(projectDir)).filter((name) =>
+      name.includes('.pre-artifact-binding-')
+    )
+    expect(backups).toHaveLength(1)
+    await expect(readFile(join(projectDir, backups[0]), 'utf8')).resolves.toBe(before)
+
+    await expect(
+      repository.saveSessionWithBindingRepair(repaired, original.revision!)
+    ).resolves.toMatchObject({ title: 'Repaired' })
+    expect(
+      (await readdir(projectDir)).filter((name) => name.includes('.pre-artifact-binding-'))
+    ).toEqual(backups)
+    await expect(readFile(join(projectDir, backups[0]), 'utf8')).resolves.toBe(before)
+  })
+
+  it.each([
+    { id: 'import-session-1', projectId: 'project-a' },
+    { id: 'session-1', projectId: 'import-project-a' }
+  ])('reads imported authority once per revisioned save for $id / $projectId', async (identity) => {
+    const readSessionFileWithinLimit = vi.fn(readFileWithinLimit)
+    const repository = new SessionRepository(await createStorageRoot(), {
+      readSessionFileWithinLimit
+    })
+    const source = createSession({
+      ...identity,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    source.messages[0].content = 'Evidence '.repeat(128 * 1024)
+    await repository.saveSession(source)
+    const initial = (await repository.loadSession(source.projectId, source.id))!
+    readSessionFileWithinLimit.mockClear()
+    const renamed = await repository.saveSession({ ...initial, title: 'Renamed' }, initial.revision)
+    expect(renamed.title).toBe('Renamed')
+    expect(renamed.messages).toEqual(initial.messages)
+    expect(readSessionFileWithinLimit).toHaveBeenCalledOnce()
+
+    readSessionFileWithinLimit.mockClear()
+    await expect(
+      repository.saveSession({ ...renamed, title: 'Stale' }, initial.revision)
+    ).rejects.toMatchObject({ code: 'session-revision-conflict', actualRevision: renamed.revision })
+    expect(readSessionFileWithinLimit).toHaveBeenCalledOnce()
+
+    readSessionFileWithinLimit.mockClear()
+    await expect(
+      repository.saveSession(
+        {
+          ...renamed,
+          messages: [{ ...renamed.messages[0], content: 'Changed evidence' }]
+        },
+        renamed.revision
+      )
+    ).rejects.toThrow('read-only')
+    expect(readSessionFileWithinLimit).toHaveBeenCalledOnce()
+
+    // Each queued save must read fresh authority. Reuse is local to one save, never a cross-save cache.
+    readSessionFileWithinLimit.mockClear()
+    const writes = await Promise.allSettled(
+      ['First', 'Second'].map((title) =>
+        repository.saveSession({ ...renamed, title }, renamed.revision)
+      )
+    )
+    expect(writes.map(({ status }) => status)).toEqual(['fulfilled', 'rejected'])
+    expect(readSessionFileWithinLimit).toHaveBeenCalledTimes(2)
+    expect(await repository.loadSession(source.projectId, source.id)).toMatchObject({
+      title: 'First',
+      messages: initial.messages
+    })
+  })
+
+  it('persists imported view changes without erasing runtime evidence or allowing research edits', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        id: 'import-session-1',
+        runtimeContext: { version: 1, revision: 1 },
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      })
+    )
+    const current = await repository.loadSession('project-a', 'import-session-1')
+    if (!current) throw new Error('Imported Session was not readable')
+    const candidate = {
+      ...current,
+      title: 'Renamed imported history',
+      pinned: true,
+      runtimeContext: undefined,
+      description: current.description ?? '',
+      permissionProfile: current.permissionProfile ?? 'ask'
+    }
+    await repository.saveSession(candidate)
+    const saved = await repository.loadSession('project-a', 'import-session-1')
+    expect(saved).toMatchObject({
+      title: 'Renamed imported history',
+      pinned: true,
+      runtimeContext: current.runtimeContext,
+      packageOrigin: current.packageOrigin
+    })
+    for (const changed of [
+      { ...candidate, runtimeContext: { version: 1 as const, revision: 2 } },
+      { ...candidate, permissionProfile: 'full' as const },
+      { ...candidate, description: 'Changed research description' },
+      {
+        ...candidate,
+        messages: candidate.messages.map((message) => ({ ...message, content: 'Changed research' }))
+      }
+    ]) {
+      await expect(repository.saveSession(changed)).rejects.toThrow('read-only')
+    }
+    expect(await repository.loadSession('project-a', 'import-session-1')).toEqual(saved)
+  })
+
   it('resolves recovery folders inside the managed Session tree', async () => {
     const root = await createStorageRoot()
     const repository = new SessionRepository(root)
@@ -167,6 +391,62 @@ describe('session persistence repository (per-session files)', () => {
       authority.status === 'found' ? authority.session.resumeRecovery : undefined
     ).toBeUndefined()
   })
+
+  it.each(['packageOrigin', 'forkOrigin'] as const)(
+    'saves already-versioned %s history without inventing an upgrade backup',
+    async (field) => {
+      const repository = new SessionRepository(await createStorageRoot())
+      const session = createSession({
+        [field]: {
+          importId: 'copy-receipt',
+          sourceProjectId: 'source',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        },
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'child-frame-1',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    initiatingTurnMessageId: 'message-1',
+                    status: 'cancelled',
+                    resolvedAgent: { kind: 'main' },
+                    executionModel: {
+                      frameworkId: 'opencode',
+                      providerId: 'provider-a',
+                      backendId: 'provider-a',
+                      modelRoute: 'opencode-openai',
+                      model: 'model-a',
+                      reasoningEffort: 'high'
+                    },
+                    runtimeSegmentIds: [],
+                    startedAt: 1,
+                    endedAt: 2,
+                    cancellationReason: 'main_agent_stop'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+      await repository.saveSession(session)
+      await expect(
+        repository.saveSession({ ...session, title: 'Saved copy' })
+      ).resolves.toBeDefined()
+      const local = { ...session, id: 'local-without-backup', [field]: undefined }
+      await repository.saveSession(local)
+      await expect(repository.saveSession({ ...local, [field]: session[field] })).rejects.toThrow(
+        'required pre-S2 backup is missing'
+      )
+    }
+  )
 
   it('preserves one immutable pre-S2 Session backup before the first initiating-Turn write', async () => {
     const repository = new SessionRepository(await createStorageRoot())
@@ -1308,6 +1588,116 @@ describe('session persistence repository (per-session files)', () => {
     await expect(lstat(filePath)).resolves.toMatchObject({ size: MAX_PERSISTED_SESSION_BYTES + 1 })
   })
 
+  it.each([false, true])(
+    'retains unresolved temporary evidence in diagnostics (valid primary: %s)',
+    async (hasPrimary) => {
+      const root = await createStorageRoot()
+      const repository = new SessionRepository(root)
+      const session = createSession()
+      const directory = join(root, 'sessions', session.projectId)
+      await mkdir(directory, { recursive: true })
+      if (hasPrimary) await repository.saveSession(session)
+      const temporaryPath = join(
+        directory,
+        `${session.id}.json.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+      )
+      // The writer may still be filling this file; neither parse nor promote it.
+      await writeFile(temporaryPath, '{', 'utf8')
+
+      await expect(
+        repository.loadSessionWithDiagnostics(session.projectId, session.id)
+      ).resolves.toMatchObject({ status: hasPrimary ? 'found' : 'unreadable' })
+      const scan = await repository.loadAllWithDiagnostics()
+      expect(scan.isComplete).toBe(hasPrimary)
+      expect(scan.result.sessions).toHaveLength(hasPrimary ? 1 : 0)
+      expect(scan.warnings ?? []).toEqual(
+        hasPrimary
+          ? []
+          : [
+              {
+                kind: 'unreadable',
+                projectId: session.projectId,
+                fileName: `${session.id}.json`,
+                recovered: false
+              }
+            ]
+      )
+      await expect(readFile(temporaryPath, 'utf8')).resolves.toBe('{')
+    }
+  )
+
+  it.each([
+    'unrelated',
+    '0-12345678-1234-1234-1234-123456789abc',
+    '9007199254740992-12345678-1234-1234-1234-123456789abc'
+  ])(
+    'reports true absence without treating an unrecognized temp suffix as authority: %s',
+    async (suffix) => {
+      const root = await createStorageRoot()
+      const directory = join(root, 'sessions', 'project-a')
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, `session-1.json.${suffix}.tmp`), '{', 'utf8')
+      const repository = new SessionRepository(root)
+      await expect(
+        repository.loadSessionWithDiagnostics('project-a', 'session-1')
+      ).resolves.toEqual({
+        status: 'missing'
+      })
+      await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+        isComplete: true,
+        result: { sessions: [] }
+      })
+    }
+  )
+
+  it.each(['0', '9007199254740992'])(
+    'preserves supported legacy PID-only temporary evidence: %s',
+    async (suffix) => {
+      const root = await createStorageRoot()
+      const repository = new SessionRepository(root)
+      const saved = await repository.saveSession(createSession())
+      const primary = join(root, 'sessions', saved.projectId, `${saved.id}.json`)
+      await rename(primary, `${primary}.${suffix}.tmp`)
+      await expect(
+        repository.loadSessionWithDiagnostics(saved.projectId, saved.id)
+      ).resolves.toMatchObject({ status: 'found', session: { id: saved.id } })
+      await expect(readFile(primary, 'utf8')).resolves.toContain(saved.id)
+    }
+  )
+
+  it('keeps the primary when explicit deletion cannot remove a recognized temporary file', async () => {
+    const root = await createStorageRoot()
+    const files = new SessionRepository(root)
+    const saved = await files.saveSession(createSession())
+    const primary = join(root, 'sessions', saved.projectId, `${saved.id}.json`)
+    const temporary = `${primary}.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+    await writeFile(temporary, '{', 'utf8')
+    const failure = new Error('injected temporary removal failure')
+    const failing = new SessionRepository(root, {
+      remove: async (path, options) => {
+        if (path === temporary) throw failure
+        await rm(path, options)
+      }
+    })
+    await expect(failing.deleteSession(saved.projectId, saved.id)).rejects.toBe(failure)
+    await expect(readFile(primary, 'utf8')).resolves.toContain(saved.id)
+    await expect(readFile(temporary, 'utf8')).resolves.toBe('{')
+    const unrelated = `${primary}.unrelated.tmp`
+    const otherSession = join(
+      root,
+      'sessions',
+      saved.projectId,
+      `other.json.${process.pid}-12345678-1234-1234-1234-123456789abc.tmp`
+    )
+    await writeFile(unrelated, 'unrelated', 'utf8')
+    await writeFile(otherSession, 'other Session', 'utf8')
+    await files.deleteSession(saved.projectId, saved.id)
+    await expect(readFile(primary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(temporary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(unrelated, 'utf8')).resolves.toBe('unrelated')
+    await expect(readFile(otherSession, 'utf8')).resolves.toBe('other Session')
+  })
+
   it('classifies an oversized recovery temp when no primary Session exists', async () => {
     const root = await createStorageRoot()
     const projectDir = join(root, 'sessions', 'project-a')
@@ -1494,6 +1884,32 @@ describe('session persistence repository (per-session files)', () => {
     expect(scan.result.sessions).toEqual([])
     expect(scan.isComplete).toBe(false)
     expect(readDirectoryEntries).toHaveBeenCalledWith(projectDir)
+  })
+
+  it('locates unreadable project directories in a strict deletion scan', async () => {
+    const root = await createStorageRoot()
+    await new SessionRepository(root).saveSession(createSession())
+    const projectDir = join(root, 'sessions', 'project-a')
+    const repository = new SessionRepository(root, {
+      readDirectoryEntries: async (path) => {
+        if (path === projectDir) throw Object.assign(new Error('Read denied'), { code: 'EACCES' })
+        return readdir(path, { withFileTypes: true })
+      }
+    })
+    const scan = await repository.loadAllWithDiagnostics({
+      mode: 'read-only',
+      quarantinedIsIncomplete: true
+    })
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toContainEqual({
+      kind: 'unreadable',
+      projectId: 'project-a',
+      fileName: '.',
+      recovered: false
+    })
+    await expect(readFile(join(projectDir, 'session-1.json'), 'utf8')).resolves.toContain(
+      'Saved conversation'
+    )
   })
 
   it('rejects saving through a symbolic link at the active sessions root', async () => {

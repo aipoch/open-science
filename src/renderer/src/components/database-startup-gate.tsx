@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CircleArrowUp,
@@ -21,7 +21,7 @@ import type {
 
 type DatabaseStartupGateProps = { children: ReactNode }
 
-const UNAVAILABLE_STARTUP_MESSAGE = 'Open Science could not finish checking its database.'
+const UNAVAILABLE_STARTUP_MESSAGE = 'Open-Science could not finish checking its database.'
 
 const unavailableStartupState: DatabaseStartupState = {
   phase: 'blocked',
@@ -52,7 +52,7 @@ const BLOCKED_GUIDANCE: Partial<Record<DatabaseStartupErrorCode, BlockedGuidance
     tone: 'teal',
     icon: CircleArrowUp,
     why: "This data folder was last written by a newer release. Older builds can't safely read its newer format.",
-    how: 'Update Open Science to the latest version, then relaunch. Your data is intact and will open in the newer version.'
+    how: 'Update Open-Science to the latest version, then relaunch. Your data is intact and will open in the newer version.'
   },
   database_history_invalid: {
     tone: 'red',
@@ -70,13 +70,13 @@ const BLOCKED_GUIDANCE: Partial<Record<DatabaseStartupErrorCode, BlockedGuidance
     tone: 'red',
     icon: Cpu,
     why: 'The database engine bundled with this app failed to load — the installation is usually incomplete or damaged.',
-    how: "Reinstall Open Science. Your data folder is stored separately and won't be touched."
+    how: "Reinstall Open-Science. Your data folder is stored separately and won't be touched."
   },
   database_open_failed: {
     tone: 'amber',
     icon: Lock,
     why: "The database file couldn't be opened — it's often locked by another copy of the app, a full disk, or a read-only location.",
-    how: 'Quit other copies of Open Science, check free disk space and folder permissions, then retry.'
+    how: 'Quit other copies of Open-Science, check free disk space and folder permissions, then retry.'
   },
   database_migration_failed: {
     tone: 'amber',
@@ -88,7 +88,7 @@ const BLOCKED_GUIDANCE: Partial<Record<DatabaseStartupErrorCode, BlockedGuidance
     tone: 'amber',
     icon: Unplug,
     why: "The background service that owns the database didn't respond in time — this is usually transient.",
-    how: 'Retry. If it keeps happening, fully quit Open Science and start it again.'
+    how: 'Retry. If it keeps happening, fully quit Open-Science and start it again.'
   }
 }
 
@@ -100,25 +100,27 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
   )
   const [retrying, setRetrying] = useState(false)
   const [issueDraftOpen, setIssueDraftOpen] = useState(false)
+  const subscription = useRef<{ events: number } | null>(null)
 
   useEffect(() => {
     if (!databaseStartup) return
-    let disposed = false
-    let receivedEvent = false
+    const owner = { events: 0 }
+    subscription.current = owner
     const unsubscribe = databaseStartup.onStateChanged((next) => {
-      receivedEvent = true
-      if (!disposed) setState(next)
+      owner.events += 1
+      if (subscription.current === owner) setState(next)
     })
     void databaseStartup
       .getState()
       .then((current) => {
-        if (!disposed && !receivedEvent) setState(current)
+        if (subscription.current === owner && owner.events === 0) setState(current)
       })
       .catch(() => {
-        if (!disposed && !receivedEvent) setState(applyUnavailableStartupFallback)
+        if (subscription.current === owner && owner.events === 0)
+          setState(applyUnavailableStartupFallback)
       })
     return () => {
-      disposed = true
+      if (subscription.current === owner) subscription.current = null
       unsubscribe()
     }
   }, [databaseStartup])
@@ -126,15 +128,26 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
   if (state.phase === 'ready') return <>{children}</>
 
   const retry = (): void => {
-    if (!databaseStartup) return
+    const owner = subscription.current
+    if (!databaseStartup || !owner) return
+    const events = owner.events
     setRetrying(true)
     void databaseStartup
       .retry()
-      .then(setState)
-      .catch(() => {
-        setState(restoreUnavailableUnlessReady)
+      .then((next) => {
+        if (subscription.current === owner && owner.events === events) setState(next)
       })
-      .finally(() => setRetrying(false))
+      .catch(() => {
+        if (subscription.current !== owner) return
+        // A retry may publish checking before failing. Recover that pending attempt, but keep
+        // newer starting/blocked/ready events authoritative over an obsolete rejection.
+        setState(
+          owner.events === events ? restoreUnavailableUnlessReady : applyUnavailableStartupFallback
+        )
+      })
+      .finally(() => {
+        if (subscription.current === owner) setRetrying(false)
+      })
   }
 
   const openIssueDraft = (): void => {
@@ -156,12 +169,12 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
                 {state.phase === 'migrating'
                   ? t('Updating database…')
                   : state.phase === 'starting'
-                    ? t('Starting Open Science…')
+                    ? t('Starting Open-Science…')
                     : t('Checking database…')}
               </span>
               {state.phase === 'migrating' || state.phase === 'starting' ? (
                 <p className="text-sm text-muted-foreground">
-                  {t('Keep Open Science open while this finishes.')}
+                  {t('Keep Open-Science open while this finishes.')}
                 </p>
               ) : null}
             </div>
@@ -183,7 +196,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
         fullPage
         icon={guidance?.icon}
         tone={guidance?.tone}
-        title={t("Open Science couldn't start")}
+        title={t("Open-Science couldn't start")}
         description={t(error.message)}
         errorCode={error.migrationId ? `${error.code} · ${error.migrationId}` : error.code}
         help={
@@ -198,7 +211,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
         }
         issueLink={{
           label: t('Still stuck? Create an issue for help'),
-          tooltip: t('Review and edit the redacted report in Open Science before opening GitHub.'),
+          tooltip: t('Review and edit the redacted report in Open-Science before opening GitHub.'),
           onClick: openIssueDraft
         }}
         secondaryButton={{

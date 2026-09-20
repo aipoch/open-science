@@ -59,8 +59,15 @@ const parseRange = (
   size: number
 ): { start: number; end: number } | undefined => {
   if (!rangeHeader) return size > 0 ? { start: 0, end: size - 1 } : undefined
-  const match = /^bytes=(\d+)-(\d*)$/.exec(rangeHeader.trim())
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim())
   if (!match) throw new Error('Managed preview range is invalid.')
+  if (!match[1]) {
+    const suffixLength = Number(match[2])
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      throw new Error('Managed preview suffix range is invalid.')
+    }
+    return size > 0 ? { start: Math.max(0, size - suffixLength), end: size - 1 } : undefined
+  }
 
   const start = Number(match[1])
   const requestedEnd = match[2] ? Number(match[2]) : size - 1
@@ -104,7 +111,7 @@ const createStrictFileResponse = async (
   try {
     const rangeHeader = request.headers.get('range')
     const range = parseRange(rangeHeader, resource.size)
-    const isPartial = rangeHeader !== null
+    const isPartial = rangeHeader !== null && range !== undefined
     const headers = new Headers({
       'accept-ranges': 'bytes',
       'content-length': String(range ? range.end - range.start + 1 : 0)

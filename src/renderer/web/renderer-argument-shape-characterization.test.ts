@@ -96,12 +96,32 @@ const loadElectronApi = async (): Promise<ApiRoot> => {
   return exposure[1] as ApiRoot
 }
 
-const loadWebApi = async (): Promise<ApiRoot> => {
-  const bootstrapImport = import('./bootstrap')
-  await vi.waitFor(() => expect((window as unknown as { api?: ApiRoot }).api).toBeDefined())
+const loadWebApi = async (startBootstrap = () => import('./bootstrap')): Promise<ApiRoot> => {
+  // Observe the real registration rather than putting a one-second deadline on module I/O.
+  const registered = new Promise<ApiRoot>((resolve) => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      set(value: ApiRoot) {
+        Object.defineProperty(window, 'api', {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value
+        })
+        resolve(value)
+      }
+    })
+  })
+  const bootstrapImport = startBootstrap()
+  const api = await Promise.race([
+    registered,
+    bootstrapImport.then(() => {
+      throw new Error('Web bootstrap completed without registering its API.')
+    })
+  ])
   window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
   await bootstrapImport
-  return (window as unknown as { api: ApiRoot }).api
+  return api
 }
 
 const invokeElectron = async (
@@ -193,6 +213,39 @@ afterEach(() => {
 })
 
 describe('renderer argument-shape characterization', () => {
+  it('waits for actual API registration when module loading outlasts the polling deadline', async () => {
+    vi.resetModules()
+    delete (window as unknown as { api?: unknown }).api
+    let releaseImport!: () => void
+    const importGate = new Promise<void>((resolve) => {
+      releaseImport = resolve
+    })
+    let failure: unknown
+    const loading = loadWebApi(async () => {
+      await importGate
+      return import('./bootstrap')
+    }).catch((error: unknown) => {
+      failure = error
+      return undefined
+    })
+    // Module loading uses wall-clock I/O even though bootstrap owns fake request timers.
+    await (await import('node:timers/promises')).setTimeout(1500)
+    releaseImport()
+    const api = await loading
+    expect(failure).toBeUndefined()
+    expect(api).toBeDefined()
+    expect(collectFunctionPaths(api)).toContain('localModels.getSnapshot')
+  })
+  it('exposes the read-only DOI lookup with identical arguments on Electron and Web', async () => {
+    const args = ['10.1007/s11914-026-00956-3']
+    const expected = { channel: 'literature:lookup-metadata', args }
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: null })
+    await expect(invokeElectron(electronApi, 'literature.lookupMetadata', args)).resolves.toEqual(
+      expected
+    )
+    await expect(invokeWeb(webApi, 'literature.lookupMetadata', args)).resolves.toEqual(expected)
+  })
+
   it('loads the complete local Web callable surface from the real bootstrap', () => {
     const expectedPaths = [
       ...Object.entries(WEB_INVOKE_CHANNELS)
@@ -208,7 +261,58 @@ describe('renderer argument-shape characterization', () => {
     expect(actualPaths).toEqual(expectedPaths)
   })
 
-  it('keeps Runtime request arguments equivalent across Electron and Web', async () => {
+  it('keeps bulk browser revocation arguments equivalent across Electron and Web', async () => {
+    const args = [{ browserIds: ['browser-1', 'browser-2'] }]
+    const channel = 'remote-access:revoke-browsers'
+    expect(await invokeElectron(electronApi, 'remoteAccess.revokeBrowsers', args)).toEqual({
+      channel,
+      args
+    })
+    expect(await invokeWeb(webApi, 'remoteAccess.revokeBrowsers', args)).toEqual({ channel, args })
+  })
+
+  it('keeps Skill Marketplace request arguments equivalent across Electron and Web', async () => {
+    for (const [path, channel, args] of [
+      ['settings.listSkillMarketplace', 'settings:list-skill-marketplace', []],
+      [
+        'settings.listSkillMarketplace',
+        'settings:list-skill-marketplace',
+        [{ forceRefresh: true }]
+      ],
+      [
+        'settings.listSkillMarketplace',
+        'settings:list-skill-marketplace',
+        [{ snapshotId: 'a'.repeat(64) }]
+      ],
+      ['settings.getSkillMarketplaceBatch', 'settings:get-skill-marketplace-batch', []],
+      ['settings.stopSkillMarketplaceBatch', 'settings:stop-skill-marketplace-batch', ['batch-id']],
+      [
+        'settings.startSkillMarketplaceBatch',
+        'settings:start-skill-marketplace-batch',
+        [
+          {
+            snapshotId: 'a'.repeat(64),
+            items: [{ id: 'abstract-trimmer', version: '1.1.0', expectedVersion: '1.0.0' }]
+          }
+        ]
+      ],
+      [
+        'settings.getSkillMarketplaceDetail',
+        'settings:get-skill-marketplace-detail',
+        [{ snapshotId: 'a'.repeat(64), id: 'abstract-trimmer' }]
+      ],
+      [
+        'settings.installSkillMarketplace',
+        'settings:install-skill-marketplace',
+        [{ snapshotId: 'a'.repeat(64), id: 'abstract-trimmer', expectedVersion: '1.0.0' }]
+      ]
+    ] as const) {
+      expect(await invokeElectron(electronApi, path, [...args])).toEqual({ channel, args })
+      expect(await invokeWeb(webApi, path, [...args])).toEqual({ channel, args })
+    }
+  })
+
+  it('keeps Runtime package request arguments equivalent across Electron and Web', async () => {
     const cases = [
       {
         path: 'runtime.listPackages',
@@ -276,6 +380,16 @@ describe('renderer argument-shape characterization', () => {
         electron.args
       )
     }
+  })
+
+  it('installs read-only PDF cache lookup with identical Electron and local Web arguments', async () => {
+    const request = { attachmentVersionId: 'version-1', page: 1 }
+    const expected = { channel: 'pdf-structure:read-cached', args: [request] }
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: undefined })
+    expect(await invokeElectron(electronApi, 'pdfStructure.readCached', [request])).toEqual(
+      expected
+    )
+    expect(await invokeWeb(webApi, 'pdfStructure.readCached', [request])).toEqual(expected)
   })
 
   it('records equivalent session-save calls and the explicit-undefined JSON deviation', async () => {

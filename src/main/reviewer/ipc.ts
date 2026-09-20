@@ -15,7 +15,7 @@ import type {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import { createLogger } from '../logger'
-import { runReview } from './orchestrator'
+import type { runReview as RunReview } from './orchestrator'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
@@ -39,6 +39,8 @@ import type { ReviewerPagedContentResolver } from './host-sdk'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const log = createLogger('reviewer:ipc')
+// Share first-use module loading across concurrent review commands; allow retry on load failure.
+let reviewerExecutor: Promise<typeof RunReview> | undefined
 
 // Sends a review update event to every open renderer window.
 const broadcastReviewUpdate = (event: ReviewUpdateEvent): void => {
@@ -84,6 +86,35 @@ const createDefaultReviewRepository = (
   return new ReviewRepository(() => getProjectDbClient(storageRoot), { snapshotStorageRoot })
 }
 
+// The read-only slice of session persistence that reviewer depends on. Deliberately narrower than
+// SessionRepository: reviewer must not reach mutation or scan-diagnostics APIs.
+type ReviewerSessionReader = Readonly<{
+  loadSession: (projectId: string, sessionId: string) => Promise<PersistedChatSession | undefined>
+  findSessionById: (sessionId: string) => Promise<PersistedChatSession | undefined>
+}>
+
+// Standalone fallback used when no reader is injected. Every read pins `mode: 'read-only'`, which
+// is the only value that disables quarantine: `readSessionFile` treats `undefined` as "quarantine
+// allowed" (`options.quarantineInvalidFiles !== false`), so omitting the mode would let a reviewer
+// read rename a corrupt live session file.
+const createFallbackSessionReader = (storageRoot: string): ReviewerSessionReader => {
+  const repository = new SessionRepository(storageRoot)
+  return {
+    loadSession: async (projectId, sessionId) => {
+      const loaded = await repository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      return loaded.status === 'found' ? loaded.session : undefined
+    },
+    findSessionById: async (sessionId) => {
+      const { sessions } = await repository
+        .loadAllWithDiagnostics({ mode: 'read-only' })
+        .then((scan) => scan.result)
+      return sessions.find((candidate) => candidate.id === sessionId)
+    }
+  }
+}
+
 type ReviewerIpcOptions = {
   // The ACP runtime used to spawn reviewer sessions.
   acpRuntime: ReviewerAcpRuntime
@@ -125,11 +156,19 @@ type ReviewerIpcOptions = {
     >
   }>
   projectRuntime?: Pick<ReviewerProjectRuntimeOwner, 'admit'>
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   withProjectAvailable?: <Result>(
     projectId: string,
     operation: () => Promise<Result>
   ) => Promise<Result>
   resolveSessionAgentTarget?: SessionAgentTargetResolver
+  // Read-only session access. Reviewer never owns session files: it reads transcripts to detect
+  // stale verdicts and to refresh the fix loop after each correction turn. The composition root
+  // injects the already-composed session-persistence owner so reviewer reads share that owner's
+  // scheduler and projection. Without it this module would construct a second SessionRepository
+  // over the same tree, whose corrupt-file recovery path (`readSessionFile` quarantines unless
+  // `quarantineInvalidFiles === false`) would rename live files outside the coordinator.
+  sessionReader?: ReviewerSessionReader
   saveSessionAgentConfiguration?: (
     session: PersistedChatSession,
     configuration: SessionAgentConfiguration
@@ -191,7 +230,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     return attempt
   }
   void ensureRecovery()
-  const sessionRepository = new SessionRepository(storageRoot)
+  // Prefer the injected reader (production wires the composed session-persistence owner). The
+  // fallback keeps standalone/test construction working, and pins `mode: 'read-only'` so even that
+  // path cannot quarantine — reviewer is never the owner that repairs a corrupt session file.
+  const sessionReader: ReviewerSessionReader =
+    options.sessionReader ?? createFallbackSessionReader(storageRoot)
   const resolveArtifactVersion: ArtifactVersionContentResolver | undefined =
     options.managedFileVersions
       ? async (request) => {
@@ -268,9 +311,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     )
     let session: PersistedChatSession | undefined
     try {
-      session = await sessionRepository.loadSession(request.projectId, request.appSessionId)
+      session = await sessionReader.loadSession(request.projectId, request.appSessionId)
     } catch {
-      return reviews
+      return reviews.map((review) =>
+        review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+      )
     }
     return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }
@@ -309,6 +354,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       sessionId,
       turnMessageId,
       scopeTurnMessageId,
+      scopeMessageBranchId,
       evidenceScope,
       projectId,
       mainSessionId,
@@ -374,9 +420,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     // Direct, repeatable loader used both for the start gate and every fix-loop refresh. The previous
     // closure returned the `session` variable below forever, so a correction turn could never appear.
     const loadCurrentSession = async (): Promise<PersistedChatSession | undefined> => {
-      if (projectId) return sessionRepository.loadSession(projectId, sessionId)
-      const { sessions } = await sessionRepository.loadAll()
-      return sessions.find((candidate) => candidate.id === sessionId)
+      if (projectId) return sessionReader.loadSession(projectId, sessionId)
+      return sessionReader.findSessionById(sessionId)
     }
 
     let session: PersistedChatSession | undefined
@@ -406,6 +451,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'not-found' })
     }
 
+    if (session.packageOrigin) {
+      log.info('review refused: imported research history is read-only', { sessionId })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
+
     let agentTarget
     try {
       agentTarget = await options.resolveSessionAgentTarget?.(session)
@@ -429,6 +479,19 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     }
 
     log.info('review triggered', { sessionId, turnMessageId })
+
+    let runReview: typeof RunReview
+    try {
+      runReview = await (reviewerExecutor ??= import('./orchestrator')
+        .then((module) => module.runReview)
+        .catch((error) => {
+          reviewerExecutor = undefined
+          throw error
+        }))
+    } catch (error) {
+      log.error('review start failed: could not load executor', { error: toErrorMessage(error) })
+      return finishBeforeBackground({ started: false, reason: 'run-failed' })
+    }
 
     let modelAdmission: Awaited<
       ReturnType<NonNullable<ReviewerIpcOptions['modelRuntime']>['admit']>
@@ -484,6 +547,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         sessionId,
         turnMessageId,
         scopeTurnMessageId,
+        scopeMessageBranchId,
         evidenceScope,
         projectId,
         mainSessionId,
@@ -621,11 +685,26 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
     const admitReview = (): Promise<ReviewRunResult> => {
       let projectAdmission: ReviewerProjectAdmission
+      const releases: (() => void)[] = []
       try {
+        for (const sessionId of new Set(
+          [request.sessionId, request.mainSessionId].filter((id): id is string => !!id)
+        )) {
+          const release = options.admitSessionWork?.(request.projectId, sessionId)
+          if (release) releases.push(release)
+        }
         // Admission is acquired synchronously before session/repository/model work begins. Once
         // Project deletion closes it, no new Reviewer operation can slip into the quiescence snapshot.
-        projectAdmission = projectRuntime.admit(request.projectId)
+        const admitted = projectRuntime.admit(request.projectId)
+        projectAdmission = {
+          ...admitted,
+          release: () => {
+            admitted.release()
+            releases.forEach((release) => release())
+          }
+        }
       } catch (error) {
+        releases.forEach((release) => release())
         return Promise.reject(error)
       }
       return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {

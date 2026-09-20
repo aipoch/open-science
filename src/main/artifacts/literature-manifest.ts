@@ -41,6 +41,7 @@ type RecordedSearch = Readonly<{
   criteria: ArtifactLiteratureRetrievalCriteria
   itemIds: readonly string[]
   totalCount: number
+  offset: number
 }>
 
 const MAX_RECORDED_PROMPTS = 100
@@ -63,6 +64,7 @@ const retrievalKey = (criteria: ArtifactLiteratureRetrievalCriteria): string =>
 
 class ArtifactLiteratureManifestOwner {
   private readonly catalog: LiteratureCatalog
+  private readonly abstractReads = new Map<string, Set<string>>()
   private readonly fullTextReads = new Map<string, Set<string>>()
   private readonly searches = new Map<string, RecordedSearch[]>()
 
@@ -81,31 +83,61 @@ class ArtifactLiteratureManifestOwner {
       searches = []
       this.searches.set(key, searches)
     }
-    if (searches.length >= MAX_SEARCHES_PER_PROMPT) return
-    searches.push({
+    const search: RecordedSearch = {
       criteria: {
         scope: request.scope,
         ...(request.query ? { query: request.query } : {}),
         ...(request.collectionId ? { collectionId: request.collectionId } : {}),
         ...(request.itemIds ? { itemIds: [...request.itemIds] } : {})
       },
-      itemIds: request.result.items.map(({ id }) => id),
-      totalCount: request.result.totalCount
-    })
+      itemIds: [...new Set(request.result.items.map(({ id }) => id))],
+      totalCount: request.result.totalCount,
+      offset: request.offset ?? 0
+    }
+    const duplicate = searches.some(
+      (recorded) =>
+        retrievalKey(recorded.criteria) === retrievalKey(search.criteria) &&
+        recorded.offset === search.offset &&
+        recorded.totalCount === search.totalCount &&
+        JSON.stringify(recorded.itemIds) === JSON.stringify(search.itemIds)
+    )
+    if (!duplicate) {
+      if (searches.length >= MAX_SEARCHES_PER_PROMPT) {
+        throw new Error(
+          'LITERATURE_EVIDENCE_LIMIT: This turn has reached 100 distinct search results. The new result was not recorded. Save using already retrieved records, or start a new turn to search further.'
+        )
+      }
+      searches.push(search)
+    }
+    // Search output always includes a nonzero-budget abstract preview when content is present.
+    for (const view of request.result.items) {
+      if (view.item?.abstract.trim()) this.recordAbstractRead({ ...request, itemId: view.id })
+    }
+  }
+
+  recordAbstractRead(request: RecordArtifactLiteraturePdfReadRequest): void {
+    this.recordRead(this.abstractReads, request)
+  }
+
+  private recordRead(
+    reads: Map<string, Set<string>>,
+    request: RecordArtifactLiteraturePdfReadRequest
+  ): void {
+    const key = searchKey(request)
+    let itemIds = reads.get(key)
+    if (!itemIds) {
+      if (reads.size >= MAX_RECORDED_PROMPTS) {
+        const oldestKey = reads.keys().next().value
+        if (oldestKey) reads.delete(oldestKey)
+      }
+      itemIds = new Set()
+      reads.set(key, itemIds)
+    }
+    itemIds.add(request.itemId)
   }
 
   recordPdfRead(request: RecordArtifactLiteraturePdfReadRequest): void {
-    const key = searchKey(request)
-    let itemIds = this.fullTextReads.get(key)
-    if (!itemIds) {
-      if (this.fullTextReads.size >= MAX_RECORDED_PROMPTS) {
-        const oldestKey = this.fullTextReads.keys().next().value
-        if (oldestKey) this.fullTextReads.delete(oldestKey)
-      }
-      itemIds = new Set()
-      this.fullTextReads.set(key, itemIds)
-    }
-    itemIds.add(request.itemId)
+    this.recordRead(this.fullTextReads, request)
   }
 
   async prepare(
@@ -166,29 +198,8 @@ class ArtifactLiteratureManifestOwner {
     }
 
     const searchedItemIds = new Set<string>()
-    const grouped = new Map<
-      string,
-      {
-        criteria: ArtifactLiteratureRetrievalCriteria
-        itemIds: Set<string>
-        totalCount: number
-      }
-    >()
     for (const search of searches) {
-      let retrieval = grouped.get(retrievalKey(search.criteria))
-      if (!retrieval) {
-        retrieval = {
-          criteria: search.criteria,
-          itemIds: new Set<string>(),
-          totalCount: search.totalCount
-        }
-        grouped.set(retrievalKey(search.criteria), retrieval)
-      }
-      retrieval.totalCount = Math.max(retrieval.totalCount, search.totalCount)
-      for (const itemId of search.itemIds) {
-        retrieval.itemIds.add(itemId)
-        searchedItemIds.add(itemId)
-      }
+      for (const itemId of search.itemIds) searchedItemIds.add(itemId)
     }
 
     for (const itemId of corpus.itemIds) {
@@ -204,22 +215,30 @@ class ArtifactLiteratureManifestOwner {
     const fullTextItemIds = this.fullTextReads.get(searchKey(context)) ?? new Set<string>()
     const fullTextCount = corpus.itemIds.filter((itemId) => fullTextItemIds.has(itemId)).length
 
+    const abstractItemIds = this.abstractReads.get(searchKey(context)) ?? new Set<string>()
+    const abstractOnlyCount = corpus.itemIds.filter(
+      (itemId) => !fullTextItemIds.has(itemId) && abstractItemIds.has(itemId)
+    ).length
+
     return {
       items: corpus.itemIds.map((itemId) => ({
         itemId,
-        metadataRevision: itemsById.get(itemId)!.metadataRevision
+        metadataRevision: itemsById.get(itemId)!.metadataRevision,
+        item: itemsById.get(itemId)!.item
       })),
-      retrievals: [...grouped.values()].map(({ criteria, itemIds, totalCount }) => ({
+      retrievals: searches.map(({ criteria, itemIds, totalCount, offset }) => ({
         ...criteria,
-        resultCount: itemIds.size,
+        offset,
+        resultCount: itemIds.length,
         totalCount,
-        complete: itemIds.size >= totalCount
+        complete: itemIds.length >= totalCount
       })),
       coverage: {
         searchedCount: searchedItemIds.size,
         candidateCount: corpus.candidateCount,
         fullTextCount,
-        abstractOnlyCount: corpus.itemIds.length - fullTextCount,
+        abstractOnlyCount,
+        metadataOnlyCount: corpus.itemIds.length - fullTextCount - abstractOnlyCount,
         unprocessedCount: searchedItemIds.size - corpus.candidateCount
       },
       capturedAt: new Date().toISOString()

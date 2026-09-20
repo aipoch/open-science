@@ -34,6 +34,8 @@ export type DiscoveredInterpreter = {
   runnable: boolean
   condaEnv?: string
   detail?: string
+  // Advisory discovery only; never persisted as consent. Missing means detection was unavailable.
+  personalRLibraries?: string[]
 }
 
 // One installed package in a discovered environment, surfaced by the Settings "Packages" dialog.
@@ -49,11 +51,13 @@ export type EnvPackage = {
 // The v4 per-language enablement state, keyed by `envId` (the interpreter's real path). `enabled` is
 // an EXPLICIT override map — a present entry wins over the provenance default (see isEnvEnabled), an
 // absent one falls back to it, so re-detection and new envs keep working without a migration.
-// `installAuthorized` is the SEPARATE high-risk opt-in that lets Open Science write packages into an
+// `installAuthorized` is the SEPARATE high-risk opt-in that lets Open-Science write packages into an
 // external env (default OFF; execute-after-enable stays read-only until this is turned on).
 export type RuntimeEnablement = {
   enabled: Record<string, boolean>
   installAuthorized: Record<string, boolean>
+  // Explicit R library consent. Historical booleans alone never authorize R writes.
+  installLibraries?: Record<string, string>
 }
 
 // How many live sessions are bound to a runtime, split by kernel state, so the Settings disable

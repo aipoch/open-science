@@ -43,10 +43,10 @@ context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suff
 
 Never translated, in any catalog:
 
-`Open Science` (product name), `Claude`, `Codex`, `opencode`, `Notebook`, `MCP`, `ACP`, `API`,
+`Open-Science` (product name), `Claude`, `Codex`, `opencode`, `Notebook`, `MCP`, `ACP`, `API`,
 `CLI`, `SSH`, `GitHub`, `Star`, `Discord`, `Python`, `Jupyter`, and all model names.
 
-- `Notebook` is a fixed Open Science feature name. Retaining it also avoids the paper-notebook
+- `Notebook` is a fixed Open-Science feature name. Retaining it also avoids the paper-notebook
   reading of 笔记本 / 筆記本.
 - Translate generic `Skill` and `Agent` prose according to the core table below. Keep exact file
   names, commands, paths, protocol identifiers, and code spans unchanged, including `SKILL.md`,
@@ -55,7 +55,7 @@ Never translated, in any catalog:
   both meanings; model input, output, context, and usage counts use 词元 / 詞元 / トークン / 토큰 /
   токен; authentication credentials use 令牌 / 權杖 / トークン / 토큰 / токен. API field names such
   as `max_tokens` remain unchanged.
-- The `Open Science` name is fixed by `docs/design.md`, but the home tagline beneath it **is**
+- The `Open-Science` name is fixed by `docs/design.md`, but the home tagline beneath it **is**
   translated.
 
 ## Core domain nouns
@@ -96,7 +96,7 @@ Never translated, in any catalog:
 | context            | Kontext              | contexte                  | コンテキスト               | 컨텍스트            | контекст             | 上下文     | 上下文     |
 | context compaction | Kontextkomprimierung | compactage du contexte    | コンテキスト圧縮           | 컨텍스트 압축       | сжатие контекста     | 上下文压缩 | 上下文壓縮 |
 
-Translate generic Open Science roles, surfaces, and domain nouns according to the table. Keep exact
+Translate generic Open-Science roles, surfaces, and domain nouns according to the table. Keep exact
 third-party names and technical identifiers, including `Claude Connectors Directory`,
 `Specialist Marketplace protocol`, `specialist.json`, and package filenames.
 

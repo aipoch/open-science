@@ -1,3 +1,6 @@
+import { storageErrorMessage } from '@/lib/storage-error'
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { AlertDialog } from 'radix-ui'
 import {
   CheckCircle2,
@@ -33,9 +36,11 @@ import { resolveLocalPath } from '../../../../shared/local-fs'
 import type {
   DataRootKind,
   DataRootInspection,
+  DataRootSelection,
   DataRootRecoveryStatus,
   UsageCategoryKey
 } from '../../../../shared/storage'
+import { PdfParsingCacheAction } from './PdfParsingCacheAction'
 import { SettingsSection } from './SettingsLayout'
 import { isAgentRepairCheck } from './settings-navigation'
 import { StorageMigrationModal } from './StorageMigrationModal'
@@ -62,10 +67,14 @@ const formatBytes = (bytes: number): string => {
 const CATEGORY_LABEL_KEYS = {
   artifacts: 'Artifacts',
   compute: 'Compute cache',
+  content: 'Shared content',
+  literature: 'Literature settings and tasks',
   delegation: 'Subagent workspaces',
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
+  models: 'Local parsing models',
+  'pdf-structure': 'PDF parsing results',
   'execution-file-evidence': 'Execution evidence',
   workspaces: 'Session workspaces'
 } as const satisfies Record<UsageCategoryKey, string>
@@ -75,10 +84,14 @@ const CATEGORY_LABEL_KEYS = {
 const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   artifacts: 'bg-storage-artifacts',
   compute: 'bg-storage-compute',
+  content: 'bg-storage-content',
+  literature: 'bg-storage-literature',
   delegation: 'bg-storage-delegation',
   runtime: 'bg-storage-runtime',
   uploads: 'bg-storage-uploads',
   notebooks: 'bg-storage-notebooks',
+  models: 'bg-storage-runtime',
+  'pdf-structure': 'bg-storage-artifacts',
   'execution-file-evidence': 'bg-storage-execution-evidence',
   workspaces: 'bg-storage-workspaces'
 }
@@ -125,12 +138,15 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [revealError, setRevealError] = useState<string | undefined>()
   const [workspaceOpenError, setWorkspaceOpenError] = useState<string | undefined>()
   const [newPath, setNewPath] = useState('')
+  const [pathError, setPathError] = useState<string>()
+  const [isInspecting, setIsInspecting] = useState(false)
   // The classification of `newPath` (a PARENT the user typed/picked), keyed by the exact path it
   // was computed for so a stale response for an already-superseded path never drives the action
-  // buttons. `dataRoot` is the derived `<newPath>/OpenScience` the app will actually use.
+  // buttons. `dataRoot` is the exact resolved destination, normally `<newPath>/Open-Science`.
   const [inspection, setInspection] = useState<(DataRootInspection & { path: string }) | null>(null)
   const [migrationTarget, setMigrationTarget] = useState<{
     path: string
+    selection?: DataRootSelection
     recoveryStatus?: DataRootRecoveryStatus
     targetAvailableBytes?: number
   } | null>(null)
@@ -147,6 +163,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   const [expandedCategory, setExpandedCategory] = useState<UsageCategoryKey | null>(null)
   // Guards against a stale inspectDataRoot response (from a superseded path) overwriting a newer one.
   const inspectRequestRef = useRef(0)
+  useEffect(
+    () => () => {
+      inspectRequestRef.current += 1
+    },
+    []
+  )
 
   useEffect(() => {
     void loadStorageStatus().catch(() => undefined)
@@ -170,7 +192,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       const result = await window.api.storage.revealAppStorage()
       // Backend-supplied failure text passes through verbatim; the catalog copy is the fallback.
       if (!result.revealed)
-        setRevealError(result.error ?? t('Could not reveal application storage.'))
+        setRevealError(
+          storageErrorMessage(result.error, t) ?? t('Could not reveal application storage.')
+        )
     } catch (error) {
       setRevealError(
         error instanceof Error ? error.message : t('Could not reveal application storage.')
@@ -209,21 +233,43 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   // route correctly; an empty path clears the classification instead of calling the IPC.
   const inspectPath = async (path: string): Promise<void> => {
     const requestId = ++inspectRequestRef.current
-    if (!path) {
-      setInspection(null)
-      return
+    setInspection(null)
+    setPathError(undefined)
+    setDefaultError(undefined)
+    setIsInspecting(Boolean(path))
+    if (!path) return
+    try {
+      const result = await window.api.storage.inspectDataRoot(path)
+      if (inspectRequestRef.current !== requestId) return
+      setInspection({ path, ...result })
+    } catch {
+      if (inspectRequestRef.current !== requestId) return
+      setPathError(t('Could not check this folder. Try again.'))
+    } finally {
+      if (inspectRequestRef.current === requestId) setIsInspecting(false)
     }
-    const result = await window.api.storage.inspectDataRoot(path)
-    if (inspectRequestRef.current !== requestId) return
-    setInspection({ path, ...result })
   }
 
   const handleBrowse = async (): Promise<void> => {
-    const picked = await window.api.storage.pickDirectory()
-    if (!picked) return
-    setNewPath(picked)
-    setAdoptError(undefined)
-    await inspectPath(picked)
+    const requestId = ++inspectRequestRef.current
+    setInspection(null)
+    setIsInspecting(false)
+    setPathError(undefined)
+    setDefaultError(undefined)
+    try {
+      const picked = await window.api.storage.pickDirectory()
+      if (inspectRequestRef.current !== requestId) return
+      if (!picked) {
+        await inspectPath(newPath.trim())
+        return
+      }
+      setNewPath(picked)
+      setAdoptError(undefined)
+      await inspectPath(picked)
+    } catch {
+      if (inspectRequestRef.current === requestId)
+        setPathError(t('Could not open the folder picker. Try again.'))
+    }
   }
 
   const handleNewPathChange = (value: string): void => {
@@ -233,8 +279,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
   }
 
   const handleCancelNewPath = (): void => {
+    inspectRequestRef.current += 1
     setNewPath('')
     setInspection(null)
+    setIsInspecting(false)
+    setPathError(undefined)
+    setDefaultError(undefined)
     setAdoptError(undefined)
     setIsEditing(false)
   }
@@ -244,8 +294,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setMigrationTarget(null)
     // Discarding a recovered copy changes its on-disk classification. Refresh the editor instead of
     // leaving a stale `recover` action that would reopen a modal for a marker that no longer exists.
-    if (resolvedTarget && inspection?.path === resolvedTarget.path) {
-      void inspectPath(resolvedTarget.path)
+    if (resolvedTarget && inspection?.dataRoot === resolvedTarget.path) {
+      void inspectPath(inspection.path)
     }
   }
 
@@ -254,46 +304,68 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setIsAdopting(true)
     setAdoptError(undefined)
 
-    const result = await window.api.storage.setDataRootAndRelaunch(trimmedNewPath, false)
-    if (!result.ok) {
+    try {
+      const result = await window.api.storage.setDataRootAndRelaunch(
+        inspection!.dataRoot,
+        false,
+        inspection!.selection
+      )
+      if (!result.ok) {
+        setIsAdopting(false)
+        setAdoptError(storageErrorMessage(result.error, t) ?? t('Could not switch to this folder.'))
+      }
+    } catch {
       setIsAdopting(false)
-      setAdoptError(result.error ?? t('Could not switch to this folder.'))
+      setAdoptError(t('Could not switch to this folder.'))
     }
     // On success the app relaunches; nothing left to update here.
   }
 
-  // "Use default location": relocate back to the default `<home>/OpenScience` (the reverse of any
-  // other move). The default is reproduced by feeding its parent through the same inspect/migrate
-  // flow a browsed folder uses, so the common case (default folder empty or gone → 'move') just
-  // opens the migration modal, which moves the data back and restarts. Rare fallbacks: the default
-  // folder still holds data ('adopt' → repoint as-is), or it is somehow unusable ('invalid' → error).
+  // Pass the displayed destination itself. A parent can resolve to a populated legacy sibling,
+  // which would make "Use default" silently target a different location from the one shown.
   const handleUseDefault = async (): Promise<void> => {
     if (!info) return
+    const requestId = ++inspectRequestRef.current
+    setInspection(null)
+    setPathError(undefined)
     setDefaultError(undefined)
-    const result = await window.api.storage.inspectDataRoot(info.defaultParent)
-    if (result.kind === 'move') {
-      setMigrationTarget({
-        path: info.defaultParent,
-        targetAvailableBytes: result.targetAvailableBytes
-      })
-      return
+    setIsInspecting(true)
+    try {
+      const result = await window.api.storage.inspectDataRoot(info.defaultDataRoot)
+      if (inspectRequestRef.current !== requestId) return
+      if (result.kind === 'move') {
+        setMigrationTarget({
+          path: result.dataRoot,
+          selection: result.selection,
+          targetAvailableBytes: result.targetAvailableBytes
+        })
+        return
+      }
+      if (result.kind === 'adopt') {
+        setNewPath(info.defaultDataRoot)
+        setInspection({ path: info.defaultDataRoot, ...result })
+        setIsEditing(true)
+        setAdoptConfirmOpen(true)
+        return
+      }
+      if (result.kind === 'recover' && result.recoveryStatus) {
+        setMigrationTarget({
+          path: result.dataRoot,
+          selection: result.selection,
+          recoveryStatus: result.recoveryStatus,
+          targetAvailableBytes: result.targetAvailableBytes
+        })
+        return
+      }
+      setDefaultError(
+        storageErrorMessage(result.error, t) ?? t('The default location is not usable.')
+      )
+    } catch {
+      if (inspectRequestRef.current === requestId)
+        setDefaultError(t('The default location is not usable.'))
+    } finally {
+      if (inspectRequestRef.current === requestId) setIsInspecting(false)
     }
-    if (result.kind === 'adopt') {
-      setNewPath(info.defaultParent)
-      setInspection({ path: info.defaultParent, ...result })
-      setIsEditing(true)
-      setAdoptConfirmOpen(true)
-      return
-    }
-    if (result.kind === 'recover' && result.recoveryStatus) {
-      setMigrationTarget({
-        path: info.defaultParent,
-        recoveryStatus: result.recoveryStatus,
-        targetAvailableBytes: result.targetAvailableBytes
-      })
-      return
-    }
-    setDefaultError(result.error ?? t('The default location is not usable.'))
   }
 
   const trimmedNewPath = newPath.trim()
@@ -320,7 +392,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       {storageRepairActive && storageCheck ? (
         <SettingsSection
           title={t('Application storage')}
-          description={t('Open Science needs write access to its private configuration directory.')}
+          description={t('Open-Science needs write access to its private configuration directory.')}
           aria-label={t('Application storage')}
         >
           {/* Keep the failure visibly actionable, then remove the warning treatment as soon as a
@@ -328,7 +400,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           <div
             className={cn(
               'space-y-3 rounded-lg border p-3',
-              storagePassed ? 'border-border bg-muted/40' : 'border-amber-500/30 bg-amber-500/5'
+              storagePassed
+                ? 'border-border bg-muted/40'
+                : 'border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface/5 dark:bg-status-warning-dark-surface/5'
             )}
           >
             <div className="flex items-start gap-2">
@@ -339,7 +413,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 />
               ) : (
                 <TriangleAlert
-                  className="mt-0.5 size-4 shrink-0 text-amber-600"
+                  className="mt-0.5 size-4 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
                   aria-hidden="true"
                 />
               )}
@@ -353,14 +427,14 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
               </div>
             </div>
             {revealError ? (
-              <p className="text-xs text-destructive" role="alert">
+              <InlineNotice level="error" role="alert">
                 {revealError}
-              </p>
+              </InlineNotice>
             ) : null}
             {environmentCheckError ? (
-              <p className="text-xs text-destructive" role="alert">
+              <InlineNotice level="error" role="alert">
                 {environmentCheckError}
-              </p>
+              </InlineNotice>
             ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" variant="outline" onClick={() => void handleRevealAppStorage()}>
@@ -392,7 +466,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       <SettingsSection
         title={t('Data location')}
         description={t(
-          'Where Open Science stores your projects, artifacts, and other app data on this device.'
+          'Where Open-Science stores your projects, artifacts, and other app data on this device.'
         )}
         aria-label={t('Data location')}
         action={
@@ -405,15 +479,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       >
         {storageStatus === null ? (
           storageLoadError ? (
-            <div className="space-y-2">
-              <p className="text-sm text-destructive" role="alert">
-                {t('Could not scan storage usage. Try again.')}
-              </p>
-              <Button type="button" variant="outline" onClick={retryStorageInfo}>
-                <RefreshCw className="size-4" aria-hidden="true" />
-                {t('Retry')}
-              </Button>
-            </div>
+            <Notice
+              level="error"
+              role="alert"
+              description={t('Could not scan storage usage. Try again.')}
+              primaryButton={{ label: t('Retry'), onClick: retryStorageInfo }}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
           )
@@ -433,8 +504,19 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 : t('Scanning…')}
             </p>
 
+            {storageStatus.cleanupPending ? (
+              <p className="mt-2 text-xs text-muted-foreground" role="status">
+                {t(
+                  'Cleanup from an earlier move is still pending. The current location remains selected; old copies may still use disk space.'
+                )}
+              </p>
+            ) : null}
+
             {isEditing && info ? (
-              <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
+              <fieldset
+                disabled={isAdopting}
+                className="mt-3 min-w-0 rounded-lg border border-border bg-muted/40 p-3"
+              >
                 <label
                   htmlFor="data-dir-path-input"
                   className="mb-1 block text-xs font-medium text-muted-foreground"
@@ -474,10 +556,21 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   </button>
                 ) : null}
 
-                {defaultError ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
-                    {defaultError}
+                {isInspecting ? (
+                  <p className="mt-2 text-xs text-muted-foreground" role="status">
+                    {t('Checking…')}
                   </p>
+                ) : null}
+                {pathError ? (
+                  <InlineNotice level="error" className="mt-2" role="alert">
+                    {pathError}
+                  </InlineNotice>
+                ) : null}
+
+                {defaultError ? (
+                  <InlineNotice level="error" className="mt-2" role="alert">
+                    {defaultError}
+                  </InlineNotice>
                 ) : null}
 
                 {(kind === 'move' || kind === 'adopt' || kind === 'recover') && inspection ? (
@@ -502,7 +595,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 {kind === 'adopt' ? (
                   <p className="mt-2 text-xs text-muted-foreground">
                     <Trans
-                      i18nKey="This folder already contains Open Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart."
+                      i18nKey="This folder already contains Open-Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart."
                       components={{ em: <strong className="font-semibold text-foreground" /> }}
                     />
                   </p>
@@ -544,15 +637,15 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                 )}
 
                 {kind === 'invalid' && inspection?.error ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
+                  <InlineNotice level="error" className="mt-2" role="alert">
                     {inspection.error}
-                  </p>
+                  </InlineNotice>
                 ) : null}
 
                 {adoptError ? (
-                  <p className="mt-2 text-xs text-destructive" role="alert">
+                  <InlineNotice level="error" className="mt-2" role="alert">
                     {adoptError}
-                  </p>
+                  </InlineNotice>
                 ) : null}
 
                 <div className="mt-3 flex gap-2">
@@ -570,7 +663,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       type="button"
                       onClick={() =>
                         setMigrationTarget({
-                          path: trimmedNewPath,
+                          path: inspection.dataRoot,
+                          selection: inspection.selection,
                           recoveryStatus: inspection.recoveryStatus,
                           targetAvailableBytes: inspection.targetAvailableBytes
                         })
@@ -585,7 +679,8 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       disabled={!canChangeLocation}
                       onClick={() =>
                         setMigrationTarget({
-                          path: trimmedNewPath,
+                          path: inspection!.dataRoot,
+                          selection: inspection!.selection,
                           targetAvailableBytes: inspection?.targetAvailableBytes
                         })
                       }
@@ -598,7 +693,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     {tCommon('Cancel')}
                   </Button>
                 </div>
-              </div>
+              </fieldset>
             ) : null}
           </>
         )}
@@ -628,30 +723,32 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
         >
           {info === null ? (
             storageLoadError ? (
-              <div className="space-y-2">
-                <p className="text-sm text-destructive" role="alert">
-                  {t('Could not scan storage usage. Try again.')}
-                </p>
-                <Button type="button" variant="outline" onClick={retryStorageInfo}>
-                  <RefreshCw className="size-4" aria-hidden="true" />
-                  {t('Retry')}
-                </Button>
-              </div>
+              <Notice
+                level="error"
+                role="alert"
+                description={t('Could not scan storage usage. Try again.')}
+                primaryButton={{ label: t('Retry'), onClick: retryStorageInfo }}
+              />
             ) : (
               <p className="text-sm text-muted-foreground">{t('Scanning…')}</p>
             )
           ) : (
             <>
               {storageLoadError ? (
-                <p className="mb-3 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mb-3" role="alert">
                   {t('Could not scan storage usage. Try again.')}
-                </p>
+                </InlineNotice>
               ) : null}
               {workspaceOpenError ? (
-                <p className="mb-3 text-sm text-destructive" role="alert">
+                <InlineNotice level="error" className="mb-3" role="alert">
                   {workspaceOpenError}
-                </p>
+                </InlineNotice>
               ) : null}
+              <p className="mb-3 text-xs text-muted-foreground">
+                {t(
+                  'Sizes count hard-linked files once within each category. They are not estimates of space freed by deletion.'
+                )}
+              </p>
               {totalBytes > 0 ? (
                 <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
                   {categories
@@ -719,9 +816,14 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                               key={child.name}
                               className="flex items-center justify-between gap-2 text-xs"
                             >
-                              <span className="truncate text-muted-foreground" title={child.name}>
-                                {child.name}
-                              </span>
+                              <div className="min-w-0 text-muted-foreground">
+                                <span className="block truncate" title={child.name}>
+                                  {child.name}
+                                </span>
+                                {category.key === 'workspaces' && child.retainedAfterDelete ? (
+                                  <span className="block">{t('Retained after deletion')}</span>
+                                ) : null}
+                              </div>
                               <div className="flex shrink-0 items-center gap-1">
                                 <span className="tabular-nums text-muted-foreground">
                                   {formatBytes(child.bytes)}
@@ -790,7 +892,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
 
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t("You can move Open Science's data to another folder on this device.")}
+                {t("You can move Open-Science's data to another folder on this device.")}
               </AlertDialog.Description>
               <div className="mt-3">
                 <DataRootWarning />
@@ -848,7 +950,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
               <pre className={PATH_PILL}>{inspection?.dataRoot ?? trimmedNewPath}</pre>
               <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-3')}>
                 <Trans
-                  i18nKey="Open Science will restart and use this folder as-is — <em>its contents are not merged with your current data</em>, and anything it's missing will show as unavailable. <em>Your current data folder is left untouched, so you can switch back.</em>"
+                  i18nKey="Open-Science will restart and use this folder as-is — <em>its contents are not merged with your current data</em>, and anything it's missing will show as unavailable. <em>Your current data folder is left untouched, so you can switch back.</em>"
                   components={{ em: <strong className="font-semibold text-text-000" /> }}
                 />
               </AlertDialog.Description>
@@ -873,11 +975,13 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       {migrationTarget !== null ? (
         <StorageMigrationModal
           targetPath={migrationTarget.path}
+          selection={migrationTarget.selection}
           recoveryStatus={migrationTarget.recoveryStatus}
           targetAvailableBytes={migrationTarget.targetAvailableBytes}
           onClose={handleMigrationClose}
         />
       ) : null}
+      <PdfParsingCacheAction />
     </div>
   )
 }

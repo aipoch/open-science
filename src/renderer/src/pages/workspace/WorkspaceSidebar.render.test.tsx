@@ -3,7 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
-import { Toolbox } from 'lucide-react'
+import { Cpu, Toolbox } from 'lucide-react'
 import {
   resolveActionMenuEntries,
   type ActionMenuSpec,
@@ -202,12 +202,14 @@ const mountProjectSidebar = async (
   openMenu: () => void
   rerenderProjects: (projects: readonly SidebarProject[]) => Promise<void>
   rerenderSessions: (sessions: ChatSession[]) => Promise<void>
+  selectSession: (sessionId: string) => Promise<void>
 }> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
 
+  let selectedSessionId = 'session-a'
   let renderedProjects = otherProjects
   let renderedSessions = [createSession({ id: 'session-a' })]
   const render = (): void => {
@@ -216,7 +218,7 @@ const mountProjectSidebar = async (
         projectName="Example project"
         otherProjects={renderedProjects}
         sessions={renderedSessions}
-        activeSessionId="session-a"
+        activeSessionId={selectedSessionId}
         canCreateConversation
         canMutateConversations
         canDeleteConversations
@@ -252,6 +254,10 @@ const mountProjectSidebar = async (
       openRadixMenu(container.querySelector<HTMLButtonElement>('[title="Example project"]')),
     rerenderProjects: async (projects) => {
       renderedProjects = projects
+      await act(async () => render())
+    },
+    selectSession: async (sessionId) => {
+      selectedSessionId = sessionId
       await act(async () => render())
     },
     rerenderSessions: async (sessions) => {
@@ -325,6 +331,101 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
+  it('reveals the selected session without resetting scroll on session updates', async () => {
+    const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+    const revealed: HTMLElement[] = []
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: function (this: HTMLElement) {
+        revealed.push(this)
+      }
+    })
+    const sidebar = await mountProjectSidebar([])
+    try {
+      const sessions = Array.from({ length: 60 }, (_, index) =>
+        createSession({ id: `session-${index}`, title: `Session ${index}` })
+      )
+      await sidebar.rerenderSessions(sessions)
+      revealed.length = 0
+      await sidebar.selectSession('session-59')
+      expect(revealed).toHaveLength(1)
+      expect(revealed[0].closest('[data-session-id]')?.getAttribute('data-session-id')).toBe(
+        'session-59'
+      )
+      await sidebar.rerenderSessions(
+        sessions.map((session) => ({ ...session, updatedAt: session.updatedAt + 1 }))
+      )
+      expect(revealed).toHaveLength(1)
+      await sidebar.selectSession('session-0')
+      expect(revealed).toHaveLength(2)
+      expect(revealed[1].closest('[data-session-id]')?.getAttribute('data-session-id')).toBe(
+        'session-0'
+      )
+    } finally {
+      sidebar.cleanup()
+      if (previous) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', previous)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+    }
+  })
+
+  it.each([true, false])(
+    'marks imported sessions with an accessible read-only icon (details loaded: %s)',
+    async (loaded) => {
+      const html = await renderSidebar([
+        createSession({
+          id: 'import-session',
+          contentLoaded: loaded ? undefined : false,
+          title: 'Literature comparison',
+          status: 'idle',
+          packageOrigin: loaded
+            ? {
+                importId: 'import-1',
+                sourceProjectId: 'source-project',
+                sourceSessionId: 'source-session',
+                importedAt: 1,
+                manifestChecksum: 'a'.repeat(64)
+              }
+            : undefined
+        }),
+        createSession({ id: 'local', title: 'New analysis', status: 'idle' })
+      ])
+      const container = document.createElement('div')
+      container.innerHTML = html
+      const imported = container.querySelector('[data-session-id="import-session"]')
+      const icon = imported?.querySelector('[role="img"][aria-label="Read-only"]')
+      expect(icon).not.toBeNull()
+      expect(icon?.textContent).toBe('')
+      expect(
+        imported?.querySelector('[data-slot="session-open-button"]')?.getAttribute('title')
+      ).toBe('Read-only')
+      expect(container.querySelector('[data-session-id="local"] [role="img"]')).toBeNull()
+    }
+  )
+
+  it.each([true, false])('leaves forked imports unlocked (details loaded: %s)', async (loaded) => {
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([
+      createSession({
+        id: '2a32189d-c609-4f99-aeb2-5a7cf7f65bb7',
+        contentLoaded: loaded ? undefined : false,
+        status: 'idle',
+        forkOrigin: loaded
+          ? {
+              importId: 'fork-receipt',
+              sourceProjectId: 'source-project',
+              sourceSessionId: 'source-session',
+              importedAt: 1,
+              manifestChecksum: 'a'.repeat(64)
+            }
+          : undefined
+      })
+    ])
+    expect(container.querySelector('[aria-label="Read-only"]')).toBeNull()
+    expect(
+      container.querySelector('[data-slot="session-open-button"]')?.getAttribute('title')
+    ).not.toBe('Read-only')
+  })
+
   it('keeps the sidebar card inset even on both sides', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
 
@@ -647,15 +748,10 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual([
-        'toggle-pin',
-        'edit',
-        'download-artifacts',
-        'view-notebook',
-        'export',
-        'archive',
-        'delete'
-      ])
+      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      expect(menu?.querySelector('[data-slot="dropdown-menu-sub-trigger"]')?.textContent).toBe(
+        'Export'
+      )
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
       expect(onOpenSession).not.toHaveBeenCalled()
 
@@ -673,15 +769,7 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual([
-        'toggle-pin',
-        'edit',
-        'download-artifacts',
-        'view-notebook',
-        'export',
-        'archive',
-        'delete'
-      ])
+      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
       await clickRadixMenuItem(
         dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
       )
@@ -2318,11 +2406,12 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Customize, Files, and Literature after New and wires their entries', async () => {
+  it('renders Customize, Files, Compute, and Literature after New and wires their entries', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
     const onOpenLiterature = vi.fn()
     const onOpenSettings = vi.fn()
+    const onOpenCompute = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
       projectName: 'Example project',
@@ -2336,6 +2425,8 @@ describe('WorkspaceSidebar accessible render', () => {
       isFilesOpen: true,
       onOpenFiles,
       onOpenLiterature,
+      isComputeOpen: false,
+      onOpenCompute,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       canDownloadArtifacts: true,
@@ -2355,14 +2446,18 @@ describe('WorkspaceSidebar accessible render', () => {
     const customizeButton = buttons.find((button) => getTextContent(button).trim() === 'Customize')
     const filesButton = buttons.find((button) => getTextContent(button).trim() === 'Files')
     const literatureButton = buttons.find((button) => getTextContent(button).trim() === 'Library')
+    const computeButton = buttons.find((button) => getTextContent(button).trim() === 'Compute')
 
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)
     expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
     expect(buttons[newButtonIndex + 2]).toBe(filesButton)
-    expect(buttons[newButtonIndex + 3]).toBe(literatureButton)
+    expect(buttons[newButtonIndex + 3]).toBe(computeButton)
+    expect(buttons[newButtonIndex + 4]).toBe(literatureButton)
     expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)
+    expect(collectElements(computeButton).some((element) => element.type === Cpu)).toBe(true)
+    expect(computeButton?.props['aria-pressed']).toBe(false)
 
     expect(customizeButton?.props.onClick).toBeTypeOf('function')
     ;(customizeButton?.props.onClick as () => void)()
@@ -2371,10 +2466,46 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
     expect(onOpenFiles).toHaveBeenCalledTimes(1)
+    ;(computeButton?.props.onClick as () => void)()
+    expect(onOpenCompute).toHaveBeenCalledTimes(1)
 
     expect(literatureButton?.props.onClick).toBeTypeOf('function')
     ;(literatureButton?.props.onClick as () => void)()
     expect(onOpenLiterature).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the Project Compute entry when its read capability is unavailable', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [],
+      activeSessionId: undefined,
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: false,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: false,
+      onDownloadProjectArtifacts: vi.fn()
+    })
+    const computeButton = collectElements(tree)
+      .filter((element) => element.type === 'button')
+      .find((button) => getTextContent(button).trim() === 'Compute')
+
+    expect(computeButton?.props.disabled).toBe(true)
   })
 
   it('wires the View notebook menu item to the matching session', async () => {

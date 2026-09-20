@@ -1,4 +1,5 @@
-import { isAbsolute, normalize, parse } from 'node:path'
+import { classificationSettingsSchema } from './classification-config'
+import { isAbsolute } from 'node:path'
 
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
@@ -157,7 +158,17 @@ const sanitizeManualInterpreters = (
 
 const sanitizeRuntimeEnablementEntry = (value: unknown): RuntimeEnablement => ({
   enabled: asBooleanRecord(isRecord(value) ? value.enabled : undefined),
-  installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined)
+  installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined),
+  ...(isRecord(value) && isRecord(value.installLibraries)
+    ? {
+        installLibraries: Object.fromEntries(
+          Object.entries(value.installLibraries).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[1] === 'string' && entry[1].length > 0
+          )
+        )
+      }
+    : {})
 })
 
 const sanitizeRuntimeEnablement = (
@@ -239,10 +250,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     providerIds.add(provider.id)
     return true
   })
+  const classification = classificationSettingsSchema.safeParse(value.classification).data
   const visionModel = sanitizeVisionModel(value.visionModel)
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers,
+    ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
     sessionDetailsModel: sanitizeSessionDetailsModel(value.sessionDetailsModel),
@@ -303,6 +316,19 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (value.notebookNetwork !== undefined) {
     settings.notebookNetwork = normalizeNotebookNetworkSettings(value.notebookNetwork)
   }
+  if (value.localShellRuntime === 'powershell' || value.localShellRuntime === 'wsl2-bash') {
+    settings.localShellRuntime = value.localShellRuntime
+  }
+  if (isRecord(value.wslSelection)) {
+    const distro = asString(value.wslSelection.distro)?.trim()
+    const user = asString(value.wslSelection.user)?.trim()
+    if (distro && user) settings.wslSelection = { distro, user }
+  }
+  if (isRecord(value.activatedWslSelection)) {
+    const distro = asString(value.activatedWslSelection.distro)?.trim()
+    const user = asString(value.activatedWslSelection.user)?.trim()
+    if (distro && user) settings.activatedWslSelection = { distro, user }
+  }
 
   const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
   if (pathsNormalizedAt !== undefined) settings.pathsNormalizedAt = pathsNormalizedAt
@@ -311,14 +337,11 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.legacyDataMovePromptDismissedAt = legacyDataMovePromptDismissedAt
   }
 
-  // Keep absolute paths canonical without stripping a filesystem root on any supported platform.
-  const dataRoot = asString(value.dataRoot)?.trim()
-  if (dataRoot && isAbsolute(dataRoot)) {
-    const normalized = normalize(dataRoot)
-    const { root } = parse(normalized)
-    settings.dataRoot =
-      normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
-  }
+  // Whitespace-only means unset. Keep a valid saved path verbatim: trimming directory names or
+  // lexically collapsing parent segments across symlinks can select a different directory.
+  const dataRoot = asString(value.dataRoot)
+  if (value.dataRootIsInitialDefault === true) settings.dataRootIsInitialDefault = true
+  if (dataRoot && isAbsolute(dataRoot)) settings.dataRoot = dataRoot
 
   const agentFrameworkId = asString(value.agentFrameworkId)
   if (

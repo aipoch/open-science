@@ -272,7 +272,11 @@ describe('createProductionProvisioner', () => {
     const root = makeRoot()
     const mmPath = join(root, 'bin', micromambaBinName)
     touchBin(mmPath)
-    const cleanup = vi.fn()
+    const cleanup = vi.fn().mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
     const processSandbox: NotebookProcessSandbox = {
       wrap: vi.fn(async () => ({
         executable: process.execPath,

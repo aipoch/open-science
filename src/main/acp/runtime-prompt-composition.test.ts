@@ -23,6 +23,7 @@ describe('ACP Runtime Prompt composition', () => {
           afterRelease: vi.fn(async () => undefined)
         },
         reload: {
+          prepareContinuationReplay: vi.fn(async () => undefined),
           disconnect: vi.fn(async () => undefined),
           resume: vi.fn(async () => ({}))
         }
@@ -33,6 +34,7 @@ describe('ACP Runtime Prompt composition', () => {
       expect(host.plan.admit).not.toHaveBeenCalled()
       expect(host.plan.beforeRelease).not.toHaveBeenCalled()
       expect(host.plan.afterRelease).not.toHaveBeenCalled()
+      expect(host.reload.prepareContinuationReplay).not.toHaveBeenCalled()
       expect(host.reload.disconnect).not.toHaveBeenCalled()
       expect(host.reload.resume).not.toHaveBeenCalled()
       return owners

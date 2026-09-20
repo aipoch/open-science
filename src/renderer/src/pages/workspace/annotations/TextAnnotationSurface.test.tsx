@@ -1,13 +1,20 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
-import type { TextAnnotation } from '../../../../../shared/annotations'
+import {
+  validateAnnotations,
+  type SessionTextAnnotationSource,
+  type TextAnnotation
+} from '../../../../../shared/annotations'
 import { WorkspaceToolCodeBlock } from '../WorkspaceToolCodeBlock'
 import { requestAnnotationReveal, subscribeAnnotationReveal } from './annotation-reveal'
 import { TextAnnotationSurface } from './TextAnnotationSurface'
+import type { Bookmark } from '../../../../../shared/bookmarks'
+import { BookmarksContext } from '../bookmarks/bookmark-context'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -24,8 +31,10 @@ const annotation = (id: string, quote: string): TextAnnotation => ({
 describe('TextAnnotationSurface highlight restoration', () => {
   let container: HTMLDivElement
   let root: Root
+  let originalClientRects: PropertyDescriptor | undefined
 
   beforeEach(() => {
+    originalClientRects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects')
     highlights = installCssHighlightsMock()
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -36,6 +45,11 @@ describe('TextAnnotationSurface highlight restoration', () => {
     await act(async () => root.unmount())
     subscribeAnnotationReveal(() => true)()
     vi.unstubAllGlobals()
+    if (originalClientRects) {
+      Object.defineProperty(Range.prototype, 'getClientRects', originalClientRects)
+    } else {
+      Reflect.deleteProperty(Range.prototype, 'getClientRects')
+    }
     container.remove()
   })
 
@@ -57,6 +71,105 @@ describe('TextAnnotationSurface highlight restoration', () => {
       )
     )
   }
+
+  it.each([
+    { kind: 'agent-message' as const, sessionId: 'session-1', messageId: 'message-1' },
+    {
+      kind: 'session-item' as const,
+      sessionId: 'session-1',
+      itemId: 'tool-1',
+      itemType: 'tool-activity' as const,
+      sectionId: 'output'
+    }
+  ])('retains observers when parent updates preserve the source values ($kind)', async (source) => {
+    let mutationCount = 0
+    let resizeCount = 0
+    const Original = globalThis.MutationObserver
+    vi.stubGlobal(
+      'MutationObserver',
+      class extends Original {
+        constructor(callback: MutationCallback) {
+          super(callback)
+          mutationCount++
+        }
+      }
+    )
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor() {
+          resizeCount++
+        }
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    for (let i = 0; i < 21; i++) {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface source={{ ...source }} isAnimating>
+            <p>{`Streaming text ${i}`}</p>
+          </TextAnnotationSurface>
+        )
+      )
+    }
+    expect(container.textContent).toContain('Streaming text 20')
+    expect({ mutationCount, resizeCount }).toEqual({ mutationCount: 1, resizeCount: 1 })
+  })
+
+  it.each<[SessionTextAnnotationSource, SessionTextAnnotationSource]>([
+    [
+      { kind: 'agent-message', sessionId: 's1', messageId: 'm1' },
+      { kind: 'agent-message', sessionId: 's2', messageId: 'm1' }
+    ],
+    [
+      { kind: 'agent-message', sessionId: 's1', messageId: 'm1' },
+      { kind: 'agent-message', sessionId: 's1', messageId: 'm2' }
+    ],
+    [
+      {
+        kind: 'session-item',
+        sessionId: 's1',
+        itemId: 'i1',
+        itemType: 'tool-activity',
+        sectionId: 'input'
+      },
+      {
+        kind: 'session-item',
+        sessionId: 's1',
+        itemId: 'i1',
+        itemType: 'tool-activity',
+        sectionId: 'output'
+      }
+    ],
+    [
+      { kind: 'session-item', sessionId: 's1', itemId: 'i1', itemType: 'tool-activity' },
+      { kind: 'session-item', sessionId: 's1', itemId: 'i1', itemType: 'plan' }
+    ],
+    [
+      { kind: 'session-item', sessionId: 's1', itemId: 'i1', itemType: 'plan' },
+      { kind: 'session-item', sessionId: 's1', itemId: 'i2', itemType: 'plan' }
+    ]
+  ])(
+    'invalidates highlights when the source identity changes (%j -> %j)',
+    async (before, after) => {
+      const saved = [{ ...annotation('scope', 'repeat'), source: before }]
+      const show = async (source: SessionTextAnnotationSource): Promise<void> => {
+        await act(async () =>
+          root.render(
+            <TextAnnotationSurface source={source} activeAnnotations={saved}>
+              <p>repeat then repeat</p>
+            </TextAnnotationSurface>
+          )
+        )
+      }
+      await show(before)
+      expect(Array.from(highlights.get('agent-annotation-draft') ?? [])).toHaveLength(1)
+      await show(after)
+      expect(Array.from(highlights.get('agent-annotation-draft') ?? [])).toHaveLength(0)
+    }
+  )
 
   it('retries a sent quote after its surface and asynchronous content mount', async () => {
     const saved = annotation('late-quote', 'unique evidence')
@@ -236,6 +349,114 @@ describe('TextAnnotationSurface highlight restoration', () => {
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
+  it.each(['window resize', 'content resize', 'content mutation'])(
+    'does not force message layout without matching markers on %s',
+    async (trigger) => {
+      let resize: (() => void) | undefined
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(callback: () => void) {
+            resize = callback
+          }
+          observe = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+      // An annotation elsewhere in the conversation must not make this surface measure itself.
+      await renderSurface([annotation('other-message', 'repeat')], 'message-2')
+      const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+      const measure = vi.spyOn(surface, 'getBoundingClientRect')
+      await act(async () => {
+        if (trigger === 'window resize') window.dispatchEvent(new Event('resize'))
+        else if (trigger === 'content resize') resize?.()
+        else container.querySelector('p')!.firstChild!.textContent = 'Updated message text'
+      })
+      expect(measure).not.toHaveBeenCalled()
+      expect(container.querySelector('[data-text-annotation-edit]')).toBeNull()
+      measure.mockRestore()
+    }
+  )
+
+  it('keeps active markers positioned on resize and clears the last removed marker without layout', async () => {
+    let rangeRight = 90
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 10, right: rangeRight, top: 24, bottom: 40, width: 80, height: 16 }]
+    })
+    await renderSurface([annotation('positioned', 'repeat')])
+    const marker = (): HTMLElement | null =>
+      container.querySelector('[data-text-annotation-edit]')?.parentElement ?? null
+    expect(marker()?.style.left).toBe('90px')
+    rangeRight = 130
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(marker()?.style.left).toBe('130px')
+
+    const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+    const measure = vi.spyOn(surface, 'getBoundingClientRect')
+    await renderSurface([])
+    expect(marker()).toBeNull()
+    expect(measure).not.toHaveBeenCalled()
+    measure.mockRestore()
+  })
+
+  it('positions bookmark-only markers and clears them when their source no longer matches', async () => {
+    let rangeRight = 90
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [{ left: 10, right: rangeRight, top: 24, bottom: 40, width: 80, height: 16 }]
+    })
+    const saved = annotation('saved', 'repeat')
+    const bookmark: Bookmark = {
+      id: 'bookmark-1',
+      version: 1,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      target: { kind: 'text', source: saved.source, quote: saved.quote, anchor: saved.anchor },
+      note: 'Personal note',
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:00:00.000Z'
+    }
+    const renderBookmarked = async (messageId: string): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <BookmarksContext.Provider
+            value={{
+              scoped: true,
+              available: true,
+              bookmarks: [bookmark],
+              total: 1,
+              loading: false,
+              retryLoad: vi.fn(),
+              create: vi.fn(),
+              updateNote: vi.fn(),
+              remove: vi.fn()
+            }}
+          >
+            <TextAnnotationSurface
+              source={{ kind: 'agent-message', sessionId: 'session-1', messageId }}
+            >
+              <p>repeat then repeat</p>
+            </TextAnnotationSurface>
+          </BookmarksContext.Provider>
+        )
+      )
+    }
+    await renderBookmarked('message-1')
+    const marker = (): HTMLElement | null => container.querySelector('[data-bookmark-marker]')
+    expect(marker()?.style.left).toBe('91px')
+    rangeRight = 130
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(marker()?.style.left).toBe('131px')
+
+    const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+    const measure = vi.spyOn(surface, 'getBoundingClientRect')
+    await renderBookmarked('message-2')
+    expect(marker()).toBeNull()
+    expect(measure).not.toHaveBeenCalled()
+    measure.mockRestore()
+  })
+
   it('observes surface and content reflow and disconnects on cleanup', async () => {
     const observe = vi.fn()
     const disconnect = vi.fn()
@@ -252,77 +473,52 @@ describe('TextAnnotationSurface highlight restoration', () => {
     expect(disconnect).toHaveBeenCalledOnce()
   })
 
-  it('overlays a zero-layout pencil and edits the annotation locally with Cancel/Save', async () => {
-    Object.defineProperty(Range.prototype, 'getClientRects', {
-      configurable: true,
-      value: () => [{ left: 10, right: 90, top: 24, bottom: 40, width: 80, height: 16 }]
-    })
-    const active = [{ ...annotation('editable', 'repeat'), note: 'Check this wording' }]
-    const onUpdateNote = vi.fn(() => undefined)
-    await act(async () =>
-      root.render(
-        <TextAnnotationSurface
-          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
-          activeAnnotations={active}
-          onAdd={vi.fn()}
-          onUpdateNote={onUpdateNote}
-          onError={vi.fn()}
-        >
-          <p>repeat then repeat</p>
-        </TextAnnotationSurface>
+  it.each(['Save', 'Cancel', 'Remove annotation'] as const)(
+    'opens an existing annotation note and handles %s',
+    async (action) => {
+      Object.defineProperty(Range.prototype, 'getClientRects', {
+        configurable: true,
+        value: () => [{ left: 10, right: 90, top: 24, bottom: 40, width: 80, height: 16 }]
+      })
+      const active = [{ ...annotation('editable', 'repeat'), note: 'Check this wording' }]
+      const onUpdateNote = vi.fn(() => undefined)
+      const onRemove = vi.fn()
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={active}
+            onAdd={vi.fn()}
+            onUpdateNote={onUpdateNote}
+            onRemove={onRemove}
+            onError={vi.fn()}
+          >
+            <p>repeat then repeat</p>
+          </TextAnnotationSurface>
+        )
       )
-    )
 
-    const pencil = container.querySelector<HTMLButtonElement>('[data-text-annotation-edit]')
-    expect(pencil?.parentElement?.className).toContain('absolute')
-    expect(pencil?.className).toContain('bg-transparent')
-    expect(pencil?.dataset.annotationNote).toBe('Check this wording')
-    expect(pencil?.parentElement?.style.left).toBe('90px')
-    await act(async () =>
-      container
-        .querySelector('p')
-        ?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 30, clientY: 30 }))
-    )
-    const hoverNote = container.querySelector('[data-text-annotation-hover-note]')
-    expect(hoverNote?.textContent).toBe('Check this wording')
-    expect(hoverNote?.className).toContain('bg-muted')
-    expect(hoverNote?.className).toContain('truncate')
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-text-annotation-edit]')?.click()
-    )
-    expect(
-      document.querySelector<HTMLTextAreaElement>('[data-source-annotation-note]')?.value
-    ).toBe('Check this wording')
-    expect(
-      Array.from(document.querySelectorAll('button')).some(
-        (button) => button.textContent === 'Cancel'
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Edit annotation note' }))
       )
-    ).toBe(true)
-    const editor = document.querySelector<HTMLTextAreaElement>('[data-source-annotation-note]')!
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(editor, 'Updated locally')
-      editor.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () =>
-      Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent === 'Save')
-        ?.click()
-    )
-    expect(onUpdateNote).toHaveBeenCalledWith('editable', 'Updated locally')
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[data-text-annotation-edit]')?.click()
-    )
-    await act(async () =>
-      Array.from(document.querySelectorAll('button'))
-        .find((button) => button.textContent === 'Cancel')
-        ?.click()
-    )
-    expect(document.querySelector('[data-source-annotation-note]')).toBeNull()
-    expect(onUpdateNote).toHaveBeenCalledTimes(1)
-    Reflect.deleteProperty(Range.prototype, 'getClientRects')
-  })
+      const editor = screen.getByRole('textbox', { name: 'Annotation note' }) as HTMLTextAreaElement
+      expect(editor.value).toBe('Check this wording')
+      await act(async () => fireEvent.change(editor, { target: { value: 'Updated locally' } }))
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: action })))
+
+      expect(screen.queryByRole('textbox', { name: 'Annotation note' })).toBeNull()
+      if (action === 'Save') {
+        expect(onUpdateNote).toHaveBeenCalledExactlyOnceWith('editable', 'Updated locally')
+      } else {
+        expect(onUpdateNote).not.toHaveBeenCalled()
+      }
+      if (action === 'Remove annotation') {
+        expect(onRemove).toHaveBeenCalledExactlyOnceWith('editable')
+      } else {
+        expect(onRemove).not.toHaveBeenCalled()
+      }
+    }
+  )
 })
 
 describe('TextAnnotationSurface note editor highlight', () => {
@@ -666,14 +862,189 @@ describe('TextAnnotationSurface annotate trigger', () => {
 
     // A real browser collapses the selection on mousedown before the click
     // lands, and the button's mouseup bubbles back into the surface.
-    window.getSelection()?.removeAllRanges()
-    await act(async () => trigger!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => {
+      trigger!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+      window.getSelection()?.removeAllRanges()
+      trigger!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+      trigger!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      trigger!.click()
+    })
 
-    const surviving = annotateTrigger()
-    expect(surviving).toBe(trigger)
-
-    await act(async () => surviving?.click())
     expect(document.querySelector('textarea')).not.toBeNull()
+  })
+
+  it('uses Range text when Chromium adds rendered block separators to Selection text', async () => {
+    const onAdd = vi.fn((annotation: TextAnnotation) => validateAnnotations([annotation]))
+    const onError = vi.fn()
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={onAdd}
+          onError={onError}
+        >
+          <div data-testid="multi-block-selection">
+            <p>first block</p>
+            <p>second block</p>
+          </div>
+        </TextAnnotationSurface>
+      )
+    )
+    const target = container.querySelector<HTMLElement>('[data-testid="multi-block-selection"]')!
+    const range = document.createRange()
+    range.selectNodeContents(target)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          left: 10,
+          right: 120,
+          top: 20,
+          bottom: 40,
+          width: 110,
+          height: 20,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }) as DOMRect
+    })
+    expect(range.toString()).toBe('first blocksecond block')
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    vi.spyOn(selection, 'toString').mockReturnValue('first block\n\nsecond block')
+
+    await act(async () => target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+    await act(async () => annotateTrigger()?.click())
+    const confirm = Array.from(document.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    await act(async () => confirm?.click())
+
+    expect(onAdd).toHaveBeenCalledOnce()
+    expect(onAdd.mock.calls[0]?.[0].quote).toBe('first blocksecond block')
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('shows one trigger when a drag starts in one of several surfaces and ends outside it', async () => {
+    await act(async () =>
+      root.render(
+        <>
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={[]}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+          >
+            <p data-testid="first-surface">first selectable reply</p>
+          </TextAnnotationSurface>
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-2' }}
+            activeAnnotations={[]}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+          >
+            <p data-testid="second-surface">second selectable reply</p>
+          </TextAnnotationSurface>
+        </>
+      )
+    )
+
+    const target = container.querySelector<HTMLElement>('[data-testid="second-surface"]')!
+    const range = document.createRange()
+    range.selectNodeContents(target.firstChild!)
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      configurable: true,
+      value: () =>
+        ({
+          left: 10,
+          right: 120,
+          top: 20,
+          bottom: 40,
+          width: 110,
+          height: 20,
+          x: 10,
+          y: 20,
+          toJSON: () => ({})
+        }) as DOMRect
+    })
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+
+    // The pointer is released in the transcript's empty space, outside the
+    // surface where the drag began. React's surface-level mouseup never fires.
+    await act(async () => document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })))
+
+    expect(document.querySelectorAll('[data-annotation-trigger]')).toHaveLength(1)
+  })
+
+  it('clears a stale trigger when the browser collapses the native selection', async () => {
+    const paragraph = await renderSurface()
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    window.getSelection()?.removeAllRanges()
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
+
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('updates an existing draft when the native selection changes within the surface', async () => {
+    const onAdd = vi.fn<(annotation: TextAnnotation) => undefined>(() => undefined)
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={onAdd}
+          onError={vi.fn()}
+        >
+          <p>first second</p>
+        </TextAnnotationSurface>
+      )
+    )
+    const text = container.querySelector('p')!.firstChild!
+    const selectOffsets = (start: number, end: number): void => {
+      const range = document.createRange()
+      range.setStart(text, start)
+      range.setEnd(text, end)
+      Object.defineProperty(range, 'getBoundingClientRect', {
+        configurable: true,
+        value: () =>
+          ({
+            left: 10,
+            right: 120,
+            top: 20,
+            bottom: 40,
+            width: 110,
+            height: 20,
+            x: 10,
+            y: 20,
+            toJSON: () => ({})
+          }) as DOMRect
+      })
+      const selected = window.getSelection()!
+      selected.removeAllRanges()
+      selected.addRange(range)
+    }
+
+    selectOffsets(0, 5)
+    await act(async () =>
+      container.querySelector('p')!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    )
+    expect(annotateTrigger()).toBeDefined()
+
+    selectOffsets(6, 12)
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
+    await act(async () => annotateTrigger()?.click())
+    const confirm = Array.from(document.querySelectorAll('button'))
+      .filter((button) => button.textContent === 'Annotate')
+      .at(-1)
+    await act(async () => confirm?.click())
+
+    expect(onAdd.mock.calls[0]?.[0].quote).toBe('second')
   })
 
   it('keeps the note editor open while typing a note', async () => {
@@ -723,6 +1094,12 @@ describe('TextAnnotationSurface annotate trigger', () => {
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
+    await act(async () =>
+      container
+        .querySelector<HTMLElement>('[data-annotation-surface]')
+        ?.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', bubbles: true }))
+    )
+    await act(async () => document.dispatchEvent(new Event('selectionchange')))
     expect(annotateTrigger()).toBeDefined()
     expect(document.querySelector('textarea')).toBeNull()
   })

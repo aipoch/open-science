@@ -11,7 +11,8 @@ const MAX_CACHED_IMAGE_COUNT = 32
 const PUBLICATION_RETRY_DELAY_MS = 200
 const PUBLICATION_RETRY_LIMIT = 4
 
-type CachedImage = { url: string; size: number; managedResourceId?: string }
+type ImageDimensions = { width?: number; height?: number }
+type CachedImage = ImageDimensions & { url: string; size: number; managedResourceId?: string }
 type CachedImageEntry = {
   key: string
   promise: Promise<CachedImage>
@@ -24,7 +25,7 @@ type CachedImageEntry = {
 type CachedPreviewImageState =
   | { status: 'idle'; url?: undefined; error?: undefined }
   | { status: 'loading'; url?: undefined; error?: undefined }
-  | { status: 'ready'; url: string; error?: undefined }
+  | ({ status: 'ready'; url: string; error?: undefined } & ImageDimensions)
   | { status: 'error'; url?: undefined; error: Error }
 
 type PreviewImageItem = Pick<PreviewFileItem, 'path' | 'source' | 'mimeType' | 'size' | 'mtimeMs'> &
@@ -77,8 +78,9 @@ const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
   const resource = await acquirePreviewResource(item)
 
   const imageSize = Math.max(item.size ?? 0, resource.size)
+  const dimensions = { width: resource.width, height: resource.height }
   if (imageSize > MAX_CACHED_IMAGE_BYTES) {
-    return { url: resource.url, size: imageSize, managedResourceId: resource.id }
+    return { url: resource.url, size: imageSize, managedResourceId: resource.id, ...dimensions }
   }
 
   try {
@@ -89,7 +91,7 @@ const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
     if (!response.ok)
       throw new Error(`Image preview request failed with status ${response.status}.`)
     const blob = await response.blob()
-    return { url: URL.createObjectURL(blob), size: blob.size }
+    return { url: URL.createObjectURL(blob), size: blob.size, ...dimensions }
   } finally {
     void window.api.previewResources.release({ resourceId: resource.id }).catch(() => undefined)
   }
@@ -155,7 +157,7 @@ const useCachedPreviewImage = (
 ): CachedPreviewImageState => {
   const requestKey = usePreviewResourceKey(item)
   const [result, setResult] = useState<
-    | { requestKey: string; status: 'ready'; url: string }
+    | ({ requestKey: string; status: 'ready'; url: string } & ImageDimensions)
     | { requestKey: string; status: 'error'; error: Error }
     | null
   >(null)
@@ -182,8 +184,8 @@ const useCachedPreviewImage = (
       requestKey
     )
     void entry.promise.then(
-      ({ url }) => {
-        if (!disposed) setResult({ requestKey, status: 'ready', url })
+      ({ url, width, height }) => {
+        if (!disposed) setResult({ requestKey, status: 'ready', url, width, height })
       },
       (error: unknown) => {
         if (!disposed) {

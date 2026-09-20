@@ -653,6 +653,30 @@ describe('host.read_artifact — tabular CSV', () => {
     })
   })
 
+  it('decodes PPTX entities once when reading actual slide XML', async () => {
+    const versionId = 'entity-presentation-version'
+    const nativePath = join(tmpDir, 'entities.pptx')
+    await writeFile(
+      nativePath,
+      zipSync({
+        'ppt/slides/slide1.xml': strToU8(
+          '<p:sld><a:t>&amp;quot; &amp;apos; &quot;quoted&quot; &amp; &amp;lt;script&amp;gt;</a:t></p:sld>'
+        )
+      })
+    )
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([versionId]),
+      tmpDir,
+      async () => ({ path: nativePath, filename: 'entities.pptx' })
+    )
+    await expect(server.readArtifact(versionId)).resolves.toMatchObject({
+      kind: 'paged',
+      format: 'pptx',
+      pages: [{ pageNumber: 1, text: '&quot; &apos; "quoted" & &lt;script&gt;' }]
+    })
+  })
+
   it('reads only requested PPTX slides and does not expand unrequested slide text', async () => {
     const versionId = 'native-presentation-version'
     const nativePath = join(tmpDir, 'review-targets.pptx')
@@ -1455,6 +1479,21 @@ describe('host.read_artifact — non-tabular', () => {
 // ---------------------------------------------------------------------------
 
 describe('host.read_artifact — read failures are not empty content', () => {
+  it.each([
+    new Error('private-native-path/secret'),
+    'private-stack/secret',
+    { toString: () => 'private-custom-error/secret' }
+  ])('keeps unexpected exception details out of HTTP responses: %s', async (failure) => {
+    server = new ReviewerHostServer(makeSession(), makeScope(), tmpDir)
+    vi.spyOn(server, 'readTurn').mockImplementation(() => {
+      throw failure
+    })
+    ;({ endpoint, token } = await server.start())
+    expect(await post(endpoint, token, 'read_turn')).toEqual({
+      error: 'Failed to read reviewer evidence.'
+    })
+  })
+
   it('surfaces an error (not empty content) when the artifact file is missing on disk', async () => {
     // The version id is in scope, but no file was written to managed storage.
     server = new ReviewerHostServer(makeSession(), makeScope(), tmpDir)
@@ -1467,6 +1506,8 @@ describe('host.read_artifact — read failures are not empty content', () => {
     expect(body.result).toBeUndefined()
     expect(body.error).toBeTruthy()
     expect(body.error).toMatch(/results\.csv|read/i)
+    expect(body.error).not.toContain(tmpDir)
+    expect(body.error).not.toContain('ENOENT')
   })
 
   it('returns empty content WITHOUT error for a genuinely empty (0-byte) readable artifact', async () => {

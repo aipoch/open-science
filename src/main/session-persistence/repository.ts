@@ -1,7 +1,13 @@
+import { SessionProjectionAfterCommitError } from './save-session'
+import { packageOriginSchema } from '../../shared/session-package'
+import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute-policy'
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { Buffer } from 'node:buffer'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { isSessionPackagePending } from '../storage/session-package-state'
+import { preserveImportedSession } from './imported-session'
 
 import {
   createEmptySessionManifest,
@@ -25,6 +31,7 @@ import {
 } from '../../shared/session-persistence'
 import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
+import { defaultFileDurability } from '../storage/file-durability'
 import {
   assertSessionProjectionStorageShape,
   buildSessionProjection,
@@ -47,13 +54,43 @@ const MANIFEST_FILE = 'manifest.json'
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
 const RECOVERABLE_TEMPORARY_FILE_PATTERN =
-  /^(.+\.json)\.(?:\d{13}-\d+|\d+|\d+-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
+  /^(.+\.json)\.(?:\d{13}-\d+|\d+|(\d+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.tmp$/iu
+
+const temporarySessionPrimaryName = (fileName: string): string | undefined => {
+  const temporary = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(fileName)
+  if (!temporary) return undefined
+  // Match the durable reader: only current PID/UUID names carry a validated PID.
+  // Legacy numeric suffixes have no reliable live-writer ownership marker.
+  const pid = Number(temporary[2])
+  if (temporary[2] !== undefined && (!Number.isSafeInteger(pid) || pid <= 0)) return undefined
+  return temporary[1]
+}
 
 const nextSessionRevision = (revision: number): number => {
   if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER) {
     throw new Error('Session revision cannot be incremented safely.')
   }
   return revision + 1
+}
+
+// A package copy starts with already-versioned history and has no local pre-upgrade image.
+// Require matching durable provenance: caller-supplied metadata cannot bypass a local backup.
+const isSamePublishedPackageCopy = (value: unknown, next: PersistedChatSession): boolean => {
+  if (!value || typeof value !== 'object') return false
+  const envelope = value as Record<string, unknown>
+  const current =
+    envelope.session && typeof envelope.session === 'object'
+      ? (envelope.session as Record<string, unknown>)
+      : envelope
+  const origin = packageOriginSchema.safeParse(current.packageOrigin ?? current.forkOrigin)
+  const nextOrigin = next.packageOrigin ?? next.forkOrigin
+  return (
+    origin.success &&
+    Boolean(nextOrigin) &&
+    current.id === next.id &&
+    current.projectId === next.projectId &&
+    origin.data.importId === nextOrigin?.importId
+  )
 }
 
 const hasS2AttemptSchema = (value: unknown): boolean => {
@@ -128,6 +165,7 @@ type SessionScanMetrics = {
 
 type PreparedSessionWrite = {
   sanitizedSession: PersistedChatSession
+  document: ReturnType<typeof createSessionFile>
   contents: string
 }
 
@@ -142,6 +180,7 @@ type SessionLoadDiagnostics = {
 }
 
 type SessionScanOptions = {
+  quarantinedIsIncomplete?: boolean
   mode?: 'repair' | 'read-only'
   // Main-owned same-process mutations read durable authority without applying app-restart recovery.
   preserveRuntimeState?: boolean
@@ -379,6 +418,7 @@ class SessionRepository {
   }
 
   private async inspectActiveProjectBoundary(projectId: string): Promise<FilesystemBoundaryState> {
+    if (await isSessionPackagePending(this.storageDir, projectId)) return 'missing'
     const sessions = await this.inspectDirectoryBoundary(this.sessionsDir)
     if (sessions !== 'valid') return sessions
     return this.inspectDirectoryBoundary(this.projectDir(projectId))
@@ -522,8 +562,23 @@ class SessionRepository {
     const result = await this.loadAuthorityWithSuspendedProjection(loadAuthority)
     return this.operationScheduler.runGlobal(async () => {
       const freshResult = await this.refreshProjectionBuildAuthority(result)
-      if (freshResult.diagnostics?.isComplete === false) {
-        return { result: freshResult, sessions: projectIncompleteSummaries(freshResult) }
+      // A caller may supply a catalog without diagnostics. An initialized projection with pending
+      // recovery is independently incomplete; rebuilding must not erase its unresolved authority.
+      if (
+        freshResult.diagnostics?.isComplete === false ||
+        ((await this.projection!.isInitialized()) && !(await this.projection!.isReady()))
+      ) {
+        return {
+          result: {
+            ...freshResult,
+            diagnostics: {
+              ...freshResult.diagnostics,
+              isComplete: false,
+              warnings: freshResult.diagnostics?.warnings ?? []
+            }
+          },
+          sessions: projectIncompleteSummaries(freshResult)
+        }
       }
       for (const session of freshResult.sessions) assertSessionProjectionStorageShape(session)
       const assignments = await this.projection!.numberAssignments()
@@ -782,37 +837,82 @@ class SessionRepository {
   ): Promise<void> {
     const sessionId = assertSafeSegment(sessionIdValue)
     const expectedProjectId = assertSafeSegment(expectedProjectIdValue)
-    const fileName = `${sessionId}.json`
-    const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
-    let belongsToAnotherProject = false
-    let isComplete = projectDirectories.isComplete
+    const ownership = await this.readSessionIdentityOwners(sessionId)
+    if (!ownership.isComplete)
+      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
+    if (ownership.projectIds.some((projectId) => projectId !== expectedProjectId))
+      throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
 
-    for (const projectIdValue of projectDirectories.names) {
+  private async readSessionIdentityOwners(
+    sessionId: string
+  ): Promise<{ projectIds: string[]; isComplete: boolean }> {
+    const fileName = `${sessionId}.json`
+    const directories = await this.listDirectoryNames(this.sessionsDir)
+    let isComplete = directories.isComplete
+    const projectIds: string[] = []
+    for (const candidate of directories.names) {
       let projectId: string
       try {
-        projectId = assertSafeSegment(projectIdValue)
+        projectId = assertSafeSegment(candidate)
       } catch {
         isComplete = false
         continue
       }
-      const sessionFiles = await this.listSessionFileNames(join(this.sessionsDir, projectId), {
+      const files = await this.listSessionFileNames(join(this.sessionsDir, projectId), {
         missingIsIncomplete: true
       })
-      isComplete &&= sessionFiles.isComplete
-      if (
-        projectId !== expectedProjectId &&
-        (sessionFiles.names.includes(fileName) ||
-          sessionFiles.quarantinedPrimaryFileNames.includes(fileName))
-      ) {
-        belongsToAnotherProject = true
-      }
+      isComplete &&= files.isComplete
+      if (files.names.includes(fileName) || files.quarantinedPrimaryFileNames.includes(fileName))
+        projectIds.push(projectId)
     }
+    return { projectIds, isComplete }
+  }
 
-    if (!isComplete) {
-      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
-    }
-    if (belongsToAnotherProject) {
-      throw new Error('Cannot save a Session id that is already owned by another Project.')
+  // Policy reads never hydrate, quarantine, repair, or mutate Session/projection state.
+  async loadComputePolicy(
+    projectIdValue: string | undefined,
+    sessionIdValue: string
+  ): Promise<SessionComputePolicy> {
+    try {
+      const sessionId = assertSafeSegment(sessionIdValue)
+      const ownership = await this.readSessionIdentityOwners(sessionId)
+      if (!ownership.isComplete) return { status: 'blocked', reason: 'unavailable' }
+      const projectId =
+        projectIdValue === undefined ? ownership.projectIds[0] : assertSafeSegment(projectIdValue)
+      if (!projectId) return { status: 'blocked', reason: 'missing' }
+      if (ownership.projectIds.some((owner) => owner !== projectId))
+        return { status: 'blocked', reason: 'identity-conflict' }
+      const deletion = await this.getProjectSessionDeletionState(projectId)
+      if (deletion !== 'live' && deletion !== 'absent')
+        return { status: 'blocked', reason: 'deleted' }
+      if ((await this.inspectActiveProjectBoundary(projectId)) !== 'valid')
+        return { status: 'blocked', reason: 'unavailable' }
+      const path = this.sessionFilePath(projectId, sessionId)
+      const boundary = await this.inspectFileBoundary(path)
+      if (boundary !== 'valid')
+        return { status: 'blocked', reason: boundary === 'missing' ? 'missing' : 'unavailable' }
+      const before = await lstat(path)
+      const contents = await this.dependencies.readSessionFileWithinLimit(
+        path,
+        this.dependencies.maxSessionBytes
+      )
+      const after = await lstat(path)
+      if (
+        !after.isFile() ||
+        after.isSymbolicLink() ||
+        before.dev !== after.dev ||
+        before.ino !== after.ino ||
+        before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs ||
+        before.ctimeMs !== after.ctimeMs
+      ) {
+        return { status: 'blocked', reason: 'unavailable' }
+      }
+      // Project identity follows the owning directory, just as the full Session decoder does.
+      return decodeSessionComputePolicy(JSON.parse(contents), sessionId)
+    } catch {
+      return { status: 'blocked', reason: 'unavailable' }
     }
   }
 
@@ -827,6 +927,7 @@ class SessionRepository {
     }
     const { sessions, isComplete, warnings } = await this.readAllSessions({
       quarantineInvalidFiles,
+      quarantinedIsIncomplete: options.quarantinedIsIncomplete,
       scanMetrics
     })
     const projectIdsBySessionId = new Map<string, Set<string>>()
@@ -919,10 +1020,39 @@ class SessionRepository {
     )
   }
 
+  // Startup-only repair: never rename graph identities underneath an attached runtime. The backup
+  // and revisioned replacement share the normal repository lane, so a retry cannot overwrite a
+  // newer Session or lose the original bytes after an interrupted repair.
+  async saveSessionWithBindingRepair(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+      if (
+        this.dependencies.hasLiveRuntimeSession(session.projectId, session.id) ||
+        this.dependencies.hasActiveRuntimePrompt(session.projectId, session.id)
+      ) {
+        throw new Error('Cannot repair Session graph bindings while its runtime is attached.')
+      }
+      return this.saveSessionNow(session, expectedRevision, true)
+    })
+  }
+
   private async saveSessionNow(
     session: PersistedChatSession,
-    expectedRevision?: number
+    expectedRevision?: number,
+    preserveBindingBackup = false
   ): Promise<PersistedChatSession> {
+    // Imported IDs keep the readonly authority check off ordinary Session save hot paths,
+    // including when imported history belongs to an existing Project.
+    const importedAuthority =
+      session.id.startsWith('import-') || session.projectId.startsWith('import-')
+        ? await loadSessionMutationAuthority(this, session.projectId, session.id)
+        : undefined
+    if (importedAuthority?.status === 'unreadable')
+      throw new Error('Cannot modify unreadable imported research history.')
+    if (importedAuthority?.status === 'found')
+      session = preserveImportedSession(importedAuthority.session, session)
     const key = `${session.projectId}:${session.id}`
     let actualRevision = Math.max(sessionRevision(session), this.sessionRevisions.get(key) ?? 0)
     if (
@@ -931,9 +1061,15 @@ class SessionRepository {
     ) {
       throw new Error('Session expected revision must be a non-negative integer.')
     }
-    await this.assertExistingSessionWithinLimit(this.sessionFilePath(session.projectId, session.id))
+    const hadPrimaryAuthority = await this.assertExistingSessionWithinLimit(
+      this.sessionFilePath(session.projectId, session.id)
+    )
     if (expectedRevision !== undefined) {
-      const current = await loadSessionMutationAuthority(this, session.projectId, session.id)
+      // Both checks own the same serialized save lane. Reuse this operation's authority read;
+      // the next save must load again so revision and readonly checks never use a stale cache.
+      const current =
+        importedAuthority ??
+        (await loadSessionMutationAuthority(this, session.projectId, session.id))
       if (current.status === 'unreadable') {
         throw new Error('Cannot compare Session revision because durable JSON is unreadable.')
       }
@@ -941,6 +1077,9 @@ class SessionRepository {
       if (actualRevision !== expectedRevision) {
         throw new SessionRevisionConflictError(expectedRevision, actualRevision)
       }
+    }
+    if (preserveBindingBackup) {
+      await this.preserveArtifactBindingBackup(this.sessionFilePath(session.projectId, session.id))
     }
     const nextRevision = nextSessionRevision(actualRevision)
 
@@ -963,27 +1102,58 @@ class SessionRepository {
     if (this.projection && this.projectionWritesSuspended) {
       assertSessionProjectionStorageShape(session)
     }
-    const projectedSession =
+    const preparedProjection =
       this.projection && !this.projectionWritesSuspended
         ? await this.projection.prepareSave(session)
-        : session
+        : undefined
     const durableSession: PersistedChatSession = {
-      ...projectedSession,
+      ...(preparedProjection?.session ?? session),
       revision: nextRevision
     }
-    await this.writeSession(
-      durableSession,
-      projectedSession === session && !projectionWillAssignNumber
-        ? unprojectedWrite
-        : this.prepareSessionWrite(durableSession)
-    )
+    // prepareSave only assigns the authoritative number. Reuse the normalized graph instead
+    // of materializing it again; retain the final byte check before writing authority.
+    try {
+      let preparedWrite = unprojectedWrite
+      if (unprojectedWrite.document.session.number !== durableSession.number) {
+        const document = {
+          ...unprojectedWrite.document,
+          session: { ...unprojectedWrite.document.session, number: durableSession.number }
+        }
+        preparedWrite = {
+          ...unprojectedWrite,
+          document,
+          contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
+        }
+      }
+      await this.writeSession(durableSession, preparedWrite)
+    } catch (error) {
+      if (preparedProjection?.created && !hadPrimaryAuthority) {
+        try {
+          if (await this.hasNoSessionAuthorityFiles(session.projectId, session.id)) {
+            await this.projection!.abortUnpublishedSave(preparedProjection)
+          }
+        } catch (compensationError) {
+          throw new AggregateError(
+            [error, compensationError],
+            'Session publication and allocation cleanup failed.',
+            { cause: error }
+          )
+        }
+      }
+      throw error
+    }
     if (this.projectionWritesSuspended) {
       this.suspendedProjectionSessionWrites.set(key, {
         projectId: session.projectId,
         sessionId: session.id
       })
     } else {
-      await this.projection?.commitSave(durableSession)
+      try {
+        await this.projection?.commitSave(durableSession)
+      } catch (error) {
+        this.sessionRevisions.set(key, durableSession.revision!)
+        throw new SessionProjectionAfterCommitError(durableSession, error)
+      }
     }
     this.sessionRevisions.set(key, durableSession.revision!)
     return durableSession
@@ -1022,6 +1192,7 @@ class SessionRepository {
     if (diagnostic.status === 'unreadable') {
       throw new Error('Cannot delete a Session whose durable JSON is unreadable.')
     }
+    await this.removeBindingRepairBackups(safeProjectId, safeSessionId)
     const revisionKey = `${safeProjectId}:${safeSessionId}`
     if (diagnostic.status === 'missing') {
       this.sessionRevisions.delete(revisionKey)
@@ -1045,10 +1216,19 @@ class SessionRepository {
       await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
     }
 
-    // The valid primary proves matching quarantines are superseded authority covered by this
-    // explicit Session deletion. Remove every backup first so any failure leaves that proof in
+    // The valid primary proves matching temps/quarantines are authority covered by this
+    // explicit Session deletion. Remove every candidate first so any failure leaves that proof in
     // place and the operation safely retryable; only then remove the current primary.
     const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+    const entries = await this.dependencies.readDirectoryEntries(this.projectDir(safeProjectId))
+    for (const entry of entries) {
+      if (entry.isFile() && temporarySessionPrimaryName(entry.name) === basename(primaryPath)) {
+        await this.dependencies.remove(join(this.projectDir(safeProjectId), entry.name), {
+          force: true,
+          recursive: false
+        })
+      }
+    }
     for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
       await this.dependencies.remove(`${primaryPath}${suffix}`, {
         force: true,
@@ -1079,6 +1259,27 @@ class SessionRepository {
       await this.projection?.commitDelete(safeProjectId, safeSessionId).catch((error: unknown) => {
         throw new SessionDeletionCommittedError(error)
       })
+    }
+  }
+
+  private async removeBindingRepairBackups(projectId: string, sessionId: string): Promise<void> {
+    const boundary = await this.inspectActiveProjectBoundary(projectId)
+    if (boundary === 'missing') return
+    if (boundary !== 'valid')
+      throw new Error('Session Project directory is not a regular directory.')
+    const directory = this.projectDir(projectId)
+    const prefix = `${sessionId}.json.pre-artifact-binding-`
+    const entries = await this.dependencies.readDirectoryEntries(directory)
+    for (const entry of entries) {
+      if (
+        !entry.name.startsWith(prefix) ||
+        !/^[a-f0-9]{64}\.backup$/.test(entry.name.slice(prefix.length))
+      ) {
+        continue
+      }
+      const path = join(directory, entry.name)
+      await this.assertFileBoundary(path, 'Session binding repair backup')
+      await this.dependencies.remove(path, { force: true, recursive: false })
     }
   }
 
@@ -1232,12 +1433,11 @@ class SessionRepository {
       )
     }
     const sanitizedSession = sanitizeSessionUploadedAttachments(session)
+    const document = createSessionFile(encodeSessionDataPaths(sanitizedSession))
     return {
       sanitizedSession,
-      contents: this.serializeJsonForWrite(
-        createSessionFile(encodeSessionDataPaths(sanitizedSession)),
-        this.dependencies.maxSessionBytes
-      )
+      document,
+      contents: this.serializeJsonForWrite(document, this.dependencies.maxSessionBytes)
     }
   }
 
@@ -1267,13 +1467,27 @@ class SessionRepository {
     await this.atomicWriteContents(filePath, contents)
   }
 
-  private async assertExistingSessionWithinLimit(filePath: string): Promise<void> {
+  private async assertExistingSessionWithinLimit(filePath: string): Promise<boolean> {
     try {
       if ((await lstat(filePath)).size > this.dependencies.maxSessionBytes) {
         throw new SessionSizeLimitError(this.dependencies.maxSessionBytes)
       }
+      return true
     } catch (error) {
-      if (isMissingFileError(error)) return
+      if (isMissingFileError(error)) return false
+      throw error
+    }
+  }
+
+  private async hasNoSessionAuthorityFiles(projectId: string, sessionId: string): Promise<boolean> {
+    try {
+      const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
+      const primary = `${assertSafeSegment(sessionId)}.json`
+      // Retain evidence even when only a temporary, backup, or quarantined file remains.
+      return !entries.some(({ name }) => name === primary || name.startsWith(`${primary}.`))
+    } catch (error) {
+      if (isMissingFileError(error) || (error as NodeJS.ErrnoException).code === 'ENOTDIR')
+        return true
       throw error
     }
   }
@@ -1291,6 +1505,39 @@ class SessionRepository {
       }
       throw error
     }
+  }
+
+  private async preserveArtifactBindingBackup(filePath: string): Promise<void> {
+    await this.ensureDirectoryBoundary(this.sessionsDir, 'Active Session root')
+    await this.ensureDirectoryBoundary(dirname(filePath), 'Session Project directory')
+    await this.assertFileBoundary(filePath, 'Session file')
+    const original = await this.readSessionFileForBackup(filePath)
+    if (original === undefined)
+      throw new Error('Cannot back up a missing Session for binding repair.')
+    const checksum = createHash('sha256').update(original).digest('hex')
+    const backupPath = `${filePath}.pre-artifact-binding-${checksum}.backup`
+    await this.assertFileBoundary(backupPath, 'Session binding repair backup')
+    try {
+      await copyFile(filePath, backupPath, fsConstants.COPYFILE_EXCL)
+    } catch (error) {
+      if (!(
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EEXIST'
+      )) {
+        throw error
+      }
+    }
+    await this.assertFileBoundary(backupPath, 'Session binding repair backup')
+    const preserved = await this.dependencies.readSessionFileWithinLimit(
+      backupPath,
+      this.dependencies.maxSessionBytes
+    )
+    if (preserved !== original)
+      throw new Error('Session binding repair backup does not match its source.')
+    await defaultFileDurability.syncFile(backupPath)
+    await defaultFileDurability.syncDirectory(dirname(backupPath))
   }
 
   private async preservePreS2Backup(
@@ -1315,6 +1562,7 @@ class SessionRepository {
     const currentWritesS2Attempt = hasS2AttemptSchema(current)
     const backupPath = `${filePath}${PRE_S2_BACKUP_SUFFIX}`
     if (currentWritesS2Attempt) {
+      if (isSamePublishedPackageCopy(current, nextSession)) return
       try {
         await lstat(backupPath)
         return
@@ -1358,6 +1606,7 @@ class SessionRepository {
     }
     const backupPath = `${filePath}${PRE_SUBAGENT_MODEL_BACKUP_SUFFIX}`
     if (hasSubagentModelAttemptSchema(current)) {
+      if (isSamePublishedPackageCopy(current, nextSession)) return
       try {
         await lstat(backupPath)
         return
@@ -1484,6 +1733,7 @@ class SessionRepository {
   // Repair scans quarantine invalid data; read-only scans report it in place. I/O errors keep
   // reconciliation disabled until the next repair.
   private async readAllSessions(options: {
+    quarantinedIsIncomplete?: boolean
     quarantineInvalidFiles: boolean
     scanMetrics: SessionScanMetrics
   }): Promise<{
@@ -1498,13 +1748,22 @@ class SessionRepository {
     let isComplete = projectDirectories.isComplete
 
     for (const projectId of projectDirectories.names) {
+      const warningCount = warnings.length
       const project = await this.readProjectSessions(projectId, {
         missingDirectoryIsIncomplete: true,
         quarantineInvalidFiles: options.quarantineInvalidFiles,
+        quarantinedIsIncomplete: options.quarantinedIsIncomplete,
         warnings,
         scanMetrics: options.scanMetrics,
         sessionsBoundaryValidated: true
       })
+      if (
+        options.quarantinedIsIncomplete &&
+        !project.isComplete &&
+        warnings.length === warningCount
+      ) {
+        warnings.push({ kind: 'unreadable', projectId, fileName: '.', recovered: false })
+      }
       sessions.push(...project.sessions)
       isComplete &&= project.isComplete
     }
@@ -1548,6 +1807,8 @@ class SessionRepository {
       scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
+    if (await isSessionPackagePending(this.storageDir, projectId))
+      return { sessions: [], isComplete: true }
     const directoryBoundary = await this.inspectDirectoryBoundary(projectDir)
     if (directoryBoundary === 'invalid') {
       return { sessions: [], isComplete: false }
@@ -1567,19 +1828,9 @@ class SessionRepository {
         },
         { maxBytes: this.dependencies.maxSessionBytes }
       )
-    } catch (error) {
+    } catch {
       recoveryComplete = false
-      if (error instanceof DurableJsonReadLimitError) {
-        const primaryFileName = RECOVERABLE_TEMPORARY_FILE_PATTERN.exec(error.fileName)?.[1]
-        if (primaryFileName) {
-          options.warnings?.push({
-            kind: 'too-large',
-            projectId,
-            fileName: primaryFileName,
-            recovered: false
-          })
-        }
-      }
+      // The per-Session read below reports the barrier, including temp-only authority.
     }
     const sessionFiles = await this.listSessionFileNames(projectDir, {
       missingIsIncomplete: options.missingDirectoryIsIncomplete,
@@ -1729,7 +1980,12 @@ class SessionRepository {
       }
     }
     if (read.status === 'missing') {
-      if (!options.missingIsIncomplete) return { isComplete: true }
+      if (!options.missingIsIncomplete) {
+        const files = await this.listSessionFileNames(dirname(filePath))
+        if (files.isComplete && !files.names.includes(basename(filePath))) {
+          return { isComplete: true }
+        }
+      }
       return {
         isComplete: false,
         warning: {
@@ -1807,9 +2063,10 @@ class SessionRepository {
     }
   }
 
-  // Lists only committed session JSON files. Quarantines are associated with their former primary so
+  // Lists Session primary identities. Quarantines are associated with their former primary so
   // terminal scans can distinguish orphan authority from a backup superseded by valid current JSON.
-  // In-progress temp writes stay excluded and non-ENOENT directory failures disable reconciliation.
+  // Include the primary identity of unresolved temps so missing JSON cannot authorize deletion.
+  // The durable reader still excludes live writers; non-ENOENT failures disable reconciliation.
   private async listSessionFileNames(
     dir: string,
     options: { missingIsIncomplete?: boolean; directoryBoundaryValidated?: boolean } = {}
@@ -1832,15 +2089,22 @@ class SessionRepository {
       const entries = await this.dependencies.readDirectoryEntries(dir)
 
       return {
-        names: entries
-          .filter(
-            (entry) =>
-              entry.isFile() &&
-              entry.name.endsWith('.json') &&
-              !entry.name.includes('.tmp') &&
-              !entry.name.includes('.invalid-')
+        names: [
+          ...new Set(
+            entries.flatMap((entry) => {
+              if (!entry.isFile()) return []
+              if (
+                entry.name.endsWith('.json') &&
+                !entry.name.includes('.tmp') &&
+                !entry.name.includes('.invalid-')
+              ) {
+                return [entry.name]
+              }
+              const primary = temporarySessionPrimaryName(entry.name)
+              return primary ? [primary] : []
+            })
           )
-          .map((entry) => entry.name),
+        ],
         isComplete: entries.every((entry) => entry.isFile() || !entry.name.includes('.json')),
         quarantinedPrimaryFileNames: entries.flatMap((entry) => {
           if (!entry.isFile()) return []

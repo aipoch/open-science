@@ -36,10 +36,10 @@ describe('ACP agent process packaging paths', () => {
   it('uses the real unpacked path for executables resolved inside app.asar', () => {
     expect(
       toUnpackedAsarPath(
-        '/Applications/Open Science.app/Contents/Resources/app.asar/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
+        '/Applications/Open-Science.app/Contents/Resources/app.asar/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
       )
     ).toBe(
-      '/Applications/Open Science.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
+      '/Applications/Open-Science.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'
     )
   })
 
@@ -48,10 +48,10 @@ describe('ACP agent process packaging paths', () => {
     // app.asar.unpacked the same way the POSIX case above does.
     expect(
       toUnpackedAsarPath(
-        'C:\\Program Files\\Open Science\\resources\\app.asar\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe'
+        'C:\\Program Files\\Open-Science\\resources\\app.asar\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe'
       )
     ).toBe(
-      'C:\\Program Files\\Open Science\\resources\\app.asar.unpacked\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe'
+      'C:\\Program Files\\Open-Science\\resources\\app.asar.unpacked\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe'
     )
   })
 
@@ -203,4 +203,29 @@ describe('spawnClaudeAgentAcp', () => {
       expect.objectContaining({ DEBUG_CLAUDE_AGENT_SDK: '1' })
     )
   })
+})
+
+it('prevents Claude physical launch when delegated ownership admission fails', () => {
+  mocks.spawn.mockReturnValue({ on: vi.fn() })
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const input = {
+    executablePath: '/runtime/claude',
+    envOverrides: { CLAUDE_CONFIG_DIR: '/isolated/claude' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => spawnClaudeAgentAcp(input)).toThrow('ownership receipt write failed')
+  expect(mocks.spawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    process.execPath,
+    [expect.stringContaining('claude-agent-acp')],
+    expect.objectContaining({
+      env: expect.objectContaining({
+        CLAUDE_CONFIG_DIR: '/isolated/claude',
+        ELECTRON_RUN_AS_NODE: '1'
+      }),
+      stdio: 'pipe'
+    })
+  )
 })

@@ -210,11 +210,13 @@ describe('Project-owned data catalog architecture', () => {
 
   it('locks the curated SQL, filesystem, and runtime ownership inventory', () => {
     expect(PROJECT_OWNED_DATA_CATALOG.map((entry) => entry.id)).toEqual([
+      'bookmarks',
       'project-memory',
       'permission-grants',
       'project-preview-state',
       'vision-evidence',
       'session-metadata-usage-history',
+      'background-result-delivery',
       'notification-inbox-history',
       'literature-inbox-provenance',
       'project-literature-links',
@@ -249,6 +251,7 @@ describe('Project-owned data catalog architecture', () => {
         )
       ].sort()
     ).toEqual([
+      'background-result-delivery-target-delete',
       'compute-job-project-delete',
       'delegated-runtime-quiescence',
       'execution-file-evidence-tail',

@@ -1208,7 +1208,7 @@ export const detectManagedRuntimeMutation = ({
       installer: rule.installer,
       message:
         `${rule.installer} cannot modify packages from a ${surface} execution. ` +
-        'Use manage_packages so Open Science can preserve the bound interpreter and audit the change.'
+        'Use manage_packages so Open-Science can preserve the bound interpreter and audit the change.'
     }
   }
 

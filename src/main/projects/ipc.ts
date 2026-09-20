@@ -35,7 +35,7 @@ type ProjectHandlers = {
 // passed as a provider (not a resolved promise) so a failed first initialization can be retried on the
 // next request instead of being cached for the app's lifetime.
 const createDefaultProjectRepository = (): ProjectRepository =>
-  new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()))
+  new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()), resolveConfigRoot())
 
 const createDefaultPreviewStateRepository = (): PreviewStateRepository =>
   new PreviewStateRepository(() => getProjectDbClient(resolveConfigRoot()))

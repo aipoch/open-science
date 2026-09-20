@@ -1,6 +1,20 @@
-import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  spawnSync,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams
+} from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +33,7 @@ import {
   rBin,
   rScriptBin
 } from './runtime-paths'
+import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { NOTEBOOK_PROTOCOL_LINE_LIMIT_BYTES, NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
@@ -26,6 +41,7 @@ import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtim
 import { NotebookHelperModuleHost } from './helper-module-host'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -219,6 +235,15 @@ const posixGate = describe.skipIf(process.platform === 'win32' || !python3)
 const rExecutable = ['/usr/local/bin/R', '/opt/homebrew/bin/R'].find(existsSync)
 const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'].find(existsSync)
 
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Symlinks an env's python interpreter to the system python3 under a runtime root, so the strict
 // resolver (env interpreter only -- no system-PATH fallback) finds it and spawns the fake loop.
 const stubEnvPython = async (
@@ -354,6 +379,110 @@ afterEach(async () => {
   }
 })
 
+it('executes an x64-only managed R through the public kernel boundary', async () => {
+  cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-x64-'))
+  const request = baseRequest(cwdDir)
+  const bin = join(envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'), 'Lib', 'R', 'bin', 'x64')
+  await mkdir(bin, { recursive: true })
+  await writeFile(join(bin, 'R.exe'), 'fixture')
+  await writeFile(join(bin, 'Rscript.exe'), 'fixture')
+  const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => {
+    // The existing OS adapter boundary substitutes a portable protocol child only after validating
+    // the real selected executable. No interpreter override bypasses managed readiness or selection.
+    await stat(invocation.executable)
+    expect(invocation.executable).toBe(join(bin, 'Rscript.exe'))
+    return {
+      executable: process.execPath,
+      args: [
+        '-e',
+        `
+        let input = Buffer.alloc(0)
+        process.stdin.on('data', chunk => {
+          input = Buffer.concat([input, chunk])
+          const newline = input.indexOf(10)
+          if (newline < 0) return
+          const [req_id, size] = input.subarray(0, newline).toString().split(' ')
+          if (input.length < newline + 1 + Number(size)) return
+          input = input.subarray(newline + 1 + Number(size))
+          console.log(JSON.stringify({ req_id, stdout: '2', stderr: '', error: null, figures: [] }))
+        })
+      `
+      ],
+      env: invocation.env,
+      annotateStderr: (stderr) => stderr,
+      cleanup: async (_reason, outcome) => ({
+        processesTerminated: outcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    }
+  })
+  const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: { wrap } })
+  try {
+    const result = await executor.execute({
+      ...request,
+      language: 'r',
+      code: '1 + 1',
+      sessionId: 'x64-test',
+      projectId: 'x64-test'
+    })
+    expect(result.status, result.stderr || result.traceback).toBe('completed')
+    expect(result.stdout).toBe('2')
+    expect(wrap).toHaveBeenCalledOnce()
+  } finally {
+    await executor.shutdown()
+  }
+})
+
+it.each([
+  { name: 'Python', request: { language: 'python' as const } },
+  { name: 'R', request: { language: 'r' as const } },
+  { name: 'REPL', request: { language: 'python' as const, kind: 'repl' as const } }
+])(
+  'requests Windows process-tree supervision for every persistent $name kernel',
+  async ({ request: kernelRequest }) => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-supervision-'))
+    const request = baseRequest(cwdDir)
+    const python = pythonBin(envPrefix(request.runtimeRoot, DEFAULT_PY_ENV, 'win32'), 'win32')
+    const rscript = join(
+      envPrefix(request.runtimeRoot, DEFAULT_R_ENV, 'win32'),
+      'Lib',
+      'R',
+      'bin',
+      'x64',
+      'Rscript.exe'
+    )
+    const r = join(dirname(rscript), 'R.exe')
+    await mkdir(dirname(python), { recursive: true })
+    await mkdir(dirname(rscript), { recursive: true })
+    await writeFile(python, 'fixture')
+    await writeFile(r, 'fixture')
+    await writeFile(rscript, 'fixture')
+
+    const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async () => {
+      throw new Error('sandbox invocation captured')
+    })
+    const executor = new NotebookKernelExecutor({
+      platform: 'win32',
+      processSandbox: { wrap }
+    })
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          ...kernelRequest,
+          code: '1',
+          sessionId: 'windows-supervision',
+          projectId: 'windows-supervision'
+        })
+      ).resolves.toMatchObject({ status: 'failed', stderr: 'sandbox invocation captured' })
+      expect(wrap).toHaveBeenCalledWith(expect.objectContaining({ superviseProcessTree: true }))
+    } finally {
+      await executor.shutdown()
+    }
+  }
+)
+
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))
@@ -469,7 +598,11 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-network-sandbox-')
     const request = baseRequest(cwdDir)
     const requestController = new AbortController()
-    const cleanup = vi.fn()
+    const cleanup = vi.fn().mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
     const endExecution = vi.fn()
     const beginExecution = vi.fn(() => endExecution)
     const annotateStderr = vi.fn(
@@ -529,6 +662,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
       expect(sandboxInvocation).not.toHaveProperty('signal')
       expect(sandboxInvocation.filesystem.readWriteRoots).not.toContain(request.dataRoot)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(request.inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
       expect(beginExecution).toHaveBeenCalledTimes(2)
       expect(endExecution).toHaveBeenCalledTimes(2)
@@ -537,6 +671,52 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await executor.shutdown()
     }
     expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('allows the sandbox to read a resolved interpreter prefix outside the runtime root', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-resolved-prefix-sandbox-'))
+    const request = { ...baseRequest(cwdDir), inputRoot: undefined }
+    const restoredPrefix = join(cwdDir, 'restored-environments', 'lock-checksum')
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        beginExecution: () => () => undefined,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup: async (_reason: unknown, outcome: { processesTerminated: boolean }) => ({
+          processesTerminated: outcome.processesTerminated,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+      }))
+    }
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      processSandbox
+    })
+
+    try {
+      await expect(
+        executor.execute({
+          ...request,
+          code: 'restored runtime',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          resolvedInterpreter: {
+            command: python3 as string,
+            condaPrefix: restoredPrefix
+          }
+        })
+      ).resolves.toMatchObject({ status: 'completed' })
+
+      const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
+      expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(restoredPrefix)
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
+    } finally {
+      await executor.shutdown()
+    }
   })
 
   it('inspects only an already-live kernel and forwards the private-variable option', async () => {
@@ -603,6 +783,108 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('AUDIT: retains each persistent process cwd when another kernel changes the request directory', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-cwd-evidence-')
+    const request = baseRequest(cwdDir)
+    const firstDir = join(request.dataRoot, 'analysis')
+    const otherDir = join(request.dataRoot, 'other')
+    await mkdir(firstDir, { recursive: true })
+    await mkdir(otherDir, { recursive: true })
+    await stubEnvPython(request.runtimeRoot, 'other')
+    const executor = new NotebookKernelExecutor({
+      pythonBin: python3,
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const changed = await executor.execute({
+        ...request,
+        cwd: request.dataRoot,
+        code: `import os; os.chdir(${JSON.stringify(firstDir)})`
+      })
+      expect(changed.status).toBe('completed')
+      expect(changed.cwdAfter).toBe(realpathSync(firstDir))
+      const other = await executor.execute({
+        ...request,
+        cwd: otherDir,
+        environment: 'other',
+        code: '1'
+      })
+      expect(other.status).toBe('completed')
+      const written = await executor.execute({
+        ...request,
+        cwd: otherDir,
+        code: 'with open("generated.csv", "w") as output: output.write("x,y\\n1,2\\n")'
+      })
+      expect(written.status).toBe('completed')
+      expect(await readFile(join(firstDir, 'generated.csv'), 'utf8')).toBe('x,y\n1,2\n')
+      expect(existsSync(join(otherDir, 'generated.csv'))).toBe(false)
+      expect.soft(written).toHaveProperty('cwdBefore', realpathSync(firstDir))
+      expect(written.workingFiles).toContainEqual(
+        expect.objectContaining({
+          path: resolve(firstDir, 'generated.csv'),
+          relativePath: 'data/analysis/generated.csv'
+        })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  }, 30_000)
+
+  it('AUDIT: observes producer files in the directory selected by helper initialization', async () => {
+    cwdDir = realpathSync(await makeDefaultEnvCwd('os-kernel-helper-cwd-evidence-'))
+    const request = baseRequest(cwdDir)
+    const producerDir = join(request.dataRoot, 'analysis')
+    await mkdir(producerDir, { recursive: true })
+    await writeFile(join(producerDir, 'input.csv'), '42')
+    await writeFile(join(request.dataRoot, 'input.csv'), 'wrong input')
+    const helperHost = new NotebookHelperModuleHost({
+      resolve: async (id) => ({
+        id,
+        language: 'python',
+        source: `import os; os.chdir(${JSON.stringify(producerDir)})\ndef helper_answer():\n    return 42`,
+        exports: ['helper_answer']
+      })
+    })
+    const plan = await helperHost.plan(
+      { id: 'helper-cwd-epoch', processKey: 'python:default-python' },
+      await helperHost.preflight('python', ['cwd-helper'])
+    )
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+    try {
+      const result = await executor.execute({
+        ...request,
+        cwd: request.dataRoot,
+        helperModules: plan.injections,
+        language: 'python',
+        runId: 'helper-cwd-run',
+        code: [
+          'with open("input.csv") as source: data = source.read()',
+          'with open("generated.csv", "w") as output: output.write(data)'
+        ].join('\n')
+      })
+      expect(result).toMatchObject({
+        status: 'completed',
+        cwdBefore: realpathSync(request.dataRoot),
+        cwdAfter: realpathSync(producerDir),
+        helperModulesInitialized: ['cwd-helper']
+      })
+      expect(await readFile(join(producerDir, 'generated.csv'), 'utf8')).toBe('42')
+      expect(result.confirmedReadPaths).toEqual(['data/analysis/input.csv'])
+      expect(result.workingFiles).toContainEqual(
+        expect.objectContaining({
+          path: resolve(producerDir, 'generated.csv'),
+          relativePath: 'data/analysis/generated.csv'
+        })
+      )
+    } finally {
+      await executor.shutdown()
+    }
+  }, 30_000)
+
   it('runs a cell, echoes stdout, and reports the working directory', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-exec-')
     const executor = makeExecutor()
@@ -628,6 +910,8 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         'import sys',
         'sys.stderr.write("PowerShell FileSystem provider initialization failed.\\n")',
         'sys.stderr.flush()',
+        // Consume the request before exiting so this tests exit diagnostics, not a competing EPIPE.
+        'sys.stdin.readline()',
         'raise SystemExit(23)'
       ].join('\n')
     )
@@ -640,7 +924,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         resolvedInterpreter: { command: python3 as string }
       })
 
-      expect(result).toMatchObject({ status: 'failed' })
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: true })
       expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
       expect(result.stderr).toContain('PowerShell FileSystem provider initialization failed.')
     } finally {
@@ -657,12 +941,18 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         'import sys',
         'sys.stderr.write("Permission denied: C:/hidden/credentials.txt\\n")',
         'sys.stderr.flush()',
+        'sys.stdin.readline()',
         'raise SystemExit(25)'
       ].join('\n')
     )
     let cleaned = false
-    const cleanup = vi.fn(() => {
+    const cleanup = vi.fn(async () => {
       cleaned = true
+      return {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
     })
     const annotateStderr = vi.fn((stderr: string) =>
       cleaned ? stderr : `${stderr}<sandbox_violations>hidden path</sandbox_violations>`
@@ -1040,6 +1330,102 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it('durably binds the OS process to its lane and Kernel epoch until shutdown reaps it', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-durable-owner-')
+    const owner = new KernelProcessLifecycleOwner({
+      storageRoot: cwdDir,
+      ownerInstanceId: 'test-owner'
+    })
+    await owner.ensureReady()
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: process.platform,
+      processLifecycle: owner,
+      laneKey: '["project-1","session-1","root",null,null]'
+    })
+    const ledger = join(cwdDir, 'runtime', 'kernel-processes')
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'owned',
+        kernelEpochId: 'epoch-owned'
+      })
+      const [entry] = await readdir(ledger)
+      expect(JSON.parse(await readFile(join(ledger, entry!), 'utf8'))).toMatchObject({
+        ownerInstanceId: 'test-owner',
+        kernelEpochId: 'epoch-owned',
+        laneKey: '["project-1","session-1","root",null,null]',
+        processKey: 'python:default-python',
+        pid: expect.any(Number),
+        ownerToken: expect.any(String)
+      })
+    } finally {
+      await executor.shutdown()
+    }
+    expect(await readdir(ledger)).toEqual([])
+  })
+
+  posixGate('reaps the persistent kernel process group when its loop leader crashes', () => {
+    it('releases durable ownership before respawning the crashed lane', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-crash-owner-')
+      const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+      await owner.ensureReady()
+      const descendantPidPath = join(cwdDir, 'descendant.pid')
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        processLifecycle: owner,
+        laneKey: '["project-1","session-1","root",null,null]'
+      })
+      try {
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: `__SPAWN_DESCENDANT_AND_CRASH__:${descendantPidPath}`,
+            kernelEpochId: 'epoch-crashed'
+          })
+        ).resolves.toMatchObject({ status: 'failed' })
+
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: 'replacement',
+            kernelEpochId: 'epoch-replacement'
+          })
+        ).resolves.toMatchObject({ status: 'completed' })
+      } finally {
+        await executor.shutdown()
+      }
+    })
+
+    it('does not leave a descendant writer alive after the leader exits', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-crash-tree-')
+      const descendantPidPath = join(cwdDir, 'descendant.pid')
+      const executor = makeExecutor()
+      let descendantPid: number | undefined
+      try {
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: `__SPAWN_DESCENDANT_AND_CRASH__:${descendantPidPath}`
+          })
+        ).resolves.toMatchObject({ status: 'failed' })
+        descendantPid = Number(await readFile(descendantPidPath, 'utf8'))
+        await vi.waitFor(() => expect(processIsAlive(descendantPid as number)).toBe(false), {
+          timeout: 5_000
+        })
+      } finally {
+        if (descendantPid && processIsAlive(descendantPid)) {
+          try {
+            process.kill(descendantPid, 'SIGKILL')
+          } catch {
+            // The process may have exited between the probe and cleanup.
+          }
+        }
+        await executor.shutdown()
+      }
+    }, 15_000)
+  })
+
   it('replaces the kernel when the runtime changes (managed -> external), never reusing the old process', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-switch-')
     const executor = makeExecutor()
@@ -1114,7 +1500,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         code: '__SLEEP__',
         timeoutMs: 100
       })
-      expect(timed.status).toBe('timeout')
+      expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
       expect(killSpy).toHaveBeenCalledWith('SIGINT')
       expect(killSpy).not.toHaveBeenCalledWith('SIGKILL')
 
@@ -1272,6 +1658,195 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   }, 15_000)
 
+  it.each(['win32', 'linux'] as const)(
+    'waits for process teardown before settling cancellation on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-drain-', platform)
+      let release!: () => void
+      const stopping = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let teardownStarted = false
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (...args) => {
+          teardownStarted = true
+          await stopping
+          return terminateProcessTree(...args)
+        }
+      })
+      let settled = false
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor
+          .execute({
+            ...baseRequest(cwdDir),
+            code: '__IGNORE_SIGINT__',
+            signal: cancellation.signal
+          })
+          .then((result) => {
+            settled = true
+            return result
+          })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await vi.waitFor(() => expect(teardownStarted).toBe(true))
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(settled).toBe(false)
+        release()
+        await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+      } finally {
+        release()
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'rejects cancellation when the process tree cannot be reaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-unreaped-', platform)
+      const unreapedChildren = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        terminateTree: async (child) => {
+          unreapedChildren.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect([...unreapedChildren][0]?.exitCode).toBeNull()
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+        await expect(executor.terminate('python', DEFAULT_PY_ENV)).rejects.toThrow(
+          'runtime switch refused'
+        )
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+      } finally {
+        await executor.shutdown()
+        for (const child of unreapedChildren) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'retains an unreaped barrier when a cancelled kernel exits before the grace timer',
+    async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-early-exit-', 'linux')
+      const children = new Set<ChildProcess>()
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        cancellationGraceMs: 10_000,
+        terminateTree: async (child) => {
+          children.add(child)
+          return { reaped: false }
+        }
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+        const child = procFor(executor, 'python')?.child
+        if (!child) throw new Error('Expected a running kernel')
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        // An actual child exit wins before the grace timer; the OS reaping boundary reports that
+        // surviving descendants could not be confirmed stopped.
+        child.kill('SIGKILL')
+        await expect.soft(run).rejects.toThrow('process tree could not be stopped')
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(executor.execute({ ...baseRequest(cwdDir), code: 'again' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+      } finally {
+        await executor.shutdown()
+        for (const child of children) await terminateProcessTree(child)
+      }
+    },
+    15_000
+  )
+
+  it.each(['win32', 'linux'] as const)(
+    'reports rejected cancellation cleanup as unreaped on %s',
+    async (platform) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-cleanup-reject-', platform)
+      const terminated = vi.fn()
+      const cleanup = vi.fn(async () => {
+        throw new Error('sandbox cleanup rejected')
+      })
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        platform,
+        cancellationGraceMs: 1,
+        onTerminated: terminated,
+        processSandbox: {
+          wrap: async (invocation) => ({
+            ...invocation,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          })
+        }
+      })
+      try {
+        expect(
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'warm'
+          })
+        ).toMatchObject({ status: 'completed', stderr: '' })
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: '__IGNORE_SIGINT__',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+        cancellation.abort()
+        await expect(run).rejects.toThrow('process tree could not be stopped')
+        expect.soft(terminated).toHaveBeenCalledWith('python', DEFAULT_PY_ENV)
+        await expect.soft(executor.shutdown()).resolves.toEqual({ reaped: false })
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            code: 'again'
+          })
+        ).rejects.toThrow('process tree could not be stopped')
+      } finally {
+        await executor.shutdown().catch(() => undefined)
+      }
+    },
+    15_000
+  )
+
   it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-', 'win32')
     const terminated: Array<['python' | 'r' | 'repl', string]> = []
@@ -1365,7 +1940,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       code: '__SLEEP__',
       timeoutMs: 100
     })
-    expect(timed.status).toBe('timeout')
+    expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
     // Node marks child.killed once the soft-timeout SIGINT is sent, even though the loop caught it
     // and is still alive (proven by reuse in the previous test) -- the process itself has not exited.
     expect(child.killed).toBe(true)
@@ -1392,7 +1967,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         code: '__IGNORE_SIGINT__',
         timeoutMs: 100
       })
-      expect(timed.status).toBe('timeout')
+      expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
       // Soft interrupt is a direct SIGINT to the loop; the hard kill is routed through
       // terminateProcessTree (which enumerates descendants before killing), so it no longer shows up
       // as a direct child.kill('SIGKILL'). What matters is the wedged loop is gone and actually dead.
@@ -1452,7 +2027,7 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         code: '__IGNORE_SIGINT__',
         timeoutMs: 100
       })
-      expect(timed.status).toBe('timeout')
+      expect(timed).toMatchObject({ status: 'timeout', kernelDispatched: true })
       // The hard-kill drop surfaces a 'terminated' kernel status, exactly once for the python kind.
       expect(terminated).toEqual(['python'])
     } finally {
@@ -1737,7 +2312,7 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
     }
   })
 
-  it('preserves a sanitized missing dependency diagnostic without dispatching producer code', async () => {
+  it('AUDIT: preserves process cwd and a sanitized diagnostic when helper initialization fails', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-helper-missing-dependency-'))
     const request = baseRequest(cwdDir)
     await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
@@ -1762,8 +2337,18 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       await helperHost.preflight('python', ['dependency-helper'])
     )
     const sentinel = join(cwdDir, 'missing-dependency-producer-sentinel.txt')
+    const processDir = join(cwdDir, 'analysis')
+    await mkdir(processDir)
 
     try {
+      const changed = await executor.execute({
+        ...request,
+        code: `import os; os.chdir(${JSON.stringify(processDir)})`
+      })
+      expect(changed).toMatchObject({
+        status: 'completed',
+        cwdAfter: realpathSync(processDir)
+      })
       const result = await executor.execute({
         ...request,
         language: 'python',
@@ -1780,6 +2365,8 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
       expect(result.traceback).toContain(
         'Python ModuleNotFoundError: No module named "open_science_definitely_missing_dependency".'
       )
+      expect.soft(result).toHaveProperty('cwdBefore', realpathSync(processDir))
+      expect.soft(result.cwdAfter).toBe(realpathSync(processDir))
       expect(result.traceback).toContain('inspect_packages')
       expect(result.traceback).toContain('manage_packages')
       expect(result.traceback).not.toContain('def dependency_export')
@@ -2245,6 +2832,60 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
     }
   })
 })
+
+describe.skipIf(!process.env.OPEN_SCIENCE_TEST_RSCRIPT || !process.env.OPEN_SCIENCE_TEST_R_LIBRARY)(
+  'external R personal library integration',
+  () => {
+    it('loads installed glue through a read-only library grant and replaces the kernel after revocation', async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-external-r-library-'))
+      const library = realpathSync(process.env.OPEN_SCIENCE_TEST_R_LIBRARY!)
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr) => stderr,
+        cleanup: async () => ({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+      }))
+      const executor = new NotebookKernelExecutor({
+        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+        processSandbox: { wrap }
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        language: 'r' as const,
+        sessionId: 'library-session',
+        projectId: 'library-project',
+        resolvedInterpreter: { command: process.env.OPEN_SCIENCE_TEST_RSCRIPT!, rLibrary: library }
+      }
+      try {
+        const loaded = await executor.execute({
+          ...request,
+          code: 'library(glue); cat(glue::glue("loaded {1 + 1}"))'
+        })
+        expect(loaded).toMatchObject({ status: 'completed', stdout: 'loaded 2' })
+        const invocation = wrap.mock.calls[0][0]
+        expect(invocation.env.R_LIBS_USER).toBe(library)
+        expect(invocation.filesystem.readOnlyRoots).toContain(library)
+        expect(invocation.filesystem.readWriteRoots).not.toContain(library)
+        const oldChild = procFor(executor, 'r')!.child
+        const revoked = await executor.execute({
+          ...request,
+          resolvedInterpreter: { command: request.resolvedInterpreter.command },
+          code: 'cat("glue" %in% loadedNamespaces())'
+        })
+        expect(revoked).toMatchObject({ status: 'completed', stdout: 'FALSE' })
+        expect(procFor(executor, 'r')!.child).not.toBe(oldChild)
+        expect(wrap.mock.calls[1][0].filesystem.readOnlyRoots).not.toContain(library)
+      } finally {
+        await executor.shutdown()
+      }
+    })
+  }
+)
 
 describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
   it('bounds R output before it crosses the loop protocol', async () => {
@@ -3178,13 +3819,13 @@ type BuildEnvFn = (
 
 describe('NotebookKernelExecutor spawn env', () => {
   it('grants the complete macOS app bundle to the Electron-backed repl kernel', () => {
-    const executable = '/Applications/Open Science.app/Contents/MacOS/Open Science'
+    const executable = '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
 
     expect(kernelExecutableReadRoot(executable, 'repl', 'darwin')).toBe(
-      '/Applications/Open Science.app'
+      '/Applications/Open-Science.app'
     )
     expect(kernelExecutableReadRoot(executable, 'python', 'darwin')).toBe(
-      '/Applications/Open Science.app/Contents/MacOS'
+      '/Applications/Open-Science.app/Contents/MacOS'
     )
   })
 
@@ -3314,6 +3955,27 @@ describe('NotebookKernelExecutor spawn env', () => {
     expect(env.PATH).toBe(process.env.PATH)
   })
 
+  it.each(['win32', 'darwin', 'linux'] as const)(
+    'exposes the authorized personal library only to the external R kernel on %s',
+    (platform) => {
+      const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform })
+      const request = {
+        ...baseRequest('/tmp/os-r-library'),
+        code: 'x',
+        resolvedInterpreter: { command: '/external/Rscript', rLibrary: '/personal/library' }
+      }
+      const buildEnv = (executor as unknown as { buildEnv: BuildEnvFn }).buildEnv.bind(executor)
+      vi.stubEnv('R_LIBS_USER', '/unrelated/host-library')
+      try {
+        expect(buildEnv('r', request, '/tmp/figs').R_LIBS_USER).toBe('/personal/library')
+        expect(buildEnv('python', request, '/tmp/figs').R_LIBS_USER).toBeUndefined()
+        expect(buildEnv('repl', request, '/tmp/figs').R_LIBS_USER).toBeUndefined()
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    }
+  )
+
   it('activates an external Windows conda R interpreter with its own DLL paths', () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE, platform: 'win32' })
     const prefix = 'C:\\Users\\HM\\miniforge3\\envs\\analysis'
@@ -3343,10 +4005,24 @@ describe('NotebookKernelExecutor spawn env', () => {
 // -- shutdown() reaped guarantee vs. in-flight teardowns (the Windows update-install gate). ----------
 
 type PendingTeardownsInternals = {
-  pendingTeardowns: Map<string, Promise<{ reaped: boolean }>>
+  pendingTeardowns: Map<
+    string,
+    { completion: Promise<{ reaped: boolean }>; retry: () => Promise<{ reaped: boolean }> }
+  >
 }
 
 describe('NotebookKernelExecutor shutdown reaping', () => {
+  it('refuses to restart while an earlier persistent process tree remains unreaped', async () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const internals = executor as unknown as PendingTeardownsInternals
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: Promise.resolve({ reaped: false }),
+      retry: async () => ({ reaped: false })
+    })
+
+    await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
+  })
+
   it('awaits an outstanding pending teardown and reports reaped:false while its tree is still dying', async () => {
     // A hard-timeout/idle drop moved its tree kill into pendingTeardowns and removed the proc from the
     // map, so shutdown()'s per-proc loop never sees it. shutdown() must still await that teardown: the
@@ -3358,7 +4034,10 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
     const teardown = new Promise<{ reaped: boolean }>((resolve) => {
       settle = resolve
     })
-    internals.pendingTeardowns.set('python:default-python', teardown)
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: teardown,
+      retry: () => teardown
+    })
 
     // shutdown() must not resolve while the old tree is still being reaped.
     let resolved = false
@@ -3379,7 +4058,10 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
   it('reports reaped:true only once every pending teardown reaped its whole tree', async () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     const internals = executor as unknown as PendingTeardownsInternals
-    internals.pendingTeardowns.set('python:default-python', Promise.resolve({ reaped: true }))
+    internals.pendingTeardowns.set('python:default-python', {
+      completion: Promise.resolve({ reaped: true }),
+      retry: async () => ({ reaped: true })
+    })
 
     const result = await executor.shutdown()
     expect(result.reaped).toBe(true)
@@ -3390,7 +4072,545 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
 
 const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
+const delayedSandboxCleanup = (
+  options: { executable?: string; args?: string[] } = {}
+): {
+  processSandbox: NotebookProcessSandbox
+  cleanup: ReturnType<typeof vi.fn>
+  release: () => void
+} => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const cleanup = vi.fn(async (_reason, processOutcome: { processesTerminated: boolean }) => {
+    await gate
+    return {
+      processesTerminated: processOutcome.processesTerminated,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }
+  })
+  return {
+    processSandbox: {
+      wrap: vi.fn(async (invocation) => ({
+        executable: options.executable ?? invocation.executable,
+        args: options.args ?? invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    },
+    cleanup,
+    release
+  }
+}
+
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('reports diagnostics when the REPL exits before replying', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-exit-diagnostic-'))
+    const terminations: unknown[][] = []
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      onTerminated: (...args) => terminations.push(args),
+      terminateTree: async () => ({ reaped: true })
+    })
+
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: 'repl',
+        code: "process.stderr.write('api_key=secret\\n'); process.exit(23)"
+      })
+
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(terminations).toHaveLength(1)
+      expect(terminations[0]).toEqual([
+        'repl',
+        '',
+        { reason: 'exit', exitCode: 23, signal: null, stderr: 'api_key=[redacted]\n' }
+      ])
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it.each(['execute', 'restart', 'shutdown'] as const)(
+    'retries receipt completion through %s without terminating the same process tree twice',
+    async (recovery) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-receipt-retry-'))
+      const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+      await owner.ensureReady()
+      const complete = owner.complete.bind(owner)
+      let receiptWritable = false
+      vi.spyOn(owner, 'complete').mockImplementation((receipt, reaped) => {
+        if (reaped && !receiptWritable) throw new Error('Receipt temporarily locked')
+        complete(receipt, reaped)
+      })
+      const terminateTree = vi.fn(terminateProcessTree)
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processLifecycle: owner,
+        laneKey: '["project-1","session-1","root",null,null]',
+        terminateTree
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        kind: 'repl' as const,
+        code: "console.log('blocked')"
+      }
+      const ledger = join(cwdDir, 'runtime', 'kernel-processes')
+      try {
+        await executor.execute({ ...request, code: "console.log('warm')" })
+        const [oldReceipt] = await readdir(ledger)
+        await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
+        await expect(executor.execute(request)).rejects.toThrow('process tree could not be stopped')
+        expect(await readdir(ledger)).toEqual([oldReceipt])
+        expect(terminateTree).toHaveBeenCalledOnce()
+
+        receiptWritable = true
+        if (recovery === 'restart') await expect(executor.restart()).resolves.toBeUndefined()
+        if (recovery === 'shutdown')
+          await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        await expect(
+          executor.execute({ ...request, code: "console.log('recovered')" })
+        ).resolves.toMatchObject({
+          status: 'completed',
+          stdout: expect.stringContaining('recovered')
+        })
+        expect(terminateTree).toHaveBeenCalledOnce()
+        expect(await readdir(ledger)).not.toContain(oldReceipt)
+      } finally {
+        receiptWritable = true
+        await executor.shutdown()
+      }
+    }
+  )
+
+  it('reaps the Windows tree before reporting an outer REPL timeout', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-timeout-'))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let stopping = false
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      terminateTree: async (child) => {
+        stopping = true
+        await gate
+        return terminateProcessTree(child)
+      }
+    })
+    const request = {
+      ...baseRequest(cwdDir),
+      kind: 'repl' as const,
+      code: "console.log('blocked')"
+    }
+    try {
+      await executor.execute({ ...request, code: "console.log('warm')" })
+      const child = procFor(executor, 'repl')!.child
+      const kill = vi.spyOn(child, 'kill')
+      let settled = false
+      const execution = executor
+        .execute({ ...request, code: 'await new Promise(() => {})', timeoutMs: 20 })
+        .finally(() => {
+          settled = true
+        })
+      await vi.waitFor(() => expect(stopping).toBe(true))
+      expect.soft(settled).toBe(false)
+      expect.soft(kill).not.toHaveBeenCalledWith('SIGINT')
+      release()
+      await expect(execution).resolves.toMatchObject({ status: 'timeout' })
+    } finally {
+      release()
+      await executor.shutdown()
+    }
+  })
+
+  it.each(['valid', 'missing', 'error'] as const)(
+    'reconciles an exited tree only with its retained native proof (%s)',
+    async (proof) => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-native-proof-'))
+      let proofAvailable = false
+      const confirm = vi.fn(async () => {
+        if (proof === 'error') throw new Error('Proof unavailable')
+        return proof === 'valid' && proofAvailable
+      })
+      const wrap = vi.fn<NotebookProcessSandbox['wrap']>(async (invocation) => ({
+        ...invocation,
+        confirmProcessTreeTermination: confirm,
+        annotateStderr: (stderr) => stderr,
+        cleanup: async (_reason, outcome) => ({
+          processesTerminated:
+            outcome.processesTerminated ||
+            Boolean(await outcome.confirmTermination?.().catch(() => false)),
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+      }))
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        processSandbox: { wrap },
+        // Model Windows taskkill losing an already-exited leader. The real child exits itself.
+        terminateTree: async (child) =>
+          child.exitCode === 7 ? { reaped: false } : terminateProcessTree(child)
+      })
+      const request = {
+        ...baseRequest(cwdDir),
+        kind: 'repl' as const,
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      }
+      try {
+        await expect(executor.execute({ ...request, code: 'process.exit(7)' })).rejects.toThrow(
+          'process tree could not be stopped'
+        )
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        proofAvailable = true
+        const retry = executor.execute({ ...request, code: "console.log('recovered')" })
+        if (proof === 'valid') {
+          await expect(retry).resolves.toMatchObject({
+            status: 'completed',
+            stdout: expect.stringContaining('recovered')
+          })
+          expect(wrap).toHaveBeenCalledTimes(2)
+        } else {
+          await expect(retry).rejects.toThrow('process tree could not be stopped')
+          expect(wrap).toHaveBeenCalledOnce()
+          await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+        }
+      } finally {
+        await executor.shutdown()
+      }
+    }
+  )
+
+  it('registers POSIX kernel ownership before reporting an incomplete post-exit reap', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-owned-cleanup-'))
+    let releaseReaping: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      releaseReaping = resolve
+    })
+    const registerOwnedProcessGroup = vi.fn()
+    const terminateTree = vi.fn(async () => {
+      await gate
+      return { reaped: false }
+    })
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'linux',
+      processSandbox: sandbox.processSandbox,
+      registerOwnedProcessGroup,
+      terminateTree
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'process.exit(7)',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .finally(() => {
+          completed = true
+        })
+
+      await vi.waitFor(() => expect(registerOwnedProcessGroup).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledOnce())
+      expect(completed).toBe(false)
+      releaseReaping?.()
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('exit', { processesTerminated: false })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(execution).rejects.toThrow('process tree could not be stopped')
+      await expect(executor.shutdown()).resolves.toEqual({ reaped: false })
+    } finally {
+      releaseReaping?.()
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'reaps a kernel helper after its leader exits',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-orphan-'))
+      const pidFile = join(cwdDir, 'helper.pid')
+      const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })
+      let helperPid: number | undefined
+
+      try {
+        await executor.execute({
+          ...baseRequest(cwdDir),
+          code: [
+            "const { spawn } = require('node:child_process')",
+            "const fs = require('node:fs')",
+            `const helper = spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGTERM',()=>{});setInterval(()=>{},1000)")}], { stdio: 'ignore', detached: true })`,
+            `fs.writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid))`,
+            'setTimeout(() => process.exit(0), 25)',
+            "return 'scheduled'"
+          ].join(';'),
+          kind: 'repl'
+        })
+        await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true))
+        helperPid = Number(await readFile(pidFile, 'utf8'))
+        await vi.waitFor(() => expect(procFor(executor, 'repl')).toBeUndefined())
+
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        await vi.waitFor(() => expect(() => process.kill(helperPid as number, 0)).toThrow())
+      } finally {
+        await executor.shutdown()
+        if (helperPid) {
+          try {
+            process.kill(helperPid, 'SIGKILL')
+          } catch {
+            // Expected once the owned kernel group has been reaped.
+          }
+        }
+      }
+    },
+    15_000
+  )
+
+  it('waits for sandbox cleanup before an unexpected exit completes its caller', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-exit-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'process.exit(7)',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .finally(() => {
+          completed = true
+        })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('exit', {
+          processesTerminated: process.platform !== 'win32'
+        })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      if (process.platform === 'win32') {
+        await expect(execution).rejects.toThrow('process tree could not be stopped')
+      } else {
+        await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      }
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for sandbox cleanup before spawn failure completes its caller', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-spawn-cleanup-'))
+    const sandbox = delayedSandboxCleanup({
+      executable: join(cwdDir, 'missing-kernel-executable')
+    })
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'return 1',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .then((result) => {
+          completed = true
+          return result
+        })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true
+        })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for exactly one sandbox cleanup when spawn throws synchronously', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-sync-spawn-cleanup-'))
+    const sandbox = delayedSandboxCleanup({ args: ['\0'] })
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'return 1',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .then((result) => {
+          completed = true
+          return result
+        })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true
+        })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+
+      const result = await execution
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.stderr).toContain('null bytes')
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for sandbox cleanup before terminate completes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-terminate-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      const termination = executor.terminate('repl', '').then(() => {
+        completed = true
+      })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await termination
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for an error-triggered sandbox cleanup before shutdown completes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-error-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      procFor(executor, 'repl')?.child.emit('error', new Error('kernel handle failed'))
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true
+        })
+      )
+      const shutdown = executor.shutdown().then((result) => {
+        completed = true
+        return result
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(shutdown).resolves.toEqual({ reaped: true })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for sandbox cleanup before shutdown completes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-shutdown-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      const shutdown = executor.shutdown().then((result) => {
+        completed = true
+        return result
+      })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(shutdown).resolves.toEqual({ reaped: true })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
   it('starts the Linux repl with an fd-only RPC token', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-rpc-fd-'))
     const token = 'kernel-fd-only-token'
@@ -3677,7 +4897,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
 // -- Readiness gate: no spawn, no python3 required. -------------------------------------------------
 
 describe('NotebookKernelExecutor readiness gate', () => {
-  it('fails clearly when R is requested but no rEnvPrefix is configured', async () => {
+  it('reports the missing default R interpreter without claiming preparation is running', async () => {
     const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
     try {
       const result = await executor.execute({
@@ -3686,7 +4906,9 @@ describe('NotebookKernelExecutor readiness gate', () => {
         language: 'r'
       })
       expect(result.status).toBe('failed')
-      expect(result.stderr).toMatch(/r environment.*still being prepared/i)
+      expect(result.kernelDispatched).toBe(false)
+      expect(result.stderr).toMatch(/R interpreter.*default-r.*was not found/)
+      expect(result.stderr).toContain('does not establish whether preparation is running')
     } finally {
       await executor.shutdown()
     }
@@ -3700,7 +4922,9 @@ describe('NotebookKernelExecutor readiness gate', () => {
     try {
       const result = await executor.execute({ ...baseRequest('/tmp'), code: 'x' })
       expect(result.status).toBe('failed')
-      expect(result.stderr).toMatch(/python environment.*still being prepared/i)
+      expect(result.kernelDispatched).toBe(false)
+      expect(result.stderr).toMatch(/Python interpreter.*default-python.*was not found/)
+      expect(result.stderr).toContain('The cell was not dispatched')
     } finally {
       await executor.shutdown()
     }
@@ -3715,8 +4939,9 @@ describe('NotebookKernelExecutor readiness gate', () => {
         environment: 'ghost-env'
       })
       expect(result.status).toBe('failed')
-      // A missing NAMED env tells the agent to create it explicitly (defaults auto-provision instead).
-      expect(result.stderr).toMatch(/environment "ghost-env" does not exist.*manage_environments/i)
+      expect(result.kernelDispatched).toBe(false)
+      expect(result.stderr).toMatch(/interpreter for environment "ghost-env" was not found/)
+      expect(result.stderr).not.toMatch(/does not exist|Create it first|manage_environments/)
     } finally {
       await executor.shutdown()
     }

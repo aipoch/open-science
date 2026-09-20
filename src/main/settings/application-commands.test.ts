@@ -40,9 +40,13 @@ const expectedChannels = [
   'settings:detect-codex',
   'settings:detect-opencode',
   'settings:get-connector-detail',
+  'settings:get-classification',
   'settings:get-github-token-status',
   'settings:get-package-mirror',
   'settings:get-notebook-network-status',
+  'settings:get-local-shell-runtime-preference',
+  'settings:get-wsl2-bash-preview-status',
+  'settings:get-wsl-setup-status',
   'settings:get-preflight',
   'settings:get-settings',
   'settings:get-skill-detail',
@@ -57,10 +61,20 @@ const expectedChannels = [
   'settings:list-app-icons',
   'settings:list-connectors',
   'settings:list-skills',
+  'settings:list-skill-marketplace',
+  'settings:get-skill-marketplace-batch',
+  'settings:stop-skill-marketplace-batch',
+  'settings:get-skill-marketplace-detail',
   'settings:mark-onboarding-complete',
   'settings:preview-agent-home-skill',
   'settings:preview-github-skill',
   'settings:preview-skill-zip',
+  'settings:probe-wsl-setup',
+  'settings:install-wsl-platform',
+  'settings:install-missing-wsl-dependencies',
+  'settings:create-wsl-support-handoff',
+  'settings:install-recommended-wsl-distro',
+  'settings:open-wsl-terminal',
   'settings:refresh-provider-models',
   'settings:scan-repo-skills',
   'settings:save-github-token',
@@ -75,9 +89,15 @@ const expectedChannels = [
   'settings:set-notebook-network',
   'settings:set-project-files-filter',
   'settings:set-reviewer-model',
+  'settings:select-wsl-profile',
+  'settings:switch-local-shell-to-powershell',
+  'settings:use-wsl2-bash',
   'settings:set-session-details-model',
   'settings:set-subagent-model',
   'settings:set-vision-model',
+  'settings:update-classification',
+  'settings:test-classification',
+  'settings:save-validated-provider',
   'settings:validate-provider'
 ] as const
 
@@ -106,6 +126,8 @@ const createDependencies = (
   snapshotCommits: SettingsSnapshotCommitOwner = passThroughSnapshotCommits
 ): Readonly<{
   appearance: ReturnType<typeof vi.fn>
+  switchToPowerShell: ReturnType<typeof vi.fn>
+  useWsl2Bash: ReturnType<typeof vi.fn>
   dependencies: CoreSettingsApplicationCommandDependencies
   emitInstallEvent: ReturnType<typeof vi.fn>
   serviceMethod: (
@@ -127,13 +149,22 @@ const createDependencies = (
     }
   ) as CoreSettingsApplicationCommandDependencies['service']
   const appearance = vi.fn()
+  const switchToPowerShell = vi.fn()
+  const useWsl2Bash = vi.fn()
   const emitInstallEvent = vi.fn()
 
   return {
     appearance,
+    switchToPowerShell,
+    useWsl2Bash,
     dependencies: {
       service,
+      runtime: {
+        refreshProviderModels: (request) => service.refreshProviderModels(request),
+        saveValidatedProvider: vi.fn()
+      },
       appearance: { setAppIconVariant: appearance },
+      localShell: { switchToPowerShell, useWsl2Bash },
       snapshotCommits,
       emitInstallEvent,
       listAppIconPreviews: vi.fn(() => [])
@@ -144,6 +175,93 @@ const createDependencies = (
 }
 
 describe('Settings core application commands', () => {
+  it('returns validated-save outcomes intact through local and remote command serialization', async () => {
+    const { dependencies } = createDependencies()
+    const result = {
+      validation: { ok: true, category: 'ok' as const },
+      providerId: 'committed',
+      runtimeReconnectFailed: true
+    }
+    vi.mocked(dependencies.runtime.saveValidatedProvider).mockResolvedValue(result)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    for (const location of ['local', 'remote'] as const) {
+      const returned = await router.dispatcher.invoke(
+        settingsCoreApplicationCommands.saveValidatedProvider,
+        invocation([{ id: 'committed', type: 'custom' }] as const, location)
+      )
+      expect(JSON.parse(JSON.stringify(returned))).toEqual(result)
+    }
+  })
+
+  it('dispatches queue progress and identity-bound stop from local and remote callers', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    serviceMethod('getSkillMarketplaceBatch').mockReturnValue(null)
+    serviceMethod('stopSkillMarketplaceBatch').mockReturnValue(true)
+    for (const location of ['local', 'remote'] as const) {
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.getSkillMarketplaceBatch,
+          invocation([] as const, location)
+        )
+      ).resolves.toBeNull()
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.stopSkillMarketplaceBatch,
+          invocation(['current-batch'] as const, location)
+        )
+      ).resolves.toBe(true)
+    }
+    expect(serviceMethod('stopSkillMarketplaceBatch')).toHaveBeenCalledWith('current-batch')
+  })
+  it('dispatches read-only Skill Marketplace browsing from local and remote callers', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+    const result = { ok: true, value: { entries: [] } }
+    const request = { snapshotId: 'a'.repeat(64), id: 'abstract-trimmer' }
+    serviceMethod('listSkillMarketplace').mockResolvedValue(result)
+    serviceMethod('getSkillMarketplaceDetail').mockResolvedValue(result)
+    for (const location of ['local', 'remote'] as const) {
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.listSkillMarketplace,
+          invocation([{ snapshotId: request.snapshotId }] as const, location)
+        )
+      ).resolves.toBe(result)
+      await expect(
+        router.dispatcher.invoke(
+          settingsCoreApplicationCommands.getSkillMarketplaceDetail,
+          invocation([request] as const, location)
+        )
+      ).resolves.toBe(result)
+    }
+    expect(serviceMethod('getSkillMarketplaceDetail')).toHaveBeenCalledWith(request)
+    expect(serviceMethod('listSkillMarketplace')).toHaveBeenCalledWith({
+      snapshotId: request.snapshotId
+    })
+  })
+  it('routes model refresh through the runtime workflow before publishing the snapshot', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const result = { ok: true, category: 'ok', models: ['new-default'] } as const
+    const refreshProviderModels = vi.fn().mockResolvedValue(result)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, {
+      ...dependencies,
+      runtime: { refreshProviderModels, saveValidatedProvider: vi.fn() }
+    })
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.refreshProviderModels,
+        invocation([{ providerId: 'provider-1' }])
+      )
+    ).resolves.toEqual(result)
+    expect(refreshProviderModels).toHaveBeenCalledWith({ providerId: 'provider-1' })
+    expect(serviceMethod('refreshProviderModels')).not.toHaveBeenCalled()
+  })
+
   it('returns and publishes current snapshots when an older command result resolves late', async () => {
     const currentSnapshot = {
       claude: {},
@@ -218,6 +336,83 @@ describe('Settings core application commands', () => {
       )
     ).resolves.toBe(savedNetwork)
     expect(published).toEqual([currentSnapshot])
+  })
+
+  it('routes local WSL setup commands through the Settings owner', async () => {
+    const { dependencies, serviceMethod, switchToPowerShell, useWsl2Bash } = createDependencies()
+    const snapshot = { state: 'ready', distros: [], operationReference: 'wsl-setup-1' }
+    serviceMethod('probeWslSetup').mockResolvedValue(snapshot)
+    serviceMethod('selectWslProfile').mockResolvedValue(snapshot)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.probeWslSetup,
+        invocation([] as const)
+      )
+    ).resolves.toBe(snapshot)
+    const switched = {
+      runtimeBinding: { kind: 'powershell' as const, version: '5.1' as const },
+      appliesTo: 'subsequent-executions' as const,
+      wslProfilePreserved: true
+    }
+    switchToPowerShell.mockResolvedValue(switched)
+    const wslEnabled = {
+      runtime: 'wsl2-bash' as const,
+      selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
+      appliesTo: 'subsequent-executions' as const
+    }
+    useWsl2Bash.mockResolvedValue(wslEnabled)
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.switchLocalShellToPowerShell,
+        invocation([] as const)
+      )
+    ).resolves.toBe(switched)
+    await expect(
+      router.dispatcher.invoke(settingsCoreApplicationCommands.useWsl2Bash, invocation([] as const))
+    ).resolves.toBe(wslEnabled)
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.selectWslProfile,
+        invocation([{ distro: 'Ubuntu-24.04', user: 'scientist' }] as const)
+      )
+    ).resolves.toBe(snapshot)
+    expect(serviceMethod('probeWslSetup')).toHaveBeenCalledOnce()
+    expect(serviceMethod('selectWslProfile')).toHaveBeenCalledWith({
+      distro: 'Ubuntu-24.04',
+      user: 'scientist'
+    })
+    expect(switchToPowerShell).toHaveBeenCalledOnce()
+    expect(useWsl2Bash).toHaveBeenCalledOnce()
+  })
+
+  it('routes revision-bound WSL dependency installation only for a local caller', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const snapshot = { state: 'ready', distros: [], operationReference: 'dependencies-1' }
+    const request = { expectedRevision: 17 }
+    serviceMethod('installMissingWslDependencies').mockResolvedValue(snapshot)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.installMissingWslDependencies,
+        invocation([request] as const)
+      )
+    ).resolves.toBe(snapshot)
+    expect(serviceMethod('installMissingWslDependencies')).toHaveBeenCalledWith(request)
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.installMissingWslDependencies,
+        invocation([request] as const, 'remote')
+      )
+    ).rejects.toThrow(
+      'Channel only available from the local app: settings:install-missing-wsl-dependencies'
+    )
+    expect(serviceMethod('installMissingWslDependencies')).toHaveBeenCalledOnce()
   })
 
   it('installs the exact command inventory and dispatches a remote-safe preflight query', async () => {

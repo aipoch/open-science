@@ -1,3 +1,5 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings form · genre: modern-minimal · theme: project system
  * states: default · hover · focus · active · disabled · loading · error · success
@@ -78,14 +80,14 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
       <SettingsSection
         title={t('Proxy')}
         description={t(
-          'Choose how Open Science reaches the internet. Changes apply to new app requests and processes.'
+          'Choose how Open-Science reaches the internet. Changes apply to new app requests and processes.'
         )}
         aria-label={t('Proxy settings')}
       >
         <SettingsRow
           label={t('Mode')}
           description={t(
-            'System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open Science started with; choose Manual to give them a fixed proxy.'
+            'System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open-Science started with; choose Manual to give them a fixed proxy.'
           )}
           className="pt-0"
         >
@@ -117,7 +119,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                 'HTTP, HTTPS, SOCKS, SOCKS4, or SOCKS5 URL. Embedded credentials are not supported.'
               )}
             >
-              <div className="space-y-1.5">
+              <div className="w-full space-y-1.5">
                 <Input
                   id="network-proxy-server"
                   aria-label={t('Proxy server')}
@@ -138,7 +140,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                   id="network-proxy-server-help"
                   className={
                     showServerError
-                      ? 'min-h-[1lh] text-xs text-destructive'
+                      ? `min-h-[1lh] ${fieldErrorClassName}`
                       : 'min-h-[1lh] text-xs text-muted-foreground'
                   }
                   role={showServerError ? 'alert' : undefined}
@@ -171,16 +173,16 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
         ) : null}
       </SettingsSection>
 
-      <div className="rounded-lg bg-bg-10 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground ring-1 ring-border-200">
+      <InlineNotice level="info">
         {t(
           'Existing agent sessions, notebook kernels, and installers keep their current connection. New requests and processes use the saved setting.'
         )}
-      </div>
+      </InlineNotice>
 
       {message ? (
-        <p className="text-xs text-destructive" role="alert">
+        <InlineNotice level="error" role="alert">
           {message}
-        </p>
+        </InlineNotice>
       ) : null}
       {isSuccess ? (
         <p className="flex items-center gap-1.5 text-xs text-success-000" role="status">
@@ -193,11 +195,21 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
         <Button type="button" variant="outline" onClick={onDone} disabled={isSaving}>
           {t('Done')}
         </Button>
-        <Button type="button" onClick={() => void handleSave()} disabled={isSaving}>
-          {isSaving ? (
-            <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-          ) : null}
-          {isSaving ? t('Saving…') : t('Save')}
+        <Button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={isSaving}
+          aria-busy={Boolean(isSaving)}
+        >
+          <span key={String(isSaving)} className="button-feedback">
+            {isSaving ? (
+              <LoaderCircle
+                className="animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {isSaving ? t('Saving…') : t('Save')}
+          </span>
         </Button>
       </div>
     </div>

@@ -82,6 +82,17 @@ const renderHook = async (
 }
 
 describe('deep-link navigation', () => {
+  it('restores the selected Session URL when returning from Library', async () => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({ sessions: [session, { ...session, id: 'newer', updatedAt: 2 }] })
+    await renderHook({ isHydrated: true, isReady: true })
+    act(() => useNavigationStore.getState().openSession(project.id, session.id, 'user'))
+    act(() => useNavigationStore.getState().openLibrary('user'))
+    expect(window.location.search).toBe('')
+    act(() => useNavigationStore.getState().returnFromLibrary('user'))
+    expect(window.location.search).toBe('?project=project-1&session=session-1')
+  })
+
   it('preserves notification navigation when no deep-link target was supplied', async () => {
     window.history.replaceState({}, '', '/')
     useProjectStore.setState({ projects: [project], isLoaded: true })

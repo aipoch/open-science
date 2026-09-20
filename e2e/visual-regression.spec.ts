@@ -60,7 +60,9 @@ const pinConversationToEnd = async (page: Page): Promise<void> => {
         (element) => element.scrollHeight - element.clientHeight - element.scrollTop
       )
     })
-    .toBeLessThanOrEqual(1)
+    // Chromium can leave a 1.5 CSS-pixel remainder at this device scale factor even after
+    // scrollTo(scrollHeight). Allow only that subpixel rounding, not a visibly unpinned viewport.
+    .toBeLessThanOrEqual(1.5)
 }
 
 const expectStableScreenshot = async (
@@ -90,7 +92,8 @@ const expectStableScreenshot = async (
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
-  await expect(page).toHaveScreenshot(name, {
+  // Collect every visual mismatch in the journey while keeping the test failure blocking.
+  await expect.soft(page).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: process.platform === 'darwin' ? maxDiffPixelRatio : 0.035
@@ -214,7 +217,10 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await appVersion.getByRole('button').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
-  await appVersion.locator(':scope > p').evaluateAll((elements) => {
+  await appVersion.getByText(/^v\d+\.\d+\.\d+/).evaluate((element) => {
+    element.textContent = 'v0.0.0'
+  })
+  await appVersion.getByRole('status').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
   // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.
@@ -358,12 +364,17 @@ test('keeps representative conversation, project, and recovery states visually s
     await completedSessionDismiss.click()
     await expect(completedSessionDismiss).toBeHidden()
   }
-  const recoveryAction = recoveryAlert.getByRole('button', {
+  const recoveryNotice = recoveryAlert.locator('xpath=../..')
+  const recoveryAction = recoveryNotice.getByRole('button', {
     name: 'View affected conversations'
   })
-  const recoveryMessage = recoveryAlert.locator('p').nth(1)
+  // ErrorNotice puts the title in a heading and the body in a single description paragraph.
+  const recoveryMessage = recoveryAlert.locator('p')
+  const recoveryDismiss = recoveryNotice.getByTestId('session-persistence-dismiss')
   for (const width of [320, 375, 414, 768]) {
     await setViewport(page, width)
+    await expect(recoveryAction).toBeVisible()
+    await expect(recoveryAction).toBeInViewport({ ratio: 1 })
     const [alertBox, actionBox, messageBox] = await Promise.all([
       recoveryAlert.boundingBox(),
       recoveryAction.boundingBox(),
@@ -375,7 +386,20 @@ test('keeps representative conversation, project, and recovery states visually s
     expect(alertBox.x).toBeGreaterThanOrEqual(0)
     expect(alertBox.x + alertBox.width).toBeLessThanOrEqual(width)
     expect(actionBox.y).toBeGreaterThanOrEqual(messageBox.y + messageBox.height)
-    await expect(recoveryAction).toHaveCSS('white-space', 'nowrap')
+    expect(actionBox.x).toBeGreaterThanOrEqual(0)
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(width)
+    const dismissBox = await recoveryDismiss.boundingBox()
+    if (!dismissBox) throw new Error(`Recovery dismiss button was not measurable at ${width}px`)
+    expect(dismissBox.y).toBeLessThanOrEqual(alertBox.y + 1)
+    expect(dismissBox.x).toBeGreaterThanOrEqual(alertBox.x + alertBox.width)
+    // Compact ErrorNotice actions may wrap; their text must remain readable without clipping.
+    expect(
+      await recoveryAction.evaluate(
+        (button) =>
+          button.scrollWidth <= button.clientWidth + 1 &&
+          button.scrollHeight <= button.clientHeight + 1
+      )
+    ).toBe(true)
   }
   await setViewport(page, 1280)
   await expectStableScreenshot(page, 'session-recovery-warning.png')

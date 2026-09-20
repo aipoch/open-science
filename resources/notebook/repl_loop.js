@@ -1460,7 +1460,20 @@ async function hostViewImage(source, options = undefined) {
     })
   })
   const body = await res.json().catch(() => ({}))
-  if (!res.ok || body.error) throw new Error(body.error || 'host.viewImage HTTP ' + res.status)
+  if (!res.ok || body.error) {
+    const detail = body.error
+    if (detail?.code === 'BACKGROUND_HOST_METHOD_UNSAFE') {
+      throw new Error(
+        JSON.stringify({
+          code: detail.code,
+          method: detail.method,
+          retryable: false,
+          hint: detail.hint
+        })
+      )
+    }
+    throw new Error(body.error || 'host.viewImage HTTP ' + res.status)
+  }
   return frozenViewImageResult(body.result)
 }
 
@@ -2783,6 +2796,9 @@ const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessio
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
 // happens outside the sandbox workspace. Uses the captured RPC endpoint/token + client for the same
 // token-isolation reasons documented on host.mcp above.
+const COMPUTE_JOB_SUBMISSION_RECEIPT_GUIDANCE =
+  'Save the exact job_id. Query that saved id with attachJob(job_id).status() or .result() when its state or result is relevant. Each call is a non-blocking snapshot and never scans Job history. Only result_final:true is final; a final .result() read reports follow_up_delivery:"suppressed" when it prevents the fallback, or "committed" when that fallback already crossed its dispatch fence. A .status() snapshot does not consume the full result. An unread final result is delivered in a later Turn.'
+
 async function computeRpc(params) {
   if (!RPC_ENDPOINT) throw new Error('host.compute is unavailable: connector RPC endpoint not set')
   const isRetryableSubmit = params?.op === 'submit_job' && typeof params.invocation_id === 'string'
@@ -2796,18 +2812,53 @@ async function computeRpc(params) {
       if (isRetryableSubmit && res.ok) throw error
       return {}
     })
+    if (isRetryableSubmit && res.ok && !body.error && typeof body.result?.job_id !== 'string') {
+      throw new Error('Compute submission response did not contain a Job receipt.')
+    }
     return { res, body }
   }
   let response
+  let replayed = false
   try {
     response = await request()
   } catch (error) {
     if (!isRetryableSubmit) throw error
-    response = await request()
+    replayed = true
+    try {
+      response = await request()
+    } catch {
+      throw new Error(
+        'Compute Job submission outcome is unknown after replaying the same submission. No Job receipt is available to query. Do not submit the same work again; application-side recovery is required.'
+      )
+    }
   }
   const { res, body } = response
   if (!res.ok || body.error) {
-    throw computeError(body.error || 'host.compute HTTP ' + res.status)
+    if (isRetryableSubmit && !body.error) {
+      throw new Error(
+        'Compute Job submission outcome is unknown (HTTP ' +
+          res.status +
+          '). No Job receipt is available to query. Do not submit the same work again; application-side recovery is required.'
+      )
+    }
+    const error = computeError(body.error || 'host.compute HTTP ' + res.status)
+    if (replayed) {
+      const uncertain = new Error(
+        'Compute Job submission outcome is unknown: the original response was lost and replay returned no receipt. Do not submit the same work again; application-side recovery is required.'
+      )
+      // The replay's rejection cannot establish the original submission's outcome. Keep its code
+      // for callers, but do not carry retry advice that would authorize a fresh submission.
+      if (error.error_code !== undefined) uncertain.error_code = error.error_code
+      uncertain.retry_after_user_action = false
+      uncertain.stack +=
+        '\n' +
+        JSON.stringify({
+          error_code: uncertain.error_code,
+          retry_after_user_action: false
+        })
+      throw uncertain
+    }
+    throw error
   }
   return body.result
 }
@@ -2840,7 +2891,19 @@ async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
     // Server-side method errors are already `host.agents.<method>: <message>`. Boundary failures
     // (auth, unknown method) are not method-scoped, so prefix them with the op the caller invoked so
     // the agent always sees a host.agents.* namespaced, secret-free message.
-    const serverMessage = body.error || 'host.agents HTTP ' + res.status
+    const structuredError = body.error
+    const serverMessage =
+      structuredError &&
+      typeof structuredError === 'object' &&
+      typeof structuredError.code === 'string'
+        ? [
+            structuredError.code,
+            typeof structuredError.method === 'string' ? structuredError.method : null,
+            typeof structuredError.hint === 'string' ? structuredError.hint : null
+          ]
+            .filter(Boolean)
+            .join(': ')
+        : body.error || 'host.agents HTTP ' + res.status
     const publicMethod =
       {
         list_skills: 'listSkills',
@@ -3283,6 +3346,8 @@ const hostSkills = {
 // re-serializes as a JSON string in `error` ({error_code, message, retry_after_user_action}); parse it
 // and hang those fields off the Error so REPL code can branch on `e.error_code` (matching the old Python
 // shim's RuntimeError.error_code contract). A plain (non-JSON) message falls back to a bare Error.
+const truncatedComputeErrors = new WeakSet()
+
 function computeError(raw) {
   try {
     const parsed = JSON.parse(raw)
@@ -3290,6 +3355,30 @@ function computeError(raw) {
       const err = new Error(parsed.message || parsed.error_code)
       err.error_code = parsed.error_code
       err.retry_after_user_action = parsed.retry_after_user_action
+      // Only public failure context belongs in the uncaught output; internal adapter frames add
+      // no recovery information. Reserve room for the fields before clipping a long message.
+      const metadata = JSON.stringify({
+        error_code: err.error_code,
+        retry_after_user_action: err.retry_after_user_action
+      })
+      const marker = '…[diagnostic truncated]'
+      const budget = {
+        remaining: Math.max(
+          0,
+          DIAGNOSTIC_LIMIT_BYTES - Buffer.byteLength('Error: \n' + metadata + marker, 'utf8')
+        ),
+        truncated: false
+      }
+      let message = err.message
+      if (Buffer.byteLength(message, 'utf8') > budget.remaining) {
+        // Causes tend to lead, while execution state and recovery guidance may follow them.
+        const headBudget = { remaining: Math.floor(budget.remaining / 3), truncated: false }
+        const head = takeOutput(headBudget, message)
+        budget.remaining -= Buffer.byteLength(head, 'utf8')
+        message = head + marker + takeOutputTail(budget, message)
+        truncatedComputeErrors.add(err)
+      }
+      err.stack = 'Error: ' + message + '\n' + metadata
       return err
     }
   } catch {
@@ -3359,7 +3448,7 @@ const hostCompute = {
       // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
       // options: { environment?, resources?, inputs?, outputs?, timeoutSeconds?, harvest? }
       // A named environment resolves to the host-owned
-      // ~/.openscience/environments/<name>.sh activation file in the Host's configured execution mode.
+      // ~/.open-science/environments/<name>.sh activation file in the Host's configured execution mode.
       // Session/project context is always threaded from spawn env for grant-scope memory.
       // workspace_cwd is captured at spawn time so the main process can resolve workspace paths.
       async submitJob(intent, command, options = {}) {
@@ -3407,9 +3496,12 @@ const hostCompute = {
           assertHarvestLimit('maxFileMb', harvest.max_file_mb, 100)
           assertHarvestLimit('maxTotalMb', harvest.max_total_mb, 500)
         }
-        return computeRpc({
+        // Generate the idempotency key once at the adapter boundary. computeRpc may replay this
+        // exact request after a lost successful response, but must never mint a second invocation.
+        const invocationId = randomUUID()
+        const receipt = await computeRpc({
           op: 'submit_job',
-          invocation_id: randomUUID(),
+          invocation_id: invocationId,
           provider_id: providerId,
           intent,
           command,
@@ -3423,6 +3515,9 @@ const hostCompute = {
           project_id: COMPUTE_PROJECT_ID,
           workspace_cwd: COMPUTE_WORKSPACE_CWD
         })
+        // Keep the main-process wire receipt unchanged; this field exists only in the Agent-facing
+        // host SDK projection so the durable job id remains available at its later dependency point.
+        return { ...receipt, nextAction: COMPUTE_JOB_SUBMISSION_RECEIPT_GUIDANCE }
       },
 
       // Attaches this provider handle to an existing job by job_id. Server-side reads verify that
@@ -3607,6 +3702,7 @@ async function run(code) {
     }
   } catch (e) {
     error = takeOutputTail(diagnosticBudget, e && e.stack ? String(e.stack) : String(e))
+    if (truncatedComputeErrors.has(e)) diagnosticBudget.truncated = true
   } finally {
     console.log = origLog
     console.error = origErr

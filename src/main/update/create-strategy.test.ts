@@ -8,7 +8,10 @@ const loggerMocks = vi.hoisted(() => {
   return { log, createLogger: vi.fn(() => log) }
 })
 
-vi.mock('node:child_process', () => ({ spawnSync }))
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  spawnSync
+}))
 vi.mock('../logger', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../logger')>()),
   createLogger: loggerMocks.createLogger
@@ -19,7 +22,7 @@ vi.mock('../logger', async (importOriginal) => ({
 // autoUpdater), so stub them enough to instantiate without a real Electron runtime.
 vi.mock('electron', () => ({
   app: {
-    getPath: () => '/Applications/Open Science.app/Contents/MacOS/Open Science',
+    getPath: () => '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
     getVersion: () => '0.0.0',
     isPackaged: false
   },
@@ -27,9 +30,20 @@ vi.mock('electron', () => ({
   shell: { openExternal: vi.fn(async () => {}), openPath: vi.fn(async () => '') }
 }))
 vi.mock('electron-updater', () => ({
+  AppImageUpdater: class {},
+  DebUpdater: class {},
+  CancellationToken: class {
+    cancelled = false
+    cancel(): void {
+      this.cancelled = true
+    }
+  },
   autoUpdater: {
     on: (event: string, listener: (...args: unknown[]) => void) => {
       updaterListeners.set(event, listener)
+    },
+    downloadUpdate: async () => {
+      updaterListeners.get('update-downloaded')?.()
     },
     autoDownload: true,
     autoInstallOnAppQuit: true,
@@ -71,7 +85,8 @@ describe('createUpdateStrategy', () => {
     async (_, platform, opts) => {
       const strategy = createUpdateStrategy(platform, opts)
       if (strategy instanceof ElectronUpdaterStrategy) {
-        updaterListeners.get('update-downloaded')?.()
+        updaterListeners.get('update-available')?.({})
+        await strategy.download()
       }
 
       await strategy.apply()
@@ -87,7 +102,8 @@ describe('createUpdateStrategy', () => {
   it('constructs the in-place strategy with its install gate', async () => {
     const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const strategy = createUpdateStrategy('win32', { installGate })
-    updaterListeners.get('update-downloaded')?.()
+    updaterListeners.get('update-available')?.({})
+    await strategy.download()
 
     await strategy.apply()
 
@@ -104,7 +120,8 @@ describe('createUpdateStrategy', () => {
       installGate: vi.fn(async () => ({ completed: true, reaped: true })),
       releaseInstallHandoff
     })
-    updaterListeners.get('update-downloaded')?.()
+    updaterListeners.get('update-available')?.({})
+    await strategy.download()
 
     await strategy.apply()
 

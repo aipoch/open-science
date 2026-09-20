@@ -4,16 +4,20 @@ import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import JSZip from 'jszip'
+import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 const VERSION = '1.0.0'
+const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
+const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
 const PERMISSION_PROMPT = 'Request fixture permission.'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
 const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
+const PROVIDER_RUNTIME_FAILURE_PROMPT = 'Verify runtime provider failure synchronization.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT = 'Profile the notebook lifecycle.'
 const NOTEBOOK_MUTATION_CANCELLATION_PROMPT = 'Verify Notebook mutation cancellation.'
@@ -62,16 +66,16 @@ const DELEGATION_BRANCH_B_PROMPT = 'Start the active-branch partial Stop certifi
 const DELEGATION_UNAVAILABLE_PROMPT = 'Verify unsupported delegation admission.'
 const DELEGATION_STRUCTURED_OUTPUT_PROMPT = 'Run the production structured output journey.'
 const RELIABLE_MESSAGING_PROMPT = 'Run the production reliable messaging journey.'
-const RELIABLE_BRANCH_PARK_PROMPT = 'Start the reliable messaging branch park journey.'
-const RELIABLE_BRANCH_WAKE_PROMPT = 'Wake the reliable messaging branch park journey.'
 const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure journey.'
 const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
 const RUNTIME_RESOURCE_STRESS_PROMPT = 'Run the runtime resource stress journey.'
+const MARKDOWN_PARSER_PROMPT = 'Run the native Markdown parser journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
+const MERMAID_BLOCK_PROMPT = 'Render the mermaid block journey.'
 const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
@@ -104,12 +108,20 @@ const DELEGATED_WAIT_NAME = 'Delegated fixture A'
 const DELEGATED_WAIT_NAME_TWO = 'Delegated fixture B'
 const DELEGATED_STRUCTURED_OUTPUT_TASK = 'Create certified structured evidence.'
 const DELEGATED_RELIABLE_MESSAGING_TASK = 'Send a reliable question to Main.'
-const DELEGATED_RELIABLE_PARK_TASK = 'Queue a reliable question for branch parking.'
 const DELEGATED_RELIABLE_FAILURE_TASK = 'Queue a reliable question for post-fence failure.'
 const DELEGATED_RELIABLE_FAILURE_NAME = 'Post-fence reliable question'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_A = 'Queue reliable fairness question A.'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_B = 'Queue reliable fairness question B.'
 const RELIABLE_CHILD_DIRECTIVE = 'Use the renderer-visible reliable evidence.'
+const RELIABLE_CONTROL_MARKERS = [
+  RELIABLE_CHILD_DIRECTIVE,
+  'Child reliable question reached Main',
+  'Main answered the reliable child question',
+  'Parked reliable child question',
+  'Trigger reliable post-fence persistence failure',
+  'Reliable fairness child A',
+  'Reliable fairness child B'
+]
 const DELEGATED_BRANCH_A_TASK = `${DELEGATED_WAIT_MARKER} inactive branch child A.`
 const DELEGATED_BRANCH_B_TASK = `${DELEGATED_WAIT_MARKER} active branch child B1.`
 const DELEGATED_BRANCH_B_TASK_TWO = `${DELEGATED_WAIT_MARKER} active branch child B2.`
@@ -124,6 +136,19 @@ const sessionCancellationResolvers = new Map()
 const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+const waitForReleaseFile = async (releaseFile) => {
+  const deadline = Date.now() + 30_000
+  while (true) {
+    try {
+      await readFile(releaseFile)
+      break
+    } catch (error) {
+      if (error.code !== 'ENOENT' || Date.now() >= deadline) throw error
+      await delay(50)
+    }
+  }
+}
 
 const suspendSessionWrites = async () => {
   const sessionsRoot = join(process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '', 'sessions')
@@ -381,6 +406,40 @@ const verifyProviderBridge = () => {
         `(base URL: ${route.options.baseURL}, credential: present).`
     )
   return 'Provider bridge verified through the Agent process.'
+}
+
+// Opt-in integration probe: use the real app-provided loopback transport instead of manufacturing
+// an ACP error. This exercises the app bridge's original-status observation before terminalizing.
+const rejectThroughProviderBridge = async () => {
+  const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+  const route = Object.values(config.provider ?? {}).find(
+    (provider) => provider?.models?.['runtime-health-model']
+  )
+  const credentialName = route?.options?.apiKey?.match(/^\{env:([^}]+)\}$/)?.[1]
+  const credential = credentialName ? process.env[credentialName] : undefined
+  if (!route?.options?.baseURL || !credential)
+    throw new Error('Runtime health fixture route missing.')
+  const url = new URL(route.options.baseURL)
+  if (url.hostname !== '127.0.0.1') throw new Error('Runtime health fixture requires loopback.')
+  const response = await fetch(`${route.options.baseURL.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: 'runtime-health-model',
+      messages: [{ role: 'user', content: 'synthetic runtime health probe' }]
+    })
+  })
+  await response.text()
+  if (
+    response.status !== 400 ||
+    !['401', '403'].includes(response.headers.get('x-open-science-upstream-status') ?? '')
+  ) {
+    throw new Error('Runtime health fixture did not receive the bridged upstream 401/403.')
+  }
+  throw acp.RequestError.internalError(
+    { errorKind: 'provider-error' },
+    'Synthetic upstream authentication rejected.'
+  )
 }
 
 const assertValidModelLimits = () => {
@@ -786,7 +845,7 @@ const createProvenanceArtifact = async (sessionId) => {
       'bash_execute',
       await client.callTool({
         name: 'bash_execute',
-        arguments: { command: "printf 'artifact-provenance-e2e\\n'" }
+        arguments: { command: "echo 'artifact-provenance-e2e'" }
       })
     )
     const state = toolResult(
@@ -923,8 +982,14 @@ if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
   assertValidModelLimits()
+  // This opt-in test reconnects the provider when switching runtimes and restarting the app.
+  // Keep its new sessions and message chunks distinct from IDs persisted by an earlier process.
+  const fixtureInstanceId = process.env.OPEN_SCIENCE_E2E_WSL_SETUP === '1' ? `${randomUUID()}-` : ''
   let nextMessageId = 1
   let nextSessionId = 1
+  let nextToolCallId = 1
+
+  const makeToolCallId = (kind) => `e2e-${kind}-${fixtureInstanceId}${nextToolCallId++}`
 
   const app = acp
     .agent({ name: 'open-science-e2e-agent' })
@@ -938,7 +1003,7 @@ if (process.argv.includes('--version')) {
     }))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
     .onRequest(acp.methods.agent.session.new, async (context) => {
-      const sessionId = `e2e-session-${nextSessionId++}`
+      const sessionId = `e2e-session-${fixtureInstanceId}${nextSessionId++}`
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
         cwd: context.params.cwd,
@@ -957,10 +1022,19 @@ if (process.argv.includes('--version')) {
       return {}
     })
     .onRequest(acp.methods.agent.session.prompt, async (context) => {
-      const prompt = context.params.prompt
+      const rawPrompt = context.params.prompt
         .map((content) => (content.type === 'text' ? content.text : ''))
         .join('')
+      // Continuation prompts replay the originating turn so the provider can retain context. Keep
+      // the latest reliable-message control marker as the routing input; otherwise its historical
+      // delegate task text wins the first matching branch and the continuation starts a duplicate
+      // child instead of handling the delivered message.
+      const controlStart = Math.max(
+        ...RELIABLE_CONTROL_MARKERS.map((marker) => rawPrompt.lastIndexOf(marker))
+      )
+      const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
 
       if (prompt.includes(DELEGATED_WAIT_MARKER)) {
         await captureDelegatedHandoff(
@@ -983,7 +1057,7 @@ if (process.argv.includes('--version')) {
           sessionId: context.params.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
-            messageId: `e2e-message-${nextMessageId++}`,
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
             content: { type: 'text', text: 'Delegated immutable Artifact Version input verified.' }
           }
         })
@@ -1003,8 +1077,25 @@ if (process.argv.includes('--version')) {
           sessionId: context.params.sessionId,
           update: {
             sessionUpdate: 'agent_message_chunk',
-            messageId: `e2e-message-${nextMessageId++}`,
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
             content: { type: 'text', text: 'Production delegation is running.' }
+          }
+        })
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+
+      if (prompt.includes('Publish then wait for cancellation.')) {
+        const publication = await createProvenanceArtifact(context.params.sessionId)
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: `${publication}\nArtifact published; waiting for cancellation.`
+            }
           }
         })
         await waitForSessionCancellation(context.params.sessionId)
@@ -1013,13 +1104,194 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(MEMORY_RECALL_PROMPT)) {
+        if (prompt.includes('Verify interaction follow-up.')) {
+          reply = 'Interaction follow-up completed.'
+        } else if (prompt.includes('Request restart verification permission.')) {
+          const toolCall = {
+            toolCallId: 'restart-permission-tool',
+            title: 'mcp__skills__load_skill',
+            kind: 'read',
+            rawInput: { skill: 'fixture-skill' }
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: { sessionUpdate: 'tool_call', ...toolCall, status: 'pending' }
+          })
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall,
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          reply =
+            permission.outcome.optionId === 'allow-once'
+              ? 'Restart verification: Permission approval delivered.'
+              : 'Restart verification: Permission denial delivered.'
+        } else if (prompt.includes('The user approved the pending tool permission')) {
+          reply = 'Restart verification: Permission approval delivered.'
+        } else if (prompt.includes('The user explicitly denied this operation.')) {
+          reply = 'Restart verification: Permission denial delivered.'
+        } else if (prompt.includes('The user approved the pending Session Plan.')) {
+          reply = 'Restart verification: Plan approval delivered.'
+        } else if (prompt.includes('The user rejected the pending Session Plan.')) {
+          reply = 'Restart verification: Plan dismissal delivered.'
+        } else if (
+          prompt.includes('The user provided review feedback for the pending Session Plan.')
+        ) {
+          reply = 'Restart verification: Plan feedback delivered.'
+        } else if (
+          prompt.includes('The user answered the pending question: Restart verification dataset?')
+        ) {
+          reply = 'Restart verification: Question answer delivered.'
+        } else if (prompt.includes('Create a restart verification Plan.')) {
+          const argumentsForPlan = {
+            task_summary: 'Restart verification Plan',
+            phases: [
+              {
+                name: 'Analysis',
+                delegations: [
+                  {
+                    name: 'Main',
+                    steps: [
+                      {
+                        title: 'Verify delivery',
+                        description: 'Produce one confirmation and verify its persistence.'
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            desired_outputs: ['Delivery confirmation'],
+            feasibility: { confidence: 'high', rationale: 'Deterministic local fixture.' }
+          }
+          const toolCallId = 'e2e-restart-plan-generation'
+          // Real providers publish the tool activity before the MCP call waits for approval.
+          // Keep that transcript witness so restart tests also exercise Plan history rendering.
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              title: 'open_science_plan_generate_plan',
+              kind: 'other',
+              status: 'in_progress',
+              rawInput: argumentsForPlan
+            }
+          })
+          const outcome = await Promise.race([
+            withMcpClient(context.params.sessionId, 'open-science-plan', async (client) =>
+              toolResult(
+                'generate_plan',
+                await client.callTool({ name: 'generate_plan', arguments: argumentsForPlan })
+              )
+            ).then(() => 'reviewed'),
+            waitForSessionCancellation(context.params.sessionId).then(() => 'cancelled')
+          ])
+          sessionCancellationResolvers.delete(context.params.sessionId)
+          if (outcome === 'cancelled') {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: { sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' }
+            })
+            return { stopReason: 'cancelled' }
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed' }
+          })
+          reply = 'Restart verification: Plan review returned.'
+        } else if (prompt.includes('Ask a restart verification question.')) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) =>
+            toolResult(
+              'ask_user_question',
+              await client.callTool({
+                name: 'ask_user_question',
+                arguments: {
+                  questions: [
+                    {
+                      question: 'Restart verification dataset?',
+                      options: [{ label: 'Dataset Alpha' }, { label: 'Dataset Beta' }]
+                    }
+                  ]
+                }
+              })
+            )
+          )
+          reply = 'Restart verification: Waiting for the answer.'
+        } else if (prompt.includes('Discuss alternatives without approving main.')) {
+          reply = 'Deterministic reply: Discuss alternatives without approving main.'
+        } else if (prompt.includes(MERMAID_BLOCK_PROMPT)) {
+          // A wide left-to-right flowchart: intrinsic width exceeds the conversation column, so
+          // zooming must stay clipped by the block, and the source view must keep its frame.
+          reply = [
+            'Here is the diagram.',
+            '',
+            '```mermaid',
+            'graph LR',
+            '  A[begin] --> B[a node with a fairly long label] --> C[another node with an even longer label here] --> D[end]',
+            '```'
+          ].join('\n')
+        } else if (prompt.includes(WSL_SETUP_UNAVAILABLE_PROMPT)) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const catalog = await client.listTools()
+            if (catalog.tools.some((tool) => tool.name.startsWith('wsl_setup_'))) {
+              throw new Error('Ordinary Session unexpectedly received WSL setup tools.')
+            }
+          })
+          reply = 'WSL setup tools are unavailable in this ordinary conversation.'
+        } else if (prompt.includes(WSL_SETUP_DIAGNOSTICS_PROMPT)) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const catalog = await client.listTools()
+            if (!catalog.tools.some((tool) => tool.name === 'wsl_setup_diagnostics')) {
+              throw new Error('Setup Session is missing its WSL diagnostics tool.')
+            }
+            const shell = catalog.tools.find((tool) => tool.name === 'bash_execute')
+            if (!shell?.description?.includes('Windows PowerShell 5.1')) {
+              throw new Error('Setup Session did not retain its Windows PowerShell binding.')
+            }
+            const execution = toolResult(
+              'bash_execute',
+              await client.callTool({
+                name: 'bash_execute',
+                arguments: {
+                  command:
+                    "Write-Output ('wsl-setup-powershell-' + $PSVersionTable.PSVersion.Major + '.' + $PSVersionTable.PSVersion.Minor)"
+                }
+              })
+            )
+            if (!execution.stdout?.includes('wsl-setup-powershell-5.1')) {
+              throw new Error(
+                'Setup Session did not execute its command in Windows PowerShell 5.1.'
+              )
+            }
+            const diagnostics = toolResult(
+              'wsl_setup_diagnostics',
+              await client.callTool({ name: 'wsl_setup_diagnostics', arguments: {} })
+            )
+            if (
+              diagnostics.schemaVersion !== 1 ||
+              !diagnostics.capturedAt ||
+              !diagnostics.windows ||
+              !diagnostics.checks ||
+              Object.hasOwn(diagnostics, 'setupSessionToken')
+            ) {
+              throw new Error('WSL diagnostics are incomplete or expose the setup token.')
+            }
+          })
+          reply = 'WSL setup diagnostics completed through the application tools.'
+        } else if (prompt.includes(MEMORY_RECALL_PROMPT)) {
           if (!prompt.includes('<memory_records>') || !prompt.includes(MEMORY_RECALL_ENTRY)) {
             throw new Error('Automatic memory recall did not reach the provider prompt.')
           }
           reply = 'Automatic memory recall reached the provider.'
         } else if (prompt.includes(BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT)) {
-          const intentMessageId = `e2e-message-${nextMessageId++}`
+          const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1083,7 +1355,7 @@ if (process.argv.includes('--version')) {
           }
           await delay(prompt.includes(TOOL_STATUS_LAYOUT_SHIFT_PROMPT) ? 2_000 : 750)
 
-          const finalMessageId = `e2e-message-${nextMessageId++}`
+          const finalMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1095,7 +1367,7 @@ if (process.argv.includes('--version')) {
           reply = ''
         } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
-          const intentMessageId = `e2e-message-${nextMessageId++}`
+          const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           // A long intent text, chunked quickly so live pacing trails far behind arrival.
           for (let chunk = 0; chunk < 30; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
@@ -1146,7 +1418,7 @@ if (process.argv.includes('--version')) {
               status: 'completed'
             }
           })
-          const followUpMessageId = `e2e-message-${nextMessageId++}`
+          const followUpMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1158,8 +1430,25 @@ if (process.argv.includes('--version')) {
           // Paint the final fragment before the prompt-completion response reaches the renderer.
           await delay(150)
           reply = ''
+        } else if (prompt.includes(MARKDOWN_PARSER_PROMPT)) {
+          // Exercise parser cost with bounded rich text, independently of the resource soak.
+          // Keep the turn open until the test observes a real nonempty Worker response.
+          const parserMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
+          for (let chunk = 0; chunk < 8; chunk += 1) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: parserMessageId,
+                content: { type: 'text', text: '**sample** and `code` '.repeat(64) + '\n' }
+              }
+            })
+            await delay(50)
+          }
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+          reply = 'Native Markdown parser journey complete.'
         } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
-          const stressMessageId = `e2e-message-${nextMessageId++}`
+          const stressMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           const payload = 'x'.repeat(2_048)
           for (let chunk = 0; chunk < 90; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
@@ -1180,7 +1469,7 @@ if (process.argv.includes('--version')) {
           // Mirror a real agent turn: text segment -> tool call -> second text segment ->
           // tool completion -> trailing segment, with separate message ids per segment.
           const streamSegment = async (segment, paragraphs) => {
-            const streamMessageId = `e2e-message-${nextMessageId++}`
+            const streamMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
             for (let chunk = 0; chunk < paragraphs; chunk += 1) {
               await context.client.notify(acp.methods.client.session.update, {
                 sessionId: context.params.sessionId,
@@ -1225,7 +1514,7 @@ if (process.argv.includes('--version')) {
           // Regression journey for queue dispatch gating: a slow lead-in, then one large final
           // chunk so the renderer's paced reveal trails the store-complete state by seconds.
           // An ungated queue would dispatch the next message mid-reveal.
-          const gateMessageId = `e2e-message-${nextMessageId++}`
+          const gateMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           for (let chunk = 0; chunk < 4; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
               sessionId: context.params.sessionId,
@@ -1237,6 +1526,9 @@ if (process.argv.includes('--version')) {
             })
             await delay(50)
           }
+          // Hold only the fake stream until the test has queued the follow-up through the UI.
+          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          await waitForReleaseFile(releaseFile)
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1300,6 +1592,9 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(NOTEBOOK_PACKAGE_CANCELLATION_PROMPT)) {
           reply = await verifyNotebookPackageCancellation(context.params.sessionId)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
+          if (prompt.includes('Observe the Task before publication.')) {
+            await new Promise((resolve) => setTimeout(resolve, 8_000))
+          }
           reply = await createProvenanceArtifact(context.params.sessionId)
         } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
@@ -1427,36 +1722,6 @@ if (process.argv.includes('--version')) {
             throw new Error(`Reliable downward delivery failed: ${JSON.stringify(downward)}`)
           }
           reply = 'Production reliable downward message was accepted.'
-        } else if (prompt.includes(RELIABLE_BRANCH_PARK_PROMPT)) {
-          await runProductionDelegationRequest(
-            context.params.sessionId,
-            { task: DELEGATED_RELIABLE_PARK_TASK, name: DELEGATED_RELIABLE_PARK_TASK },
-            false
-          )
-          await delay(500)
-          await context.client.notify(acp.methods.client.session.update, {
-            sessionId: context.params.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              messageId: `e2e-message-${nextMessageId++}`,
-              content: { type: 'text', text: 'Branch park upward message queued.' }
-            }
-          })
-          await delay(2_000)
-          reply = 'Reliable branch park source turn completed.'
-        } else if (prompt.includes(RELIABLE_BRANCH_WAKE_PROMPT)) {
-          const receipt = controlResultValue(
-            await executeControlCode(
-              context.params.sessionId,
-              `return await host.messageReceipt("e2e-child-park", { timeoutSeconds: 0 })`
-            )
-          )
-          if (receipt.status !== 'queued') {
-            throw new Error(
-              `Reliable parked receipt changed before wake: ${JSON.stringify(receipt)}`
-            )
-          }
-          reply = 'Reliable branch wake admitted.'
         } else if (prompt.includes(RELIABLE_FAILURE_PROMPT)) {
           await runProductionDelegationRequest(
             context.params.sessionId,
@@ -1495,11 +1760,11 @@ if (process.argv.includes('--version')) {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
-              messageId: `e2e-message-${nextMessageId++}`,
-              content: { type: 'text', text: 'Two upward lanes are queued.' }
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+              content: { type: 'text', text: 'Two upward lanes are starting.' }
             }
           })
-          await delay(1_500)
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
           reply = 'Reliable fairness source turn completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_BATCH_PROMPT)) {
           const delegated = controlResultValue(
@@ -1629,17 +1894,6 @@ if (process.argv.includes('--version')) {
             throw new Error(`Reliable upward admission failed: ${JSON.stringify(upward)}`)
           }
           reply = 'Child sent a reliable question.'
-        } else if (prompt.includes(DELEGATED_RELIABLE_PARK_TASK)) {
-          const upward = controlResultValue(
-            await executeControlCode(
-              context.params.sessionId,
-              `return await host.sendFrameMessage("parent", "Parked reliable child question", { kind: "question", requestId: "e2e-child-park" })`
-            )
-          )
-          if (upward.status !== 'queued') {
-            throw new Error(`Reliable parked admission failed: ${JSON.stringify(upward)}`)
-          }
-          reply = 'Child queued a branch-bound reliable question.'
         } else if (prompt.includes(DELEGATED_RELIABLE_FAILURE_TASK)) {
           await executeControlCode(
             context.params.sessionId,
@@ -1682,7 +1936,7 @@ if (process.argv.includes('--version')) {
               sessionId: context.params.sessionId,
               update: {
                 sessionUpdate: 'agent_message_chunk',
-                messageId: `e2e-message-${nextMessageId++}`,
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
                 content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
               }
             })
@@ -1690,7 +1944,18 @@ if (process.argv.includes('--version')) {
           } finally {
             await restoreWrites()
           }
-          reply = 'Persistence sabotage released.'
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+              content: { type: 'text', text: 'Persistence sabotage released.' }
+            }
+          })
+          // Keep the provider call in flight until the test crashes Main. Completing it would
+          // provide fresh acceptance evidence and legitimately settle the receipt after recovery.
+          await waitForSessionCancellation(context.params.sessionId)
+          return { stopReason: 'cancelled' }
         } else if (prompt.includes('Reliable fairness child A')) {
           reply = 'Main rendered reliable fairness child A.'
         } else if (prompt.includes('Reliable fairness child B')) {
@@ -1706,7 +1971,7 @@ if (process.argv.includes('--version')) {
             {
               sessionId: context.params.sessionId,
               toolCall: {
-                toolCallId: 'e2e-delegated-permission-tool',
+                toolCallId: makeToolCallId('delegated-permission-tool'),
                 title: 'Read delegated evidence'
               },
               options: [
@@ -1798,7 +2063,7 @@ if (process.argv.includes('--version')) {
             {
               sessionId: context.params.sessionId,
               toolCall: {
-                toolCallId: 'e2e-permission-tool',
+                toolCallId: makeToolCallId('permission-tool'),
                 title: 'Write fixture output'
               },
               options: [
@@ -1820,7 +2085,7 @@ if (process.argv.includes('--version')) {
             {
               sessionId: context.params.sessionId,
               toolCall: {
-                toolCallId: 'e2e-skill-permission-tool',
+                toolCallId: makeToolCallId('skill-permission-tool'),
                 title: 'mcp__skills__load_skill',
                 rawInput: { skill: 'fixture-skill' }
               },
@@ -1844,7 +2109,7 @@ if (process.argv.includes('--version')) {
         sessionId: context.params.sessionId,
         update: {
           sessionUpdate: 'agent_message_chunk',
-          messageId: `e2e-message-${nextMessageId++}`,
+          messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
           content: { type: 'text', text: reply }
         }
       })

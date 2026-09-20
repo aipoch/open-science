@@ -118,6 +118,43 @@ const makeOwner = (
   )
 
 describe('ComputeRemoteOperationOwner.callCommand', () => {
+  it('distinguishes failure to acquire a connection from an unconfirmed command', async () => {
+    const acquire = vi.fn(async () => {
+      throw new ComputeConnectionError('host_unreachable')
+    })
+    const { repo } = makeRepo()
+    const service = new ComputeRemoteOperationOwner({ acquire }, repo, makeApprovalBroker('once'))
+    const error = await service.callCommand('ssh:biowulf', 'echo hi', 'probe').catch((e) => e)
+    expect(error.computeCallError.message).toContain('command was not sent for execution')
+    expect(error.computeCallError.message).not.toContain('side effects are unconfirmed')
+    expect(error.computeCallError.retry_after_user_action).toBe(true)
+  })
+
+  it.each(['Error', 'AbortError'])(
+    'preserves uncertain execution when run rejects with %s and bounds safe diagnostics',
+    async (name) => {
+      const runner: SshRunner = {
+        run: vi.fn(async () => {
+          const error = new Error(`password=synthetic-secret\n${'x'.repeat(2000)}`)
+          error.name = name
+          throw error
+        })
+      }
+      const { repo } = makeRepo()
+      const service = makeOwner(runner, repo, makeApprovalBroker('once'))
+      const error = await service.callCommand('ssh:biowulf', 'echo hi', 'probe').catch((e) => e)
+      expect(error.name).toBe(name)
+      const delivered = JSON.parse(JSON.stringify(error.computeCallError))
+      expect(delivered.message).toContain('side effects are unconfirmed')
+      expect(delivered.message).toContain('retry only if repeating the command is safe')
+      expect(delivered.message).toContain('diagnostic truncated')
+      expect(delivered.message).not.toContain('synthetic-secret')
+      expect(delivered.message.length).toBeLessThan(1600)
+      expect(delivered.retry_after_user_action).toBe(false)
+      expect(error.message).toBe(delivered.message)
+    }
+  )
+
   it('binds request cancellation to connection acquisition and SSH execution', async () => {
     const run = vi.fn(async () => ({
       exitCode: 0,
@@ -165,11 +202,14 @@ describe('ComputeRemoteOperationOwner.callCommand', () => {
       .callCommand('ssh:biowulf', 'echo hi', 'intent')
       .catch((error) => error)
 
-    expect(failure.computeCallError).toEqual({
+    expect(failure.computeCallError).toMatchObject({
       error_code: 'authentication_failed',
-      message: 'Authentication failed. Verify the username and password.',
-      retry_after_user_action: true
+      retry_after_user_action: false
     })
+    expect(failure.computeCallError.message).toContain(
+      'Remote execution and side effects are unconfirmed'
+    )
+    expect(failure.computeCallError.message).toContain('Authentication failed')
   })
 
   it('returns ExecResult on success with correct fields', async () => {
@@ -312,9 +352,14 @@ describe('ComputeRemoteOperationOwner.callCommand', () => {
     expect(err).toBeInstanceOf(Error)
     expect(err.computeCallError?.error_code).toBe('approval_denied')
     expect(err.computeCallError?.retry_after_user_action).toBe(false)
+    expect(err.computeCallError?.message).toContain('command was not sent for execution')
+    expect(err.computeCallError?.message).toContain(
+      'Do not repeat the request or bypass the denial'
+    )
+    expect(runner.run).not.toHaveBeenCalled()
   })
 
-  it('throws host_unreachable on ssh exit 255', async () => {
+  it('keeps SSH exit 255 execution ambiguous', async () => {
     const runner = makeFakeRunner({
       exitCode: 255,
       stdout: '',
@@ -328,7 +373,9 @@ describe('ComputeRemoteOperationOwner.callCommand', () => {
     const err = await service.callCommand('ssh:biowulf', 'echo hi', 'intent').catch((e) => e)
 
     expect(err.computeCallError?.error_code).toBe('host_unreachable')
-    expect(err.computeCallError?.retry_after_user_action).toBe(true)
+    expect(err.computeCallError?.retry_after_user_action).toBe(false)
+    expect(err.computeCallError?.message).toContain('SSH failure or the remote command exit status')
+    expect(err.computeCallError?.message).toContain('side effects are unconfirmed')
   })
 
   it('throws timeout when the runner times out', async () => {
@@ -346,6 +393,8 @@ describe('ComputeRemoteOperationOwner.callCommand', () => {
 
     expect(err.computeCallError?.error_code).toBe('timeout')
     expect(err.computeCallError?.retry_after_user_action).toBe(false)
+    expect(err.computeCallError?.message).toContain('side effects are unconfirmed')
+    expect(err.computeCallError?.message).toContain('No Job receipt exists')
   })
 
   it('passes truncated=true when output is capped', async () => {

@@ -36,9 +36,10 @@ import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewFileViewState } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { useSessionStore } from '@/stores/session-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
@@ -58,7 +59,7 @@ import {
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import {
-  LocalFileActionErrorToast,
+  LocalFileActionErrorNotice,
   LocalFileHeaderActions,
   type LocalFileActionFailure,
   type SaveAsArtifactState
@@ -80,6 +81,8 @@ import { PreviewFileContent } from './previews/PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
 import type { PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { ManagedVersionDiffError } from './ManagedVersionDiffError'
+import { PreviewProvenanceSplit } from './PreviewProvenanceSplit'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 import { PreviewActionMenuAdapterProvider } from './preview-actions/preview-action-adapter'
 import { usePreviewActions } from './preview-actions/preview-action-hooks'
@@ -98,6 +101,7 @@ type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
   allowReadingContext?: boolean
   onReadWithAgent?: (item: PreviewFileItem) => void
+  onPdfPageCountChange?: (pageCount: number | undefined) => void
   contentKey?: string
   renderContent?: boolean
   tooltipClassName?: string
@@ -136,7 +140,7 @@ const managedSaveErrorMessage = (code: ManagedFileVersionErrorCode, t: TFunction
     case 'STORAGE_UNAVAILABLE':
       return t('File storage is unavailable. Check the storage location and try again.')
     case 'PERMISSION_DENIED':
-      return t('Open Science does not have permission to save this file.')
+      return t('Open-Science does not have permission to save this file.')
     case 'OUT_OF_SPACE':
       return t('There is not enough storage space to save this file.')
     // The file operator and service use different integrity codes for the same recovery action.
@@ -429,7 +433,7 @@ const PreviewFileHeader = ({
               {item.originSession?.state === 'deleted' ? (
                 <span
                   data-testid="deleted-origin-session"
-                  className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
+                  className="shrink-0 rounded bg-status-warning-surface dark:bg-status-warning-dark-surface px-1.5 py-0.5 text-[10px] text-status-warning-foreground dark:text-status-warning-dark-foreground"
                 >
                   {t('Source session deleted')}
                 </span>
@@ -638,6 +642,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       item,
       allowReadingContext = true,
       onReadWithAgent,
+      onPdfPageCountChange,
       contentKey,
       renderContent = true,
       tooltipClassName,
@@ -765,11 +770,27 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     const canShowProvenance = Boolean(
       previewItem.source !== 'upload' && previewItem.artifactId && projectId
     )
+    const requestedProvenanceOpen =
+      storedItem?.fileViewState?.provenanceOpen ??
+      (provenanceTarget?.surfaceKey === surfaceKey ? true : undefined)
     const showProvenance =
       canShowProvenance &&
-      (provenanceTarget?.surfaceKey === surfaceKey ||
+      (requestedProvenanceOpen ??
         (widePreview && renderContent && mode === 'view' && dismissedProvenanceKey !== surfaceKey))
     const provenanceFocused = showProvenance && !widePreview
+    const updateFileView = (patch: PreviewFileViewState): void => {
+      if (storedItem) {
+        usePreviewWorkbenchStore.getState().setFileViewState(projectId, item.id, patch)
+      }
+      if (patch.provenanceOpen !== undefined) {
+        setProvenanceTarget(
+          patch.provenanceOpen
+            ? { surfaceKey, initialTab: patch.provenanceTab === 'sources' ? 'sources' : undefined }
+            : undefined
+        )
+        if (!patch.provenanceOpen) setDismissedProvenanceKey(surfaceKey)
+      }
+    }
     const lineageKey = `${projectId ?? ''}:${previewItem.sessionId}:${previewItem.artifactId ?? ''}`
     // Finalization increments the owning Session's filesRevision even when this already-open preview
     // remains on an older Version. Include it in the request identity so the version navigator learns
@@ -901,12 +922,34 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : {}),
       suggestedName: resolvedPreviewItem.name
     })
+    const pdfPageCountKey = JSON.stringify([
+      contentItem.id,
+      contentItem.path,
+      contentItem.selectedVersionId,
+      previewContentKey
+    ])
+    const [pdfPageCount, setPdfPageCount] = useState<{ key: string; count: number }>()
+    const confirmedPdfPageCount =
+      contentItem.format === 'pdf' && pdfPageCount?.key === pdfPageCountKey
+        ? pdfPageCount.count
+        : undefined
+    useEffect(() => {
+      onPdfPageCountChange?.(confirmedPdfPageCount)
+    }, [confirmedPdfPageCount, onPdfPageCountChange])
+    const hidePdfReadingEntry = contentItem.format === 'pdf' && (confirmedPdfPageCount ?? 0) <= 1
+    const visiblePdfContextAction =
+      hidePdfReadingEntry && pdfContextAction?.state === 'link' ? undefined : pdfContextAction
     const reportPdfReadingPosition = useCallback(
       (position: { pageNumber: number; pageCount: number }): void => {
+        setPdfPageCount((current) =>
+          current?.key === pdfPageCountKey && current.count === position.pageCount
+            ? current
+            : { key: pdfPageCountKey, count: position.pageCount }
+        )
         if (!readingContextBindingId) return
         usePreviewWorkbenchStore.getState().setPdfReadingPosition(readingContextBindingId, position)
       },
-      [readingContextBindingId]
+      [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
 
@@ -980,6 +1023,16 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     // Copy feedback is transient and must not outlive a closed or replaced preview.
     useEffect(() => () => clearTimeout(copiedTimer.current), [])
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
+    useEffect(() => {
+      if (!isDirty) return
+      const preventUnload = (event: BeforeUnloadEvent): void => {
+        event.preventDefault()
+        // Chromium/Electron's legacy path also requires a return value.
+        event.returnValue = ''
+      }
+      window.addEventListener('beforeunload', preventUnload)
+      return () => window.removeEventListener('beforeunload', preventUnload)
+    }, [isDirty])
     const discardEdit = useCallback((): void => {
       saveGenerationRef.current += 1
       pendingSaveRef.current = undefined
@@ -1025,8 +1078,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
     useEffect(
       () =>
-        leaveGuardScope ? previewLeaveGuards.register(leaveGuardScope, guardLeave) : undefined,
-      [guardLeave, leaveGuardScope]
+        leaveGuardScope
+          ? previewLeaveGuards.register(leaveGuardScope, guardLeave, () => isDirty)
+          : undefined,
+      [guardLeave, leaveGuardScope, isDirty]
     )
 
     useEffect(() => {
@@ -1187,13 +1242,28 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       !originSessionUnavailable
     const viewInContext = (): void => {
       if (!projectId) return
+      const sourceMessageId = lineage
+        ? resolveArtifactVersionDescriptor(lineage, annotationVersionId)?.messageId
+        : undefined
+      // Resolve the visible version's origin only after guarded navigation succeeds.
+      const afterNavigate = sourceMessageId
+        ? (): void => {
+            useSearchMessageFocusStore.getState().request({
+              projectId,
+              sessionId: previewItem.sessionId,
+              messageId: sourceMessageId,
+              navigationRevision: useNavigationStore.getState().userNavigationRevision
+            })
+            onViewInContextNavigate?.()
+          }
+        : onViewInContextNavigate
       useNavigationStore
         .getState()
-        .openSession(projectId, previewItem.sessionId, 'user', onViewInContextNavigate)
+        .openSession(projectId, previewItem.sessionId, 'user', afterNavigate)
     }
     const openProvenance =
       previewItem.source !== 'upload' && previewItem.artifactId && projectId
-        ? (): void => setProvenanceTarget({ surfaceKey })
+        ? (): void => updateFileView({ provenanceOpen: true })
         : undefined
     const closePreview = (): void => {
       const close = (): void => {
@@ -1239,6 +1309,20 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       setEditError(undefined)
       setConflictHead(undefined)
       setMode('edit')
+    }
+
+    const copyEditDraft = async (): Promise<void> => {
+      const generation = saveGenerationRef.current
+      try {
+        await navigator.clipboard.writeText(draft)
+        if (saveGenerationRef.current !== generation) return
+        setCopied(true)
+        clearTimeout(copiedTimer.current)
+        copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+      } catch {
+        if (saveGenerationRef.current !== generation) return
+        setEditError(t('Could not copy the draft. Select the text and copy it manually.'))
+      }
     }
 
     const saveEdit = async (): Promise<void> => {
@@ -1348,21 +1432,21 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             close: { execute: closePreview }
           }
         : {
-            ...(pdfContextAction
+            ...(visiblePdfContextAction
               ? {
                   'pdf-context': {
                     execute: () => {
                       // Linking intentionally moves focus to the composer after the menu closes.
                       contextMenuComposerFocusRequestedRef.current =
-                        pdfContextAction.state !== 'remove'
-                      return pdfContextAction.run()
+                        visiblePdfContextAction.state !== 'remove'
+                      return visiblePdfContextAction.run()
                     },
-                    disabled: pdfContextAction.disabled || pdfContextAction.pending,
+                    disabled: visiblePdfContextAction.disabled || visiblePdfContextAction.pending,
                     labelKey:
-                      pdfContextAction.state === 'remove'
+                      visiblePdfContextAction.state === 'remove'
                         ? 'Remove PDF from context'
                         : 'Read with agent',
-                    icon: pdfContextAction.state === 'remove' ? Link2Off : BookOpen
+                    icon: visiblePdfContextAction.state === 'remove' ? Link2Off : BookOpen
                   }
                 }
               : {}),
@@ -1438,7 +1522,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                 onClose={closePreview}
                 onOpenFullScreen={onOpenFullScreen}
                 onReload={() => setReloadToken((token) => token + 1)}
-                pdfContextAction={pdfContextAction}
+                pdfContextAction={visiblePdfContextAction}
                 saveAsArtifactState={saveAsArtifactState}
                 managedDownload={managedDownload}
                 provenanceEntry={provenanceEntry}
@@ -1597,9 +1681,44 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   <VersionHistoryLoadButton history={lineageHistory} />
                 </>
               ) : null}
-              <div
-                data-testid="preview-file-content-region"
-                className="flex min-h-0 flex-1 overflow-hidden"
+              {localActionFailure ? (
+                <div className="shrink-0 max-h-[40%] overflow-y-auto">
+                  <LocalFileActionErrorNotice
+                    failure={localActionFailure}
+                    onDismiss={() => setLocalActionFailure(undefined)}
+                  />
+                </div>
+              ) : null}
+              <PreviewProvenanceSplit
+                mode={showProvenance ? (widePreview ? 'split' : 'provenance') : 'content'}
+                provenance={
+                  showProvenance && projectId ? (
+                    <aside
+                      aria-label={t('Provenance')}
+                      data-testid="preview-provenance-pane"
+                      className="h-full min-h-0 min-w-0"
+                    >
+                      <ArtifactProvenancePanel
+                        item={resolvedPreviewItem}
+                        projectId={projectId}
+                        onClose={() => updateFileView({ provenanceOpen: false })}
+                        selectedTab={storedItem?.fileViewState?.provenanceTab}
+                        onTabChange={
+                          storedItem
+                            ? (provenanceTab) => updateFileView({ provenanceTab })
+                            : undefined
+                        }
+                        onVersionChange={selectProvenanceVersion}
+                        tooltipClassName={tooltipClassName}
+                        initialTab={
+                          provenanceTarget?.surfaceKey === surfaceKey
+                            ? provenanceTarget.initialTab
+                            : undefined
+                        }
+                      />
+                    </aside>
+                  ) : null
+                }
               >
                 <div
                   data-testid="preview-file-content-surface"
@@ -1612,15 +1731,26 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                         autoFocus
                         aria-label={t('Edit {{name}} source', { name: resolvedPreviewItem.name })}
                         className="min-h-0 flex-1 resize-none bg-bg-000 p-4 font-mono text-sm leading-6 text-text-000 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        readOnly={saving}
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                       />
                       {editError ? (
                         <div
                           role="alert"
-                          className="flex items-center justify-between border-t border-border-300 px-3 py-2 text-xs text-destructive"
+                          className="flex flex-wrap items-center gap-2 border-t border-border-300 px-3 py-2 text-xs text-destructive"
                         >
-                          {editError}
+                          <span className="min-w-0 flex-1">{editError}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void copyEditDraft()}
+                          >
+                            <span key={String(copied)} className="button-feedback">
+                              {copied ? t('Copied!') : t('Copy draft')}
+                            </span>
+                          </Button>
                           {conflictHead ? (
                             <Button
                               type="button"
@@ -1667,9 +1797,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           onRedoAnnotation={onRedoAnnotation}
                           onAnnotationError={onAnnotationError}
                           onRetry={retryManagedPreview}
-                          onPdfReadingPositionChange={
-                            readingContextBindingId ? reportPdfReadingPosition : undefined
-                          }
+                          onPdfReadingPositionChange={reportPdfReadingPosition}
                         />
                       ) : null
                     ) : managedWorkflow.diffResult ? (
@@ -1678,10 +1806,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                         format={resolvedPreviewItem.format}
                         name={resolvedPreviewItem.name}
                       />
+                    ) : managedWorkflow.diffError ? (
+                      <ManagedVersionDiffError
+                        error={managedWorkflow.diffError}
+                        onRetry={managedWorkflow.refreshInspect}
+                        onView={managedWorkflow.stopDiff}
+                      />
                     ) : (
-                      <div className="p-4 text-sm text-text-100">
-                        {managedWorkflow.diffError ?? t('Comparing versions...')}
-                      </div>
+                      <div className="p-4 text-sm text-text-100">{t('Comparing versions...')}</div>
                     )
                   ) : renderContent ? (
                     <PreviewFileContent
@@ -1699,35 +1831,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                       onRedoAnnotation={onRedoAnnotation}
                       onAnnotationError={onAnnotationError}
                       onRetry={retryManagedPreview}
-                      onPdfReadingPositionChange={
-                        readingContextBindingId ? reportPdfReadingPosition : undefined
-                      }
+                      onPdfReadingPositionChange={reportPdfReadingPosition}
                     />
                   ) : null}
                 </div>
-                {showProvenance && projectId ? (
-                  <aside
-                    aria-label={t('Provenance')}
-                    data-testid="preview-provenance-pane"
-                    className={`h-full min-h-0 min-w-0 ${widePreview ? 'basis-[40%] shrink-0 border-l border-border-200' : 'flex-1'}`}
-                  >
-                    <ArtifactProvenancePanel
-                      item={resolvedPreviewItem}
-                      projectId={projectId}
-                      onClose={() => {
-                        setProvenanceTarget(undefined)
-                        setDismissedProvenanceKey(surfaceKey)
-                      }}
-                      onVersionChange={selectProvenanceVersion}
-                      initialTab={
-                        provenanceTarget?.surfaceKey === surfaceKey
-                          ? provenanceTarget.initialTab
-                          : undefined
-                      }
-                    />
-                  </aside>
-                ) : null}
-              </div>
+              </PreviewProvenanceSplit>
               {!showProvenance &&
               renderContent &&
               mode === 'view' &&
@@ -1740,17 +1848,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   data-testid="artifact-literature-entry"
                   className={`absolute right-3 z-40 gap-1.5 whitespace-nowrap border-border-300/50 bg-bg-000/90 shadow-sm backdrop-blur hover:bg-bg-100 active:bg-bg-200 ${resolvedPreviewItem.format === 'pdf' ? 'bottom-14' : 'bottom-3'}`}
                   aria-label={t('Literature')}
-                  onClick={() => setProvenanceTarget({ surfaceKey, initialTab: 'sources' })}
+                  onClick={() => updateFileView({ provenanceOpen: true, provenanceTab: 'sources' })}
                 >
                   <BookOpen className="size-3.5" aria-hidden="true" />
                   {t('Literature')}
                 </Button>
-              ) : null}
-              {localActionFailure ? (
-                <LocalFileActionErrorToast
-                  failure={localActionFailure}
-                  onDismiss={() => setLocalActionFailure(undefined)}
-                />
               ) : null}
             </div>
           </ActionMenuTarget>
@@ -1767,8 +1869,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           onConfirm={() => {
             const action = pendingLeaveAction
             setPendingLeaveAction(undefined)
-            discardEdit()
-            if (action) previewLeaveGuards.runApproved(leaveGuardScope, action)
+            // A deferred restore may have become obsolete while the confirmation was open.
+            if (!action || previewLeaveGuards.runApproved(leaveGuardScope, action)) discardEdit()
           }}
         />
       </ActionMenuProvider>

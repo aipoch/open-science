@@ -1331,3 +1331,137 @@ describe('ReviewerCard — stale review', () => {
     expect(rerunButton.disabled).toBe(false)
   })
 })
+
+describe('ReviewerCard recovery and assessment coverage', () => {
+  it('offers an in-place retry for a failed historical review with its exact scope', async () => {
+    const review = makeReview({
+      lifecycle: 'error',
+      outcome: null,
+      errorMessage: 'Temporary provider failure',
+      scope: { turnMessageId: 'historical-correction', blocks: [], artifactVersionIds: [] }
+    })
+    const onRerun = vi.fn().mockResolvedValue(true)
+    await act(async () => {
+      root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+    })
+
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Re-run review'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => {
+      retry!.click()
+    })
+    expect(onRerun).toHaveBeenCalledExactlyOnceWith(review)
+  })
+
+  it('does not present an explicitly empty assessment as a successful check', async () => {
+    await act(async () => {
+      root.render(<ReviewerCard review={makeReview({ checks: [], submittedChecks: [] })} />)
+    })
+
+    expect(container.textContent).not.toContain('No issues found')
+    expect(container.querySelector('.text-green-600')).toBeNull()
+  })
+})
+
+describe('ReviewerCard recovery feedback', () => {
+  it.each(['not-started', 'rejected'] as const)(
+    'releases a failed retry after %s and allows another attempt',
+    async (result) => {
+      let finish!: () => void
+      const onRerun = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>((resolve, reject) => {
+              finish = () =>
+                result === 'rejected' ? reject(new Error('Temporary failure')) : resolve(false)
+            })
+        )
+        .mockResolvedValueOnce(true)
+      const review = makeReview({ lifecycle: 'error', outcome: null })
+      await act(async () => {
+        root.render(<ReviewerCard review={review} onRerun={onRerun} />)
+      })
+      const retry = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Re-run review'
+      )!
+      await act(async () => {
+        retry.click()
+      })
+      await act(async () => {
+        retry.click()
+      })
+      expect(retry.disabled).toBe(true)
+      expect(retry.textContent).toBe('Re-running…')
+      expect(onRerun).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        finish()
+      })
+      expect(container.textContent).toContain('Review did not start. Please try again.')
+      expect(retry.disabled).toBe(false)
+      await act(async () => {
+        retry.click()
+      })
+      expect(onRerun).toHaveBeenCalledTimes(2)
+      expect(container.textContent).not.toContain('Re-run review')
+    }
+  )
+
+  it('shows an unverified historical pass neutrally and retries evidence without rerunning the model', async () => {
+    const onRetryVerification = vi.fn().mockResolvedValue(undefined)
+    const onRerun = vi.fn()
+    await act(async () => {
+      root.render(
+        <ReviewerCard
+          review={makeReview({ verificationUnavailable: true })}
+          onRetryVerification={onRetryVerification}
+          onRerun={onRerun}
+        />
+      )
+    })
+    expect(container.textContent).toContain('Current evidence could not be verified')
+    expect(container.textContent).not.toContain('No issues found')
+    expect(container.textContent).not.toContain('Turn changed')
+    expect(container.querySelector('.text-green-600')).toBeNull()
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Retry')!
+        .click()
+    })
+    expect(onRetryVerification).toHaveBeenCalledTimes(1)
+    expect(onRerun).not.toHaveBeenCalled()
+  })
+
+  it('explains context cancellation and opens the original review evidence', async () => {
+    const onGoToTranscript = vi.fn()
+    await act(async () => {
+      root.render(
+        <ReviewerCard
+          onGoToTranscript={onGoToTranscript}
+          review={makeReview({
+            outcome: 'flagged',
+            checks: [
+              makeCheck({
+                resolution: 'unaddressed',
+                unaddressedTrigger: 'aborted',
+                unaddressedNote:
+                  'Automatic correction stopped because the active conversation changed.'
+              })
+            ]
+          })}
+        />
+      )
+    })
+    expect(container.textContent).toContain(
+      'Automatic correction stopped because the active conversation changed.'
+    )
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Go to transcript')!
+        .click()
+    })
+    expect(onGoToTranscript).toHaveBeenCalledWith({ reviewId: 'review-1' })
+  })
+})

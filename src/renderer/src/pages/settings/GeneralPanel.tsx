@@ -1,4 +1,14 @@
-import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
+import { Notice } from '@/components/notice'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import {
+  Check,
+  CircleAlert,
+  ExternalLink,
+  FolderOpen,
+  Globe,
+  Terminal,
+  TriangleAlert
+} from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -11,6 +21,7 @@ import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
+import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
@@ -251,7 +262,6 @@ const GeneralPanel = (): React.JSX.Element => {
           }
 
           className="pt-0"
-          controlClassName="flex justify-end"
         >
           <ThemeSegmentedControl />
         </SettingsRow>
@@ -326,13 +336,11 @@ const GeneralPanel = (): React.JSX.Element => {
           )}
           className="pt-0"
         >
-          <div className="flex justify-end">
-            <SettingsToggle
-              enabled={notificationsEnabled}
-              aria-label={t('Toggle task notifications')}
-              onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
-            />
-          </div>
+          <SettingsToggle
+            enabled={notificationsEnabled}
+            aria-label={t('Toggle task notifications')}
+            onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
+          />
         </SettingsRow>
 
         <SettingsRow
@@ -341,14 +349,12 @@ const GeneralPanel = (): React.JSX.Element => {
             'Include task names and request details. Provider errors are always hidden.'
           )}
         >
-          <div className="flex justify-end">
-            <SettingsToggle
-              enabled={showNotificationContent}
-              disabled={!notificationsEnabled}
-              aria-label={t('Toggle task content in system notifications')}
-              onToggle={() => void setShowNotificationContent(!showNotificationContent)}
-            />
-          </div>
+          <SettingsToggle
+            enabled={showNotificationContent}
+            disabled={!notificationsEnabled}
+            aria-label={t('Toggle task content in system notifications')}
+            onToggle={() => void setShowNotificationContent(!showNotificationContent)}
+          />
         </SettingsRow>
 
         <SettingsRow
@@ -359,7 +365,7 @@ const GeneralPanel = (): React.JSX.Element => {
               : t('System notifications are unavailable on this device.')
           }
         >
-          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex w-full flex-col items-end">
             <Button
               type="button"
               variant="outline"
@@ -369,17 +375,38 @@ const GeneralPanel = (): React.JSX.Element => {
             >
               {isTestingNotification ? t('Sending test…') : t('Send test notification')}
             </Button>
-            {notificationTestResult ? (
-              <p className="text-right text-xs text-muted-foreground" role="status">
-                {notificationTestResult === 'shown'
-                  ? t('Test notification shown.')
-                  : notificationTestResult === 'failed'
-                    ? t('Test notification failed.')
-                    : notificationTestResult === 'unconfirmed'
-                      ? t('Test notification sent, but display could not be confirmed.')
-                      : t('System notifications are unavailable on this device.')}
-              </p>
-            ) : null}
+            {/* Reserved feedback slot: constant height, idle state only hidden, so a result
+                appearing or toggling tone never shifts the button or the row. */}
+            <div className="flex min-h-[30px] w-full items-start justify-end pt-1.5">
+              <span
+                role="status"
+                className={cn(
+                  'inline-flex items-center gap-[5px] rounded-lg border px-2 py-[3px] text-xs leading-[18px] font-medium whitespace-nowrap',
+                  notificationTestResult === undefined
+                    ? 'invisible'
+                    : notificationTestResult === 'shown'
+                      ? 'border-status-success-accent/30 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground'
+                      : notificationTestResult === 'unconfirmed'
+                        ? 'border-status-warning-foreground/30 bg-status-warning-surface text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
+                        : 'border-status-failure-border bg-status-failure-surface text-status-failure-foreground dark:border-status-failure-dark-border dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
+                )}
+              >
+                {notificationTestResult === 'shown' || notificationTestResult === undefined ? (
+                  <Check className="size-3.5" aria-hidden="true" />
+                ) : notificationTestResult === 'unconfirmed' ? (
+                  <TriangleAlert className="size-3.5" aria-hidden="true" />
+                ) : (
+                  <CircleAlert className="size-3.5" aria-hidden="true" />
+                )}
+                {notificationTestResult === 'failed'
+                  ? t('Test notification failed.')
+                  : notificationTestResult === 'unconfirmed'
+                    ? t('Test notification sent, but display could not be confirmed.')
+                    : notificationTestResult === 'unavailable'
+                      ? t('System notifications are unavailable on this device.')
+                      : t('Test notification shown.')}
+              </span>
+            </div>
           </div>
         </SettingsRow>
 
@@ -401,11 +428,7 @@ const GeneralPanel = (): React.JSX.Element => {
         )}
         aria-label={t('Diagnostics')}
       >
-        <SettingsRow
-          label={t('Log file')}
-          controlClassName="w-auto justify-self-end"
-          className="pt-0"
-        >
+        <SettingsRow label={t('Log file')} className="pt-0">
           <div className="flex items-center gap-2">
             <Button
               type="button"
@@ -431,6 +454,7 @@ const GeneralPanel = (): React.JSX.Element => {
         <pre
           className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
           aria-label={t('Log file path')}
+          tabIndex={0}
         >
           {logPath ??
             (isCheckingLog
@@ -452,38 +476,41 @@ const GeneralPanel = (): React.JSX.Element => {
         ) : null}
 
         {logStatusError !== undefined ? (
-          <div className="mt-2 space-y-2">
-            <p className="text-xs text-destructive" role="alert">
-              {t('Could not check the log file.')}
-            </p>
+          <Notice
+            inline
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={t('Could not check the log file.')}
+            primaryButton={{
+              label: isCheckingLog ? t('Loading…') : t('Check again'),
+              disabled: isCheckingLog,
+              onClick: () => void refreshLogStatus()
+            }}
+          >
             <DiagnosticDetails detail={logStatusError} />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isCheckingLog}
-              onClick={() => void refreshLogStatus()}
-            >
-              {isCheckingLog ? t('Loading…') : t('Check again')}
-            </Button>
-          </div>
+          </Notice>
         ) : null}
 
         {logStatus && (logStatus.lastWriteSucceeded === false || logStatus.lastFailureCategory) ? (
-          <p className="mt-2 text-xs text-destructive" role="status">
+          <InlineNotice level="error" className="mt-2" role="status">
             {logStatus.lastWriteSucceeded === false
               ? t('The app could not write to the log file during its most recent attempt.')
               : null}{' '}
             {logFailureCopy(logStatus.lastFailureCategory, t)}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {message ? (
-          <div className="mt-2">
-            <p className="text-xs text-destructive" role="alert">
-              {generalActionErrorCopy(message, t)}
-            </p>
+          <Notice
+            inline
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={generalActionErrorCopy(message, t)}
+          >
             <DiagnosticDetails detail={message.detail} />
-          </div>
+          </Notice>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">
@@ -510,11 +537,7 @@ const GeneralPanel = (): React.JSX.Element => {
         }
         aria-label={t('Command line tool')}
       >
-        <SettingsRow
-          label={t('open-science')}
-          controlClassName="w-auto justify-self-end"
-          className="pt-0"
-        >
+        <SettingsRow label={t('open-science')} className="pt-0">
           <Button
             type="button"
             variant="outline"
@@ -544,24 +567,24 @@ const GeneralPanel = (): React.JSX.Element => {
         ) : null}
 
         {cliError ? (
-          <div className="mt-2">
-            <p className="text-xs text-destructive" role="alert">
-              {generalActionErrorCopy(cliError, t)}
-            </p>
+          <Notice
+            inline
+            level="error"
+            role="alert"
+            className="mt-2"
+            description={generalActionErrorCopy(cliError, t)}
+            primaryButton={
+              cliError.action === 'cli-status'
+                ? {
+                    label: isUpdatingCli ? t('Checking…') : t('Check again'),
+                    disabled: isUpdatingCli,
+                    onClick: () => void checkCliStatus()
+                  }
+                : undefined
+            }
+          >
             <DiagnosticDetails detail={cliError.detail} />
-            {cliError.action === 'cli-status' ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                disabled={isUpdatingCli}
-                onClick={() => void checkCliStatus()}
-              >
-                {isUpdatingCli ? t('Checking…') : t('Check again')}
-              </Button>
-            ) : null}
-          </div>
+          </Notice>
         ) : null}
 
         <p className="mt-3 text-xs text-muted-foreground">

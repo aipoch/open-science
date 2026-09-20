@@ -1,3 +1,5 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: device credential editor · genre: modern-minimal · theme: existing Settings tokens · slop: pass */
 import { ChevronDown, Copy } from 'lucide-react'
@@ -62,6 +64,7 @@ export function DeviceCredentialEditor({
   previewState
 }: DeviceCredentialEditorProps): React.JSX.Element {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const createCredential = useSettingsStore((state) => state.createDeviceCredential)
   const updateCredential = useSettingsStore((state) => state.updateDeviceCredential)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
@@ -471,7 +474,7 @@ export function DeviceCredentialEditor({
                         </div>
                         <span className={helperClassName}>
                           {t(
-                            'Register this callback URI with your OAuth provider. Open Science adds an available port at runtime.'
+                            'Register this callback URI with your OAuth provider. Open-Science adds an available port at runtime.'
                           )}
                         </span>
                         {!customRedirectUriOpen ? (
@@ -543,13 +546,13 @@ export function DeviceCredentialEditor({
         {activeCredential?.kind === 'oauth' &&
         activeCredential.needsSecret &&
         encryptionAvailable ? (
-          <p className="text-sm text-status-warning-foreground" role="status">
+          <InlineNotice level="warning" role="status">
             {activeCredential.needsClientSecret
               ? t(
                   'Replace the client secret before signing in. Your Connector bindings will be kept.'
                 )
               : t('The saved sign-in state could not be read. Sign in again to restore it.')}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {kind !== 'oauth' ? (
@@ -566,28 +569,28 @@ export function DeviceCredentialEditor({
             <span className={helperClassName}>
               {editing
                 ? t('Leave blank to keep the stored value.')
-                : t('The value is encrypted before it is written to disk.')}
+                : (fileCredentialNotice ??
+                  t('The value is encrypted before it is written to disk.'))}
             </span>
           </label>
         ) : null}
 
         {message ? (
-          <p
-            className={
-              message.tone === 'success'
-                ? 'text-sm text-status-success-foreground'
-                : 'text-sm text-destructive'
-            }
-            role={message.tone === 'error' ? 'alert' : 'status'}
-          >
-            {message.text}
-          </p>
+          message.tone === 'success' ? (
+            <p className="text-sm text-status-success-foreground" role="status">
+              {message.text}
+            </p>
+          ) : (
+            <InlineNotice level="error" role="alert">
+              {message.text}
+            </InlineNotice>
+          )
         ) : null}
 
         {!encryptionAvailable ? (
-          <p className="text-sm text-destructive">
+          <InlineNotice level="error" role="note">
             {t('Secure key storage is unavailable. Unlock the system keychain and try again.')}
-          </p>
+          </InlineNotice>
         ) : null}
 
         {activeCredential?.kind === 'oauth' ? (
@@ -652,13 +655,15 @@ export function DeviceCredentialEditor({
             {t('Cancel')}
           </Button>
           <Button type="button" onClick={() => void save()} disabled={!canSave} aria-busy={busy}>
-            {busyAction === 'saving'
-              ? t('Saving…')
-              : busyAction === 'authenticating'
-                ? t('Signing in…')
-                : !editing && kind === 'oauth'
-                  ? t('Save and sign in')
-                  : t('Save')}
+            <span key={String(busyAction ?? 'idle')} className="button-feedback">
+              {busyAction === 'saving'
+                ? t('Saving…')
+                : busyAction === 'authenticating'
+                  ? t('Signing in…')
+                  : !editing && kind === 'oauth'
+                    ? t('Save and sign in')
+                    : t('Save')}
+            </span>
           </Button>
         </div>
       </div>

@@ -195,7 +195,7 @@ describe('codebuddy framework', () => {
     const tools = config.args?.[config.args.indexOf('--tools') + 1]
     const settings = JSON.parse(config.configFiles?.[1]?.content ?? '{}')
 
-    expect(tools).toBe('Read,Write,Edit,Glob,Grep')
+    expect(tools).toBe('Read,Write,Edit')
     expect(config.args).toContain('Bash(curl:*)')
     expect(settings.sandbox.enabled).toBe(false)
   })
@@ -210,6 +210,31 @@ describe('codebuddy framework', () => {
     const tools = config.args?.[config.args.indexOf('--tools') + 1]
 
     expect(tools).not.toContain('Bash')
+  })
+
+  it('renders app MCP names at CodeBuddy system and turn prompt boundaries', () => {
+    const framework = createCodeBuddyFramework({ platform: 'linux' })
+    const config = framework.prepareModelConfig(provider, {
+      storageRoot: '/app-data',
+      executablePath: '/usr/bin/codebuddy',
+      systemPromptAppends: ['Read Plan details with `bash_execute`, then call `generate_plan`.'],
+      reasoningEfforts: []
+    })
+    const persistentPrompt = config.configFiles?.find((file) =>
+      file.path.endsWith('system-prompt.md')
+    )?.content
+    const setup = framework.buildSessionSetup({
+      systemPromptAppends: ['Read Plan details with `bash_execute`.'],
+      turnPromptReminders: ['Report progress with `update_step_status`.']
+    })
+
+    expect(persistentPrompt).toContain('`mcp__open_science_notebook__bash_execute`')
+    expect(persistentPrompt).toContain('`mcp__open_science_plan__generate_plan`')
+    expect(setup.promptPrefix).toContain('`mcp__open_science_notebook__bash_execute`')
+    expect(setup.promptPrefix).toContain('`mcp__open_science_plan__update_step_status`')
+    expect(`${persistentPrompt}${setup.promptPrefix}`).not.toMatch(
+      /mcp__open_science_[a-z_]+__mcp__/u
+    )
   })
 
   it('replays dynamic MCP servers when activating the target Session before a prompt', async () => {
@@ -357,4 +382,33 @@ describe('codebuddy framework', () => {
     expect(setup.promptPrefix).toContain('Do not use WebFetch, WebSearch, or direct HTTP')
     expect(setup.promptPrefix).toContain('report that external retrieval is unavailable')
   })
+})
+
+it('prevents physical launch when delegated ownership admission fails', () => {
+  const ordinarySpawn = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const framework = createCodeBuddyFramework({
+    platform: 'win32',
+    sourceEnv: { PATH: 'C:\\bin' },
+    spawnProcess: ordinarySpawn
+  })
+  const input = {
+    executablePath: 'C:\\runtime\\codebuddy.exe',
+    args: ['--trace'],
+    env: { OWNED: 'yes' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => framework.spawn(input)).toThrow('ownership receipt write failed')
+  expect(ordinarySpawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    input.executablePath,
+    ['--acp', '--trace'],
+    expect.objectContaining({
+      env: expect.objectContaining({ OWNED: 'yes' }),
+      stdio: 'pipe',
+      windowsHide: true
+    })
+  )
 })

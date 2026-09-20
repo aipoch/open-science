@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { NotebookKernelMetadata } from '../../shared/notebook'
+import type { NotebookEnvironmentLock, NotebookKernelMetadata } from '../../shared/notebook'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import {
   NotebookEnvironmentManagementOwner,
@@ -19,6 +19,10 @@ const manager = (): NotebookEnvironmentManager => ({
     ready: true,
     isDefault: false
   })),
+  createNamedEnvironmentFromLock: vi.fn(async (name, language) => ({
+    environment: { name, language, ready: true, isDefault: false },
+    reused: false
+  })),
   listEnvironments: vi.fn(() => []),
   removeEnvironment: vi.fn(() => [])
 })
@@ -34,6 +38,23 @@ const session = (
 })
 
 const managedPythonRuntimeId = (name: string): string => pythonBin(envPrefix('/runtime', name))
+
+const importedLock = (): NotebookEnvironmentLock => ({
+  schemaVersion: 1,
+  format: 'environment-lock-bundle',
+  kernelKind: 'python',
+  environmentName: 'default-python',
+  components: [
+    {
+      ecosystem: 'conda',
+      format: 'conda-explicit-md5',
+      resolution: 'locked',
+      explicitLock:
+        '@EXPLICIT\nhttps://repo.example.test/python.conda#0123456789abcdef0123456789abcdef\n',
+      packages: ['python']
+    }
+  ]
+})
 
 const runtimeBinding = (
   name: string,
@@ -143,6 +164,49 @@ describe('NotebookEnvironmentManagementOwner', () => {
       owner.manage({ action: 'create', name: 'analysis', language: 'python' }, cancellation.signal)
     ).rejects.toThrow('MCP request cancelled.')
     expect(options.ensureRecovered).not.toHaveBeenCalled()
+  })
+
+  it('does not publish a list cancelled while awaiting the manager', async () => {
+    const controller = new AbortController()
+    let finish!: (environments: []) => void
+    const pending = new Promise<[]>((resolve) => {
+      finish = resolve
+    })
+    const configured = manager()
+    vi.mocked(configured.listEnvironments).mockReturnValue(pending)
+    const { owner } = harness({ manager: configured })
+    const result = owner.manage({ action: 'list' }, controller.signal)
+    controller.abort(new Error('list cancelled'))
+    finish([])
+    await expect(result).rejects.toThrow('list cancelled')
+    expect(configured.listEnvironments).toHaveBeenCalledWith(controller.signal)
+  })
+
+  it('imports a lock under a deterministic cross-project environment name', async () => {
+    const configured = manager()
+    const { owner, options } = harness({ manager: configured })
+    const checksum = 'a'.repeat(64)
+
+    await expect(
+      owner.importLock({
+        projectId: 'project-2',
+        language: 'python',
+        lock: importedLock(),
+        lockChecksum: checksum
+      })
+    ).resolves.toEqual({ environmentName: 'repro-aaaaaaaaaaaa', reused: false })
+
+    expect(options.ensureRecovered).toHaveBeenCalled()
+    expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(
+      envPrefix('/runtime', 'repro-aaaaaaaaaaaa')
+    )
+    expect(configured.createNamedEnvironmentFromLock).toHaveBeenCalledWith(
+      'repro-aaaaaaaaaaaa',
+      'python',
+      importedLock(),
+      checksum,
+      { projectId: 'project-2' }
+    )
   })
 
   it('keeps manager configuration inside the owner', async () => {
@@ -291,12 +355,32 @@ describe('NotebookEnvironmentManagementOwner', () => {
       /reserved environment name/
     )
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
-      /in use by a running kernel/
+      /live python Kernel \(status: idle\) in Session "session-1"/
     )
 
     expect(options.ensureRecovered).not.toHaveBeenCalled()
     expect(configured.removeEnvironment).not.toHaveBeenCalled()
   })
+
+  it.each(['idle', 'running'] as const)(
+    'reports the actual %s Kernel state and allows removal after termination',
+    async (status) => {
+      const statuses: Array<[string, NotebookKernelMetadata['lastKnownStatus']]> = [
+        ['python:analysis', status]
+      ]
+      const { owner, manager: configured } = harness({
+        sessions: () => [session('session-owner', statuses)]
+      })
+      await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
+        `(status: ${status}) in Session "session-owner"`
+      )
+      expect(configured?.removeEnvironment).not.toHaveBeenCalled()
+      statuses[0] = ['python:analysis', 'terminated']
+      await expect(owner.manage({ action: 'remove', name: 'analysis' })).resolves.toEqual({
+        removed: { name: 'analysis' }
+      })
+    }
+  )
 
   it('refuses an agent-created environment selected by an active dormant Session', async () => {
     const configured = manager()
@@ -308,7 +392,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
-      'Environment "analysis" cannot be removed because Session "session-42" has an active Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+      'Environment "analysis" cannot be removed because Session "session-42" has an active Runtime Binding to it.'
     )
 
     expect(options.ensureRecovered).not.toHaveBeenCalled()
@@ -342,7 +426,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(owner.manage({ action: 'remove', name: 'analysis' })).rejects.toThrow(
-      'Environment "analysis" cannot be removed because Session "session-revoking" has a revoking Runtime Binding to it. Switch that Session to another Runtime Environment first.'
+      'Environment "analysis" cannot be removed because Session "session-revoking" has a revoking Runtime Binding to it.'
     )
 
     expect(options.ensureRecovered).not.toHaveBeenCalled()
@@ -423,6 +507,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'recovery',
       'recoverable',
       'mutation:analysis',
+      'recoverable',
       'remove:analysis',
       'repair:analysis'
     ])
@@ -443,3 +528,39 @@ describe('NotebookEnvironmentManagementOwner', () => {
     expect(options.runtimeRepair.completeRemovedManagedEnvironment).not.toHaveBeenCalled()
   })
 })
+
+it.each(['binding', 'kernel'] as const)(
+  'AUDIT: removal rechecks a %s created while waiting for the mutation lease',
+  async (usage) => {
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const lease = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sessions: EnvironmentSession[] = []
+    const { owner, manager: configured } = harness({
+      sessions: () => sessions,
+      environmentOperations: {
+        runMutation: async (_name, operation) => {
+          entered()
+          await lease
+          return operation()
+        }
+      }
+    })
+    const removing = owner.manage({ action: 'remove', name: 'analysis' })
+    await waiting
+    sessions.push(
+      usage === 'binding'
+        ? session('new-session', [], [['python', runtimeBinding('analysis')]])
+        : session('new-session', [['python:analysis', 'idle']])
+    )
+    release()
+    const outcome = await removing.catch((error) => error)
+    expect.soft(outcome).toBeInstanceOf(Error)
+    expect(configured?.removeEnvironment).not.toHaveBeenCalled()
+  }
+)

@@ -1,21 +1,12 @@
-import { AlertTriangle, LoaderCircle, SearchX, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ErrorNotice } from '@/components/error-notice'
+import { LoaderCircle, SearchX, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
 
 import type { SkillSource } from '../../../../shared/settings'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
+import { BatchManageLayout, BatchManageReview } from './BatchManageLayout'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -60,6 +51,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [bulkError, setBulkError] = useState<string | undefined>()
   const [bulkResult, setBulkResult] = useState<string | undefined>()
+  const operationRef = useRef(false)
 
   useEffect(() => {
     void loadSpecialists()
@@ -100,7 +92,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
     ? manageableSkills.filter((skill) => validSelectedIds.has(skill.id))
     : filteredSkills
 
-  const resultIds = filteredSkills.map((skill) => skill.id)
+  const resultIds = visible.map((skill) => skill.id)
   const allResultsSelected =
     resultIds.length > 0 && resultIds.every((id) => validSelectedIds.has(id))
   const selectedSkills = manageableSkills.filter((skill) => validSelectedIds.has(skill.id))
@@ -114,6 +106,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
   const busy = pendingEnabled !== undefined || deleteBusy
 
   const toggleSelected = (id: string): void => {
+    if (operationRef.current || deleteOpen) return
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
@@ -123,6 +116,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
   }
 
   const toggleAllResults = (): void => {
+    if (operationRef.current || deleteOpen) return
     setSelectedIds((current) => {
       const next = new Set([...current].filter((id) => manageableIds.has(id)))
       for (const id of resultIds) {
@@ -149,13 +143,20 @@ const SkillBulkManageView = (): React.JSX.Element => {
   }
 
   const updateSelected = async (enabled: boolean): Promise<void> => {
-    if (validSelectedIds.size === 0 || busy) return
+    if (validSelectedIds.size === 0 || operationRef.current) return
+    operationRef.current = true
     setPendingEnabled(enabled)
     setBulkError(undefined)
     setBulkResult(undefined)
     try {
       await setSkillsEnabled([...validSelectedIds], enabled)
       setShowSelectedOnly(true)
+      setBulkResult(
+        t('Updated: {{completed}} / {{total}}', {
+          completed: validSelectedIds.size,
+          total: validSelectedIds.size
+        })
+      )
     } catch (error) {
       setBulkError(
         errorMessage(error) ||
@@ -167,19 +168,22 @@ const SkillBulkManageView = (): React.JSX.Element => {
       )
     } finally {
       setPendingEnabled(undefined)
+      operationRef.current = false
     }
   }
 
   const deleteSelected = async (): Promise<void> => {
-    if (deletableSkills.length === 0 || deleteBusy) return
+    if (deletableSkills.length === 0 || operationRef.current) return
+    operationRef.current = true
     setDeleteBusy(true)
     setBulkError(undefined)
     setBulkResult(undefined)
     const deletedIds = new Set<string>()
     const failures: string[] = []
     for (const { skill } of deletableSkills) {
+      if (skill.source === 'featured') continue
       try {
-        await deleteSkill(skill.id)
+        await deleteSkill(skill.id, skill.source, skill.directoryName)
         deletedIds.add(skill.id)
       } catch (error) {
         failures.push(errorMessage(error) || skill.displayName)
@@ -190,6 +194,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
     setShowSelectedOnly(protectedSkills.length > 0 || failures.length > 0)
     setDeleteOpen(false)
     setDeleteBusy(false)
+    operationRef.current = false
 
     if (deletedIds.size > 0) {
       setBulkResult(
@@ -205,23 +210,40 @@ const SkillBulkManageView = (): React.JSX.Element => {
   }
 
   return (
-    <div className="p-5">
-      <p className="text-[13px] leading-5 text-muted-foreground">
-        {t(
-          'Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.'
-        )}
-      </p>
-
-      <div className="sticky top-0 z-10 -mx-5 mt-4 bg-card px-5 py-3">
-        <div className="flex flex-wrap items-center gap-2">
+    <BatchManageLayout
+      description={
+        <>
+          {t(
+            'Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.'
+          )}
+        </>
+      }
+      filters={
+        <>
+          <SettingsSearchInput
+            disabled={busy || deleteOpen}
+            aria-label={t('Search manageable skills')}
+            placeholder={t('Search skills…')}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              setShowSelectedOnly(false)
+            }}
+            containerClassName="min-w-0 flex-[2] @max-[30rem]:[&>span]:hidden!"
+            className="@max-[30rem]:[&:placeholder-shown:not(:focus)]:pr-2.5"
+          />
           <Select
+            disabled={busy || deleteOpen}
             value={sourceFilter}
             onValueChange={(value) => {
               setSourceFilter(value as SourceFilter)
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label={t('Filter manageable skills by source')} className="w-36">
+            <SelectTrigger
+              aria-label={t('Filter manageable skills by source')}
+              className="min-w-0 flex-1 @min-[30rem]:flex-none w-36"
+            >
               <span>{t(SOURCE_LABEL_KEYS[sourceFilter])}</span>
             </SelectTrigger>
             <SelectContent>
@@ -231,13 +253,17 @@ const SkillBulkManageView = (): React.JSX.Element => {
             </SelectContent>
           </Select>
           <Select
+            disabled={busy || deleteOpen}
             value={statusFilter}
             onValueChange={(value) => {
               setStatusFilter(value as StatusFilter)
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label={t('Filter manageable skills by status')} className="w-32">
+            <SelectTrigger
+              aria-label={t('Filter manageable skills by status')}
+              className="min-w-0 flex-1 @min-[30rem]:flex-none w-32"
+            >
               <span>{t(STATUS_LABEL_KEYS[statusFilter])}</span>
             </SelectTrigger>
             <SelectContent>
@@ -246,294 +272,188 @@ const SkillBulkManageView = (): React.JSX.Element => {
               <SelectItem value="disabled">{t('Disabled')}</SelectItem>
             </SelectContent>
           </Select>
-          <SettingsSearchInput
-            aria-label={t('Search manageable skills')}
-            placeholder={t('Search skills…')}
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setShowSelectedOnly(false)
-            }}
-            containerClassName="min-w-48"
-          />
-        </div>
-
-        <div
-          role="group"
-          aria-label={t('Bulk Skill controls')}
-          className="mt-3 flex min-h-9 flex-wrap items-center gap-1.5"
-        >
-          <label className="flex min-h-9 items-center gap-1.5 pr-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
-            <input
-              type="checkbox"
-              aria-label={t('Select all results')}
-              checked={allResultsSelected}
-              onChange={toggleAllResults}
-              disabled={busy || resultIds.length === 0}
-              className="size-4 shrink-0"
-            />
-            {t('Select all results')}
-          </label>
-          <span className="mr-1 text-xs tabular-nums text-muted-foreground">
-            {t('{{selectedCount}} selected', { selectedCount: validSelectedIds.size })}
-          </span>
+        </>
+      }
+      controlsLabel={t('Bulk Skill controls')}
+      visibleCount={visible.length}
+      visibleSelectedCount={visible.filter((item) => validSelectedIds.has(item.id)).length}
+      selectedCount={validSelectedIds.size}
+      selectedOnly={showSelectedOnly}
+      busy={busy}
+      onToggleAll={toggleAllResults}
+      onToggleSelectedOnly={() => setShowSelectedOnly((current) => !current)}
+      onClear={clearSelection}
+      actions={
+        <>
           <Button
             type="button"
-            variant={showSelectedOnly ? 'secondary' : 'ghost'}
+            variant="outline"
             size="sm"
-            aria-pressed={showSelectedOnly}
-            onClick={() => setShowSelectedOnly((current) => !current)}
+            onClick={() => void updateSelected(true)}
             disabled={busy || validSelectedIds.size === 0}
+            aria-busy={Boolean(pendingEnabled === true)}
           >
-            {t('Selected ({{selectedCount}})', { selectedCount: validSelectedIds.size })}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={clearSelection}
-            disabled={busy || validSelectedIds.size === 0}
-          >
-            {t('Clear selection')}
-          </Button>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void updateSelected(true)}
-              disabled={busy || validSelectedIds.size === 0}
-            >
+            <span key={String(pendingEnabled === true)} className="button-feedback">
               {pendingEnabled === true ? (
                 <>
                   <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
                   {t('Enabling…')}
                 </>
               ) : (
-                t('Enable selected ({{selectedCount}})', {
-                  selectedCount: validSelectedIds.size
-                })
+                t('Enable')
               )}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void updateSelected(false)}
-              disabled={busy || validSelectedIds.size === 0}
-            >
+            </span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void updateSelected(false)}
+            disabled={busy || validSelectedIds.size === 0}
+            aria-busy={Boolean(pendingEnabled === false)}
+          >
+            <span key={String(pendingEnabled === false)} className="button-feedback">
               {pendingEnabled === false ? (
                 <>
                   <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
                   {t('Disabling…')}
                 </>
               ) : (
-                t('Disable selected ({{selectedCount}})', {
-                  selectedCount: validSelectedIds.size
-                })
+                t('Disable')
               )}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                setBulkError(undefined)
-                setBulkResult(undefined)
-                setDeleteOpen(true)
-              }}
-              disabled={busy || validSelectedIds.size === 0}
-            >
-              <Trash2 aria-hidden="true" />
-              {t('Delete selected ({{selectedCount}})', {
-                selectedCount: validSelectedIds.size
-              })}
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {bulkResult ? (
-        <p
-          role="status"
-          className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-foreground"
-        >
-          {bulkResult}
-        </p>
-      ) : null}
-
-      {bulkError ? (
-        <p
-          role="alert"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
-          <span>{bulkError}</span>
-        </p>
-      ) : null}
-
-      {visible.length > 0 ? (
-        <ul className="mt-3 flex flex-col">
-          {visible.map((skill) => (
-            <li
-              key={skill.id}
-              data-slot="bulk-skill-row"
-              className="flex min-h-14 items-center gap-3 py-2.5"
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
-                <input
-                  type="checkbox"
-                  aria-label={t('Select {{name}}', { name: skill.displayName })}
-                  checked={validSelectedIds.has(skill.id)}
-                  onChange={() => toggleSelected(skill.id)}
-                  disabled={busy}
-                  className="size-4 shrink-0"
-                />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-foreground">{skill.displayName}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {skill.description}
-                </span>
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {skill.source === 'imported' ? t('Imported') : t('Personal')}
-              </span>
-              <Badge
-                variant={skill.enabled ? 'secondary' : 'outline'}
-                data-skill-status={skill.enabled ? 'enabled' : 'disabled'}
-              >
-                {skill.enabled ? t('Enabled') : t('Disabled')}
-              </Badge>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="flex flex-col items-start gap-2 py-10 text-sm text-muted-foreground">
-          <SearchX className="size-5" aria-hidden="true" />
-          <p>
-            {showSelectedOnly
-              ? t('No Skills are selected.')
-              : manageableSkills.length === 0
-                ? t('No imported or personal Skills yet.')
-                : t('No manageable Skills match these filters.')}
-          </p>
-          {manageableSkills.length > 0 ? (
-            <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
-              {t('Show all manageable Skills')}
-            </Button>
-          ) : null}
-        </div>
-      )}
-
-      <AlertDialog.Root
-        open={deleteOpen}
-        onOpenChange={(nextOpen) => {
-          if (!deleteBusy) setDeleteOpen(nextOpen)
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] max-h-[85vh] p-0')}
+            </span>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            data-batch-delete-trigger
+            className="text-destructive hover:text-destructive"
+            size="sm"
+            onClick={() => {
+              if (operationRef.current) return
+              setBulkError(undefined)
+              setBulkResult(undefined)
+              setDeleteOpen(true)
+            }}
+            disabled={busy || validSelectedIds.size === 0}
           >
-            <div data-slot="skill-bulk-delete-header" className={dialogHeaderClassName}>
-              <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete selected Skills?')}
-              </AlertDialog.Title>
-            </div>
-
-            <div className={`${dialogBodyClassName} max-h-[55vh] overflow-y-auto`}>
-              <AlertDialog.Description
+            <Trash2 aria-hidden="true" />
+            {t('Delete…')}
+          </Button>
+        </>
+      }
+      feedback={
+        bulkError || bulkResult ? (
+          <>
+            {bulkResult ? (
+              <p role="status" className="text-sm font-medium text-foreground">
+                {bulkResult}
+              </p>
+            ) : null}
+            {bulkError ? (
+              <ErrorNotice inline role="alert" tone="amber" description={bulkError} />
+            ) : null}
+          </>
+        ) : undefined
+      }
+      onDone={
+        bulkError || bulkResult
+          ? () => {
+              setBulkError(undefined)
+              setBulkResult(undefined)
+            }
+          : undefined
+      }
+      review={
+        deleteOpen ? (
+          <BatchManageReview
+            title={t('Delete selected Skills?')}
+            description={
+              <p
                 data-slot="skill-bulk-delete-description"
-                className={dialogDescriptionClassName}
+                className="text-xs leading-5 text-muted-foreground"
               >
                 {t('Deleted Skills are removed from this device and cannot be recovered.')}
-              </AlertDialog.Description>
-
-              <div className="mt-5 space-y-5">
-                <section>
+              </p>
+            }
+            summary={
+              <>
+                <h3
+                  data-slot="skill-bulk-delete-primary-summary"
+                  className="text-sm font-medium leading-5 text-foreground"
+                >
+                  {t('{{count}} selected Skills can be deleted.', {
+                    count: deletableSkills.length,
+                    defaultValue_one: '{{count}} selected Skill can be deleted.'
+                  })}
+                </h3>
+                {protectedSkills.length > 0 ? (
                   <h3
-                    data-slot="skill-bulk-delete-primary-summary"
-                    className="text-base font-semibold leading-6 text-foreground"
+                    data-slot="skill-bulk-delete-protected-summary"
+                    className="text-sm font-medium leading-5 text-foreground"
                   >
-                    {t('{{count}} selected Skills can be deleted.', {
-                      count: deletableSkills.length,
-                      defaultValue_one: '{{count}} selected Skill can be deleted.'
+                    {t('{{count}} protected Skills will be kept.', {
+                      count: protectedSkills.length,
+                      defaultValue_one: '{{count}} protected Skill will be kept.'
                     })}
                   </h3>
-                  {deletableSkills.length > 0 ? (
-                    <ul
-                      data-slot="skill-bulk-delete-deletable-list"
-                      className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground"
-                    >
-                      {deletableSkills.map(({ skill }) => (
-                        <li key={skill.id} className="truncate">
-                          {skill.displayName}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </section>
-
-                {protectedSkills.length > 0 ? (
-                  <section data-slot="skill-bulk-delete-protected-section">
-                    <h3
-                      data-slot="skill-bulk-delete-protected-summary"
-                      className="text-base font-semibold leading-6 text-foreground"
-                    >
-                      {t('{{count}} protected Skills will be kept.', {
-                        count: protectedSkills.length,
-                        defaultValue_one: '{{count}} protected Skill will be kept.'
-                      })}
-                    </h3>
-                    <ul
-                      data-slot="skill-bulk-delete-protected-list"
-                      className="mt-2 space-y-2 text-xs leading-5"
-                    >
-                      {protectedSkills.map(({ skill, owners, usages }) => (
-                        <li key={skill.id}>
-                          <p className="truncate text-foreground">{skill.displayName}</p>
-                          <p className="text-muted-foreground">
-                            {owners.length > 0
-                              ? t('Owned by a Specialist.')
-                              : t('Used by a Specialist.')}
-                            {owners.length + usages.length > 0
-                              ? ` ${[...owners, ...usages]
-                                  .map((item) => item.name)
-                                  .filter((name, index, names) => names.indexOf(name) === index)
-                                  .join(', ')}`
-                              : ''}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
                 ) : null}
-              </div>
-            </div>
-
-            <div className={dialogFooterClassName}>
-              <AlertDialog.Cancel asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className={dialogCancelButtonClassName}
-                  disabled={deleteBusy}
-                >
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <AlertDialog.Action asChild>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={deleteBusy || deletableSkills.length === 0}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    void deleteSelected()
-                  }}
-                >
+              </>
+            }
+            details={
+              <>
+                {deletableSkills.length > 0 ? (
+                  <ul
+                    data-slot="skill-bulk-delete-deletable-list"
+                    className="mt-2 space-y-1 text-xs leading-5 text-muted-foreground"
+                  >
+                    {deletableSkills.map(({ skill }) => (
+                      <li key={skill.id} className="break-words">
+                        {skill.displayName}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {protectedSkills.length > 0 ? (
+                  <ul
+                    data-slot="skill-bulk-delete-protected-list"
+                    className="mt-2 space-y-2 text-xs leading-5"
+                  >
+                    {protectedSkills.map(({ skill, owners, usages }) => (
+                      <li key={skill.id}>
+                        <p className="break-words text-foreground">{skill.displayName}</p>
+                        <p className="text-muted-foreground">
+                          {owners.length > 0
+                            ? t('Owned by a Specialist.')
+                            : t('Used by a Specialist.')}
+                          {owners.length + usages.length > 0
+                            ? ` ${[...owners, ...usages]
+                                .map((item) => item.name)
+                                .filter((name, index, names) => names.indexOf(name) === index)
+                                .join(', ')}`
+                            : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            }
+            busy={busy}
+            onCancel={() => setDeleteOpen(false)}
+            actions={
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={deleteBusy || deletableSkills.length === 0}
+                onClick={(event) => {
+                  event.preventDefault()
+                  void deleteSelected()
+                }}
+                aria-busy={Boolean(deleteBusy)}
+              >
+                <span key={String(deleteBusy)} className="button-feedback">
                   {deleteBusy ? (
                     <>
                       <LoaderCircle
@@ -548,13 +468,73 @@ const SkillBulkManageView = (): React.JSX.Element => {
                       defaultValue_one: 'Delete {{count}} Skill'
                     })
                   )}
-                </Button>
-              </AlertDialog.Action>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-    </div>
+                </span>
+              </Button>
+            }
+          />
+        ) : undefined
+      }
+    >
+      {visible.length > 0 ? (
+        <ul className="mt-3 flex flex-col">
+          {visible.map((skill) => (
+            <li key={skill.id} data-slot="bulk-skill-row" className="min-w-0">
+              <label className="flex min-h-14 min-w-0 cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ring has-[:disabled]:cursor-default has-[:disabled]:opacity-60 [@media(hover:hover)]:hover:bg-muted/60">
+                <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
+                  <input
+                    type="checkbox"
+                    aria-label={t('Select {{name}}', { name: skill.displayName })}
+                    checked={validSelectedIds.has(skill.id)}
+                    onChange={() => toggleSelected(skill.id)}
+                    disabled={busy || deleteOpen}
+                    className="size-4 shrink-0 accent-primary"
+                  />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-foreground">
+                    {skill.displayName}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {skill.description}
+                  </span>
+                </span>
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
+                  {skill.source === 'imported' ? t('Imported') : t('Personal')}
+                </span>
+                <Badge
+                  variant={skill.enabled ? 'secondary' : 'outline'}
+                  data-skill-status={skill.enabled ? 'enabled' : 'disabled'}
+                >
+                  {skill.enabled ? t('Enabled') : t('Disabled')}
+                </Badge>
+              </label>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="flex flex-col items-start gap-2 py-10 text-sm text-muted-foreground">
+          <SearchX className="size-5" aria-hidden="true" />
+          <p>
+            {showSelectedOnly
+              ? t('No Skills are selected.')
+              : manageableSkills.length === 0
+                ? t('No imported or personal Skills yet.')
+                : t('No manageable Skills match these filters.')}
+          </p>
+          {manageableSkills.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={resetFilters}
+              disabled={busy || deleteOpen}
+            >
+              {t('Show all manageable Skills')}
+            </Button>
+          ) : null}
+        </div>
+      )}
+    </BatchManageLayout>
   )
 }
 

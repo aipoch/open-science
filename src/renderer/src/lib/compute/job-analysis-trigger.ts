@@ -447,6 +447,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   }
 
   function onJobDone(job: JobSummary): void {
+    if (job.result_delivery_path === 'agent-result-delivery') return
     if (disposed) return
     if (!isDoneState(job)) return
     if (isAlreadyConsumed(job)) return

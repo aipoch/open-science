@@ -43,6 +43,7 @@ const invocation = <Args extends readonly unknown[]>(
   Object.freeze({ callerContext: caller(location), callerLease: lease(), args })
 
 const createWorkflows = (): RuntimeWorkflows => ({
+  setSandboxAccess: vi.fn(async () => ({ cancelled: false })),
   listEnvironments: vi.fn(async () => ({ python: [], r: [] })),
   listPackages: vi.fn(async () => [{ name: 'numpy', version: '2.1.3' }]),
   listPackageCounts: vi.fn(async () => ({ managed: 1 })),
@@ -80,13 +81,13 @@ const install = (
 }
 
 describe('runtime application commands', () => {
-  it('installs the exact 12-command Runtime group', () => {
+  it('installs every Runtime method contract', () => {
     install()
-    const runtimeChannels = RENDERER_CONTRACT_GROUPS.find(
-      (group) => group.capability === 'runtime'
-    )?.contracts.map((contract) => contract.channel)
+    const runtimeChannels = RENDERER_CONTRACT_GROUPS.find((group) => group.capability === 'runtime')
+      ?.contracts.filter((contract) => contract.kind === 'method')
+      .map((contract) => contract.channel)
 
-    expect(runtimeChannels).toHaveLength(12)
+    expect(runtimeChannels).toHaveLength(13)
     expect(runtimeApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       runtimeChannels
     )

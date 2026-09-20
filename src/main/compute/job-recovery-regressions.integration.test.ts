@@ -290,6 +290,30 @@ describe('Compute Job recovery behavior', () => {
     await scheduler.waitForIdle()
   })
 
+  it('allows an explicit collection retry to bypass backoff without scheduling a second active attempt', async () => {
+    const job = await createJob()
+    let finish!: () => void
+    const harvest = vi
+      .fn()
+      .mockRejectedValueOnce(new RetryableHarvestError('File transfer failed.'))
+      .mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+    const scheduler = new JobHarvestScheduler(harvest, () => 0)
+    await scheduler.schedule(job)
+    await scheduler.schedule(job)
+    expect(harvest).toHaveBeenCalledOnce()
+    const retry = scheduler.retry(job)
+    const duplicate = scheduler.retry(job)
+    expect(retry).toBe(duplicate)
+    await vi.waitFor(() => expect(harvest).toHaveBeenCalledTimes(2))
+    finish()
+    await retry
+  })
+
   it.each([
     'command.sh',
     'launcher.sh',
@@ -360,6 +384,7 @@ describe('Compute Job recovery behavior', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: async () => confirmed.resolve(),
           startQueueReconciliation: vi.fn(),
@@ -426,6 +451,7 @@ describe('Compute Job recovery behavior', () => {
     const runtime = createComputeJobRuntime(
       {
         computeService: {
+          bindJobHarvestRetry: vi.fn(() => () => undefined),
           handleJobUpdated: vi.fn(),
           handleJobCancellationConfirmed: vi.fn(async () => undefined),
           startQueueReconciliation: vi.fn(),

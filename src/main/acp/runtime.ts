@@ -3,7 +3,8 @@ import type {
   ActiveSession,
   ClientConnection,
   CreateElicitationResponse,
-  PromptResponse
+  PromptResponse,
+  SessionConfigOption
 } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -58,7 +59,10 @@ import {
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
 } from '../agent-framework'
+import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
+import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import { redactSensitiveText } from '../diagnostic-redaction'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
@@ -71,7 +75,11 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { NotebookExecutionRpcMethod, NotebookPromptInput } from '../../shared/notebook'
+import type {
+  NotebookExecutionRpcMethod,
+  NotebookPromptInput,
+  ShellRuntimeBinding
+} from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -138,7 +146,15 @@ import type {
   AcpBackendGenerationView
 } from './backend-generation-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
-import type { AcpSessionUpdateProjector } from './session-update-projector'
+import type {
+  AcpSessionUpdateProjector,
+  AcpToolFailureDiagnostic
+} from './session-update-projector'
+import { RepeatedToolFailureGuard } from './repeated-tool-failure-guard'
+import {
+  artifactPublicationContinuationText,
+  type NotebookWorkingFile
+} from './artifact-publication-continuation'
 import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import type { AcpModelChangeWorkflow } from './model-change-workflow'
@@ -172,6 +188,7 @@ import type {
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
@@ -202,8 +219,12 @@ export type AcpRuntimeCallbacks = {
 }
 
 type AcpRuntimeOptions = {
+  classifySkills?: import('../../shared/classification').ClassifySkills
+  hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string
+  // Disposable framework homes must retain the same read protection as app-owned config roots.
+  additionalProtectedReadRoots?: readonly string[]
   callbacks?: AcpRuntimeCallbacks
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
@@ -224,6 +245,7 @@ type AcpRuntimeOptions = {
     systemPromptAppends: string[]
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
+  runtimeSessions?: RuntimeSessionOwner
   uploads?: AcpRuntimeUploadOptions
   // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
@@ -232,6 +254,11 @@ type AcpRuntimeOptions = {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
+  wslSetupSessions?: Readonly<{
+    authorizeToken(token: unknown): boolean
+    bind(token: string, sessionId: string): Promise<void>
+    isBound(sessionId: string): Promise<boolean>
+  }>
   memory?: {
     isEnabled?(): Promise<boolean>
     recallForPrompt(
@@ -256,6 +283,7 @@ type AcpRuntimeOptions = {
     ) => Promise<SideChatSendMessageResult>
   }>
   literature?: Readonly<{
+    elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     resolveAttachmentVersion?: (versionId: string) => Promise<
       | Readonly<{
@@ -276,11 +304,13 @@ type AcpRuntimeOptions = {
     acquirePdf?: (request: {
       candidate: LiteratureLibraryDiscovery
       pdfUrl?: string
+      signal?: AbortSignal
       projectId: string
       sessionId: string
     }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>
     resolveSaveReferences?: (
-      references: readonly string[]
+      references: readonly string[],
+      signal?: AbortSignal
     ) => Promise<readonly LiteratureLibraryDiscovery[]>
     searchLibrary: (request: {
       projectId: string
@@ -310,6 +340,7 @@ type AcpRuntimeOptions = {
       sessionId: string
       workspaceCwd: string
       filename: string
+      signal?: AbortSignal
     }) => Promise<string>
     formatReferences?: (request: {
       projectId: string
@@ -345,6 +376,7 @@ type AcpRuntimeOptions = {
       projectId: string
       sessionId: string
       candidates: readonly LiteratureLibraryDiscovery[]
+      signal?: AbortSignal
     }) => Promise<LiteratureLibrarySaveResult>
   }>
   sideChatRelays?: Readonly<{
@@ -422,7 +454,10 @@ type AcpRuntimeArtifactOptions = {
     Partial<
       Pick<
         import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
-        'recordLiteraturePdfRead' | 'recordLiteratureSearch'
+        | 'recordLiteraturePdfRead'
+        | 'recordLiteratureAbstractRead'
+        | 'recordLiteratureSearch'
+        | 'withSessionMutation'
       >
     >
   managedFileVersions?: Pick<
@@ -440,13 +475,15 @@ type AcpRuntimeNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   memoryTools?: boolean
+  isMemoryEnabled?: () => Promise<boolean>
+  getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string
     memoryTools: boolean
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   authorizeExecution?: (authorization: {
     sessionId: string
@@ -463,7 +500,14 @@ type AcpRuntimeNotebookOptions = {
       provenanceContext: import('../../shared/notebook').NotebookRunProvenanceContext
     }
   ) => void
-  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void
+  clearArtifactTurnBinding?: (sessionId: string, ownerExecutionId: string) => void | Promise<void>
+  prepareTurnInputs?: (request: {
+    projectId: string
+    appSessionId: string
+    promptMessageId: string
+    uploads: UploadedAttachment[]
+    references: FileReference[]
+  }) => Promise<{ inputs: readonly NotebookPromptInput[]; commit: () => void }>
   registerTurnInputs?: (request: {
     projectId: string
     appSessionId: string
@@ -483,7 +527,7 @@ type AcpRuntimeSkillImportOptions = {
   isEnabled?: () => Promise<boolean>
   getRpcConnection: (binding: { sessionId: string }) => Promise<SkillImportRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
-  releaseSessionCapabilities?: (sessionId: string) => void
+  releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
   authorizeReferencedUploads?: (
     projectId: string,
     sessionId: string,
@@ -497,6 +541,7 @@ type AcpRuntimePlanOptions = {
   getRpcConnection: (binding: {
     sessionId: string
     projectId: string
+    replaceExisting: false
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   sessions: SessionRuntimeContextCommands &
@@ -564,24 +609,6 @@ const hasCodexWebSocketFallback = (text: string): boolean =>
     text
   )
 
-const utf8PrefixWithinBytes = (value: string, maxBytes: number): string => {
-  if (maxBytes <= 0) return ''
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
-
-  let low = 0
-  let high = Math.min(value.length, maxBytes)
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2)
-    if (Buffer.byteLength(value.slice(0, middle), 'utf8') <= maxBytes) low = middle
-    else high = middle - 1
-  }
-  // Do not retain half of a UTF-16 surrogate pair at the byte boundary.
-  if (low > 0 && value.charCodeAt(low - 1) >= 0xd800 && value.charCodeAt(low - 1) <= 0xdbff) {
-    low -= 1
-  }
-  return value.slice(0, low)
-}
-
 type AgentStderrWindow = {
   process: ChildProcessWithoutNullStreams
   framework: AgentFrameworkId
@@ -599,7 +626,7 @@ type AgentStderrWindow = {
   codexTransportSignalSample: string
   codexWebSocketFallbackObserved: boolean
   eventEligible: boolean
-  timer: ReturnType<typeof setTimeout>
+  timer?: ReturnType<typeof setTimeout>
 }
 
 type PlanDeliveryClaimRetry = {
@@ -629,9 +656,11 @@ class AcpRuntime {
   // Stable app identities, provider aliases, publication order, selection, and startup/delete
   // arbitration share one owner. The runtime retains only protocol/resource orchestration.
   private readonly sessionRegistry: AcpSessionRegistry
+  private readonly sessionEfforts = new WeakMap<ActiveSession, ResolvedReasoningEffort>()
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with the connection resource owner.
   private readonly sessionInteractions: AcpSessionInteractionOwner
+  readonly hasPendingSideChatInteraction: (sessionId: string) => boolean
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
   private readonly userChoiceProvenanceContexts = new Map<
@@ -653,6 +682,15 @@ class AcpRuntime {
   private durablePlanDeliveries?: Map<string, { projectId: string; commandId: string }>
   private readonly planDeliveryClaimRetries = new Map<string, PlanDeliveryClaimRetry>()
   private readonly planDeliveryPreparations = new Set<string>()
+  // Incomplete lines belong to the process stream, not the one-second reporting window.
+  private readonly agentStderrTails = new WeakMap<
+    ChildProcessWithoutNullStreams,
+    {
+      text: string
+      discarding: boolean
+      window: AgentStderrWindow
+    }
+  >()
   private readonly agentStderrWindows = new Map<ChildProcessWithoutNullStreams, AgentStderrWindow>()
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
@@ -687,6 +725,7 @@ class AcpRuntime {
     string,
     { revision: number; tail: Promise<void> }
   >()
+  private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -715,6 +754,14 @@ class AcpRuntime {
     this.permissionContext = session.permissionContext
     this.clientInteractions = session.clientInteractions
     this.elicitationOwner = session.elicitationOwner
+    this.hasPendingSideChatInteraction = (sessionId) =>
+      this.permissionContext.hasPendingForSession(sessionId) ||
+      this.elicitationOwner
+        .getPendingRequests()
+        .some((request) => request.sessionId === sessionId) ||
+      base.planInteractions.hasPendingApproval(sessionId) ||
+      options.hasPendingCredentialRequest?.(sessionId) === true
+
     this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
     this.planDeliveryOwner = options.plan
@@ -724,14 +771,62 @@ class AcpRuntime {
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
     this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session, {
-      deliveries: this.planDeliveryOwner
+      deliveries: this.planDeliveryOwner,
+      pauseProvider: (sessionId, sequence) => {
+        const connection = this.connection
+        const provider = this.activeSessionFor(sessionId)
+        return requestPlanReviewProviderStop({
+          ...(connection && provider
+            ? {
+                notify: () =>
+                  connection.agent.notify(acp.methods.agent.session.cancel, {
+                    sessionId: provider.sessionId
+                  })
+              }
+            : {}),
+          isCurrent: () => this.sessionInteractions.current(sessionId)?.sequence === sequence,
+          onUnconfirmed: (reason) => {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              sessionId,
+              title: 'Could not pause the Agent for Plan review',
+              text:
+                reason === 'unavailable'
+                  ? 'The Provider connection is unavailable. The Plan remains pending.'
+                  : reason === 'notification-failed'
+                    ? 'The Provider stop request could not be delivered. The connection will close; the Plan remains pending.'
+                    : 'Provider stop was not confirmed. The connection will close; the Plan remains pending.'
+            })
+            void this.disconnect()
+          }
+        })
+      }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
+        prepareContinuationReplay: async (request) => {
+          const promptMessageId = request.provenanceContext?.promptMessageId
+          if (!promptMessageId) {
+            throw new Error('App continuation history requires its originating Message.')
+          }
+          const continuation = await this.durableContinuationContext.prepare({
+            projectId: this.resolveSessionProjectId(request.sessionId),
+            sessionId: request.sessionId,
+            promptMessageId,
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: await this.supportsDurableContinuationImages()
+            }
+          })
+          return continuation.historyReplay
+        },
         disconnect: () => this.disconnect(false),
         resume: (request) => this.resumeSession(request)
       },
+      requestArtifactPublicationContinuation: (input) =>
+        this.parkArtifactPublicationContinuation(input),
       onPromptEnded: (sessionId, turnToken) => this.nativeFollowUp.releaseTurn(sessionId, turnToken)
     })
     this.contextCompactionWorkflow = prompt.contextCompactionWorkflow
@@ -745,6 +840,7 @@ class AcpRuntime {
       activeProviderSessionId: (sessionId) => this.activeSessionFor(sessionId)?.sessionId,
       hasLivePrompt: (sessionId) => this.sessionInteractions.current(sessionId)?.kind === 'prompt',
       hasPendingPermission: (sessionId) => this.permissionContext.hasPendingForSession(sessionId),
+      hasPendingSideChatInteraction: this.hasPendingSideChatInteraction,
       livePrompt: (sessionId) => {
         const current = this.sessionInteractions.current(sessionId)
         return current?.kind === 'prompt'
@@ -757,8 +853,8 @@ class AcpRuntime {
       },
       sessionCwd: (sessionId) => this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd,
       prepareFollowUp: (request) => this.prepareNativeFollowUpContent(request),
-      ...(this.options.notebook?.registerTurnInputs
-        ? { registerTurnInputs: this.options.notebook.registerTurnInputs }
+      ...(this.options.notebook?.prepareTurnInputs
+        ? { prepareTurnInputs: this.options.notebook.prepareTurnInputs }
         : {}),
       publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) =>
         this.publication.pushEvent({
@@ -798,6 +894,32 @@ class AcpRuntime {
     this.providerSessionResumer = providerSessions.providerSessionResumer
     this.sessionReplacement = providerSessions.sessionReplacement
     this.sessionDeletion = providerSessions.sessionDeletion
+    session.bindToolFailureObserver((failure) => this.handleToolFailure(failure))
+  }
+
+  private handleToolFailure(failure: AcpToolFailureDiagnostic): void {
+    const interaction = this.sessionInteractions.current(failure.sessionId)
+    if (interaction?.kind !== 'prompt' || interaction.signal.aborted) return
+    if (
+      !this.repeatedToolFailureGuard.observe({
+        interactionSequence: interaction.sequence,
+        reason: failure.reason,
+        sessionId: failure.sessionId,
+        tool: failure.tool,
+        toolCallId: failure.toolCallId
+      })
+    ) {
+      return
+    }
+
+    log.warn('stopping prompt after repeated MCP input validation failures', {
+      sessionId: failure.sessionId,
+      tool: failure.tool
+    })
+    void this.cancelPrompt({ sessionId: failure.sessionId }).catch((error) => {
+      this.repeatedToolFailureGuard.clearSession(failure.sessionId)
+      safeLogError('repeated MCP input validation cancellation failed', errorLogFields(error))
+    })
   }
 
   private get backend(): AcpBackendGenerationView {
@@ -875,8 +997,16 @@ class AcpRuntime {
     const record = this.sessionRegistry.lookup(sessionId)
     if (!record?.attachment) return undefined
     const aggregate = record.aggregate.snapshot()
+    const effort = this.sessionEfforts.get(record.attachment.session)
+    let backend = this.backend
+    if (effort !== undefined) {
+      const session = { ...backend.session }
+      if (effort === 'default') delete session.effort
+      else session.effort = effort
+      backend = Object.freeze({ ...backend, session: Object.freeze(session) })
+    }
     return Object.freeze({
-      backend: this.backend,
+      backend,
       ...(aggregate.appliedModel ? { appliedModel: aggregate.appliedModel } : {})
     })
   }
@@ -1027,6 +1157,48 @@ class AcpRuntime {
     return this.withOperationLease(() => this.providerSessionCreator.create(request))
   }
 
+  getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
+    const session = this.activeSessionFor(sessionId)
+    return session ? this.sessionEfforts.get(session) : undefined
+  }
+
+  async applySessionReasoningEffortChange(
+    sessionId: string,
+    effort: ResolvedReasoningEffort
+  ): Promise<boolean> {
+    return this.withOperationLease(async () => {
+      const record = this.sessionRegistry.lookup(sessionId)
+      const session = record?.attachment?.session
+      const connection = this.connection
+      if (!session || !connection || this.sessionInteractions.current(sessionId)) return false
+      const assertCurrent = (): void => {
+        this.assertCurrentConnectedConnection(connection)
+        if (this.activeSessionFor(sessionId) !== session)
+          throw new Error('ACP session startup was superseded.')
+      }
+      const facts = await this.sessionConfigurator.applyLiveEffort({
+        backend: this.backend,
+        connection,
+        effort,
+        sessions: [
+          {
+            session,
+            configOptions:
+              (record.aggregate.snapshot().configOptions as
+                readonly SessionConfigOption[] | undefined) ??
+              (session as { newSessionResponse?: { configOptions?: SessionConfigOption[] | null } })
+                .newSessionResponse?.configOptions,
+            assertCurrent
+          }
+        ]
+      })
+      assertCurrent()
+      if (facts.reconnectRequired) return false
+      this.sessionEfforts.set(session, effort)
+      return true
+    })
+  }
+
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
@@ -1143,8 +1315,8 @@ class AcpRuntime {
   // Hot-switches the specialist bound to a live session. Updates the per-session skills and identity
   // maps so the next prompt reflects the new specialist. For Claude (identity baked into session
   // _meta at creation) the agent session is replaced via a context reset so the new identity append
-  // takes effect immediately; Codex/OpenCode carry identity as a per-turn prefix (updated in the map)
-  // and need no reset. Returns `contextReset` so the renderer knows to replay conversation history
+  // takes effect immediately; Codex refreshes its scoped MCP loader through compatible resume,
+  // while OpenCode updates its turn prefix. Both preserve history. Returns `contextReset` for replay
   // into the next prompt (only true for Claude, whose fresh session starts with no provider context).
   async switchSpecialist(
     sessionId: string,
@@ -1412,6 +1584,14 @@ class AcpRuntime {
       },
       markProcessExitExpected: (process) => this.connectionClose.markExpected(process),
       onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
+      onProcessStderrEnd: (context) => {
+        const tail = this.agentStderrTails.get(context.process)
+        if (tail?.text || (tail?.discarding && this.agentStderrWindows.has(context.process))) {
+          this.handleAgentProcessStderr('', context, true)
+        }
+        this.agentStderrTails.delete(context.process)
+        this.flushAgentProcessStderr(context.process)
+      },
       onProcessError: (error, context) => this.handleAgentProcessError(error, context),
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
       onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
@@ -1557,7 +1737,8 @@ class AcpRuntime {
   async sendPrompt(
     request: AcpPromptRequest,
     promptAttemptId?: string,
-    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+    runtimeReviewOwner: 'task' | 'renderer' = 'renderer'
   ): Promise<PromptResponse> {
     if (
       request.referencedArtifacts?.some(
@@ -1572,7 +1753,8 @@ class AcpRuntime {
         request,
         {
           kind: 'user',
-          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
+          runtimeReviewOwner
         },
         onPromptAdmitted
       )
@@ -1582,14 +1764,25 @@ class AcpRuntime {
   async sendApplicationPrompt(
     request: AcpPromptRequest,
     attribution: MessageAttribution,
-    promptAttemptId?: string
+    options?: {
+      promptAttemptId?: string
+      // Runs under prompt ownership, before prompt events, Artifact opening or provider dispatch.
+      // Throwing rejects this application turn without emitting a user-visible prompt.
+      onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    }
   ): Promise<PromptResponse> {
     return this.withOperationLease(() =>
-      this.runPromptTurn(request, {
-        kind: 'application',
-        attribution,
-        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-      })
+      this.runPromptTurn(
+        request,
+        {
+          kind: 'application',
+          attribution,
+          ...(options?.promptAttemptId === undefined
+            ? {}
+            : { promptAttemptId: options.promptAttemptId })
+        },
+        options?.onPromptAdmitted
+      )
     )
   }
 
@@ -1599,7 +1792,8 @@ class AcpRuntime {
   async sendAppContinuation(
     request: AcpPromptRequest,
     promptAttemptId?: string,
-    planDelivery?: Readonly<{ projectId: string; commandId: string }>
+    planDelivery?: Readonly<{ projectId: string; commandId: string }>,
+    delegatedMessageId?: string
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
@@ -1607,7 +1801,8 @@ class AcpRuntime {
       this.runPromptTurn(request, {
         kind: 'app-continuation',
         ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
-        ...(planDelivery ? { planDelivery } : {})
+        ...(planDelivery ? { planDelivery } : {}),
+        ...(delegatedMessageId ? { delegatedMessageId } : {})
       })
     )
   }
@@ -1615,7 +1810,11 @@ class AcpRuntime {
   private runPromptTurn(
     request: AcpPromptRequest,
     intent:
-      | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+      | Readonly<{
+          kind: 'user'
+          promptAttemptId?: string
+          runtimeReviewOwner?: 'task' | 'renderer'
+        }>
       | Readonly<{
           kind: 'application'
           attribution: MessageAttribution
@@ -1625,6 +1824,7 @@ class AcpRuntime {
           kind: 'app-continuation'
           promptAttemptId?: string
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
+          delegatedMessageId?: string
         }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
@@ -1634,6 +1834,7 @@ class AcpRuntime {
         response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
         return response
       } finally {
+        this.repeatedToolFailureGuard.clearSession(request.sessionId)
         this.schedulePendingAppContinuation(request.sessionId, response?.stopReason)
       }
     })
@@ -1641,12 +1842,14 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    const cancelPromptRequest = this.promptTurnWorkflow.captureCancellation(request.sessionId)
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
     const cancelPlanInteraction = this.sessionPlanWorkflow.capturePromptCancellation(
       request.sessionId
     )
-    const interactionInFlight = this.sessionInteractions.current(request.sessionId) !== undefined
+    const interactionInFlight =
+      this.sessionInteractions.has(request.sessionId) || !!cancelPromptRequest
     const durablePermission = this.durablePermissionContinuations?.get(request.sessionId)
     if (durablePermission) durablePermission.cancellationRequested = true
     const continuationWasPending = this.appContinuations.get(request.sessionId) !== undefined
@@ -1691,6 +1894,19 @@ class AcpRuntime {
     }
 
     let cancellationAccepted = false
+    const onAccepted = (): void => {
+      cancellationAccepted = true
+      cancelPromptRequest?.()
+      cancelPlanInteraction()
+      this.cancelPermissionFlowForSession(request.sessionId)
+      this.pushEvent({
+        kind: 'system',
+        level: 'warning',
+        sessionId: request.sessionId,
+        title: 'Prompt cancellation requested'
+      })
+      this.emitState()
+    }
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
         sessionId: request.sessionId,
@@ -1698,29 +1914,20 @@ class AcpRuntime {
           connection.agent.notify(acp.methods.agent.session.cancel, {
             sessionId: activeSession.sessionId
           }),
-        onAccepted: () => {
-          cancellationAccepted = true
-          cancelPlanInteraction()
-          this.cancelPermissionFlowForSession(request.sessionId)
-          this.pushEvent({
-            kind: 'system',
-            level: 'warning',
-            sessionId: request.sessionId,
-            title: 'Prompt cancellation requested'
-          })
-          this.emitState()
-        },
+        onAccepted,
         onTimeout: () => {
           this.pushEvent({
             kind: 'error',
             level: 'error',
             sessionId: request.sessionId,
             title: 'Prompt cancellation timed out',
-            text: 'The agent did not stop, so its process was stopped and will restart on the next prompt.'
+            text: 'Cancellation was not confirmed before the deadline. The agent connection is being closed; process termination is not yet confirmed.'
           })
           void this.disconnect()
         }
       })
+    } else if (cancelPromptRequest) {
+      onAccepted()
     }
     if (cancellationAccepted) {
       await this.settleCancelledDurablePermissionContinuation(request.sessionId)
@@ -2021,7 +2228,19 @@ class AcpRuntime {
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
           request: continuation,
-          condition: 'always'
+          condition: 'always',
+          onUnaccepted: async () => {
+            const promptMessageId = resolution.request.durable?.promptMessageId
+            if (!promptMessageId) return
+            await this.options.runtimeSessions?.flush(resolution.request.sessionId, promptMessageId)
+            await this.durableContinuationContext.rearmElicitation({
+              projectId: this.sessionEnvironment.projectId(resolution.request.sessionId),
+              sessionId: resolution.request.sessionId,
+              promptMessageId,
+              requestId: resolution.request.requestId,
+              toolCallId: resolution.request.toolCallId
+            })
+          }
         })
         this.schedulePendingAppContinuation(resolution.request.sessionId)
       }
@@ -2069,6 +2288,12 @@ class AcpRuntime {
       })
       const appended = this.elicitationOwner.appendDetached(pendingChoice.requestId, fields)
       if (!appended) return { action: 'cancelled' }
+      if (appended.durable?.promptMessageId) {
+        await this.options.runtimeSessions?.flush(
+          request.sessionId,
+          appended.durable.promptMessageId
+        )
+      }
       return { action: 'pending' }
     }
 
@@ -2124,6 +2349,11 @@ class AcpRuntime {
     )
 
     if (!pending) return { action: 'cancelled' }
+    // The tool must not acknowledge a durable question while its only copy is in the
+    // streaming batch. A restart immediately after the tool returns must retain the card.
+    if (pending.durable?.promptMessageId) {
+      await this.options.runtimeSessions?.flush(request.sessionId, pending.durable.promptMessageId)
+    }
     const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
     if (
       promptInteraction?.kind === 'prompt' &&
@@ -2476,6 +2706,25 @@ class AcpRuntime {
     })
   }
 
+  private parkArtifactPublicationContinuation(input: {
+    sessionId: string
+    provenanceContext?: AcpPromptRequest['provenanceContext']
+    files: readonly NotebookWorkingFile[]
+  }): void {
+    if (this.appContinuations.has(input.sessionId)) return
+    const backend = this.backendGeneration.current
+    const toolName = renderAppMcpToolReferences(backend.framework.id, 'write_artifact_file')
+    this.appContinuations.set(input.sessionId, {
+      condition: 'always',
+      request: {
+        sessionId: input.sessionId,
+        text: artifactPublicationContinuationText(input.files, toolName),
+        suppressUserMessage: true,
+        ...(input.provenanceContext ? { provenanceContext: input.provenanceContext } : {})
+      }
+    })
+  }
+
   private async flushPendingAppContinuation(sessionId: string): Promise<void> {
     const pending = this.appContinuations.get(sessionId)
     if (!pending || this.sessionInteractions.current(sessionId)) return
@@ -2507,6 +2756,19 @@ class AcpRuntime {
       })
       this.emitState()
     } finally {
+      if (continuation.onUnaccepted) {
+        try {
+          await continuation.onUnaccepted()
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not restore the unanswered question',
+            text: errorMessage(error)
+          })
+        }
+      }
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
       const durablePlan = this.durablePlanDeliveries?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)
@@ -2689,11 +2951,13 @@ class AcpRuntime {
   // App-owned directories the agent's Read tool must never read: framework config dirs hold
   // materialized skills plus provider/auth configuration whose contents must not be surfaced.
   private protectedReadRoots(): string[] {
-    if (!this.artifactOptions) return []
+    const additional = this.options.additionalProtectedReadRoots ?? []
+    if (!this.artifactOptions) return [...additional]
 
     const root = this.artifactOptions.configRoot
 
     return [
+      ...additional,
       getAppClaudeConfigDir(root),
       opencodeStorageDir(root),
       codexStorageDir(root),
@@ -2819,9 +3083,10 @@ class AcpRuntime {
   // Projects adapter-bound process diagnostics while retaining epoch classification and event state.
   private handleAgentProcessStderr(
     text: string,
-    context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1]
+    context: Parameters<AcpAgentConnectionHooks['onProcessStderr']>[1],
+    ended = false
   ): void {
-    if (!text) return
+    if (!text && !ended) return
 
     const disposition = this.processEventDisposition(context.process, context.epoch)
     const inFlight = disposition === 'current' ? this.getInFlightSessionIds() : []
@@ -2831,7 +3096,7 @@ class AcpRuntime {
       : undefined
     const existing = this.agentStderrWindows.get(context.process)
     if (existing) {
-      existing.chunkCount += 1
+      existing.chunkCount += ended ? 0 : 1
       existing.byteCount += Buffer.byteLength(text, 'utf8')
       existing.eventEligible &&= disposition === 'current'
       existing.nonActionableCodexOnly &&=
@@ -2844,8 +3109,15 @@ class AcpRuntime {
         existing.interactionSequence = undefined
         existing.sessionAttributionConsistent = false
       }
-      this.appendAgentStderrSample(existing, text)
+      this.appendAgentStderrSample(existing, text, ended)
       this.observeCodexTransportSignal(existing, text)
+      if (!existing.timer) {
+        existing.timer = setTimeout(
+          () => this.flushAgentProcessStderr(context.process),
+          AGENT_STDERR_REPORT_WINDOW_MS
+        )
+        existing.timer.unref?.()
+      }
       return
     }
 
@@ -2859,7 +3131,7 @@ class AcpRuntime {
       framework: context.framework,
       epoch: context.epoch,
       startedAt: Date.now(),
-      chunkCount: 1,
+      chunkCount: ended ? 0 : 1,
       byteCount: Buffer.byteLength(text, 'utf8'),
       rawSample: '',
       rawSampleBytes: 0,
@@ -2873,7 +3145,7 @@ class AcpRuntime {
       eventEligible: disposition === 'current',
       timer
     }
-    this.appendAgentStderrSample(window, text)
+    this.appendAgentStderrSample(window, text, ended)
     this.observeCodexTransportSignal(window, text)
     this.agentStderrWindows.set(context.process, window)
   }
@@ -2907,29 +3179,68 @@ class AcpRuntime {
     return process.env[RAW_AGENT_STDERR_ENV]?.trim().toLowerCase() === 'raw'
   }
 
-  private appendAgentStderrSample(window: AgentStderrWindow, text: string): void {
-    if (!this.includeRawAgentStderr()) return
-    let available = MAX_RAW_AGENT_STDERR_SAMPLE_BYTES - window.rawSampleBytes
-    if (available <= 0) {
-      window.rawSampleTruncated = true
+  private appendAgentStderrSample(window: AgentStderrWindow, text: string, ended: boolean): void {
+    if (!this.includeRawAgentStderr()) {
+      this.agentStderrTails.delete(window.process)
       return
     }
-    if (window.rawSample) {
-      window.rawSample += '\n'
-      window.rawSampleBytes += 1
-      available -= 1
+    const tail = this.agentStderrTails.get(window.process) ?? {
+      text: '',
+      discarding: false,
+      window
     }
-    const prefix = utf8PrefixWithinBytes(text, available)
-    window.rawSample += prefix
-    window.rawSampleBytes += Buffer.byteLength(prefix, 'utf8')
-    if (prefix.length < text.length) window.rawSampleTruncated = true
+    if (tail.window !== window && (tail.text || tail.discarding)) {
+      // A line crossing reporting windows must not acquire a later prompt's attribution.
+      window.sessionAttributionConsistent = false
+    }
+    tail.window = window
+    let offset = 0
+    do {
+      const newline = text.indexOf('\n', offset)
+      const end = newline < 0 ? text.length : newline + 1
+      const part = text.slice(offset, end)
+      if (!tail.discarding) {
+        if (
+          Buffer.byteLength(tail.text, 'utf8') + Buffer.byteLength(part, 'utf8') >
+          MAX_RAW_AGENT_STDERR_SAMPLE_BYTES
+        ) {
+          tail.text = ''
+          tail.discarding = true
+        } else {
+          tail.text += part
+        }
+      }
+      if (tail.discarding) window.rawSampleTruncated = true
+      if (newline >= 0 || ended) {
+        if (!tail.discarding) {
+          const safe = redactSensitiveText(tail.text)
+          const bytes = Buffer.byteLength(safe, 'utf8')
+          if (window.rawSampleBytes + bytes <= MAX_RAW_AGENT_STDERR_SAMPLE_BYTES) {
+            window.rawSample += safe
+            window.rawSampleBytes += bytes
+          } else {
+            window.rawSampleTruncated = true
+          }
+        }
+        tail.text = ''
+        tail.discarding = false
+      }
+      offset = end
+      if (newline < 0) break
+    } while (offset < text.length)
+    this.agentStderrTails.set(window.process, tail)
   }
 
   private flushAgentProcessStderr(process: ChildProcessWithoutNullStreams): void {
     const window = this.agentStderrWindows.get(process)
     if (!window) return
-    this.agentStderrWindows.delete(process)
     clearTimeout(window.timer)
+    window.timer = undefined
+    // Keep the original counters and attribution until a bounded raw line is complete.
+    // With no more data there is no repeating timer; stream end/close finalizes the window.
+    const tail = this.agentStderrTails.get(process)
+    if (this.includeRawAgentStderr() && tail?.text && !tail.discarding) return
+    this.agentStderrWindows.delete(process)
 
     const windowMs = Math.max(1, Date.now() - window.startedAt)
     const includeRaw = this.includeRawAgentStderr() && window.rawSample.length > 0
@@ -2945,7 +3256,7 @@ class AcpRuntime {
       byteCount: window.byteCount,
       windowMs,
       chunksPerSecond: Number(((window.chunkCount * 1000) / windowMs).toFixed(1)),
-      ...(includeRaw
+      ...(this.includeRawAgentStderr()
         ? { rawSample: window.rawSample, rawSampleTruncated: window.rawSampleTruncated }
         : {})
     })
@@ -2974,7 +3285,7 @@ class AcpRuntime {
       level: 'warning',
       sessionId,
       title: 'agent',
-      text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : summary
+      text: includeRaw ? `${summary}\n${window.rawSample}${rawSuffix}` : `${summary}${rawSuffix}`
     })
   }
 

@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { DelegatedProcessOwnership } from './process-ownership'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
@@ -60,11 +61,17 @@ type ProductionFrameworkCertification = Readonly<{
 
 type ProductionDelegatedFrameworksOptions = Readonly<{
   capacity: number
-  certify(session: PersistedChatSession): Promise<ProductionFrameworkCertification>
+  certify(
+    session: PersistedChatSession,
+    ownership?: DelegatedProcessOwnership
+  ): Promise<ProductionFrameworkCertification>
 }>
 
 type ProductionDelegatedFrameworks = Readonly<{
-  forSession(session: PersistedChatSession): Promise<{
+  forSession(
+    session: PersistedChatSession,
+    ownership?: DelegatedProcessOwnership
+  ): Promise<{
     frameworkId: AgentFrameworkId
     execution: DelegateExecution
     assertAvailable(): Promise<void>
@@ -82,10 +89,10 @@ const requireCodexRuntime = (
 const createProductionDelegatedFrameworks = (
   options: ProductionDelegatedFrameworksOptions
 ): ProductionDelegatedFrameworks => ({
-  async forSession(session) {
+  async forSession(session, ownership) {
     const frameworkId = session.agentFrameworkId
     if (!frameworkId) throw new Error('Delegated Work Session has no framework identity.')
-    const certification = await options.certify(session)
+    const certification = await options.certify(session, ownership)
     if (certification.frameworkId !== frameworkId) {
       throw new Error('Delegated Work certification does not match the Session framework.')
     }

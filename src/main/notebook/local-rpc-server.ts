@@ -1,3 +1,5 @@
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { artifactSaveRequestSchema } from '../artifacts/save-request'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
@@ -9,7 +11,10 @@ import {
 } from '../../shared/compute'
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import {
+  NotebookBackgroundRunError,
+  type NotebookRunProvenanceContext
+} from '../../shared/notebook'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
 import {
   createArtifactVersionLocator,
@@ -28,6 +33,7 @@ import {
 import type {
   NotebookInputRegistry,
   NotebookInputRunLease,
+  PreparedNotebookTurnInputs,
   RegisterNotebookTurnInputsRequest
 } from './input-registry'
 import type {
@@ -36,6 +42,8 @@ import type {
 } from '../skills/conversation-import'
 import type {
   ArtifactRpcCapabilityBinding,
+  SaveArtifactVersionRequest,
+  ArtifactWriteSourceScope,
   ArtifactRpcMethod,
   ArtifactWriteReservation,
   ArtifactVersionFile,
@@ -68,6 +76,8 @@ import { createLogger, errorLogFields } from '../logger'
 import {
   LOCAL_RESOURCE_BUDGETS,
   ResourceBudgetExceededError,
+  PendingRequestBudget,
+  PendingRequestLimitError,
   readBoundedJsonBody
 } from '../resource-budget'
 import { PlanCommandError } from '../../shared/session-plan/contract'
@@ -103,6 +113,14 @@ import {
 import type { MemoryService } from '../memory/service'
 import { withDataRootWrite } from '../storage/migration-state'
 import { isRecord } from '../value-guards'
+import type {
+  OpenWslTerminalRequest,
+  SelectWslProfileRequest,
+  WslPlatformInstallResult,
+  WslSetupSnapshot,
+  WslSetupStatus,
+  WslSupportHandoff
+} from '../../shared/wsl-setup'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
@@ -207,6 +225,7 @@ type NotebookLocalRpcServerOptions = {
       active_count: number
       queued_count: number
       provider_ceilings: Record<string, number>
+      queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>
@@ -221,6 +240,12 @@ type NotebookLocalRpcServerOptions = {
   }
   requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
   artifactProvenance?: {
+    saveVersion?(
+      request: SaveArtifactVersionRequest,
+      sourceScope: ArtifactWriteSourceScope,
+      signal?: AbortSignal,
+      onMetadataBytes?: (bytes: number) => void
+    ): Promise<ArtifactVersionFile>
     createVersion(
       request: CreateArtifactVersionRequest,
       signal?: AbortSignal
@@ -237,7 +262,7 @@ type NotebookLocalRpcServerOptions = {
     releaseAllWriteReservations?(): Promise<void>
   }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
-    Partial<Pick<NotebookInputRegistry, 'openRun'>>
+    Partial<Pick<NotebookInputRegistry, 'openRun' | 'prepareTurn'>>
   hostArtifacts?: {
     list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
     resolvePath(
@@ -334,6 +359,22 @@ type NotebookLocalRpcServerOptions = {
     discardSession(sessionId: string): void
     shutdown(): void
   }
+  wslSetup?: Readonly<{
+    getStatus(): WslSetupStatus
+    probe(): Promise<WslSetupSnapshot>
+    createSupportHandoff(): Promise<WslSupportHandoff>
+    installPlatform(): Promise<WslPlatformInstallResult>
+    installRecommendedDistro(): Promise<WslSetupSnapshot>
+    select(request: SelectWslProfileRequest): Promise<WslSetupSnapshot>
+    selectAtRevision?(
+      request: SelectWslProfileRequest,
+      expectedRevision: number
+    ): Promise<WslSetupSnapshot>
+    openTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot>
+  }>
+  wslSetupSessions?: Readonly<{ isBound(sessionId: string): Promise<boolean> }>
+  wslSetupPreviewAvailable?: () => boolean
+  openWslSetupPowerShellTerminal?: () => Promise<void>
 }
 
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
@@ -351,6 +392,7 @@ type NotebookRpcSessionBinding = {
   delegatedWorkRole?: 'main' | 'delegate'
   delegatedWorkAttemptId?: string
   allowedMethods?: ReadonlySet<string>
+  capabilityLifetime?: AbortController
   activeControlInvocation?: TrustedControlInvocationIdentity
   executionCwd?: string
   isControl?: true
@@ -373,6 +415,7 @@ type NotebookExecutionAuthorization = Readonly<{
 }>
 
 type ActiveArtifactTurnBinding = Readonly<{
+  artifactRunId?: string
   ownerExecutionId: string
   projectId: string
   provenanceContext: NotebookRunProvenanceContext
@@ -395,11 +438,19 @@ type DelegatedNotebookConnection = NotebookRpcConnection & {
   revoke(): Promise<void>
 }
 
+type BoundArtifactTurn = ActiveArtifactTurnBinding & {
+  pendingRequests: Set<Promise<void>>
+  stopFailure?: NotebookExecutionStopError
+}
+
 type NotebookRpcRequestLifecycle = {
   request: IncomingMessage
   response: ServerResponse
   disconnect: AbortController
   bodyComplete: boolean
+  foregroundTurn?: { sessionId: string; binding: BoundArtifactTurn }
+  settled: Promise<void>
+  settle(): void
   method?: string
 }
 
@@ -428,7 +479,27 @@ const parseRpcParams = <Result>(parse: () => Result): Result => {
   }
 }
 
+class BackgroundHostMethodUnsafeError extends RpcHttpError {
+  readonly detail: Readonly<{
+    code: 'BACKGROUND_HOST_METHOD_UNSAFE'
+    method: string
+    retryable: false
+    hint: string
+  }>
+
+  constructor(method: string) {
+    super(409, `${method} is not safe for background REPL execution.`)
+    this.detail = {
+      code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+      method,
+      retryable: false,
+      hint: 'Run this Host SDK operation in foreground repl_execute.'
+    }
+  }
+}
+
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
+  'artifactSaveVersion',
   'artifactReserveWrite',
   'artifactReleaseWrite',
   'artifactCreateVersion',
@@ -469,6 +540,13 @@ const DELEGATED_CONTROL_RPC_METHODS = new Set([
 ])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 const PLAN_RPC_METHODS = new Set(['planCall'])
+const WSL_SETUP_RPC_METHODS = new Set([
+  'wslSetupDiagnostics',
+  'wslSetupInstallPlatform',
+  'wslSetupInstallRecommendedDistro',
+  'wslSetupSelectProfile',
+  'wslSetupOpenTerminal'
+])
 
 const RPC_METHODS = new Set<string>([
   ...NOTEBOOK_LOCAL_RPC_METHODS,
@@ -476,6 +554,7 @@ const RPC_METHODS = new Set<string>([
   ...ARTIFACT_RPC_METHODS,
   ...SKILL_IMPORT_RPC_METHODS,
   ...PLAN_RPC_METHODS,
+  ...WSL_SETUP_RPC_METHODS,
   'delegatedOutputCall',
   'resolveNotebookInput'
 ])
@@ -537,6 +616,7 @@ const notebookExecutionInputFingerprint = (
             ? 'python'
             : null,
         method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null,
+        input?.background === true,
         kernelSkillIds,
         artifactVersionInputs
       ])
@@ -587,6 +667,10 @@ class NotebookLocalRpcServer {
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostModel: NotebookLocalRpcServerOptions['hostModel']
   private readonly hostViewImage: NotebookLocalRpcServerOptions['hostViewImage']
+  private readonly wslSetup: NotebookLocalRpcServerOptions['wslSetup']
+  private readonly wslSetupSessions: NotebookLocalRpcServerOptions['wslSetupSessions']
+  private readonly wslSetupPreviewAvailable: NotebookLocalRpcServerOptions['wslSetupPreviewAvailable']
+  private readonly openWslSetupPowerShellTerminal: NotebookLocalRpcServerOptions['openWslSetupPowerShellTerminal']
   private readonly resolveSpecialistSkillIds: NotebookLocalRpcServerOptions['resolveSpecialistSkillIds']
   private server: Server | undefined
   private serverLifecycle: NotebookRpcServerLifecycle | undefined
@@ -596,7 +680,7 @@ class NotebookLocalRpcServer {
   private readonly sessionRpcCapabilities = new Map<string, NotebookRpcSessionBinding>()
   private readonly sessionRpcTokens = new Map<string, string>()
   private readonly skillImportRpcTokens = new Map<string, string>()
-  private readonly planRpcTokens = new Map<string, string>()
+  private readonly planRpcTokens = new Map<string, Set<string>>()
   // The session → Specialist relationship is established by the ACP runtime, not supplied by the
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
@@ -607,14 +691,28 @@ class NotebookLocalRpcServer {
     { sessionId: string; controller: AbortController }
   >()
 
-  private readonly activeArtifactTurnBindings = new Map<string, ActiveArtifactTurnBinding>()
+  private readonly activeArtifactTurnBindings = new Map<string, BoundArtifactTurn>()
+  // Routing may advance before an older execution finishes draining. Keep its outcome until its
+  // owner clears it, including failures recorded after the HTTP request has already settled.
+  private readonly artifactTurnBindingsByExecution = new Map<
+    string,
+    Map<string, BoundArtifactTurn>
+  >()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
+  private static readonly artifactRequestBudget = new PendingRequestBudget()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
   private readonly executionAuthorizations = new Map<
     string,
     Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
+  >()
+  // Retains claimed durable execution authorizations for the active prompt so a lost HTTP response
+  // can retry the exact request with the same submission identity. Each execution lifecycle remains
+  // a separate owner; a newly authorized call takes precedence and turn/session teardown clears both.
+  private readonly claimedDurableExecutionAuthorizations = new Map<
+    string,
+    Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization>
   >()
   private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
   private readonly computeSubmissionInvocations = new Map<
@@ -654,6 +752,10 @@ class NotebookLocalRpcServer {
     this.skillsService = options.skillsService
     this.hostModel = options.hostModel
     this.hostViewImage = options.hostViewImage
+    this.wslSetup = options.wslSetup
+    this.wslSetupSessions = options.wslSetupSessions
+    this.wslSetupPreviewAvailable = options.wslSetupPreviewAvailable
+    this.openWslSetupPowerShellTerminal = options.openWslSetupPowerShellTerminal
   }
 
   issueArtifactRunCapability(
@@ -666,18 +768,17 @@ class NotebookLocalRpcServer {
     const token = randomUUID()
     this.artifactRpcCapabilities.set(token, {
       ...binding,
+      sourceScope: binding.sourceScope
+        ? {
+            ...binding.sourceScope,
+            allowedImportRoots: [...binding.sourceScope.allowedImportRoots]
+          }
+        : undefined,
       messageBranchAncestry: binding.messageBranchAncestry
         ? [...binding.messageBranchAncestry]
         : undefined,
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
-      allowedMethods: new Set(
-        binding.allowedMethods ?? [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
-      ),
+      allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
       expiresAt: this.now() + ttlMs,
       inFlightRequests: 0,
       drainWaiters: new Set()
@@ -783,6 +884,7 @@ class NotebookLocalRpcServer {
     this.sessionRpcTokens.clear()
     this.skillImportRpcTokens.clear()
     this.executionAuthorizations.clear()
+    this.claimedDurableExecutionAuthorizations.clear()
     this.consumedExecutionToolCalls.clear()
     this.computeSubmissionInvocations.clear()
 
@@ -925,6 +1027,7 @@ class NotebookLocalRpcServer {
   }
 
   private revokeSessionCapability(token: string): void {
+    this.sessionRpcCapabilities.get(token)?.capabilityLifetime?.abort()
     this.codeWriteProducers.get(token)?.controller.abort()
     this.codeWriteProducers.delete(token)
     this.sessionRpcCapabilities.delete(token)
@@ -948,10 +1051,31 @@ class NotebookLocalRpcServer {
 
   private revokePlanSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
-      const token = this.planRpcTokens.get(ownedSessionId)
-      if (token) this.revokeSessionCapability(token)
+      const tokens = this.planRpcTokens.get(ownedSessionId)
+      for (const token of tokens ?? []) this.revokeSessionCapability(token)
       this.planRpcTokens.delete(ownedSessionId)
     }
+  }
+
+  // Runtime generations overlap during adoption. Only a caller holding every current ACP
+  // credential in this alias closure may remove the shared Session state. Concrete release()
+  // callbacks still revoke the caller's own credentials when this ownership check fails.
+  releaseSessionCapabilitiesIfOwned(sessionId: string, capabilityTokens: readonly string[]): void {
+    const expected = new Set(capabilityTokens)
+    let ownsCurrentCapability = false
+    for (const owner of this.resolveSessionCapabilityOwners(sessionId)) {
+      for (const tokens of [this.sessionRpcTokens, this.skillImportRpcTokens]) {
+        const token = tokens.get(owner)
+        if (!token) continue
+        if (!expected.has(token)) return
+        ownsCurrentCapability = true
+      }
+      for (const token of this.planRpcTokens.get(owner) ?? []) {
+        if (!expected.has(token)) return
+        ownsCurrentCapability = true
+      }
+    }
+    if (ownsCurrentCapability) this.releaseSessionCapabilities(sessionId)
   }
 
   // Releases ACP-owned session state without revoking the persistent control-plane capability. The
@@ -966,6 +1090,7 @@ class NotebookLocalRpcServer {
       this.cancelCodeWriteProducers(ownedSessionId)
       this.sessionSpecialists.delete(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
+      this.claimedDurableExecutionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
       this.computeSubmissionInvocations.delete(ownedSessionId)
     }
@@ -1039,7 +1164,17 @@ class NotebookLocalRpcServer {
     const authorization = byMethod?.get(method)
     byMethod?.delete(method)
     if (byMethod?.size === 0) this.executionAuthorizations.delete(sessionId)
-    if (!authorization || authorization === 'ambiguous') return undefined
+    if (!authorization) {
+      const claimed = this.claimedDurableExecutionAuthorizations.get(sessionId)?.get(method)
+      const activePrompt =
+        this.activeArtifactTurnBindings.get(sessionId)?.provenanceContext.promptMessageId
+      return claimed &&
+        claimed.promptMessageId === activePrompt &&
+        notebookExecutionInputFingerprint(method, params) === claimed.inputFingerprint
+        ? claimed.executionInvocationId
+        : undefined
+    }
+    if (authorization === 'ambiguous') return undefined
     const consumed = this.consumedExecutionToolCalls.get(sessionId) ?? new Set<string>()
     consumed.add(authorization.toolCallId)
     this.consumedExecutionToolCalls.set(sessionId, consumed)
@@ -1050,6 +1185,11 @@ class NotebookLocalRpcServer {
     ) {
       return undefined
     }
+    const claimed =
+      this.claimedDurableExecutionAuthorizations.get(sessionId) ??
+      new Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization>()
+    claimed.set(method, authorization)
+    this.claimedDurableExecutionAuthorizations.set(sessionId, claimed)
     return authorization.executionInvocationId
   }
 
@@ -1260,23 +1400,32 @@ class NotebookLocalRpcServer {
     }
   }
 
-  async issuePlanConnection(sessionId: string, projectId: string): Promise<NotebookRpcConnection> {
+  async issuePlanConnection(
+    sessionId: string,
+    projectId: string,
+    options: Readonly<{ replaceExisting?: boolean }> = {}
+  ): Promise<NotebookRpcConnection> {
     const connection = await this.ensureStarted()
-    this.revokePlanSessionCapabilities(sessionId)
+    if (options.replaceExisting !== false) this.revokePlanSessionCapabilities(sessionId)
 
     const token = randomUUID()
-    this.planRpcTokens.set(sessionId, token)
+    const tokens = this.planRpcTokens.get(sessionId) ?? new Set<string>()
+    tokens.add(token)
+    this.planRpcTokens.set(sessionId, tokens)
     this.sessionRpcCapabilities.set(token, {
       sessionId,
       projectId,
-      allowedMethods: PLAN_RPC_METHODS
+      allowedMethods: PLAN_RPC_METHODS,
+      capabilityLifetime: new AbortController()
     })
     return {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
       token,
       release: () => {
-        if (this.planRpcTokens.get(sessionId) === token) this.planRpcTokens.delete(sessionId)
+        const activeTokens = this.planRpcTokens.get(sessionId)
+        activeTokens?.delete(token)
+        if (activeTokens?.size === 0) this.planRpcTokens.delete(sessionId)
         this.revokeSessionCapability(token)
       }
     }
@@ -1383,9 +1532,17 @@ class NotebookLocalRpcServer {
     ) {
       this.cancelCodeWriteProducers(sessionId)
       this.executionAuthorizations.delete(sessionId)
+      this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
-    this.activeArtifactTurnBindings.set(sessionId, binding)
+    const boundTurn: BoundArtifactTurn = { ...binding, pendingRequests: new Set() }
+    let ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
+    if (!ownedTurns) {
+      ownedTurns = new Map()
+      this.artifactTurnBindingsByExecution.set(sessionId, ownedTurns)
+    }
+    ownedTurns.set(binding.ownerExecutionId, boundTurn)
+    this.activeArtifactTurnBindings.set(sessionId, boundTurn)
     const context = binding.provenanceContext
     if (context.agentFrameId === context.rootFrameId) {
       for (const capability of this.sessionRpcCapabilities.values()) {
@@ -1403,13 +1560,37 @@ class NotebookLocalRpcServer {
     }
   }
 
-  clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): void {
-    if (this.activeArtifactTurnBindings.get(sessionId)?.ownerExecutionId !== ownerExecutionId)
-      return
-    this.cancelCodeWriteProducers(sessionId)
-    this.activeArtifactTurnBindings.delete(sessionId)
-    this.executionAuthorizations.delete(sessionId)
-    this.consumedExecutionToolCalls.delete(sessionId)
+  async clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): Promise<void> {
+    const ownedTurns = this.artifactTurnBindingsByExecution.get(sessionId)
+    const binding = ownedTurns?.get(ownerExecutionId)
+    if (!binding) return
+    // Request ownership outlives the HTTP server reference, including during server shutdown.
+    const draining = [...binding.pendingRequests]
+    // Replacement already cancelled the old producers. Never revoke the new turn's authority
+    // while draining an older owner.
+    if (this.activeArtifactTurnBindings.get(sessionId) === binding) {
+      this.cancelCodeWriteProducers(sessionId)
+      this.activeArtifactTurnBindings.delete(sessionId)
+      this.executionAuthorizations.delete(sessionId)
+      this.claimedDurableExecutionAuthorizations.delete(sessionId)
+      this.consumedExecutionToolCalls.delete(sessionId)
+    }
+    await Promise.all(draining)
+    if (ownedTurns?.get(ownerExecutionId) === binding) {
+      ownedTurns.delete(ownerExecutionId)
+      if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
+    }
+    if (binding.stopFailure) throw binding.stopFailure
+  }
+
+  async prepareNotebookTurnInputs(
+    request: RegisterNotebookTurnInputsRequest
+  ): Promise<PreparedNotebookTurnInputs> {
+    if (!this.inputRegistry) return { inputs: [], commit: () => {} }
+    if (!this.inputRegistry.prepareTurn) {
+      throw new Error('Notebook input preparation is unavailable.')
+    }
+    return this.inputRegistry.prepareTurn(request)
   }
 
   async registerNotebookTurnInputs(
@@ -1436,20 +1617,25 @@ class NotebookLocalRpcServer {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
 
-    const boundFields =
-      method === 'artifactCreateVersion'
-        ? [
-            'projectId',
-            'appSessionId',
-            'artifactStorageSessionId',
-            'artifactRunId',
-            'rootFrameId',
-            'agentFrameId',
-            'messageBranchId',
-            'runtimeSegmentId',
-            'promptMessageId'
-          ]
-        : ['projectId', 'appSessionId', 'artifactStorageSessionId', 'artifactRunId']
+    if (method !== 'artifactSaveVersion') {
+      throw new RpcHttpError(
+        409,
+        'Artifact save protocol changed. Restart the Agent MCP connection.'
+      )
+    }
+    if (!capability.sourceScope)
+      throw new RpcHttpError(403, 'Artifact save requires a trusted source scope.')
+    const boundFields = [
+      'projectId',
+      'appSessionId',
+      'artifactStorageSessionId',
+      'artifactRunId',
+      'rootFrameId',
+      'agentFrameId',
+      'messageBranchId',
+      'runtimeSegmentId',
+      'promptMessageId'
+    ] as const
     for (const field of boundFields) {
       const expected = capability[field as keyof ArtifactRpcCapabilityBinding]
       if (params[field] !== expected) {
@@ -1457,35 +1643,24 @@ class NotebookLocalRpcServer {
       }
     }
 
-    const sanitizedParams = { ...params }
-    delete sanitizedParams.messageBranchAncestry
-    delete sanitizedParams.messageAncestry
-    delete sanitizedParams.agentName
-    delete sanitizedParams.notebookSessionId
-
     const trustedParams = {
-      ...sanitizedParams,
+      ...params,
+      sourceScope: capability.sourceScope,
       projectId: capability.projectId,
       appSessionId: capability.appSessionId,
       artifactStorageSessionId: capability.artifactStorageSessionId,
       artifactRunId: capability.artifactRunId,
-      ...(method === 'artifactCreateVersion'
-        ? {
-            rootFrameId: capability.rootFrameId,
-            agentFrameId: capability.agentFrameId,
-            messageBranchId: capability.messageBranchId,
-            messageBranchAncestry: capability.messageBranchAncestry
-              ? [...capability.messageBranchAncestry]
-              : undefined,
-            messageAncestry: capability.messageAncestry
-              ? [...capability.messageAncestry]
-              : undefined,
-            runtimeSegmentId: capability.runtimeSegmentId,
-            promptMessageId: capability.promptMessageId,
-            agentName: capability.agentName,
-            notebookSessionId: capability.notebookSessionId
-          }
-        : {})
+      rootFrameId: capability.rootFrameId,
+      agentFrameId: capability.agentFrameId,
+      messageBranchId: capability.messageBranchId,
+      messageBranchAncestry: capability.messageBranchAncestry
+        ? [...capability.messageBranchAncestry]
+        : undefined,
+      messageAncestry: capability.messageAncestry ? [...capability.messageAncestry] : undefined,
+      runtimeSegmentId: capability.runtimeSegmentId,
+      promptMessageId: capability.promptMessageId,
+      agentName: capability.agentName,
+      notebookSessionId: capability.notebookSessionId
     }
     capability.inFlightRequests += 1
     let released = false
@@ -1586,11 +1761,23 @@ class NotebookLocalRpcServer {
   ): Promise<void> {
     const disconnect = new AbortController()
     let writeProducerSignal: AbortSignal | undefined
+    let artifactAdmission: ReturnType<PendingRequestBudget['acquire']> | undefined
+    let settle!: () => void
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve
+    })
     const activeRequest: NotebookRpcRequestLifecycle = {
+      settled,
+      settle,
       request,
       response,
       disconnect,
       bodyComplete: false
+    }
+    const recordStopFailure = (error: unknown): void => {
+      if (error instanceof NotebookExecutionStopError && activeRequest.foregroundTurn) {
+        activeRequest.foregroundTurn.binding.stopFailure ??= error
+      }
     }
     lifecycle.activeRequests.add(activeRequest)
     const abortDisconnectedRequest = (): void => disconnect.abort()
@@ -1638,9 +1825,26 @@ class NotebookLocalRpcServer {
         writeJson(response, 401, { error: 'Invalid notebook RPC token.' })
         return
       }
+      // A session capability can outlive its turn. Snapshot before reading the body so a
+      // slow request cannot acquire a later turn's authority after cleanup has returned.
+      const initialSessionBinding = this.sessionRpcCapabilities.get(bearerToken)
+      const initialSessionId = initialSessionBinding
+        ? (this.sessionAliases.get(initialSessionBinding.sessionId) ??
+          initialSessionBinding.sessionId)
+        : undefined
+      const initialTurn = initialSessionId
+        ? this.activeArtifactTurnBindings.get(initialSessionId)
+        : undefined
       let payload: unknown
       try {
-        payload = await readBoundedJsonBody(request, this.requestBytes)
+        if (artifactCapability) {
+          artifactAdmission = NotebookLocalRpcServer.artifactRequestBudget.acquire(
+            `${artifactCapability.projectId}\0${artifactCapability.appSessionId}`
+          )
+        }
+        payload = await readBoundedJsonBody(request, this.requestBytes, {
+          onBytes: artifactAdmission?.addBytes
+        })
       } catch (error) {
         if (error instanceof SyntaxError) throw new RpcHttpError(400, error.message)
         throw error
@@ -1669,6 +1873,29 @@ class NotebookLocalRpcServer {
         const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
         if (sessionBinding) {
           authenticatedSessionBinding = sessionBinding
+          // Capture the authenticated turn before any awaited input resolution. A cancelled or
+          // replaced turn cannot regain execution authority from a newer binding at dispatch.
+          if (
+            !sessionBinding.delegatedNotebook &&
+            sessionBinding.delegatedWorkRole !== 'delegate' &&
+            params.background !== true &&
+            ['execute', 'runCell', 'executeControl', 'executeShell'].includes(method)
+          ) {
+            const sessionId =
+              this.sessionAliases.get(sessionBinding.sessionId) ?? sessionBinding.sessionId
+            const binding = this.activeArtifactTurnBindings.get(sessionId)
+            if (sessionId !== initialSessionId || binding !== initialTurn) {
+              throw new RpcHttpError(409, 'Notebook execution turn ended before request admission.')
+            }
+            if (binding) {
+              activeRequest.foregroundTurn = {
+                sessionId,
+                binding
+              }
+              binding.pendingRequests.add(activeRequest.settled)
+              writeProducerSignal = this.codeWriteProducerSignal(bearerToken, sessionId)
+            }
+          }
           if (method === 'beginCodeCell') {
             writeProducerSignal = this.codeWriteProducerSignal(
               bearerToken,
@@ -1705,6 +1932,17 @@ class NotebookLocalRpcServer {
               checkLifetime()
             }
             await checkMemoryAccess()
+          }
+          if (sessionBinding.activeControlInvocation?.executionMode === 'background') {
+            if (method === 'requestUserInput') {
+              throw new BackgroundHostMethodUnsafeError('host.requestUserInput')
+            }
+            if (method === 'agentsCall' && params.op === 'switch') {
+              throw new BackgroundHostMethodUnsafeError('host.agents.switch')
+            }
+            if (method === 'viewImageCall') {
+              throw new BackgroundHostMethodUnsafeError('host.viewImage')
+            }
           }
           if (
             (method === 'artifactsCall' || method === 'lineageCall') &&
@@ -1982,6 +2220,12 @@ class NotebookLocalRpcServer {
         ) {
           throw new RpcHttpError(403, 'Notebook RPC capability does not match active Agent Frame.')
         }
+        if (method === 'getBackgroundRun' || method === 'cancelBackgroundRun') {
+          resolvedParams = {
+            ...resolvedParams,
+            agentFrameId: authenticatedBinding.agentFrameId
+          }
+        }
       }
       if (
         authenticatedBinding &&
@@ -2001,20 +2245,46 @@ class NotebookLocalRpcServer {
           resolvedParams = { ...resolvedParams, executionInvocationId }
         }
       }
-      const dispatchSignal = writeProducerSignal
-        ? AbortSignal.any([disconnect.signal, writeProducerSignal])
-        : disconnect.signal
+      writeProducerSignal?.throwIfAborted()
+      const dispatchSignals = [
+        disconnect.signal,
+        ...(writeProducerSignal ? [writeProducerSignal] : []),
+        ...(authenticatedBinding?.capabilityLifetime
+          ? [authenticatedBinding.capabilityLifetime.signal]
+          : [])
+      ]
+      const dispatchSignal =
+        dispatchSignals.length === 1 ? dispatchSignals[0] : AbortSignal.any(dispatchSignals)
       const result =
         method === 'capabilitiesCall'
           ? hostCapabilities
           : isNotebookLocalRpcMethod(method) && method !== 'requestNetworkAccess'
             ? await withDataRootWrite(() =>
-                this.dispatch(method, resolvedParams, dispatchSignal, checkMemoryAccess)
+                this.dispatch(
+                  method,
+                  resolvedParams,
+                  dispatchSignal,
+                  checkMemoryAccess,
+                  undefined,
+                  method === 'executeControl'
+                    ? (error) => {
+                        recordStopFailure(error)
+                        activeRequest.settle()
+                      }
+                    : undefined
+                )
               )
-            : await this.dispatch(method, resolvedParams, dispatchSignal, checkMemoryAccess)
+            : await this.dispatch(
+                method,
+                resolvedParams,
+                dispatchSignal,
+                checkMemoryAccess,
+                artifactAdmission?.addBytes
+              )
 
       writeJson(response, 200, { result })
     } catch (error) {
+      recordStopFailure(error)
       // A captured control completion belongs to the approved handoff, not to this legacy RPC
       // caller. Do not serialize it as a tool error (or any result): cancellation of the old prompt
       // closes this request, at which point the transport ownership has been released.
@@ -2025,18 +2295,28 @@ class NotebookLocalRpcServer {
       if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
       const serializedError =
-        error instanceof PlanCommandError
-          ? { code: error.code, message }
-          : error instanceof StructuredOutputError
-            ? {
-                code: error.code,
-                ...(error.keyword ? { keyword: error.keyword } : {}),
-                ...(error.instancePath !== undefined ? { instance_path: error.instancePath } : {}),
-                ...(error.property ? { property: error.property } : {})
-              }
-            : message
+        error instanceof NotebookBackgroundRunError
+          ? { ...error.detail, message }
+          : error instanceof BackgroundHostMethodUnsafeError
+            ? error.detail
+            : error instanceof PlanCommandError
+              ? { code: error.code, message }
+              : error instanceof StructuredOutputError
+                ? {
+                    code: error.code,
+                    message,
+                    ...(error.keyword ? { keyword: error.keyword } : {}),
+                    ...(error.instancePath !== undefined
+                      ? { instance_path: error.instancePath }
+                      : {}),
+                    ...(error.property ? { property: error.property } : {})
+                  }
+                : message
 
-      if (error instanceof ResourceBudgetExceededError) {
+      if (
+        error instanceof ResourceBudgetExceededError ||
+        error instanceof PendingRequestLimitError
+      ) {
         closeRequestAfterResponse(request, response)
       }
 
@@ -2050,14 +2330,19 @@ class NotebookLocalRpcServer {
             ? 403
             : error instanceof ResourceBudgetExceededError
               ? 413
-              : 500,
+              : error instanceof PendingRequestLimitError
+                ? 429
+                : 500,
         { error: serializedError }
       )
     } finally {
       request.off('aborted', abortDisconnectedRequest)
       response.off('close', abortDisconnectedResponse)
       lifecycle.activeRequests.delete(activeRequest)
+      activeRequest.foregroundTurn?.binding.pendingRequests.delete(activeRequest.settled)
+      activeRequest.settle()
       releaseArtifactRequest?.()
+      artifactAdmission?.release()
       releaseDelegatedNotebookRequest?.()
     }
   }
@@ -2067,8 +2352,69 @@ class NotebookLocalRpcServer {
     method: string,
     params: Record<string, unknown>,
     signal: AbortSignal,
-    checkMemoryAccess?: () => Promise<void>
+    checkMemoryAccess?: () => Promise<void>,
+    onArtifactMetadataBytes?: (bytes: number) => void,
+    onExecutionSettled?: (error?: unknown) => void
   ): Promise<unknown> {
+    if (WSL_SETUP_RPC_METHODS.has(method)) {
+      if (!this.wslSetup || !this.wslSetupSessions) {
+        throw new RpcHttpError(403, 'WSL setup tools are unavailable.')
+      }
+      if (this.wslSetupPreviewAvailable?.() !== true) {
+        throw new RpcHttpError(403, 'WSL setup preview is unavailable on this host.')
+      }
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      if (!sessionId || !(await this.wslSetupSessions.isBound(sessionId))) {
+        throw new RpcHttpError(403, 'WSL setup tools require a bound local setup Session.')
+      }
+      if (method === 'wslSetupDiagnostics') {
+        await this.wslSetup.probe()
+        return this.wslSetup.createSupportHandoff()
+      }
+      if (method === 'wslSetupInstallPlatform') return this.wslSetup.installPlatform()
+      if (method === 'wslSetupInstallRecommendedDistro') {
+        return this.wslSetup.installRecommendedDistro()
+      }
+      if (method === 'wslSetupSelectProfile') {
+        if (
+          typeof params.expectedRevision !== 'number' ||
+          !Number.isSafeInteger(params.expectedRevision) ||
+          params.expectedRevision !== this.wslSetup.getStatus().revision
+        ) {
+          throw new RpcHttpError(409, 'WSL_SETUP_DIAGNOSTICS_STALE')
+        }
+        if (typeof params.distro !== 'string' || typeof params.user !== 'string') {
+          throw new RpcHttpError(400, 'WSL setup profile is invalid.')
+        }
+        const request = { distro: params.distro, user: params.user }
+        return this.wslSetup.selectAtRevision
+          ? this.wslSetup.selectAtRevision(request, params.expectedRevision)
+          : this.wslSetup.select(request)
+      }
+      if (params.target === 'powershell') {
+        if (params.distro !== undefined || params.user !== undefined) {
+          throw new RpcHttpError(400, 'A PowerShell terminal does not accept a distro or user.')
+        }
+        if (!this.openWslSetupPowerShellTerminal) {
+          throw new RpcHttpError(503, 'The WSL setup PowerShell terminal is unavailable.')
+        }
+        await this.openWslSetupPowerShellTerminal()
+        return Object.freeze({ target: 'powershell', state: 'opened' })
+      }
+      if (params.target !== 'distro' || typeof params.distro !== 'string') {
+        throw new RpcHttpError(400, 'WSL setup terminal target is invalid.')
+      }
+      if (params.user !== undefined && typeof params.user !== 'string') {
+        throw new RpcHttpError(400, 'WSL setup terminal user is invalid.')
+      }
+      return Object.freeze({
+        target: 'distro',
+        snapshot: await this.wslSetup.openTerminal({
+          distro: params.distro,
+          ...(typeof params.user === 'string' ? { user: params.user } : {})
+        })
+      })
+    }
     if (MEMORY_RPC_METHODS.has(method)) {
       if (!this.memoryService) throw new Error('Memory service is not configured.')
       if (typeof params.sessionId !== 'string') {
@@ -2115,37 +2461,15 @@ class NotebookLocalRpcServer {
     // Artifact stdio/HTTP MCP handlers cannot own SQLite connections. Route the trusted run-bound
     // save envelope back into the main process, where the Provenance repository owns transactions,
     // immutable Version publication, and idempotency.
-    if (method === 'artifactCreateVersion') {
-      if (!this.artifactProvenance) {
-        throw new Error('Artifact Provenance persistence is not configured.')
-      }
-      const request = params as CreateArtifactVersionRequest
-      if (!request.resourceReservationId) {
-        throw new RpcHttpError(400, 'Artifact Version creation requires a write reservation.')
-      }
-      return this.artifactProvenance.createVersion(request, signal)
-    }
-    if (method === 'artifactReserveWrite') {
-      if (!this.artifactProvenance?.reserveWrite) {
-        throw new Error('Artifact write reservation is not configured.')
-      }
-      return this.artifactProvenance.reserveWrite(params as ReserveArtifactWriteRequest)
-    }
-    if (method === 'artifactReleaseWrite') {
-      if (!this.artifactProvenance?.releaseWriteReservation) {
-        throw new Error('Artifact write reservation is not configured.')
-      }
-      await this.artifactProvenance.releaseWriteReservation(
-        params as ReleaseArtifactWriteReservationRequest
+    if (method === 'artifactSaveVersion') {
+      if (!this.artifactProvenance?.saveVersion) throw new Error('Artifact save is unavailable.')
+      const request = artifactSaveRequestSchema.parse(params)
+      return this.artifactProvenance.saveVersion(
+        request,
+        params.sourceScope as ArtifactWriteSourceScope,
+        signal,
+        onArtifactMetadataBytes
       )
-      return { released: true }
-    }
-    if (method === 'artifactReplayVersion') {
-      if (!this.artifactProvenance?.replayVersion) {
-        throw new Error('Artifact Provenance persistence is not configured.')
-      }
-
-      return this.artifactProvenance.replayVersion(params as ReplayArtifactVersionRequest)
     }
 
     if (method === 'skillImport') {
@@ -2581,7 +2905,7 @@ class NotebookLocalRpcServer {
             if (existing.fingerprint !== fingerprint) {
               throw new RpcHttpError(
                 409,
-                'invocation_id was already used with a different submit_job request.'
+                'Compute submission identity conflicts with a different request. The identity is managed by the Host SDK; do not replace it or resubmit the same work. Application recovery is required.'
               )
             }
             return await existing.submission
@@ -3015,9 +3339,35 @@ class NotebookLocalRpcServer {
       this.inputRegistry?.openRun
     ) {
       const sessionId = params.sessionId as string
+      const boundTurn = this.activeArtifactTurnBindings.get(sessionId)
+      const producerScope =
+        boundTurn?.artifactRunId &&
+        [
+          'rootFrameId',
+          'agentFrameId',
+          'messageBranchId',
+          'runtimeSegmentId',
+          'promptMessageId'
+        ].every(
+          (key) =>
+            provenanceContext[key] ===
+            boundTurn.provenanceContext[key as keyof NotebookRunProvenanceContext]
+        )
+          ? {
+              ...boundTurn.provenanceContext,
+              appSessionId: sessionId,
+              artifactRunId: boundTurn.artifactRunId,
+              assertActive: (): void => {
+                signal?.throwIfAborted()
+                if (this.activeArtifactTurnBindings.get(sessionId) !== boundTurn)
+                  throw new Error('Notebook producer input turn is no longer active.')
+              }
+            }
+          : undefined
       const lease = await this.inputRegistry.openRun({
         projectId,
         appSessionId: sessionId,
+        ...(producerScope ? { producerScope } : {}),
         promptMessageId: provenanceContext.promptMessageId,
         ...(method === 'execute' && Array.isArray(params.artifactVersionInputs)
           ? { artifactVersionInputs: params.artifactVersionInputs as string[] }
@@ -3028,20 +3378,36 @@ class NotebookLocalRpcServer {
       leases.add(lease)
       this.inputRunLeaseIds.set(lease, inputRunLeaseId)
       this.activeInputRunLeases.set(sessionId, leases)
+      let retainedForBackgroundRun = false
+      const closeLease = async (): Promise<void> => {
+        await lease.close()
+        leases.delete(lease)
+        this.inputRunLeaseIds.delete(lease)
+        if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)
+      }
       try {
-        return await handler(
+        const result = await handler(
           {
             ...trustedParams,
             registeredInputFiles: lease.getRunInputFiles(),
             inputRunLeaseId
           },
-          signal
+          signal,
+          onExecutionSettled
         )
+        const backgroundRunId =
+          (method === 'execute' || method === 'executeControl' || method === 'executeShell') &&
+          params.background === true &&
+          isRecord(result)
+            ? result.runId
+            : undefined
+        if (typeof backgroundRunId === 'string') {
+          retainedForBackgroundRun = true
+          void this.service.waitForBackgroundRun(backgroundRunId).then(closeLease, closeLease)
+        }
+        return result
       } finally {
-        await lease.close()
-        leases.delete(lease)
-        this.inputRunLeaseIds.delete(lease)
-        if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)
+        if (!retainedForBackgroundRun) await closeLease()
       }
     }
 
@@ -3055,7 +3421,7 @@ class NotebookLocalRpcServer {
       )
     }
 
-    return handler(trustedParams, signal)
+    return handler(trustedParams, signal, onExecutionSettled)
   }
 
   // Rewrites the temporary notebook session id to the final ACP session id when needed.

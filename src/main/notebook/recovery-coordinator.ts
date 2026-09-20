@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
-import { lstat, realpath, rm } from 'node:fs/promises'
+import { lstat, readFile, realpath, rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
+import type { NotebookRecoveryStatus } from '../../shared/notebook-env'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import { createLogger } from '../logger'
 import {
@@ -20,7 +21,14 @@ import {
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
 import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { verifyExecutable } from './provisioner-runtime'
-import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
+import {
+  addRepairRequired,
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  importedEnvironmentLockMarkerPath,
+  pythonBin,
+  rBin
+} from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 const log = createLogger('notebook:recovery')
@@ -59,6 +67,9 @@ type NotebookRecoveryCoordinatorDeps = {
 }
 
 export class NotebookRecoveryCoordinator {
+  private startupOperationIds: Set<string> | undefined
+  private checkedAt: number | undefined
+  private retainedOperations: NotebookRecoveryStatus['operations'] = []
   private recoveryComplete: Promise<void> | undefined
   private recoveryInFlight: Promise<void> | undefined
   private readiness: NotebookRecoveryReadiness = 'not-started'
@@ -105,6 +116,7 @@ export class NotebookRecoveryCoordinator {
       if (!this.disposed) this.readiness = 'failed'
       throw error
     } finally {
+      this.checkedAt = Date.now()
       if (isCurrentInFlight(this.recoveryInFlight, run)) this.recoveryInFlight = undefined
     }
   }
@@ -126,6 +138,21 @@ export class NotebookRecoveryCoordinator {
     this.disposed = true
     this.readiness = 'disposed'
     await this.recoveryInFlight?.catch(() => undefined)
+  }
+
+  status(): NotebookRecoveryStatus {
+    return {
+      checkedAt: this.checkedAt,
+      corruptJournal: this.recoveryCorrupt,
+      operations: this.retainedOperations
+        .filter(
+          (operation) =>
+            this.startupBlockedRuntimeIds.has(operation.runtimeId) ||
+            (operation.targetPath !== undefined &&
+              this.startupBlockedPrefixes.has(operation.targetPath))
+        )
+        .map((operation) => ({ ...operation }))
+    }
   }
 
   snapshot(): NotebookRecoverySnapshot {
@@ -191,17 +218,24 @@ export class NotebookRecoveryCoordinator {
     const publishedArchiveRecords: RuntimeOperationRecord[] = []
     let recoveryIncomplete = false
 
-    await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
-      () => undefined
-    )
+    const initialRecovery = this.startupOperationIds === undefined
+    if (initialRecovery) {
+      await rm(join(this.runtimeRoot, 'packs', '.cache'), { recursive: true, force: true }).catch(
+        () => undefined
+      )
+    }
     const journal = RuntimeOperationJournal.forPath(operationJournalPath(this.runtimeRoot))
-    if ((await journal.readState()) === 'corrupt') {
+    const startupState = await journal.readState()
+    if (startupState === 'corrupt') {
       log.error('operation journal is unreadable; blocking all runtime writes until recovery')
       this.recoveryCorrupt = true
       return
     }
 
+    this.startupOperationIds ??= new Set(startupState.records.map((record) => record.operationId))
+    this.retainedOperations = []
     const reconciled = await reconcileInterruptedOperations(journal, {
+      operationIds: this.startupOperationIds,
       operationChildLiveness: defaultOperationChildLiveness,
       hydrateInterruptedChild: (record) => {
         const state = readOperationChild(this.runtimeRoot, record.operationId)
@@ -250,6 +284,32 @@ export class NotebookRecoveryCoordinator {
           !isDirectChild(canonicalEnvsRoot, canonicalPrefix)
         ) {
           rejectUnsafe('Interrupted environment target escapes the managed runtime root.')
+        }
+        if (record.phase === 'import-python' || record.phase === 'import-r') {
+          // This exact journal target belongs to an interrupted import. A runnable Conda
+          // interpreter does not prove that its native packages finished restoring. Only the
+          // marker written after restoration and verification permits retaining that import.
+          // Child liveness and archive-publication barriers are checked before this callback.
+          const markerPath = importedEnvironmentLockMarkerPath(canonicalPrefix)
+          const marker = await lstat(markerPath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return undefined
+            return rejectUnsafe('Interrupted import completion marker could not be read.')
+          })
+          if (!marker) {
+            await rm(canonicalPrefix, { recursive: true, force: true }).catch(() =>
+              rejectUnsafe('Interrupted import could not be removed for retry.')
+            )
+            return
+          }
+          if (!marker.isFile() || marker.isSymbolicLink() || marker.size > 65) {
+            rejectUnsafe('Interrupted import completion marker is invalid.')
+          }
+          const checksum = await readFile(markerPath, 'utf8').catch(() =>
+            rejectUnsafe('Interrupted import completion marker could not be read.')
+          )
+          if (!/^[a-f0-9]{64}\n?$/u.test(checksum)) {
+            rejectUnsafe('Interrupted import completion marker is invalid.')
+          }
         }
         const language =
           record.phase.endsWith('-r') ||
@@ -303,14 +363,40 @@ export class NotebookRecoveryCoordinator {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
         if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
       },
+      canDiscardPendingArchivePublication: async (record) => {
+        if (
+          record.kind !== 'materialize' ||
+          !/^create-(python|r)$/.test(record.phase) ||
+          !record.targetPath ||
+          !isDirectChild(join(this.runtimeRoot, 'envs'), record.targetPath)
+        ) {
+          return false
+        }
+        try {
+          await lstat(record.targetPath)
+          return false
+        } catch (error) {
+          return (error as NodeJS.ErrnoException).code === 'ENOENT'
+        }
+      },
       publishArchives: async (record) => {
         const publish = this.deps.publishWorkingCacheArchives ?? publishRecoveredMicromambaArchives
         await publish(this.runtimeRoot, record.archivePublications ?? [])
         publishedArchiveRecords.push(record)
       },
       deferArchiveCompletion: true,
-      onRetained: () => {
+      onRetained: (record, reason) => {
+        this.retainedOperations.push({
+          operationId: record.operationId,
+          runtimeId: record.runtimeId,
+          targetPath: record.targetPath,
+          reason
+        })
         recoveryIncomplete = true
+        // A failed repair or journal commit is no safer than an unconfirmed writer. Keep the
+        // existing admission block until the retained operation can be reconciled durably.
+        if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)
+        if (record.targetPath) nextStartupBlockedPrefixes.add(record.targetPath)
       }
     })
 
@@ -399,6 +485,7 @@ export class NotebookRecoveryCoordinator {
       this.recoveryCorrupt = true
     }
     if (
+      initialRecovery &&
       nextStartupBlockedPrefixes.size === 0 &&
       nextStartupBlockedRuntimeIds.size === 0 &&
       !recoveryIncomplete

@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -162,7 +163,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         <div className="flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between gap-2">
             <label htmlFor="compute-details" className="text-sm font-medium text-foreground">
-              {t('Anything Open Science should know? (optional)')}
+              {t('Anything Open-Science should know? (optional)')}
             </label>
             <span
               className={`text-xs ${detailsTooLong ? 'text-destructive' : 'text-muted-foreground'}`}
@@ -233,9 +234,9 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         )}
 
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
+          <InlineNotice level="error" role="alert">
             {error}
-          </p>
+          </InlineNotice>
         ) : null}
 
         <div className="flex justify-end gap-2">

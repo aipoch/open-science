@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../../../scripts/ci/load-module-impact.mjs'
+
 const workspacePagePath = resolve(__dirname, 'WorkspacePage.tsx')
 const workspacePanelLayoutPath = resolve(__dirname, 'workspace-panel-layout.tsx')
 const workspaceSidebarPath = resolve(__dirname, 'WorkspaceSidebar.tsx')
@@ -82,11 +84,9 @@ describe('workspace page component boundaries', () => {
       resolve(__dirname, 'previews/PreviewToolContent.tsx'),
       'utf8'
     )
-    const moduleImpact = JSON.parse(
-      readFileSync(resolve(__dirname, '../../../../../scripts/ci/module-impact.json'), 'utf8')
-    ) as {
-      modules: { project_files_view: { ownerPaths: string[] } }
-    }
+    const moduleImpact = loadModuleImpactManifest(
+      resolve(__dirname, '../../../../../scripts/ci/module-impact.json')
+    )
 
     expect(rawLineCount(facadeSource)).toBeLessThanOrEqual(900)
     // Translation wrappers and Notebook kernel-stop confirmations add render-only lines to the
@@ -378,7 +378,10 @@ describe('conversation message scroller integration', () => {
     )
     expect(workspaceMessageScrollerSource).toContain('scrollPreviousItemPeek={64}')
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceMessageItem')
-    expect(workspaceMessageItemSource).toContain("scrollAnchor={message.role === 'user'}")
+    expect(workspaceMessageItemSource).toContain(
+      "scrollAnchor={message.role === 'user' && !disableScrollAnchor}"
+    )
+    expect(workspaceMessageItemSource).toContain('disableScrollAnchor?: boolean')
     expect(workspaceMessageItemSource).toContain('messageId={message.id}')
     expect(workspaceMessageItemSource).toContain('<SessionMessageMarkdown')
     expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
@@ -410,7 +413,7 @@ describe('conversation message scroller integration', () => {
       "'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'"
     )
     expect(workspaceMessageScrollerSource).toContain(
-      'className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"'
+      "'mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]'"
     )
     // Rows must stay direct children of MessageScrollerContent; no transcript wrapper div.
     expect(workspaceMessageScrollerSource).not.toContain('conversationContentClassName')

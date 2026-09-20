@@ -94,6 +94,8 @@ export type UploadTransferRequest = {
 export type UploadTransferStatus = UploadTransferProgress
 
 export type UploadedAttachment = {
+  // Process-lifetime receipt for restoring a completed Web draft upload. Never persisted on messages.
+  draftReceipt?: string
   id: string
   // Native durable uploads expose one stable file identity plus one immutable byte Version.
   // These stay optional while legacy Session JSON records are upgraded on their next finalize.
@@ -111,6 +113,7 @@ export type UploadedAttachment = {
 
 const uploadedAttachmentSchema = z
   .object({
+    draftReceipt: z.string().optional(),
     id: z.string(),
     versionId: z.string().optional(),
     versionNumber: z.number().int().positive().optional(),
@@ -262,6 +265,10 @@ const finalizeUploadSessionRequestSchema = z
   .strict() satisfies z.ZodType<FinalizeUploadSessionRequest>
 
 export const uploadApplicationCommandContracts = Object.freeze({
+  recoverDraft: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ receipt: z.string().max(32000) }).strict()])),
+    validationCodec(uploadedAttachmentSchema.nullable())
+  ),
   finalizeSession: defineApplicationCommandContract(
     validationCodec(z.tuple([finalizeUploadSessionRequestSchema])),
     validationCodec(finalizeUploadAttachmentsSchema)

@@ -9,6 +9,7 @@ import { createLogger, errorLogFields } from '../logger'
 import type { SettingsRepository } from '../settings/repository'
 import {
   createNativeI18n,
+  prepareNativeLocale,
   type NativeTranslateOptions,
   type NativeTranslator
 } from './main-process-messages'
@@ -61,6 +62,7 @@ export class LocalePreferenceOwner {
   private async commitPreference(value: LanguagePreference): Promise<LocalePreferenceSnapshot> {
     if (value === this.preference && this.hasPersistedPreference) return this.snapshot()
 
+    prepareNativeLocale(resolveLocale(value, this.systemLanguageTags))
     await this.repository.setLocalePreference(value)
 
     const changed = value !== this.preference

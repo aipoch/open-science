@@ -1,0 +1,49 @@
+name: Source desktop regression
+description: Shared supplemental Electron execution for PRs and scheduled main verification
+inputs:
+  group:
+    description: Supplemental suite (regressions or delegation)
+    required: true
+  include-capacity:
+    description: Include nightly capacity profiling ('true' or 'false'; every caller sets it)
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Validate suite
+      shell: bash
+      env:
+        GROUP: ${{ inputs.group }}
+      run: |
+        case "$GROUP" in
+          regressions|delegation) ;;
+          *) echo "Unsupported supplemental suite: $GROUP" >&2; exit 1 ;;
+        esac
+    - name: Install headless Chromium
+      if: inputs.group == 'regressions'
+      shell: bash
+      run: npx playwright install chromium --only-shell
+    # Separate output directories retain the first suite's traces/screenshots when a scheduled
+    # runner executes the second suite in the same workspace.
+    - name: Run supplemental regressions
+      if: inputs.group == 'regressions'
+      shell: bash
+      env:
+        INCLUDE_CAPACITY: ${{ inputs.include-capacity }}
+        PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
+        PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
+      run: |
+        args=()
+        case "$INCLUDE_CAPACITY" in
+          true) ;;
+          false) args+=(--grep-invert '@capacity') ;;
+          *) echo "Invalid capacity selection" >&2; exit 1 ;;
+        esac
+        npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/regressions_macos "${args[@]}"
+    - name: Run supplemental delegation
+      if: inputs.group == 'delegation'
+      shell: bash
+      env:
+        PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
+        PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/delegation_macos.json
+      run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/delegation_macos

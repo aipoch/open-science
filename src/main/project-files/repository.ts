@@ -5,6 +5,7 @@ import type {
   HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ReadProjectExportFilesRequest,
   ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
@@ -97,6 +98,10 @@ class ManagedFileIndexRepository {
 
   async listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage> {
     return this.queryOwner.listFiles(request)
+  }
+
+  async readExportFiles(request: ReadProjectExportFilesRequest): Promise<ProjectFileItem[]> {
+    return this.queryOwner.readExportFiles(request)
   }
 
   async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {

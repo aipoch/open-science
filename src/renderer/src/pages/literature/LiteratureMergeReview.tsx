@@ -1,4 +1,4 @@
-/* Hallmark · component: merge review · theme: Open Science · P5 H5 E4 S5 R5 V4 */
+/* Hallmark · component: merge review · theme: Open-Science · P5 H5 E4 S5 R5 V4 */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Paperclip } from 'lucide-react'
@@ -11,6 +11,7 @@ import type {
 } from '../../../../shared/literature'
 import {
   literatureMergeRows,
+  buildLiteratureMergeItem,
   mergeFieldSource,
   mergeValueKey,
   type LiteratureMergeField,
@@ -41,6 +42,9 @@ export function LiteratureMergeReview({
   const { t, i18n } = useTranslation()
   const [showAll, setShowAll] = useState(false)
   const rows = literatureMergeRows(entries)
+  const merged = entries.some(({ id }) => id === survivorId)
+    ? buildLiteratureMergeItem(entries, survivorId, sources)
+    : undefined
   const differences = rows.filter(({ different }) => different)
   const date = (value: number): string =>
     new Intl.DateTimeFormat(i18n.language, {
@@ -54,6 +58,7 @@ export function LiteratureMergeReview({
     publisher: t('Publisher'),
     edition: t('Edition'),
     place: t('Place'),
+    publisherPlace: t('Place'),
     series: t('Series'),
     isbn: t('ISBN'),
     issn: t('ISSN')
@@ -183,7 +188,15 @@ export function LiteratureMergeReview({
                     {fieldName}
                     {field.startsWith('identifier:') && different ? (
                       <span className="ml-2 font-normal text-muted-foreground">
-                        {t('All identifiers are kept.')}
+                        {t(
+                          'All identifiers are kept. Preferred values come from the kept reference when available.'
+                        )}{' '}
+                        {
+                          merged?.identifiers.find(
+                            (identifier) =>
+                              identifier.scheme === field.slice(11) && identifier.isPrimary
+                          )?.value
+                        }
                       </span>
                     ) : null}
                   </th>

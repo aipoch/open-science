@@ -3,7 +3,7 @@ import {
   providerValidationSucceeded,
   type AgentFrameworkId,
   type ProviderValidationTarget,
-  type Preflight
+  type ReadinessPreflight
 } from '../../shared/settings'
 import type { StoredProvider, StoredSettings } from './types'
 
@@ -21,11 +21,13 @@ export type PreflightInput = {
   codexPathExists: boolean
   // The selected framework, resolved (default applied) by the caller.
   agentFrameworkId: AgentFrameworkId
-  // Whether a provider's credentials are usable (codex subscriptions always; custom must decrypt).
+  // Whether a provider's current credentials are usable (subscription auth is checked by its owner;
+  // custom credentials must still decrypt).
   isProviderKeyUsable: (provider: StoredProvider) => boolean
   // Whether the active provider can actually drive the selected framework (endpoint + provider-type
   // compatibility). Resolved by the caller, which has the vendor registry to derive official apiTypes.
   activeProviderCompatible: boolean
+  activeProviderModelAvailable: boolean
   activeValidationTarget?: ProviderValidationTarget
 }
 
@@ -41,8 +43,9 @@ const computePreflight = ({
   agentFrameworkId,
   isProviderKeyUsable,
   activeProviderCompatible,
+  activeProviderModelAvailable,
   activeValidationTarget
-}: PreflightInput): Preflight => {
+}: PreflightInput): ReadinessPreflight => {
   const claudeReady = Boolean(settings.claude?.resolvedPath) && claudePathExists
   const opencodeReady = Boolean(settings.opencodePath) && opencodePathExists
   const codebuddyReady = Boolean(settings.codebuddyPath) && codebuddyPathExists
@@ -54,6 +57,19 @@ const computePreflight = ({
     codebuddy: codebuddyReady
   }
   const agentReady = readyByFramework[agentFrameworkId]
+  const runtimeConfiguredByFramework: Record<AgentFrameworkId, boolean> = {
+    'claude-code': Boolean(settings.claude?.resolvedPath),
+    opencode: Boolean(settings.opencodePath),
+    codex: Boolean(settings.codex?.resolvedPath),
+    codebuddy: Boolean(settings.codebuddyPath)
+  }
+  const runtimeReadiness = {
+    status: agentReady
+      ? ('ready' as const)
+      : runtimeConfiguredByFramework[agentFrameworkId]
+        ? ('not_ready' as const)
+        : ('missing' as const)
+  }
 
   const activeProvider = settings.activeProviderId
     ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
@@ -61,15 +77,44 @@ const computePreflight = ({
 
   // "Ready" also requires the active provider to be able to drive the selected framework, so an
   // incompatible pair (e.g. OpenCode + a Codex-only provider) is never marked ready.
+  const activeProviderValidationFailed = Boolean(
+    activeProvider && providerValidationFailed(activeProvider, activeValidationTarget)
+  )
+  const validationFailureCategory = activeProviderValidationFailed
+    ? activeProvider?.lastValidationFailure?.category
+    : undefined
+  const validationFailureReason =
+    validationFailureCategory === 'auth'
+      ? ('credential_invalid' as const)
+      : validationFailureCategory === 'ok'
+        ? undefined
+        : validationFailureCategory
+  const activeProviderKeyUsable = Boolean(activeProvider && isProviderKeyUsable(activeProvider))
   const activeProviderReady = Boolean(
     activeProvider &&
     (activeValidationTarget
       ? providerValidationSucceeded(activeProvider, activeValidationTarget)
       : activeProvider.lastValidatedAt !== undefined &&
         !providerValidationFailed(activeProvider)) &&
-    isProviderKeyUsable(activeProvider) &&
+    activeProviderKeyUsable &&
+    activeProviderModelAvailable &&
     activeProviderCompatible
   )
+  const providerReason =
+    activeProvider && (validationFailureReason === 'credential_invalid' || !activeProviderKeyUsable)
+      ? ('credential_invalid' as const)
+      : activeProvider && validationFailureReason
+        ? validationFailureReason
+        : activeProvider && !activeProviderModelAvailable
+          ? ('model-not-found' as const)
+          : activeProvider && !activeProviderCompatible
+            ? ('incompatible' as const)
+            : undefined
+  const providerReadiness = activeProviderReady
+    ? ({ status: 'ready' } as const)
+    : !activeProvider
+      ? ({ status: 'missing' } as const)
+      : ({ status: 'not_ready', ...(providerReason ? { reason: providerReason } : {}) } as const)
 
   return {
     claudeReady,
@@ -78,7 +123,9 @@ const computePreflight = ({
     codexReady,
     agentFrameworkId,
     agentReady,
-    activeProviderReady
+    activeProviderReady,
+    runtimeReadiness,
+    providerReadiness
   }
 }
 

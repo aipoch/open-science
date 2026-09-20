@@ -6,6 +6,9 @@
 // English expectations meaningful and makes a locale-dependent test opt in by switching the language
 // itself.
 
-import { initI18n } from '../src/renderer/src/i18n'
+import { initI18n, prepareI18nLocale } from '../src/renderer/src/i18n'
 
+// Existing render suites switch synchronously; cold-loading behavior has a separate reset-module suite.
+import { LOCALES } from '../src/shared/locale'
+await Promise.all(LOCALES.map(prepareI18nLocale))
 initI18n('en')

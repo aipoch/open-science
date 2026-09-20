@@ -73,7 +73,8 @@ describe('pull request change classification', () => {
         mode: 'selective',
         roots: expect.any(Array),
         lanes: expect.any(Array),
-        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e'])
+        bundles: expect.arrayContaining(['policy', 'static', 'unit', 'macos_e2e']),
+        macosGroups: ['journeys', 'presentation', 'regressions', 'delegation']
       })
       expect(JSON.parse(outputs.plan)).not.toHaveProperty('reasonChains')
       expect(readFileSync(summary, 'utf8')).toContain(
@@ -255,7 +256,12 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toContain('notebook_runtime')
     expect(plan.roots).not.toContain('main_runtime')
-    expect(plan.lanes).toEqual(['policy', 'typecheck_node'])
+    expect(plan.lanes).toEqual([
+      'policy',
+      'typecheck_node',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
+    ])
   })
 
   it('keeps risk overlays additive after a specific owner replaces a fallback', () => {
@@ -373,11 +379,17 @@ describe('pull request change classification', () => {
 
   it.each([
     ['Windows runtime', 'src/main/windows.ts'],
+    ['Shell search scope', 'src/main/notebook/shell-search-scope.ts'],
+    ['PowerShell search parser', 'src/main/notebook/powershell-search-parser.ts'],
     ['PowerShell', 'src/main/notebook/micromamba-cache-powershell.test.ts'],
     ['path handling', 'src/main/acp/workspace-path.ts'],
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
+    ['Windows wheel recovery', 'src/main/notebook/pip-wheel-evidence.ts'],
+    ['Windows wheel regression', 'src/main/notebook/pip-wheel-evidence.test.ts'],
+    ['Windows install evidence', 'src/main/notebook/pip-install-evidence.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['delegated process ownership', 'src/main/delegation/process-ownership.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],
@@ -388,13 +400,25 @@ describe('pull request change classification', () => {
     ['CodeBuddy detect', 'src/main/settings/codebuddy-detect.ts'],
     ['managed CodeBuddy', 'src/main/settings/managed-codebuddy.ts'],
     ['immutable notebook inputs', 'src/main/immutable-input-authority.ts'],
-    ['notebook package process sandbox', 'src/main/notebook/package-process-sandbox.ts']
+    ['notebook package process sandbox', 'src/main/notebook/package-process-sandbox.ts'],
+    ['WSL setup ownership', 'src/main/wsl/wsl-setup-owner.ts'],
+    ['window shortcuts', 'src/main/window-shortcuts.ts']
   ])('adds native Windows lanes for %s changes', (_category, path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])
 
     expect(plan.roots).toContain('windows_sensitive')
     expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'windows_path']))
     expect(plan.reasonChains).toContain(`${path} -> windows_sensitive`)
+  })
+
+  it('requires a live CDN bundle when the immutable runtime version changes', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/runtime-paths.ts', status: 'modified' }
+    ])
+
+    expect(plan.roots).toEqual(expect.arrayContaining(['main_runtime', 'runtime_bundle']))
+    expect(plan.lanes).toContain('runtime_bundle')
+    expect(plan.reasonChains).toContain('src/main/notebook/runtime-paths.ts -> runtime_bundle')
   })
 
   it('does not add focused Windows lanes for platform-neutral Main changes', () => {
@@ -499,7 +523,9 @@ describe('pull request change classification', () => {
       'typecheck_web',
       'interface_contracts',
       'unit_macos',
-      'build'
+      'build',
+      'e2e_regressions_macos',
+      'e2e_delegation_macos'
     ])
     expect(plan.bundles).toEqual(['policy', 'static', 'unit', 'macos_e2e'])
   })
@@ -548,6 +574,38 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.lanes).toEqual(['policy', 'docs'])
     expect(plan.bundles).toEqual(['policy', 'static'])
+  })
+
+  it('runs the PR workflow contract without selecting desktop or full suites', () => {
+    const plan = classifyChanges([
+      { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' }
+    ])
+    expect(plan.mode).toBe('selective')
+    expect(plan.bundles).toEqual(['policy', 'static', 'unit'])
+    expect(plan.roots).toEqual(['ci_workflow_contract_test'])
+  })
+
+  it.each(['deleted', 'renamed', 'type-changed'] as const)(
+    'retains the conservative fallback for a %s workflow contract',
+    (status) => {
+      const plan = classifyChanges([{ path: 'scripts/ci/pr-gate-workflow.test.ts', status }])
+      expect(plan.mode).toBe('full')
+    }
+  )
+
+  it.each([
+    '.github/workflows/pr-gate.yml',
+    'scripts/ci/classify-pr-changes.mjs',
+    'scripts/ci/module-impact.json',
+    'scripts/ci/module-impact/sample.json',
+    'scripts/ci/load-module-impact.mjs'
+  ])('does not let a workflow test hide the changed CI input %s', (path) => {
+    const plan = classifyChanges([
+      { path: 'scripts/ci/pr-gate-workflow.test.ts', status: 'modified' },
+      { path, status: 'modified' }
+    ])
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('global_gate_input')
   })
 
   it.each([

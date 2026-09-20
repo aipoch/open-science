@@ -131,6 +131,25 @@ describe('isRangeTriggerVisible', () => {
     return range
   }
 
+  it.each(['inert', 'aria-hidden'])(
+    'withdraws a portal when the source ancestor has %s',
+    (attribute) => {
+      const parent = document.createElement('div')
+      const paragraph = document.createElement('p')
+      paragraph.textContent = 'selected source'
+      parent.append(paragraph)
+      document.body.append(parent)
+      const range = document.createRange()
+      range.selectNodeContents(paragraph)
+
+      expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+      parent.setAttribute(attribute, 'true')
+      expect(isRangeTriggerVisible(range, false, viewport)).toBe(false)
+      parent.removeAttribute(attribute)
+      expect(isRangeTriggerVisible(range, false, viewport)).toBe(true)
+    }
+  )
+
   it('keeps the trigger when geometry methods are missing', () => {
     const paragraph = document.createElement('p')
     paragraph.textContent = 'selectable agent reply'

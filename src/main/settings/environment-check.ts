@@ -57,7 +57,7 @@ const platformLabel = (platform: NodeJS.Platform): string => {
 }
 
 // Writes and removes a uniquely-named sentinel inside the exact directory used by the managed
-// runtime. This verifies the permission Open Science actually needs without requesting admin access
+// runtime. This verifies the permission Open-Science actually needs without requesting admin access
 // or touching a system-owned installation directory.
 const verifyStorageAccess = async (storageRoot: string): Promise<void> => {
   await mkdir(storageRoot, { recursive: true })
@@ -115,6 +115,7 @@ const runEnvironmentCheck = async ({
   agentFrameworkId,
   frameworks,
   encryptionAvailable,
+  credentialStore = 'os',
   deps = {}
 }: {
   storageRoot: string
@@ -124,6 +125,7 @@ const runEnvironmentCheck = async ({
   // and detection result in the shared shape.
   frameworks: { id: AgentFrameworkId; label: string; runtime: ClaudeDetectResult }[]
   encryptionAvailable: boolean
+  credentialStore?: 'os' | 'file'
   deps?: EnvironmentCheckDeps
 }): Promise<EnvironmentCheckResult> => {
   // The selected framework's runtime drives the required gate; the others are shown for context only.
@@ -206,7 +208,7 @@ const runEnvironmentCheck = async ({
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.',
+        summary: 'Open-Science can write to its private data folder.',
         detail: storageRoot,
         presentation: { kind: 'storage-writable' }
       }))
@@ -214,7 +216,7 @@ const runEnvironmentCheck = async ({
         id: 'storage',
         label: 'App storage permission',
         status: 'failed',
-        summary: 'Open Science cannot write to its private data folder.',
+        summary: 'Open-Science cannot write to its private data folder.',
         detail:
           error instanceof Error
             ? `${storageRoot} — ${error.message}`
@@ -271,23 +273,33 @@ const runEnvironmentCheck = async ({
         }
   }
 
-  const secureStorageCheck: EnvironmentCheckItem = encryptionAvailable
-    ? {
-        id: 'secure-storage',
-        label: 'Secure credential storage',
-        status: 'passed',
-        summary: 'The operating-system credential vault is available.',
-        presentation: { kind: 'secure-storage-available' }
-      }
-    : {
-        id: 'secure-storage',
-        label: 'Secure credential storage',
-        status: 'warning',
-        summary: 'The operating-system credential vault is unavailable.',
-        detail:
-          'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.',
-        presentation: { kind: 'secure-storage-unavailable' }
-      }
+  const secureStorageCheck: EnvironmentCheckItem =
+    credentialStore === 'file'
+      ? {
+          id: 'secure-storage',
+          label: 'Secure credential storage',
+          status: 'warning',
+          summary:
+            'File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.',
+          presentation: { kind: 'file-credential-storage' }
+        }
+      : encryptionAvailable
+        ? {
+            id: 'secure-storage',
+            label: 'Secure credential storage',
+            status: 'passed',
+            summary: 'The operating-system credential vault is available.',
+            presentation: { kind: 'secure-storage-available' }
+          }
+        : {
+            id: 'secure-storage',
+            label: 'Secure credential storage',
+            status: 'warning',
+            summary: 'The operating-system credential vault is unavailable.',
+            detail:
+              'Unlock or authorize the system keychain before saving API keys. Keyless runtimes can continue setup.',
+            presentation: { kind: 'secure-storage-unavailable' }
+          }
 
   // Notebooks run in an app-managed Python environment (provisioned on demand), so a system Python 3
   // is NOT required — it is only an optional interpreter the user can point notebooks at instead.

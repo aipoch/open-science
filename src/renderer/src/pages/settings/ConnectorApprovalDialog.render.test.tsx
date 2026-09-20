@@ -126,7 +126,7 @@ describe('ConnectorApprovalDialog', () => {
         element.className.includes('border-t border-border-300/90 px-5 py-3.5')
       )
     ).toBe(true)
-    expect(document.body.querySelector('[role="dialog"]')?.className).toContain('overflow-hidden')
+    expect(document.body.querySelector('[role="dialog"]')?.className).toContain('overflow-y-auto')
     expect(button('Deny')?.getAttribute('data-slot')).toBe('button')
     expect(button('Deny')?.getAttribute('data-variant')).toBe('destructive')
     expect(button('This session')?.getAttribute('data-variant')).toBe('outline')

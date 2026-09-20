@@ -3,11 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NotebookCell } from '../../shared/notebook'
 
 import { createRootNotebookLane } from './lane-identity'
-import { NotebookSessionAggregate } from './session-aggregate'
+import { NotebookSessionAggregate, type NotebookKernelEpochOwnership } from './session-aggregate'
 
 describe('NotebookSessionAggregate', () => {
   it('keeps a stable kernel epoch until that process is terminated', async () => {
     const terminate = vi.fn(async () => undefined)
+    const onKernelEpochsRetired = vi
+      .fn<(epochs: readonly NotebookKernelEpochOwnership[]) => Promise<void>>()
+      .mockResolvedValue(undefined)
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',
       projectId: 'default-project',
@@ -19,6 +22,7 @@ describe('NotebookSessionAggregate', () => {
       runJsonPath: '/workspace/run.json',
       executionCount: 0,
       executorGeneration: Symbol('executor-1'),
+      onKernelEpochsRetired,
       executor: {
         execute: async () => ({
           status: 'completed',
@@ -38,14 +42,55 @@ describe('NotebookSessionAggregate', () => {
 
     const managed = session.kernelEpoch('python:default-python', false, '')
     expect(session.kernelEpoch('python:default-python', false, '')).toBe(managed)
-    expect(session.kernelEpoch('python:default-python', false, '/usr/bin/python3')).not.toBe(
-      managed
-    )
+    const external = session.kernelEpoch('python:default-python', false, '/usr/bin/python3')
+    expect(external).not.toBe(managed)
 
     await session.terminateExecutor('python', 'default-python')
 
     expect(terminate).toHaveBeenCalledWith('python', 'default-python')
+    expect(
+      onKernelEpochsRetired.mock.calls.flatMap(([epochs]) => epochs.map(({ id }) => id))
+    ).toEqual([managed.id, external.id])
     expect(session.kernelEpochId('python:default-python')).not.toBe(first)
+  })
+
+  it('retires every live kernel epoch when the executor shuts down', async () => {
+    const onKernelEpochsRetired = vi
+      .fn<(epochs: readonly NotebookKernelEpochOwnership[]) => Promise<void>>()
+      .mockResolvedValue(undefined)
+    const session = new NotebookSessionAggregate({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      cwd: '/workspace/data',
+      notebookSessionRoot: '/workspace',
+      dataRoot: '/workspace/data',
+      runtimeRoot: '/runtime',
+      runJsonPath: '/workspace/run.json',
+      executionCount: 0,
+      executorGeneration: Symbol('executor-1'),
+      onKernelEpochsRetired,
+      executor: {
+        execute: async () => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: '/workspace/data',
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      }
+    })
+    const pythonEpoch = session.kernelEpochId('python:default-python')
+    const rEpoch = session.kernelEpochId('r:default-r')
+
+    await session.shutdownExecutor()
+
+    expect(onKernelEpochsRetired).toHaveBeenCalledWith([
+      expect.objectContaining({ id: pythonEpoch }),
+      expect.objectContaining({ id: rEpoch })
+    ])
   })
 
   it('serializes execution for one process while allowing another process to run', async () => {

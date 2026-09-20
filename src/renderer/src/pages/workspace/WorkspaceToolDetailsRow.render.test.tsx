@@ -83,6 +83,213 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(formatNotebookRunOutputLineMeta(run, i18next.t)).toBe('3 lines of output')
   })
 
+  it.each([
+    'mcp__open-science-literature__list_pdf_elements',
+    'open_science_literature_list_pdf_elements',
+    'mcp.open-science-literature.list_pdf_elements',
+    'mcp__open_science_literature__list_pdf_elements'
+  ])('shows discovery coverage without treating %s as read evidence', async (providerToolName) => {
+    const activity = createActivity({
+      providerToolName,
+      rawInput: {},
+      rawOutput: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              document: { documentId: 'private-binding', name: 'Trial.pdf' },
+              elements: [
+                {
+                  elementRef: 'opaque-secret-reference',
+                  kind: 'table',
+                  caption: 'Table 2. Outcomes',
+                  pageStart: 2,
+                  pageEnd: 2
+                }
+              ],
+              coverage: {
+                checkedPages: [1, 2, 3],
+                parsedPages: [2],
+                unavailablePages: [1, 3],
+                scanComplete: false
+              },
+              warnings: ['Some checked pages have no cache.'],
+              nextCursor: 'private-cursor'
+            })
+          }
+        ]
+      }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+        />
+      )
+    )
+    expect(container.textContent).toContain('PDF figures and tables')
+    expect(container.textContent).toContain('Trial.pdf')
+    expect(container.textContent).toContain('Elements: 1')
+    expect(container.textContent).toContain('Parsed pages: 1 / 3')
+    expect(container.textContent).toContain('Some PDF content could not be extracted or delivered.')
+    expect(container.textContent).toContain('More results are available')
+    expect(container.textContent).not.toContain('opaque-secret-reference')
+    expect(container.textContent).not.toContain('private-cursor')
+    expect(container.textContent).not.toContain('passages')
+  })
+
+  it('shows the selected figure caption and image delivery without rendering Base64 as text', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp.open-science-literature.read_pdf_element',
+      rawOutput: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              document: { name: 'Trial.pdf' },
+              kind: 'figure',
+              caption: 'Figure 3. Survival by treatment group.',
+              pageStart: 2,
+              pageEnd: 2,
+              imageIncluded: true,
+              warnings: [],
+              nextCursor: null
+            })
+          },
+          { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }
+        ]
+      }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Figure 3. Survival by treatment group.')
+    expect(container.textContent).toContain('Image delivered')
+    expect(container.textContent).toContain('Page 2')
+    expect(container.textContent).not.toContain('aW1hZ2U=')
+  })
+
+  it.each(['search', 'read'] as const)(
+    'collapses and deduplicates row conflicts on a %s result despite complete coverage or image delivery',
+    async (action) => {
+      const element = {
+        kind: 'table',
+        caption: 'Table 1. Outcomes',
+        pageStart: 3,
+        pageEnd: 3,
+        warnings: ['span-conflicts-with-source-rows', 'span-conflicts-with-source-rows']
+      }
+      const activity = createActivity({
+        providerToolName: `open-science-literature/${action === 'search' ? 'list_pdf_elements' : 'read_pdf_element'}`,
+        rawOutput: {
+          document: { name: 'Trial.pdf' },
+          ...(action === 'search'
+            ? {
+                elements: [
+                  element,
+                  {
+                    kind: 'figure',
+                    caption: 'Figure 5. Correlation',
+                    pageStart: 7,
+                    pageEnd: 7,
+                    warnings: [
+                      'Caption is truncated; inspect the source PDF for the complete text.'
+                    ]
+                  }
+                ],
+                coverage: {
+                  checkedPages: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                  parsedPages: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                  unavailablePages: []
+                }
+              }
+            : { ...element, imageIncluded: true }),
+          nextCursor: null
+        }
+      })
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={buildToolActivityDetails(activity)!}
+            isExpanded
+            onToggle={() => undefined}
+          />
+        )
+      )
+      const notes = container.querySelector('details:has(summary)')
+      expect(notes?.hasAttribute('open')).toBe(false)
+      expect(notes?.querySelector('summary')?.textContent).toBe('Extraction notes')
+      expect(notes?.textContent?.match(/Extracted merged cells conflict/gu)).toHaveLength(1)
+      expect(container.textContent).not.toContain(
+        'Some PDF content could not be extracted or delivered.'
+      )
+      expect(container.textContent).toContain('Page 3')
+      expect(container.textContent).not.toContain('span-conflicts-with-source-rows')
+      expect(container.textContent).not.toContain('Some evidence is unavailable or incomplete.')
+      if (action === 'search') {
+        expect(container.textContent).toContain('Parsed pages: 9 / 9')
+        expect(container.textContent).not.toContain('Figure 5. Correlation')
+        expect(container.textContent).not.toContain(
+          'Caption or table preview shortened in this list.'
+        )
+      } else expect(container.textContent).toContain('Image delivered')
+    }
+  )
+
+  it.each([
+    ['Caption is truncated; inspect the source PDF for the complete text.', false, false],
+    ['private/path/unknown-warning', true, false],
+    ['No cells or image are available; caption alone is not detailed evidence.', false, true]
+  ] as const)(
+    'shows only the necessary surface for a listing warning: %s',
+    async (warning, hasNotes, hasWarning) => {
+      const activity = createActivity({
+        providerToolName: 'open-science-literature/list_pdf_elements',
+        rawOutput: {
+          document: { name: 'Trial.pdf' },
+          elements: [{ caption: 'Table 1', pageStart: 1, pageEnd: 1, warnings: [warning] }],
+          coverage: { checkedPages: [1], parsedPages: [1], unavailablePages: [] }
+        }
+      })
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={buildToolActivityDetails(activity)!}
+            isExpanded
+            onToggle={() => undefined}
+          />
+        )
+      )
+      const notes = container.querySelector('details')
+      expect(Boolean(notes)).toBe(hasNotes)
+      if (notes) {
+        expect(notes.open).toBe(false)
+        expect(notes.querySelector('summary')?.textContent).toBe('Extraction notes')
+        expect(notes.textContent).toContain('Some evidence is unavailable or incomplete.')
+      }
+      expect(
+        container.textContent?.includes('Some PDF content could not be extracted or delivered.')
+      ).toBe(hasWarning)
+      expect(container.textContent).not.toContain(warning)
+    }
+  )
+
   it('counts the normalized notebook output shown by tool details', () => {
     const echoedRun = createNotebookRun({
       text: { stdout: '42\n', stderr: '', traceback: '', plain: ['42\n'] },
@@ -262,47 +469,62 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).not.toContain('private-')
   })
 
-  it('opens the Literature Inbox from a completed save card', async () => {
-    const activity = createActivity({
-      providerToolName: 'mcp__open-science-library__save_to_inbox',
-      rawInput: { candidates: [{ item: { title: 'Paper A' } }] },
-      toolContent: [
-        {
-          type: 'content',
-          content: {
-            type: 'text',
-            text: JSON.stringify({
-              openScienceLiteraturePresentation: {
-                libraryAction: 'save',
-                itemTitles: ['Paper A'],
-                candidateCount: 1,
-                savedCount: 1
-              }
-            })
+  it.each([true, false])(
+    'offers an Inbox action only with a pending receipt (receipt: %s)',
+    async (hasReceipt) => {
+      const activity = createActivity({
+        providerToolName: 'mcp__open-science-library__save_to_inbox',
+        rawInput: { candidates: [{ item: { title: 'Paper A' } }] },
+        toolContent: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: JSON.stringify({
+                ...(hasReceipt
+                  ? { results: [{ kind: 'candidate', id: 'pending-1', state: 'pending' }] }
+                  : {}),
+                openScienceLiteraturePresentation: {
+                  libraryAction: 'save',
+                  itemTitles: ['Paper A'],
+                  candidateCount: 1,
+                  savedCount: 1
+                }
+              })
+            }
           }
-        }
-      ]
-    })
+        ]
+      })
 
-    useNavigationStore.setState({ view: 'workspace' })
-    root = createRoot(container)
-    await act(async () => {
-      root.render(
-        <WorkspaceToolDetailsRow
-          activity={activity}
-          details={buildToolActivityDetails(activity)!}
-          isExpanded={true}
-          onToggle={vi.fn()}
-        />
+      useNavigationStore.setState({ view: 'workspace' })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={buildToolActivityDetails(activity)!}
+            isExpanded={true}
+            onToggle={vi.fn()}
+          />
+        )
+      })
+
+      const card = container.querySelector('[data-testid="literature-tool-card"]')!
+      const openInbox = Array.from(card.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Open Inbox'
       )
-    })
-
-    const card = container.querySelector('[data-testid="literature-tool-card"]')
-    expect(card?.tagName).toBe('BUTTON')
-    expect(card?.textContent).toContain('Open')
-    act(() => card?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(useNavigationStore.getState().view).toBe('library')
-  })
+      if (hasReceipt) {
+        expect(openInbox).toBeDefined()
+        act(() => openInbox!.click())
+        expect(useNavigationStore.getState().view).toBe('library')
+      } else {
+        expect(openInbox).toBeUndefined()
+        expect(card.textContent).not.toContain('Pending review:')
+        act(() => card.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+        expect(useNavigationStore.getState().view).toBe('workspace')
+      }
+    }
+  )
 
   it('presents citation document formatting as a first-party Literature action', async () => {
     const activity = createActivity({

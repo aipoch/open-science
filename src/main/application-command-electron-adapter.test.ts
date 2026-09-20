@@ -23,8 +23,15 @@ const validatedChannels = [
   'acp:respond-elicitation',
   'acp:respond-permission',
   'acp:respond-plan',
+  'bookmarks:create',
+  'bookmarks:delete',
+  'bookmarks:list',
+  'bookmarks:resolve-pdf-source',
+  'bookmarks:update-note',
+  'lifecycle:claim-runtime-writer',
   'literature:citation-styles',
   'literature:complete-metadata',
+  'literature:export-record',
   'literature:format-document',
   'literature:format-references',
   'literature:full-text',
@@ -32,7 +39,9 @@ const validatedChannels = [
   'literature:import-pdf',
   'literature:import-records',
   'literature:jobs',
+  'literature:lookup-metadata',
   'literature:search',
+  'literature:sources',
   'literature:transact',
   'memory:clear-all',
   'memory:create-category',
@@ -43,6 +52,11 @@ const validatedChannels = [
   'memory:snapshot',
   'memory:update-category',
   'memory:update-entry',
+  'pdf-structure:cancel',
+  'pdf-structure:clear-cache',
+  'pdf-structure:parse',
+  'pdf-structure:read-cached',
+  'pdf-structure:read-thumbnail',
   'projects:create',
   'projects:delete',
   'projects:get',
@@ -53,8 +67,12 @@ const validatedChannels = [
   'projects:update-archive',
   'sessions:delete-session',
   'sessions:edit-details',
+  'sessions:export-package',
   'sessions:filter-pdf-context-candidates',
+  'sessions:fork',
+  'sessions:import-package',
   'sessions:link-pdf-context',
+  'sessions:package-operation',
   'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
   'sessions:update-archive',
@@ -64,7 +82,8 @@ const validatedChannels = [
   'tags:set-assignment',
   'tags:snapshot',
   'tags:update',
-  'uploads:finalize-session'
+  'uploads:finalize-session',
+  'uploads:recover-draft'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {
@@ -142,5 +161,28 @@ describe('Electron Application Command adapter', () => {
       })
     ).toThrow('Electron Application Command adapter inventory mismatch.')
     expect(handlers).toEqual(new Map())
+  })
+})
+
+it('preserves CSL validation parameters through the Electron command adapter', async () => {
+  registerApplicationCommandElectronAdapter(
+    dispatcher(
+      vi.fn().mockRejectedValue(
+        new ApplicationCommandError('csl-undefined-macro', 'Undefined macro', {
+          macro: 'author-原名'
+        })
+      )
+    ),
+    { warn }
+  )
+  await expect(
+    handlers.get('literature:citation-styles')?.(eventWithLease(), { kind: 'import', content: '<' })
+  ).resolves.toEqual({
+    ok: false,
+    error: {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro',
+      parameters: { macro: 'author-原名' }
+    }
   })
 })

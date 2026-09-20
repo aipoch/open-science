@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /*
  * Hallmark · component: Plan approval card · genre: modern-minimal · theme: existing semantic tokens
  * pre-emit critique: P5 · H5 · E5 · S5 · R5 · V4
@@ -626,12 +627,12 @@ const PlanPreviewSurface = ({
         <PlanDocumentBody projection={projection} compactSummary />
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center p-8">
-          <div
+          <ErrorNotice
             role="alert"
-            className="max-w-sm rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-          >
-            {t('Invalid Plan document. This preview cannot be displayed.')}
-          </div>
+            tone="red"
+            className="max-w-sm"
+            description={t('Invalid Plan document. This preview cannot be displayed.')}
+          />
         </div>
       )}
     </div>

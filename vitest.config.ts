@@ -1,21 +1,38 @@
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
 import { defineConfig, configDefaults } from 'vitest/config'
+import WindowsTestSequencer from './scripts/ci/windows-test-sequencer'
 
 const testRoot = resolve('.')
 const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve('../..') : testRoot
 const windowsFullTest = process.env.VITEST_WINDOWS_FULL_TEST === '1'
 
 export function resolveVitestMaxWorkers(
-  available = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length
+  available = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length,
+  override?: string
 ): number {
+  if (override !== undefined) {
+    const workers = Number(override)
+    if (!/^[1-9]\d*$/.test(override) || !Number.isSafeInteger(workers)) {
+      throw new Error('OPEN_SCIENCE_TEST_MAX_WORKERS must be a positive integer.')
+    }
+    return workers
+  }
   return Math.max(available - 1, 1)
 }
 
-export const VITEST_ARCHITECTURE_TEST_GLOBS = ['**/*.architecture.test.ts'] as const
+export const VITEST_ARCHITECTURE_TEST_GLOBS = [
+  '**/*.architecture.test.ts',
+  // Whole-repository graph scanning belongs after the parallel pool, retaining its timeout.
+  'scripts/ci/module-consumer-coverage.test.ts'
+] as const
 
 export const VITEST_DATABASE_TEST_GLOBS = [
-  'scripts/database-migration-ledger-smoke.test.ts'
+  'scripts/database-migration-ledger-smoke.test.ts',
+  // Package round trips repeatedly migrate real validation databases. Keep their disk/CPU work
+  // out of the parallel unit pool instead of extending the tests' timeout budget.
+  'src/main/session-package/service.test.ts',
+  'src/main/session-package/literature.test.ts'
 ] as const
 
 export const VITEST_PROCESS_TEST_GLOBS = [
@@ -34,6 +51,8 @@ export const VITEST_PROCESS_TEST_GLOBS = [
 const BASE_VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
   'e2e/**',
+  // This native addon owns its node:test runner; Vitest cannot collect those suites.
+  'packages/credential-identity-probe-native/test/**',
   'docs/internal/**',
   '**/.claude/**',
   '**/.codex/**',
@@ -45,7 +64,8 @@ const BASE_VITEST_EXCLUDE_PATTERNS = [
 const VITEST_PORTABLE_CI_EXCLUDE_PATTERNS = [
   'src/renderer/src/i18n/resources.test.ts',
   'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
-  'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts'
+  'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
+  'src/main/session-plan/plan-context-file.shell.integration.test.ts'
 ] as const
 
 function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
@@ -143,6 +163,9 @@ export default defineConfig({
     }
   },
   test: {
+    // Only the advisory Windows full suite uses fixed module groups. Inherit Vitest's
+    // sorting/group ordering; override just assignment, never test discovery or worker limits.
+    ...(windowsFullTest ? { sequence: { sequencer: WindowsTestSequencer } } : {}),
     // Vitest shards each project independently. A valid full-suite shard can therefore contain no
     // files for one project even though its other projects execute tests.
     passWithNoTests: fullSuiteShardAllowsEmptyProjects(process.argv),
@@ -176,7 +199,10 @@ export default defineConfig({
     hookTimeout: windowsFullTest ? 60000 : 30000,
     // Pin the pool to Vitest's own CPU-minus-one bound so full-suite runs cannot spawn an unbounded
     // set of short-lived workers. Heavy files below run in later groups and do not share that pool.
-    maxWorkers: windowsFullTest ? 1 : resolveVitestMaxWorkers(),
+    // Inline projects inherit this before CLI overrides, so provide a config-time worker cap.
+    maxWorkers: windowsFullTest
+      ? 1
+      : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
       {
         extends: true,

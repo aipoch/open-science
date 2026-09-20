@@ -66,7 +66,7 @@ const parseStored = (value: unknown): StoredRemoteAccess => {
   const storedVersion = input.version
   if (storedVersion > REMOTE_ACCESS_VERSION) {
     throw new Error(
-      `Remote access configuration version ${storedVersion} was created by a newer version of Open Science.`
+      `Remote access configuration version ${storedVersion} was created by a newer version of Open-Science.`
     )
   }
   const mode: RemoteAccessMode =

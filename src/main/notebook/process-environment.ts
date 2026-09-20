@@ -6,6 +6,38 @@ import { rLibraryDir } from './runtime-paths'
 
 const COMMON_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'] as const
 
+export const normalizeRProcessLocale = (
+  sourceEnv: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform
+): NodeJS.ProcessEnv => {
+  const env = { ...sourceEnv }
+  if (platform === 'win32') {
+    // POSIX C.UTF-8 is not a Windows R locale. Let R select the system locale
+    // instead; using C here would disable UTF-8 character handling.
+    for (const [key, value] of Object.entries(env)) {
+      if (/^(LANG|LC_.*)$/i.test(key) && /^C\.UTF-?8$/i.test(value ?? '')) delete env[key]
+    }
+  }
+  return env
+}
+
+// Package transport settings may cross the installer boundary; options that change its
+// destination or turn installation into a dry run must stay under the operation owner's control.
+export const PIP_TRANSPORT_ENV_KEYS = [
+  'PIP_INDEX_URL',
+  'PIP_EXTRA_INDEX_URL',
+  'PIP_NO_INDEX',
+  'PIP_FIND_LINKS',
+  'PIP_PROXY',
+  'PIP_CERT',
+  'PIP_CLIENT_CERT',
+  'PIP_TRUSTED_HOST',
+  'PIP_TIMEOUT',
+  'PIP_DEFAULT_TIMEOUT',
+  'PIP_RETRIES',
+  'PIP_CACHE_DIR'
+] as const
+
 const POSIX_ENV_ALLOWLIST = ['HOME', 'USER', 'LOGNAME', 'SHELL'] as const
 
 const WINDOWS_ENV_ALLOWLIST = [
@@ -127,7 +159,11 @@ export const buildManagedRuntimeProcessEnvironment = (
   const platform = options.platform ?? process.platform
   const platformPath = platform === 'win32' ? win32 : posix
   const home = platformPath.join(root, 'home')
-  const env = sanitizeManagedRuntimeHostState(options.sourceEnv ?? process.env, options.language)
+  const hostEnv = sanitizeManagedRuntimeHostState(
+    options.sourceEnv ?? process.env,
+    options.language
+  )
+  const env = options.language === 'r' ? normalizeRProcessLocale(hostEnv, platform) : hostEnv
   return {
     ...env,
     HOME: home,

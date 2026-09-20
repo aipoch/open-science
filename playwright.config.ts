@@ -1,7 +1,11 @@
 import { defineConfig } from '@playwright/test'
+import { resolve } from 'node:path'
 
 export default defineConfig({
   testDir: './e2e',
+  forbidOnly: Boolean(process.env.CI),
+  tag: process.env.CI ? `@${process.platform}` : undefined,
+  testIgnore: ['**/browser/**'],
   outputDir: 'test-results/electron',
   // Keep one canonical Chromium layout baseline for every desktop OS. Text antialiasing differs by
   // platform, so the visual spec applies a wider cross-platform pixel budget while still catching
@@ -18,7 +22,18 @@ export default defineConfig({
     timeout: 20_000
   },
   reporter: process.env.CI
-    ? [['line'], ['html', { outputFolder: 'playwright-report', open: 'never' }]]
+    ? [
+        ...(process.platform === 'win32'
+          ? [[resolve(__dirname, 'e2e/windows-shard-reporter.ts')] as [string]]
+          : []),
+        ['line'],
+        ['blob'],
+        [
+          'json',
+          { outputFile: process.env.PLAYWRIGHT_JSON_OUTPUT_NAME ?? 'test-results/e2e.json' }
+        ],
+        ['html', { outputFolder: 'playwright-report', open: 'never' }]
+      ]
     : [['list']],
   use: {
     screenshot: 'only-on-failure',

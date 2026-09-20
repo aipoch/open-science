@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { UPDATE_INSTALLATION_REQUIRED } from '../../../shared/update'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,6 +31,24 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('keeps long release notes in one scrolling body and cancellation outside it', () => {
+    const notes = Array.from({ length: 35 }, (_, index) => `Release note ${index + 1}`).join('\n')
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'available', current: '0.26.0', latest: '0.26.1', notes }
+    })
+    act(() => root.render(<UpdateDialog />))
+    const dialog = document.querySelector('[role="dialog"]')!
+    const viewport = dialog.querySelector('[data-slot="scroll-area-viewport"]')!
+    expect(viewport.textContent).toContain('Release note 35')
+    const cancel = Array.from(dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel'
+    )!
+    expect(viewport.contains(cancel)).toBe(false)
+    act(() => cancel.click())
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+  })
+
   it('U04: offers manual download instead of an inert button when the installer artifact is missing', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
@@ -288,7 +307,7 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain(
       'use Reveal in Settings → General → Diagnostics to locate the log file'
     )
-    expect(document.body.textContent).toContain('Quit and reopen Open Science')
+    expect(document.body.textContent).toContain('Quit and reopen Open-Science')
     const issueLink = document.body.querySelector(`a[href="${APP.links.githubIssues}"]`)
     expect(issueLink?.textContent).toContain('open a GitHub issue')
   })
@@ -342,6 +361,9 @@ describe('UpdateDialog', () => {
       }
     })
     act(() => root.render(<UpdateDialog />))
+    const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')!
+    const progress = document.querySelector('[role="progressbar"]')!
+    expect(viewport.contains(progress)).toBe(false)
     expect(document.body.textContent).toContain('4.1 KB')
     expect(document.body.textContent).toContain('9.8 KB')
     expect(document.body.textContent).toContain('42%')
@@ -396,4 +418,30 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('2.3 MB/s')
     expect(document.body.textContent).toContain('42%')
   })
+})
+
+it('opens installation guidance from a read-only update failure', () => {
+  const download = vi.fn(async () => {})
+  const originalDownload = useUpdateStore.getState().download
+  useUpdateStore.setState({
+    download,
+    isDialogOpen: true,
+    status: {
+      state: 'error',
+      current: '0.2.0',
+      latest: '0.3.0',
+      applyKind: 'restart',
+      error: UPDATE_INSTALLATION_REQUIRED
+    }
+  })
+  act(() => root.render(<UpdateDialog />))
+  expect(document.body.textContent).not.toContain('Retry')
+  expect(document.body.textContent).toContain('Show installation steps')
+  expect(document.body.textContent).toContain(UPDATE_INSTALLATION_REQUIRED)
+  const guidanceButton = Array.from(document.body.querySelectorAll('button')).find(
+    (button) => button.textContent === 'Show installation steps'
+  )!
+  act(() => guidanceButton.click())
+  expect(download).toHaveBeenCalledOnce()
+  useUpdateStore.setState({ download: originalDownload })
 })

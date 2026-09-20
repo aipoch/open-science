@@ -1,19 +1,44 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+  stat,
+  rename,
+  copyFile,
+  readdir,
+  symlink,
+  lstat
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { literatureItemInputSchema } from '../../shared/literature'
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { markContentBlobAvailable, registerContentBlob } from './content-blob-registry'
 import { ContentRepository, resolveContentStorageKey } from './content-repository'
 
+vi.mock('../uploads/atomic-no-replace-publisher', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../uploads/atomic-no-replace-publisher')>()
+  return { ...original, removeAnchoredFile: vi.fn(original.removeAnchoredFile) }
+})
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...original, rm: vi.fn(original.rm) }
+  return {
+    ...original,
+    rm: vi.fn(original.rm),
+    stat: vi.fn(original.stat),
+    copyFile: vi.fn(original.copyFile),
+    lstat: vi.fn(original.lstat)
+  }
 })
 
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex')
@@ -23,10 +48,27 @@ describe('content repository', () => {
   let client: PrismaClient | undefined
 
   afterEach(async () => {
+    vi.mocked(stat)
+      .mockReset()
+      .mockImplementation(
+        (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).stat
+      )
     vi.mocked(rm).mockReset()
     vi.mocked(rm).mockImplementation(
       (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm
     )
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(copyFile).mockReset().mockImplementation(fs.copyFile)
+    vi.mocked(lstat).mockReset().mockImplementation(fs.lstat)
+    vi.mocked(removeAnchoredFile)
+      .mockReset()
+      .mockImplementation(
+        (
+          await vi.importActual<typeof import('../uploads/atomic-no-replace-publisher')>(
+            '../uploads/atomic-no-replace-publisher'
+          )
+        ).removeAnchoredFile
+      )
     await client?.$disconnect()
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   })
@@ -60,6 +102,389 @@ describe('content repository', () => {
       await markContentBlobAvailable(transaction, input, createdAt)
     })
   }
+
+  it('retains orphan authority when its content parent is replaced by a symlink', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'source.txt')
+    await writeFile(sourcePath, 'original content')
+    const content = await repository.publish({ sourcePath })
+    const parent = dirname(content.path)
+    const outside = await mkdtemp(join(tmpdir(), 'open-science-outside-content-'))
+    const sentinel = join(outside, content.checksum)
+    try {
+      await writeFile(sentinel, 'outside sentinel')
+      await rename(parent, `${parent}-original`)
+      await symlink(outside, parent, process.platform === 'win32' ? 'junction' : 'dir')
+      const result = await repository.sweep({ createdBefore: new Date(Date.now() + 1_000) })
+      const survivingBytes = await readFile(sentinel, 'utf8').catch(() => null)
+      expect({ result, survivingBytes }).toEqual({
+        result: { removedIds: [], retainedIds: [], failedIds: [content.id] },
+        survivingBytes: 'outside sentinel'
+      })
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: content.id } })
+      ).resolves.not.toBeNull()
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['leaf', 'parent'] as const)(
+    'finishes cleanup when the content %s is already absent',
+    async (missing) => {
+      const repository = await createRepository()
+      const storageKey = 'uploads/legacy/absent.pdf'
+      await publishFixture('absent', storageKey, Buffer.from('already removed'))
+      const path = join(storageRoot!, storageKey)
+      await rm(missing === 'leaf' ? path : dirname(path), { recursive: true })
+      await expect(
+        repository.sweep({ contentIds: ['absent'], createdBefore: new Date() })
+      ).resolves.toEqual({
+        removedIds: ['absent'],
+        retainedIds: [],
+        failedIds: []
+      })
+    }
+  )
+
+  it('does not discard content authority when the configured storage root is unavailable', async () => {
+    await createRepository()
+    await publishFixture('retained', 'content/retained', Buffer.from('keep'))
+    const unavailable = new ContentRepository({
+      storageRoot: join(storageRoot!, 'unavailable'),
+      getClient: async () => client!
+    })
+    await expect(
+      unavailable.sweep({ contentIds: ['retained'], createdBefore: new Date() })
+    ).resolves.toEqual({
+      removedIds: [],
+      retainedIds: [],
+      failedIds: ['retained']
+    })
+    expect(await readFile(join(storageRoot!, 'content/retained'), 'utf8')).toBe('keep')
+    await expect(
+      client!.contentBlob.findUnique({ where: { id: 'retained' } })
+    ).resolves.not.toBeNull()
+  })
+
+  const interruptContentRemoval = async (
+    content: { id: string; path: string; storageKey: string },
+    boundary: 'before receipt' | 'before move' | 'after move' | 'after unlink'
+  ): Promise<string> => {
+    const directory = dirname(content.path)
+    const parent = await lstat(directory, { bigint: true })
+    const file = await lstat(content.path, { bigint: true })
+    const name = `.content-recovery-${sha256(Buffer.from(JSON.stringify([content.id, content.storageKey])))}`
+    const quarantine = join(directory, name)
+    await mkdir(quarantine, { mode: 0o700 })
+    if (boundary !== 'before receipt') {
+      await writeFile(
+        join(quarantine, 'receipt'),
+        [
+          'content-removal-v1',
+          name,
+          basename(content.path),
+          parent.dev,
+          parent.ino,
+          file.dev,
+          file.ino,
+          file.size,
+          file.mtimeNs,
+          ''
+        ].join('\n')
+      )
+    }
+    if (boundary === 'after move' || boundary === 'after unlink') {
+      await rename(content.path, join(quarantine, 'payload'))
+    }
+    if (boundary === 'after unlink') await rm(join(quarantine, 'payload'))
+    await client!.contentBlob.update({ where: { id: content.id }, data: { state: 'quarantined' } })
+    return quarantine
+  }
+
+  it
+    .skipIf(process.platform === 'win32')
+    .each(['before receipt', 'before move', 'after move', 'after unlink'] as const)(
+    'recovers content removal %s through targeted sweep',
+    async (boundary) => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'interrupted content')
+      const content = await repository.publish({ sourcePath })
+      const quarantine = await interruptContentRemoval(content, boundary)
+      const request = { contentIds: [content.id], createdBefore: new Date(Date.now() + 1_000) }
+      await expect(repository.sweep(request)).resolves.toEqual({
+        removedIds: [content.id],
+        retainedIds: [],
+        failedIds: []
+      })
+      await expect(lstat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(lstat(content.path)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: content.id } })
+      ).resolves.toBeNull()
+      await expect(repository.sweep(request)).resolves.toEqual({
+        removedIds: [],
+        retainedIds: [],
+        failedIds: []
+      })
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'recovers a removal before republishing the same content',
+    async () => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'publish again')
+      const content = await repository.publish({ sourcePath })
+      const quarantine = await interruptContentRemoval(content, 'after move')
+      await expect(repository.publish({ sourcePath })).resolves.toMatchObject({ id: content.id })
+      expect(await readFile(content.path, 'utf8')).toBe('publish again')
+      await expect(lstat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(repository.verify(content.id)).resolves.toMatchObject({ state: 'available' })
+    }
+  )
+
+  it('preserves a referenced content receipt during full sweep and publication', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'source.txt')
+    await writeFile(sourcePath, 'referenced content')
+    const content = await repository.publish({ sourcePath })
+    const quarantine = await interruptContentRemoval(content, 'before move')
+    await client!.literatureItem.create({
+      data: {
+        itemType: 'journalArticle',
+        title: 'Retained reference',
+        attachments: {
+          create: {
+            kind: 'fullText',
+            versions: {
+              create: {
+                contentBlobId: content.id,
+                versionNumber: 1,
+                filename: 'source.txt',
+                contentType: 'text/plain',
+                sizeBytes: content.sizeBytes,
+                checksum: content.checksum
+              }
+            }
+          }
+        }
+      }
+    })
+    await expect(
+      repository.sweep({ createdBefore: new Date(Date.now() + 1_000) })
+    ).resolves.toEqual({
+      removedIds: [],
+      retainedIds: [content.id],
+      failedIds: []
+    })
+    await expect(repository.publish({ sourcePath })).rejects.toThrow('unresolved removal receipt')
+    expect(await readFile(content.path, 'utf8')).toBe('referenced content')
+    expect(await readFile(join(quarantine, 'receipt'), 'utf8')).toContain('content-removal-v1')
+  })
+
+  it.each(['replacement', 'malformed', 'wrong authority', 'wrong filename'])(
+    'retains content removal evidence on %s across retries',
+    async (conflict) => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'original')
+      const content = await repository.publish({ sourcePath })
+      const quarantine = await interruptContentRemoval(content, 'after move')
+      if (conflict === 'replacement') await writeFile(content.path, 'replacement')
+      else {
+        const receipt = join(quarantine, 'receipt')
+        const lines = (await readFile(receipt, 'utf8')).split('\n')
+        if (conflict === 'malformed') lines[0] = 'unknown-version'
+        if (conflict === 'wrong authority') lines[1] = `.content-recovery-${'0'.repeat(64)}`
+        if (conflict === 'wrong filename') lines[2] = 'another-file'
+        await writeFile(receipt, lines.join('\n'))
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(
+          repository.sweep({ createdBefore: new Date(Date.now() + 1_000) })
+        ).resolves.toEqual({
+          removedIds: [],
+          retainedIds: [],
+          failedIds: [content.id]
+        })
+        expect(await readFile(join(quarantine, 'payload'), 'utf8')).toBe('original')
+        await expect(
+          client!.contentBlob.findUnique({ where: { id: content.id } })
+        ).resolves.toMatchObject({ state: 'quarantined' })
+      }
+      if (conflict === 'replacement')
+        expect(await readFile(content.path, 'utf8')).toBe('replacement')
+    }
+  )
+
+  it.each(['parent', 'leaf'])(
+    'refuses a content %s replacement at the native deletion boundary',
+    async (level) => {
+      const repository = await createRepository()
+      const sourcePath = join(storageRoot!, 'source.txt')
+      await writeFile(sourcePath, 'owned')
+      const content = await repository.publish({ sourcePath })
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      let replaced = false
+      vi.mocked(lstat).mockImplementation((...args) => {
+        if (String(args[0]) !== content.path || replaced) return fs.lstat(...args)
+        replaced = true
+        return (async () => {
+          const observed = await fs.lstat(...args)
+          const target = level === 'parent' ? dirname(content.path) : content.path
+          await rename(target, `${target}-held`)
+          if (level === 'parent') await mkdir(target)
+          await writeFile(content.path, 'replacement')
+          return observed
+        })() as ReturnType<typeof lstat>
+      })
+      await expect(
+        repository.sweep({ contentIds: [content.id], createdBefore: new Date(Date.now() + 1_000) })
+      ).resolves.toMatchObject({
+        removedIds: [],
+        failedIds: [content.id]
+      })
+      expect(await readFile(content.path, 'utf8')).toBe('replacement')
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: content.id } })
+      ).resolves.toMatchObject({ state: 'quarantined' })
+    }
+  )
+
+  it.each(['uploads', 'artifacts'])(
+    'safely removes unreferenced legacy %s content without migration',
+    async (directory) => {
+      const repository = await createRepository()
+      const storageKey = `${directory}/legacy/paper.pdf`
+      await publishFixture('legacy', storageKey, Buffer.from('legacy bytes'))
+      await expect(repository.sweep({ createdBefore: new Date() })).resolves.toEqual({
+        removedIds: ['legacy'],
+        retainedIds: [],
+        failedIds: []
+      })
+      await expect(lstat(join(storageRoot!, storageKey))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  it.each([false, true])(
+    'retains overlapping publications across repositories and releases them on failure=%s',
+    async (fail) => {
+      const publisher = await createRepository()
+      const other = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      const sourcePath = join(storageRoot!, 'source.pdf')
+      await writeFile(sourcePath, 'shared publication')
+      let contentId = ''
+      const sweep = (): ReturnType<ContentRepository['sweep']> =>
+        other.sweep({ createdBefore: new Date(Date.now() + 1) })
+      const acquisition = publisher.withPublishedContent({ sourcePath }, async (first) => {
+        contentId = first.id
+        await other.withPublishedContent({ sourcePath }, async (second) => {
+          expect(second.id).toBe(first.id)
+          expect((await sweep()).retainedIds).toContain(first.id)
+          await expect(other.verify(first.id)).resolves.toMatchObject({ state: 'available' })
+        })
+        expect((await sweep()).retainedIds).toContain(first.id)
+        if (fail) throw new Error('Reference insertion failed')
+      })
+      if (fail) await expect(acquisition).rejects.toThrow('Reference insertion failed')
+      else await acquisition
+      expect((await sweep()).removedIds).toContain(contentId)
+    }
+  )
+
+  it.each(['EACCES', 'EPERM'])('records %s as a retryable permission failure', async (code) => {
+    const repository = await createRepository()
+    await publishFixture('blob-permissions', 'content/project/permissions', Buffer.from('readable'))
+    await repository.verify('blob-permissions')
+    await client!.contentBlob.update({
+      where: { id: 'blob-permissions' },
+      data: { lastVerificationAttemptAt: new Date(1) }
+    })
+    vi.mocked(stat).mockRejectedValueOnce(Object.assign(new Error('Access denied'), { code }))
+    await expect(repository.verify('blob-permissions', { retry: true })).rejects.toMatchObject({
+      code
+    })
+    const failed = await client!.contentBlob.findUniqueOrThrow({
+      where: { id: 'blob-permissions' }
+    })
+    expect(failed).toMatchObject({
+      state: 'available',
+      lastVerificationFailure: 'permission-denied'
+    })
+    expect(failed.lastVerificationAttemptAt!.getTime()).toBeGreaterThan(1)
+    await expect(repository.verify('blob-permissions', { retry: true })).resolves.toMatchObject({
+      state: 'available'
+    })
+    expect(
+      await client!.contentBlob.findUniqueOrThrow({ where: { id: 'blob-permissions' } })
+    ).toMatchObject({ lastVerificationFailure: null })
+  })
+
+  it('validates content availability once per preview chunk before releasing bytes', async () => {
+    const repository = await createRepository()
+    const bytes = Buffer.from('ORIGINAL')
+    await publishFixture('blob-chunks', 'content/project/chunks', bytes)
+    const lease = await repository.openLease('blob-chunks')
+    const lookup = vi.spyOn(client!.contentBlob, 'findUnique')
+    try {
+      const buffer = Buffer.alloc(bytes.length)
+      await expect(lease.read(buffer, 0, buffer.length, 0)).resolves.toEqual({
+        bytesRead: bytes.length
+      })
+      expect(buffer).toEqual(bytes)
+      expect(lookup).toHaveBeenCalledTimes(1)
+      lookup.mockClear()
+      await expect(lease.readRange(0, bytes.length)).resolves.toEqual(new Uint8Array(bytes))
+      expect(lookup).toHaveBeenCalledTimes(1)
+    } finally {
+      lookup.mockRestore()
+      await lease.close()
+    }
+  })
+
+  it.each(['replace', 'overwrite'] as const)(
+    'keeps content leases bound to their verified bytes after %s',
+    async (mode) => {
+      const repository = await createRepository()
+      const bytes = Buffer.from('ORIGINAL')
+      await publishFixture('blob-lease', 'content/project/lease', bytes)
+      const lease = await repository.openLease('blob-lease')
+      try {
+        if (mode === 'replace') {
+          if (process.platform === 'win32') return
+          const replacement = join(storageRoot!, 'replacement')
+          await writeFile(replacement, 'REPLACED')
+          await rename(replacement, lease.path)
+          expect(Buffer.from(await lease.readRange(0, bytes.length))).toEqual(bytes)
+        } else {
+          await writeFile(lease.path, 'REPLACED')
+          await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+        }
+        await expect(repository.verify('blob-lease')).resolves.toMatchObject({
+          state: 'unavailable'
+        })
+        await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+        await writeFile(lease.path, bytes)
+        await repository.verify('blob-lease', { retry: true })
+        await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+      } finally {
+        await lease.close()
+      }
+      await expect(lease.readRange(0, bytes.length)).rejects.toThrow()
+      const fresh = await repository.openLease('blob-lease')
+      try {
+        expect(Buffer.from(await fresh.readRange(0, bytes.length))).toEqual(bytes)
+      } finally {
+        await fresh.close()
+      }
+    }
+  )
 
   it('opens and verifies available immutable bytes', async () => {
     const repository = await createRepository()
@@ -100,6 +525,130 @@ describe('content repository', () => {
     })
     await expect(readFile(first.path)).resolves.toEqual(content)
     await expect(client!.contentBlob.count()).resolves.toBe(1)
+  })
+
+  it('serializes cancellation cleanup with another publisher of the same bytes', async () => {
+    const repository = await createRepository()
+    const other = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    const sourcePath = join(storageRoot!, 'shared-paper.pdf')
+    const bytes = Buffer.from('concurrent publication')
+    await writeFile(sourcePath, bytes)
+    let release!: () => void
+    let entered!: () => void
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const cancelled = repository
+      .publish({
+        sourcePath,
+        commit: async () => {
+          entered()
+          await gate
+          throw new Error('cancelled before commit')
+        }
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    await ready
+    const concurrent = other.publish({ sourcePath })
+    release()
+    expect(await cancelled).toMatchObject({ message: 'cancelled before commit' })
+    const kept = await concurrent
+    expect(await readFile(kept.path)).toEqual(bytes)
+    expect(await client!.contentBlob.count()).toBe(1)
+  })
+
+  it('retains reused unreferenced bytes and newly committed references on callback failure', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'shared-paper.pdf')
+    await writeFile(sourcePath, 'already published')
+    const existing = await repository.publish({ sourcePath })
+    await expect(
+      repository.publish({
+        sourcePath,
+        commit: async () => {
+          throw new Error('cancelled')
+        }
+      })
+    ).rejects.toThrow('cancelled')
+    expect(await repository.open(existing.id)).toEqual(existing)
+
+    await writeFile(sourcePath, 'newly committed')
+    const catalog = new LiteratureCatalog(async () => client!)
+    const item = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({
+        itemType: 'journalArticle',
+        title: 'Committed paper'
+      })
+    })
+    let committedId = ''
+    await expect(
+      repository.publish({
+        sourcePath,
+        contentType: 'application/pdf',
+        commit: async (content) => {
+          committedId = content.id
+          await catalog.attachContent({
+            itemId: item.id,
+            contentBlobId: content.id,
+            filename: 'paper.pdf',
+            contentType: 'application/pdf',
+            checksum: content.checksum,
+            sizeBytes: Number(content.sizeBytes),
+            pageCount: 1
+          })
+          throw new Error('caller failed after commit')
+        }
+      })
+    ).rejects.toThrow('caller failed after commit')
+    expect((await repository.open(committedId)).id).toBe(committedId)
+    expect((await catalog.get(item.id))!.attachments).toHaveLength(1)
+  })
+
+  it('keeps a sweep outside the publication-to-commit window', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'sweep-paper.pdf')
+    await writeFile(sourcePath, 'publication under sweep')
+    const catalog = new LiteratureCatalog(async () => client!)
+    const item = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Paper' })
+    })
+    let sweep!: ReturnType<ContentRepository['sweep']>
+    const published = await repository.publish({
+      sourcePath,
+      contentType: 'application/pdf',
+      commit: async (content) => {
+        sweep = repository.sweep({
+          createdBefore: new Date(Date.now() + 1000),
+          contentIds: [content.id]
+        })
+        await catalog.attachContent({
+          itemId: item.id,
+          contentBlobId: content.id,
+          filename: 'paper.pdf',
+          contentType: 'application/pdf',
+          checksum: content.checksum,
+          sizeBytes: Number(content.sizeBytes),
+          pageCount: 1
+        })
+      }
+    })
+    expect(await sweep).toMatchObject({
+      removedIds: [],
+      retainedIds: [published.id],
+      failedIds: []
+    })
+    expect((await repository.open(published.id)).id).toBe(published.id)
   })
 
   it.each(['broken', 'selected literature byte!'])(
@@ -160,12 +709,13 @@ describe('content repository', () => {
       markClaimed = resolve
     })
     const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
-    vi.mocked(rm).mockImplementation(async (path, options) => {
-      if (path === original.path) {
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== original.path) return actualFs.lstat(...args)
+      return (async () => {
         markClaimed()
         await unlinkAllowed
-      }
-      return actualFs.rm(path, options)
+        return actualFs.lstat(...args)
+      })() as ReturnType<typeof lstat>
     })
     const sweeping = sweeper.sweep({
       createdBefore: new Date(Date.now() + 1_000),
@@ -204,103 +754,671 @@ describe('content repository', () => {
     await expect(readFile(published.path)).resolves.toEqual(bytes)
   })
 
-  it('sweeps only old unreferenced blobs and leaves referenced bytes intact', async () => {
+  it('orders a failed verification before repair across repository instances', async () => {
+    const verifier = await createRepository()
+    const sourcePath = join(storageRoot!, 'verification-repair.pdf')
+    await writeFile(sourcePath, 'original bytes')
+    const published = await verifier.publish({ sourcePath, contentType: 'application/pdf' })
+    await writeFile(published.path, 'broken')
+    const publisher = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    let observe!: () => void
+    let release!: () => void
+    const observing = new Promise<void>((resolve) => {
+      observe = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const update = client!.contentBlob.updateMany.bind(client!.contentBlob)
+    const spy = vi.spyOn(client!.contentBlob, 'updateMany').mockImplementation((async (
+      args: Parameters<typeof update>[0]
+    ) => {
+      if (args?.data.lastVerificationFailure === 'size-mismatch') {
+        observe()
+        await gate
+      }
+      return update(args)
+    }) as unknown as typeof update)
+    const verification = verifier.verify(published.id)
+    await observing
+    const publishing = publisher.publish({ sourcePath, contentType: 'application/pdf' })
+    try {
+      release()
+      await expect(verification).resolves.toMatchObject({
+        state: 'unavailable',
+        reason: 'size-mismatch'
+      })
+      await publishing
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: published.id } })
+      ).resolves.toMatchObject({
+        state: 'available',
+        lastVerificationFailure: null,
+        lastVerificationAttemptAt: expect.any(Date)
+      })
+      await expect(verifier.verify(published.id)).resolves.toMatchObject({ state: 'available' })
+    } finally {
+      release()
+      spy.mockRestore()
+    }
+  })
+
+  it('limits targeted sweep reference reads to candidate content', async () => {
     const repository = await createRepository()
-    const createdAt = new Date('2026-08-30T00:00:00.000Z')
-    await publishFixture('orphan', 'content/project/orphan', Buffer.from('orphan'), createdAt)
-    await publishFixture('inbox-only', 'content/inbox/paper', Buffer.from('pending'), createdAt)
-    await client!.literatureInboxCandidate.create({
-      data: {
-        id: 'inbox',
-        dedupeKey: 'inbox',
-        itemType: 'journalArticle',
-        title: 'Pending paper',
-        candidateJson: '{}',
-        metadataChecksum: 'a'.repeat(64),
-        origin: 'agent',
-        pdfs: {
-          create: {
-            contentBlobId: 'inbox-only',
-            filename: 'paper.pdf',
-            sizeBytes: 7n,
-            checksum: sha256(Buffer.from('pending')),
-            pageCount: 1,
-            sourceUrl: 'https://example.test/paper'
-          }
-        }
-      }
-    })
-    await publishFixture('referenced', 'content/project/referenced', Buffer.from('kept'), createdAt)
-    await publishFixture(
-      'literature-only',
-      'content/literature/paper',
-      Buffer.from('paper'),
-      createdAt
-    )
-    await client!.fileOriginSession.create({
-      data: { projectId: 'project-1', sessionId: 'session-1' }
-    })
-    await client!.uploadFile.create({
-      data: {
-        id: 'upload-1',
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        filename: 'paper.pdf',
-        originalFilename: 'paper.pdf',
-        versions: {
-          create: {
-            id: 'upload-version-1',
-            versionNumber: 1,
-            state: 'ready',
-            contentStorageKey: 'content/project/referenced',
-            filename: 'paper.pdf',
-            originalFilename: 'paper.pdf',
-            contentType: 'application/pdf',
-            sizeBytes: 4n,
-            checksum: sha256(Buffer.from('kept')),
-            contentBlobId: 'referenced',
-            createdAt
-          }
-        }
-      }
-    })
-    await client!.literatureItem.create({
-      data: {
-        itemType: 'journalArticle',
-        title: 'Referenced paper',
-        attachments: {
-          create: {
-            kind: 'fullText',
-            versions: {
-              create: {
-                contentBlobId: 'literature-only',
-                versionNumber: 1,
-                filename: 'paper.pdf',
-                contentType: 'application/pdf',
-                sizeBytes: 5n,
-                checksum: sha256(Buffer.from('paper')),
-                pageCount: 2
+    for (const id of ['target', 'unrelated']) {
+      await publishFixture(id, `content/project/${id}`, Buffer.from(id))
+      await client!.literatureItem.create({
+        data: {
+          itemType: 'journalArticle',
+          title: id,
+          attachments: {
+            create: {
+              kind: 'fullText',
+              versions: {
+                create: {
+                  contentBlobId: id,
+                  versionNumber: 1,
+                  filename: 'paper.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: BigInt(id.length),
+                  checksum: sha256(Buffer.from(id))
+                }
               }
             }
           }
         }
+      })
+    }
+    const queries = [
+      vi.spyOn(client!.uploadVersion, 'findMany'),
+      vi.spyOn(client!.artifactVersion, 'findMany'),
+      vi.spyOn(client!.literatureAttachmentVersion, 'findMany'),
+      vi.spyOn(client!.literatureInboxPdf, 'findMany')
+    ]
+    await expect(
+      repository.sweep({
+        contentIds: ['target'],
+        createdBefore: new Date('2026-08-31T00:00:00.000Z')
+      })
+    ).resolves.toEqual({ removedIds: [], retainedIds: ['target'], failedIds: [] })
+    // Observe real SQLite rows, not a mock that assumes the filter works.
+    expect(await queries[2].mock.results[0].value).toEqual([{ contentBlobId: 'target' }])
+    for (const query of queries) {
+      expect(query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { contentBlobId: { in: ['target'] } }
+        })
+      )
+    }
+  })
+
+  it('retains a reference published after targeted sweep prefiltering', async () => {
+    const repository = await createRepository()
+    await publishFixture('target', 'content/project/target', Buffer.from('target'))
+    const findMany = client!.literatureAttachmentVersion.findMany.bind(
+      client!.literatureAttachmentVersion
+    )
+    vi.spyOn(client!.literatureAttachmentVersion, 'findMany').mockImplementationOnce(
+      (query) =>
+        (async () => {
+          const before = await findMany(query)
+          await client!.literatureItem.create({
+            data: {
+              itemType: 'journalArticle',
+              title: 'Late reference',
+              attachments: {
+                create: {
+                  kind: 'fullText',
+                  versions: {
+                    create: {
+                      contentBlobId: 'target',
+                      versionNumber: 1,
+                      filename: 'paper.pdf',
+                      contentType: 'application/pdf',
+                      sizeBytes: 6n,
+                      checksum: sha256(Buffer.from('target'))
+                    }
+                  }
+                }
+              }
+            }
+          })
+          return before
+        })() as ReturnType<typeof findMany>
+    )
+    await expect(
+      repository.sweep({
+        contentIds: ['target'],
+        createdBefore: new Date('2026-08-31T00:00:00.000Z')
+      })
+    ).resolves.toEqual({ removedIds: [], retainedIds: ['target'], failedIds: [] })
+    await expect(
+      readFile(resolveContentStorageKey(storageRoot!, 'content/project/target'))
+    ).resolves.toEqual(Buffer.from('target'))
+  })
+
+  it('skips reference reads when a targeted sweep has no candidates', async () => {
+    const repository = await createRepository()
+    const queries = [
+      vi.spyOn(client!.uploadVersion, 'findMany'),
+      vi.spyOn(client!.artifactVersion, 'findMany'),
+      vi.spyOn(client!.literatureAttachmentVersion, 'findMany'),
+      vi.spyOn(client!.literatureInboxPdf, 'findMany')
+    ]
+    await expect(
+      repository.sweep({
+        contentIds: ['missing'],
+        createdBefore: new Date()
+      })
+    ).resolves.toEqual({ removedIds: [], retainedIds: [], failedIds: [] })
+    for (const query of queries) expect(query).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'sweeps only old unreferenced blobs and leaves referenced bytes intact (targeted=%s)',
+    async (targeted) => {
+      const repository = await createRepository()
+      const createdAt = new Date('2026-08-30T00:00:00.000Z')
+      await publishFixture('orphan', 'content/project/orphan', Buffer.from('orphan'), createdAt)
+      await publishFixture('inbox-only', 'content/inbox/paper', Buffer.from('pending'), createdAt)
+      await client!.literatureInboxCandidate.create({
+        data: {
+          id: 'inbox',
+          dedupeKey: 'inbox',
+          itemType: 'journalArticle',
+          title: 'Pending paper',
+          candidateJson: '{}',
+          metadataChecksum: 'a'.repeat(64),
+          origin: 'agent',
+          pdfs: {
+            create: {
+              contentBlobId: 'inbox-only',
+              filename: 'paper.pdf',
+              sizeBytes: 7n,
+              checksum: sha256(Buffer.from('pending')),
+              pageCount: 1,
+              sourceUrl: 'https://example.test/paper'
+            }
+          }
+        }
+      })
+      await publishFixture(
+        'referenced',
+        'content/project/referenced',
+        Buffer.from('kept'),
+        createdAt
+      )
+      await publishFixture(
+        'literature-only',
+        'content/literature/paper',
+        Buffer.from('paper'),
+        createdAt
+      )
+      await client!.fileOriginSession.create({
+        data: { projectId: 'project-1', sessionId: 'session-1' }
+      })
+      await publishFixture(
+        'artifact-only',
+        'content/project/artifact',
+        Buffer.from('artifact'),
+        createdAt
+      )
+      await client!.artifactLineage.create({
+        data: {
+          id: 'artifact',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          normalizedFilename: 'result.pdf',
+          filename: 'result.pdf',
+          versions: {
+            create: {
+              id: 'artifact-version',
+              versionNumber: 1,
+              filename: 'result.pdf',
+              contentBlobId: 'artifact-only',
+              contentStorageKey: 'content/project/artifact',
+              sizeBytes: 8n,
+              checksum: sha256(Buffer.from('artifact')),
+              state: 'finalized',
+              originKind: 'legacy'
+            }
+          }
+        }
+      })
+      await client!.uploadFile.create({
+        data: {
+          id: 'upload-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          filename: 'paper.pdf',
+          originalFilename: 'paper.pdf',
+          versions: {
+            create: {
+              id: 'upload-version-1',
+              versionNumber: 1,
+              state: 'ready',
+              contentStorageKey: 'content/project/referenced',
+              filename: 'paper.pdf',
+              originalFilename: 'paper.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: 4n,
+              checksum: sha256(Buffer.from('kept')),
+              contentBlobId: 'referenced',
+              createdAt
+            }
+          }
+        }
+      })
+      await client!.literatureItem.create({
+        data: {
+          itemType: 'journalArticle',
+          title: 'Referenced paper',
+          attachments: {
+            create: {
+              kind: 'fullText',
+              versions: {
+                create: {
+                  contentBlobId: 'literature-only',
+                  versionNumber: 1,
+                  filename: 'paper.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: 5n,
+                  checksum: sha256(Buffer.from('paper')),
+                  pageCount: 2
+                }
+              }
+            }
+          }
+        }
+      })
+
+      await expect(
+        repository.sweep({
+          createdBefore: new Date('2026-08-31T00:00:00.000Z'),
+          ...(targeted
+            ? {
+                contentIds: [
+                  'orphan',
+                  'inbox-only',
+                  'referenced',
+                  'literature-only',
+                  'artifact-only'
+                ]
+              }
+            : {})
+        })
+      ).resolves.toEqual({
+        removedIds: ['orphan'],
+        retainedIds: ['artifact-only', 'inbox-only', 'literature-only', 'referenced'],
+        failedIds: []
+      })
+      await expect(client!.contentBlob.findUnique({ where: { id: 'orphan' } })).resolves.toBeNull()
+      await expect(
+        readFile(resolveContentStorageKey(storageRoot!, 'content/project/orphan'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        readFile(resolveContentStorageKey(storageRoot!, 'content/project/referenced'), 'utf8')
+      ).resolves.toBe('kept')
+    }
+  )
+
+  it.each(['staging', 'available', 'missing'] as const)(
+    'recovers abandoned publication files with %s authority and preserves the published file',
+    async (state) => {
+      const repository = await createRepository()
+      const bytes = Buffer.from('interrupted publication')
+      const checksum = sha256(bytes)
+      const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
+      const destination = join(storageRoot!, storageKey)
+      const temporary = `${destination}.01234567-89ab-4def-8123-456789abcdef.tmp`
+      await mkdir(dirname(destination), { recursive: true })
+      await writeFile(destination, bytes)
+      await writeFile(temporary, bytes.subarray(0, 4))
+      await writeFile(`${destination}.unknown.tmp`, bytes)
+      if (state !== 'missing')
+        await client!.contentBlob.create({
+          data: {
+            id: `sha256:${checksum}:${bytes.length}`,
+            checksum,
+            storageKey,
+            sizeBytes: BigInt(bytes.length),
+            state
+          }
+        })
+      // A targeted deletion owns no unrelated temporary files, even if their row is absent.
+      await repository.sweep({ contentIds: ['unrelated'], createdBefore: new Date(0) })
+      expect(await readFile(temporary)).toEqual(bytes.subarray(0, 4))
+      // No row is old enough to be deleted; temporary recovery is independently discoverable.
+      await repository.sweep({ createdBefore: new Date(0) })
+      await expect(readFile(temporary)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readFile(destination)).toEqual(bytes)
+      expect(await readFile(`${destination}.unknown.tmp`)).toEqual(bytes)
+      await repository.sweep({ createdBefore: new Date(0) })
+    }
+  )
+
+  it('preserves a currently copying publication across repository instances', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'source.pdf')
+    await writeFile(sourcePath, 'active publication')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let copied!: () => void
+    const ready = new Promise<void>((resolve) => {
+      copied = resolve
+    })
+    let temporary = ''
+    vi.mocked(copyFile).mockImplementationOnce(async (source, destination) => {
+      await fs.copyFile(source, destination)
+      temporary = String(destination)
+      copied()
+      await held
+    })
+    const publication = repository.publish({ sourcePath })
+    try {
+      await ready
+      const sweeper = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      await sweeper.sweep({ createdBefore: new Date(0) })
+      expect(await readFile(temporary, 'utf8')).toBe('active publication')
+    } finally {
+      release()
+    }
+    const content = await publication
+    expect(await repository.verify(content.id)).toMatchObject({ state: 'available' })
+  })
+
+  it('retains interrupted publication authority when unlink fails and recovers on retry', async () => {
+    const repository = await createRepository()
+    const bytes = Buffer.from('retry publication')
+    const checksum = sha256(bytes)
+    const id = `sha256:${checksum}:${bytes.length}`
+    const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
+    const temporary = join(storageRoot!, `${storageKey}.01234567-89ab-4def-8123-456789abcdef.tmp`)
+    await mkdir(dirname(temporary), { recursive: true })
+    await writeFile(temporary, bytes)
+    await client!.contentBlob.create({
+      data: {
+        id,
+        storageKey,
+        checksum,
+        sizeBytes: BigInt(bytes.length),
+        state: 'staging',
+        createdAt: new Date(1)
       }
     })
-
-    await expect(
-      repository.sweep({ createdBefore: new Date('2026-08-31T00:00:00.000Z') })
-    ).resolves.toEqual({
-      removedIds: ['orphan'],
-      retainedIds: ['inbox-only', 'literature-only', 'referenced'],
-      failedIds: []
+    vi.mocked(removeAnchoredFile).mockImplementationOnce(() => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' })
     })
-    await expect(client!.contentBlob.findUnique({ where: { id: 'orphan' } })).resolves.toBeNull()
-    await expect(
-      readFile(resolveContentStorageKey(storageRoot!, 'content/project/orphan'))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      readFile(resolveContentStorageKey(storageRoot!, 'content/project/referenced'), 'utf8')
-    ).resolves.toBe('kept')
+    await expect(repository.sweep({ createdBefore: new Date() })).rejects.toMatchObject({
+      code: 'EACCES'
+    })
+    expect(await client!.contentBlob.findUnique({ where: { id } })).not.toBeNull()
+    expect(await readFile(temporary)).toEqual(bytes)
+    expect((await repository.sweep({ createdBefore: new Date() })).removedIds).toEqual([id])
+    await expect(readFile(temporary)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not traverse a symlinked publication prefix', async () => {
+    const repository = await createRepository()
+    const outside = join(storageRoot!, 'unowned')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    await mkdir(outside)
+    await writeFile(join(outside, filename), 'keep')
+    const blobs = join(storageRoot!, 'content', 'blobs')
+    await mkdir(blobs, { recursive: true })
+    await symlink(outside, join(blobs, 'aa'), process.platform === 'win32' ? 'junction' : 'dir')
+    await repository.sweep({ createdBefore: new Date() })
+    expect(await readFile(join(outside, filename), 'utf8')).toBe('keep')
+  })
+
+  it
+    .skipIf(process.platform === 'win32')
+    .each(['before receipt', 'before move', 'after move', 'after unlink'])(
+    'recovers an interrupted publication quarantine %s',
+    async (boundary) => {
+      const repository = await createRepository()
+      const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+      const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+      const temporary = join(directory, filename)
+      await mkdir(directory, { recursive: true })
+      await writeFile(temporary, 'interrupted publication')
+      const parent = await lstat(directory, { bigint: true })
+      const file = await lstat(temporary, { bigint: true })
+      const quarantine = join(
+        directory,
+        '.publication-recovery-01234567-89ab-4def-8123-456789abcdef'
+      )
+      await mkdir(quarantine, { mode: 0o700 })
+      if (boundary !== 'before receipt')
+        await writeFile(
+          join(quarantine, 'receipt'),
+          [
+            'publication-removal-v1',
+            filename,
+            parent.dev,
+            parent.ino,
+            file.dev,
+            file.ino,
+            file.size,
+            file.mtimeNs,
+            ''
+          ].join('\n'),
+          { mode: 0o600 }
+        )
+      if (boundary === 'after move' || boundary === 'after unlink')
+        await rename(temporary, join(quarantine, 'payload'))
+      if (boundary === 'after unlink') await rm(join(quarantine, 'payload'))
+      await repository.sweep({ createdBefore: new Date(0) })
+      await expect(lstat(quarantine)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(temporary)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readdir(directory)).toEqual([])
+    }
+  )
+
+  it
+    .skipIf(process.platform === 'win32')
+    .each(['reused source', 'captured replacement', 'modified payload'])(
+    'retains conflicting quarantine bytes across repeated sweeps: %s',
+    async (conflict) => {
+      const repository = await createRepository()
+      const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+      const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+      const temporary = join(directory, filename)
+      await mkdir(directory, { recursive: true })
+      await writeFile(temporary, 'original')
+      const parent = await lstat(directory, { bigint: true })
+      const file = await lstat(temporary, { bigint: true })
+      const quarantine = join(
+        directory,
+        '.publication-recovery-01234567-89ab-4def-8123-456789abcdef'
+      )
+      await mkdir(quarantine, { mode: 0o700 })
+      await writeFile(
+        join(quarantine, 'receipt'),
+        [
+          'publication-removal-v1',
+          filename,
+          parent.dev,
+          parent.ino,
+          file.dev,
+          file.ino,
+          file.size,
+          file.mtimeNs,
+          ''
+        ].join('\n'),
+        { mode: 0o600 }
+      )
+      await rename(temporary, join(quarantine, 'payload'))
+      if (conflict === 'reused source') {
+        await writeFile(temporary, 'replacement user bytes')
+      } else {
+        if (conflict === 'captured replacement')
+          await rename(join(quarantine, 'payload'), `${temporary}-held`)
+        await writeFile(join(quarantine, 'payload'), 'replacement user bytes')
+      }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await repository
+          .sweep({ createdBefore: new Date(0) })
+          .catch((error) => error)
+        expect(await readFile(temporary, 'utf8')).toBe('replacement user bytes')
+        if (conflict === 'reused source')
+          expect(await readFile(join(quarantine, 'payload'), 'utf8')).toBe('original')
+        else
+          await expect(lstat(join(quarantine, 'payload'))).rejects.toMatchObject({ code: 'ENOENT' })
+        if (conflict === 'captured replacement')
+          expect(await readFile(`${temporary}-held`, 'utf8')).toBe('original')
+        expect(result).toBeInstanceOf(Error)
+      }
+    }
+  )
+
+  it('rejects a receipt that names published content instead of a publication temporary', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const filename = 'a'.repeat(64)
+    const quarantine = join(directory, '.publication-recovery-01234567-89ab-4def-8123-456789abcdef')
+    await mkdir(quarantine, { recursive: true, mode: 0o700 })
+    await writeFile(join(directory, filename), 'published bytes')
+    const parent = await lstat(directory, { bigint: true })
+    const file = await lstat(join(directory, filename), { bigint: true })
+    await writeFile(
+      join(quarantine, 'receipt'),
+      [
+        'publication-removal-v1',
+        filename,
+        parent.dev,
+        parent.ino,
+        file.dev,
+        file.ino,
+        file.size,
+        file.mtimeNs,
+        ''
+      ].join('\n'),
+      { mode: 0o600 }
+    )
+    const result = await repository.sweep({ createdBefore: new Date(0) }).catch((error) => error)
+    expect(await readFile(join(directory, filename), 'utf8')).toBe('published bytes')
+    expect(result).toBeInstanceOf(Error)
+  })
+
+  it('retains files when a quarantine receipt is malformed or belongs to another platform', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    const quarantine = join(directory, '.publication-recovery-01234567-89ab-4def-8123-456789abcdef')
+    await mkdir(quarantine, { recursive: true, mode: 0o700 })
+    await writeFile(join(quarantine, 'receipt'), 'incomplete receipt')
+    await writeFile(join(directory, filename), 'keep')
+    const result = await repository.sweep({ createdBefore: new Date(0) }).catch((error) => error)
+    expect(await readFile(join(directory, filename), 'utf8')).toBe('keep')
+    expect(await readFile(join(quarantine, 'receipt'), 'utf8')).toBe('incomplete receipt')
+    expect(result).toBeInstanceOf(Error)
+  })
+
+  it('refuses to follow a linked publication quarantine', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const outside = join(storageRoot!, 'outside')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    await mkdir(directory, { recursive: true })
+    await mkdir(outside, { mode: 0o700 })
+    await writeFile(join(outside, 'payload'), 'keep outside')
+    await writeFile(join(directory, filename), 'keep source')
+    await symlink(
+      outside,
+      join(directory, '.publication-recovery-01234567-89ab-4def-8123-456789abcdef'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const result = await repository.sweep({ createdBefore: new Date(0) }).catch((error) => error)
+    expect(await readFile(join(outside, 'payload'), 'utf8')).toBe('keep outside')
+    expect(await readFile(join(directory, filename), 'utf8')).toBe('keep source')
+    expect(result).toBeInstanceOf(Error)
+  })
+
+  it('preserves a replacement file installed after the final publication check', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    const temporary = join(directory, filename)
+    await mkdir(directory, { recursive: true })
+    await writeFile(temporary, 'interrupted publication')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let checks = 0
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== temporary || ++checks !== 2) return fs.lstat(...args)
+      return (async () => {
+        const current = await fs.lstat(...args)
+        await rename(temporary, `${temporary}-held`)
+        await writeFile(temporary, 'replacement user bytes')
+        return current
+      })() as ReturnType<typeof lstat>
+    })
+    const result = await repository.sweep({ createdBefore: new Date(0) }).catch((error) => error)
+    expect(await readFile(temporary, 'utf8')).toBe('replacement user bytes')
+    expect(result).toBeInstanceOf(Error)
+  })
+
+  it('preserves outside bytes when a publication parent is swapped after the final path check', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const outside = join(storageRoot!, 'outside')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    const temporary = join(directory, filename)
+    await mkdir(directory, { recursive: true })
+    await mkdir(outside)
+    await writeFile(temporary, 'owned')
+    await writeFile(join(outside, filename), 'outside user bytes')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let checks = 0
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== temporary || ++checks !== 2) return fs.lstat(...args)
+      return (async () => {
+        const current = await fs.lstat(...args)
+        await rename(directory, `${directory}-held`)
+        await symlink(outside, directory, process.platform === 'win32' ? 'junction' : 'dir')
+        return current
+      })() as ReturnType<typeof lstat>
+    })
+    const result = await repository.sweep({ createdBefore: new Date(0) }).catch((error) => error)
+    expect(await readFile(join(outside, filename), 'utf8')).toBe('outside user bytes')
+    expect(result).toBeInstanceOf(Error)
+    expect(await readFile(join(`${directory}-held`, filename), 'utf8')).toBe('owned')
+  })
+
+  it('refuses a replaced publication directory before unlinking a same-named file', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    const temporary = join(directory, filename)
+    await mkdir(directory, { recursive: true })
+    await writeFile(temporary, 'old')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let replaced = false
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== temporary || replaced) return fs.lstat(...args)
+      replaced = true
+      return (async () => {
+        const original = await fs.lstat(...args)
+        await rename(directory, `${directory}-retained`)
+        await mkdir(directory)
+        await writeFile(temporary, 'new user data')
+        return original
+      })() as ReturnType<typeof lstat>
+    })
+    await expect(repository.sweep({ createdBefore: new Date() })).rejects.toThrow(
+      'directory changed'
+    )
+    expect(await readFile(temporary, 'utf8')).toBe('new user data')
+    expect(await readdir(`${directory}-retained`)).toEqual([filename])
   })
 
   it('rejects traversal and platform-specific absolute storage keys', () => {

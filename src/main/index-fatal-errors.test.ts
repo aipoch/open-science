@@ -1,3 +1,22 @@
+vi.mock('./credential-identity/bootstrap', () => ({
+  selectStartupCredentialIdentity: () => ({
+    backend: 'mac-keychain',
+    appName: 'Open-Science (DEV)',
+    exists: true
+  }),
+  prepareCredentialValidation: () => () => {}
+}))
+vi.mock('./storage/electron-profile', () => ({
+  resolveBootstrapConfigRoot: () => '/isolated-test',
+  resolveElectronProfile: () => '/isolated-test/profile'
+}))
+vi.mock('./storage/initialize-location', () => ({
+  prepareApplicationLocations: async () => ({
+    settingsStore: {},
+    repository: { getSettings: async () => ({}) }
+  }),
+  initializeDataLocation: vi.fn()
+}))
 import { spawn } from 'node:child_process'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -11,7 +30,11 @@ const mocks = vi.hoisted(() => {
   }
   const app = {
     isPackaged: false,
+    whenReady: async () => {},
     setName: vi.fn(),
+    setPath: vi.fn(),
+    setAppLogsPath: vi.fn(),
+    requestSingleInstanceLock: vi.fn(() => true),
     getPath: vi.fn(() => 'test-logs'),
     getVersion: vi.fn(() => '0.0.0-test'),
     on: vi.fn(),
@@ -41,10 +64,6 @@ vi.mock('node:module', async (importOriginal) => ({
     nativeTheme: {},
     protocol: { registerSchemesAsPrivileged: vi.fn() }
   })
-}))
-
-vi.mock('./single-instance', () => ({
-  acquireSingleInstanceLock: vi.fn(() => true)
 }))
 
 vi.mock('./app-startup', () => ({
@@ -81,7 +100,8 @@ vi.mock('./diagnostics/startup-storage-probe', () => ({
   }))
 }))
 
-vi.mock('./logger', () => ({
+vi.mock('./logger', async (importOriginal) => ({
+  errorLogFields: (await importOriginal<typeof import('./logger')>()).errorLogFields,
   createLogger: vi.fn(() => mocks.log),
   diagnosticErrorFields: vi.fn((error: unknown) => ({ error })),
   flushLogs: vi.fn(async () => undefined),

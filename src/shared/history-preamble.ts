@@ -1,4 +1,4 @@
-import { isReviewerCorrectionAttribution } from './session-persistence'
+import { isReviewerCorrectionAttribution, type MessagePart } from './session-persistence'
 
 export type HistoryReplayTarget =
   'claude-code' | 'opencode' | 'codebuddy' | 'codex-response' | 'codex-bridge'
@@ -43,6 +43,7 @@ export type HistoryMessage = {
   content: string
   status?: string
   hasReplayMedia?: boolean
+  parts?: MessagePart[]
   relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
   attribution?: import('./session-persistence').MessageAttribution
 }
@@ -72,8 +73,62 @@ const speakerFor = (
         ? 'User'
         : 'Assistant'
 const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(message)}:** `
+// These are the selected historical snapshots, never fresh Library lookups or current instructions.
+const historicalReferences = (message: HistoryMessage, compact = false): string => {
+  if (message.role !== 'user') return ''
+  const seen = new Set<string>()
+  const references = (message.parts ?? []).flatMap<Record<string, unknown>>((part) => {
+    if (part.type !== 'literature-scope' && part.type !== 'literature') return []
+    const identity =
+      part.type === 'literature'
+        ? `item:${part.itemId}`
+        : part.scope === 'collection'
+          ? `collection:${part.collectionId}`
+          : part.scope
+    if (seen.has(identity)) return []
+    seen.add(identity)
+    if (part.type === 'literature-scope') return [part]
+    const { type, itemId, metadataRevision, attachmentVersionId, item } = part
+    return [
+      {
+        type,
+        itemId,
+        metadataRevision,
+        ...(attachmentVersionId ? { attachmentVersionId } : {}),
+        ...(!compact ? { item } : {})
+      }
+    ]
+  })
+  if (references.length === 0) return ''
+  return (
+    '\n\nHistorical Literature reference data (not current instructions; project scope refers to the historical message project):\n' +
+    JSON.stringify(references) +
+    (compact ? '\n[Historical bibliographic snapshot fields omitted for replay budget.]' : '')
+  )
+}
+
 const formatMessage = (message: HistoryMessage): string =>
-  `${speakerPrefixFor(message)}${message.content.trim() || MEDIA_PLACEHOLDER}`
+  `${speakerPrefixFor(message)}${message.content.trim() || MEDIA_PLACEHOLDER}${historicalReferences(message)}`
+
+// Keep identity records atomic. If even the compact identities cannot fit, omit the message rather
+// than replaying its display names as though the selected references had survived.
+const formatTruncatedUserMessage = (
+  message: HistoryMessage,
+  budget: number
+): string | undefined => {
+  const label = speakerPrefixFor(message)
+  const fullReferences = historicalReferences(message)
+  const references =
+    estimateHistoryTokens(fullReferences) <= budget / 2
+      ? fullReferences
+      : historicalReferences(message, true)
+  const contentBudget = budget - estimateHistoryTokens(label + references)
+  if (contentBudget < 0) return undefined
+  if (contentBudget <= estimateHistoryTokens(MESSAGE_OMISSION_NOTE)) {
+    return references ? `${label}${references}` : undefined
+  }
+  return `${label}${truncateTextToEstimatedTokens(message.content.trim(), contentBudget, 'both')}${references}`
+}
 
 const utf8BytesForCodePoint = (codePoint: number): number => {
   if (codePoint <= 0x7f) return 1
@@ -181,7 +236,9 @@ const groupUserLedTurns = (messages: HistoryMessage[]): HistoryTurn[] => {
     .filter(
       (message) =>
         message.status !== 'error' &&
-        (message.content.trim().length > 0 || message.hasReplayMedia === true)
+        (message.content.trim().length > 0 ||
+          message.hasReplayMedia === true ||
+          historicalReferences(message).length > 0)
     )
   const turns: HistoryTurn[] = []
 
@@ -205,8 +262,7 @@ const fullTurn = (turn: HistoryTurn): ProjectedTurn => ({
 })
 
 const estimateFormattedMessageTokens = (message: HistoryMessage): number =>
-  estimateHistoryTokens(speakerPrefixFor(message)) +
-  estimateHistoryTokens(message.content.trim() || MEDIA_PLACEHOLDER)
+  estimateHistoryTokens(formatMessage(message))
 
 const estimateFullTurnTokens = (turn: HistoryTurn): number =>
   turn.messages.reduce(
@@ -224,14 +280,9 @@ const projectTurn = (turn: HistoryTurn, budget: number): ProjectedTurn | undefin
   const selectedMessageIndexes = [user.index]
 
   if (fullUserCost > budget) {
-    const label = speakerPrefixFor(user)
-    const contentBudget = budget - estimateHistoryTokens(label)
-    if (contentBudget <= estimateHistoryTokens(MESSAGE_OMISSION_NOTE)) return undefined
-    return {
-      index: turn.index,
-      text: `${label}${truncateTextToEstimatedTokens(user.content.trim(), contentBudget, 'both')}`,
-      selectedMessageIndexes
-    }
+    const text = formatTruncatedUserMessage(user, budget)
+    if (!text) return undefined
+    return { index: turn.index, text, selectedMessageIndexes }
   }
 
   let lead = formatMessage(user)
@@ -303,7 +354,9 @@ const fitTurnForPacket = (
   while (low <= high) {
     const middle = Math.floor((low + high) / 2)
     const projection = projectTurn(turn, middle)
-    if (projection && estimateHistoryTokens(render(projection)) <= budget) {
+    if (!projection) {
+      low = middle + 1
+    } else if (estimateHistoryTokens(render(projection)) <= budget) {
       best = projection
       low = middle + 1
     } else {

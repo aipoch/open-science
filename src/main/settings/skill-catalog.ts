@@ -1,5 +1,13 @@
+import type { SpecialistListItem } from '../../shared/specialist'
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import type { MarketplacePackage } from '../skills/marketplace-package'
+import type {
+  SkillMarketplaceEntry,
+  SkillMarketplaceInstallation,
+  SkillMarketplaceUpdateImpact,
+  SkillMarketplaceUpdatePreview
+} from '../../shared/skill-marketplace'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -55,6 +63,7 @@ import { readSkillFile } from '../skills/skill-files'
 import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
+  SAFE_SKILL_NAME,
   UserSkillRepository,
   isReservedSkillName
 } from '../skills/user-skill-repository'
@@ -68,6 +77,10 @@ import {
   type RegisteredSkillPackage,
   validateRegisteredSkillPackages
 } from '../skills/registered-helper-catalog'
+import {
+  isSkillEffectivelyEnabled,
+  trustedSkillActivationPolicy
+} from '../skills/activation-policy'
 
 type SkillCatalogEntry = {
   name: string
@@ -109,6 +122,8 @@ type SkillCatalogModuleOptions = {
   userSkills?: UserSkillRepository
   withUserSkillRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   githubFetch?: FetchLike
+  readMarketplaceSpecialists?: () => Promise<SpecialistListItem[]>
+  withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   authorizeRegisteredHelper?: (
     skillId: string,
     scope: RegisteredHelperScope | undefined
@@ -152,9 +167,10 @@ class SkillCatalogModule {
         const disabled = new Set(
           (await this.options.repository.getSettings()).disabledSkillIds ?? []
         )
+        const skill = (await this.catalog()).find((entry) => entry.id === skillId)
         // A trusted Specialist scope may force-load a globally disabled Skill. Main Agent requests
         // have no allowedSkillIds and continue to honor global enablement.
-        return !disabled.has(skillId)
+        return skill ? isSkillEffectivelyEnabled(skill, disabled) : false
       }
     })
   }
@@ -369,6 +385,9 @@ class SkillCatalogModule {
       ...this.toSkillView(skill, disabled),
       available,
       catalogEntryKey,
+      ...(skill.source === 'imported' || skill.source === 'personal'
+        ? { directoryName: skill.name }
+        : {}),
       ...(available ? {} : { availability: 'identity-conflict' as const })
     }))
   }
@@ -398,7 +417,7 @@ class SkillCatalogModule {
       frameworkName: skill.name,
       displayName: skill.displayName,
       source: skill.source,
-      mainEnabled: !disabled.has(skill.id),
+      mainEnabled: isSkillEffectivelyEnabled(skill, disabled),
       // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
       available: true,
       ...(skill.compatibility ? { compatibility: skill.compatibility } : {})
@@ -407,8 +426,11 @@ class SkillCatalogModule {
 
   async skillsNeedingForceLoad(ids: string[]): Promise<string[]> {
     const disabled = new Set((await this.options.repository.getSettings()).disabledSkillIds ?? [])
-    const managedIds = new Set((await this.managedCatalog()).map((skill) => skill.id))
-    return ids.filter((id) => managedIds.has(id) && disabled.has(id))
+    const managedById = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill]))
+    return ids.filter((id) => {
+      const skill = managedById.get(id)
+      return skill !== undefined && disabled.has(id) && !isSkillEffectivelyEnabled(skill, disabled)
+    })
   }
 
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
@@ -466,9 +488,18 @@ class SkillCatalogModule {
     return this.projectedSkillCatalog(join(runtimeRoot, '.claude', 'skills'), additionalEntries)
   }
 
+  async delegatedSkillCatalog(
+    skillsRoot: string,
+    forcedSkillIds: ReadonlySet<string>,
+    additionalEntries: AdditionalSkillCatalogEntries = []
+  ): Promise<SkillCatalogEntry[]> {
+    return this.projectedSkillCatalog(skillsRoot, additionalEntries, forcedSkillIds)
+  }
+
   private async projectedSkillCatalog(
     skillsRoot: string,
-    additionalEntries: AdditionalSkillCatalogEntries
+    additionalEntries: AdditionalSkillCatalogEntries,
+    delegatedSkillIds?: ReadonlySet<string>
   ): Promise<SkillCatalogEntry[]> {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
@@ -481,12 +512,14 @@ class SkillCatalogModule {
       typeof additionalEntries === 'function'
         ? await additionalEntries(settings)
         : additionalEntries
-    const disabled = new Set(settings.disabledSkillIds ?? [])
+    const disabled = new Set(
+      (settings.disabledSkillIds ?? []).filter((id) => !delegatedSkillIds?.has(id))
+    )
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
-        .filter((skill) => skill.exposure === 'internal' || !disabled.has(skill.id))
+        .filter((skill) => isSkillEffectivelyEnabled(skill, disabled))
         .map((skill) => ({
-          directory: `${OS_SKILL_PREFIX}${skill.id}`,
+          directory: delegatedSkillIds ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`,
           name: skill.name,
           description: skill.description
         })),
@@ -569,8 +602,19 @@ class SkillCatalogModule {
 
   async setSkillsEnabled(request: SetSkillsEnabledRequest): Promise<SkillView[]> {
     const ids = [...new Set(request.ids)]
+    const catalog = await this.managedCatalog()
+    if (!request.enabled) {
+      const required = catalog.find(
+        (skill) =>
+          ids.includes(skill.id) &&
+          trustedSkillActivationPolicy(skill.source, skill.activationPolicy) === 'always-on'
+      )
+      if (required) {
+        throw new Error(`Application-required Skill cannot be disabled: ${required.id}`)
+      }
+    }
     const selectableIds = new Set(
-      (await this.managedCatalog())
+      catalog
         .filter((skill) => skill.source === 'imported' || skill.source === 'personal')
         .map((skill) => skill.id)
     )
@@ -613,12 +657,26 @@ class SkillCatalogModule {
 
   async deleteSkill(
     request: DeleteSkillRequest,
-    guard?: (skillId: string) => Promise<void>
+    guard?: (request: DeleteSkillRequest) => Promise<void>
   ): Promise<SkillView[]> {
-    await this.userSkills.delete(request.id, guard)
-    await this.options.repository.setSkillEnabled(request.id, true)
+    if (
+      !request.source &&
+      (await this.skillRegistry.list()).some((skill) => skill.id === request.id)
+    ) {
+      throw new Error('Built-in Skills cannot be deleted.')
+    }
+    await this.userSkills.delete(
+      request.id,
+      request.source,
+      request.directoryName,
+      guard ? () => guard(request) : undefined
+    )
     await this.refreshRegisteredHelpers()
-    return this.listSkills()
+    const skills = await this.listSkills()
+    if (!skills.some((skill) => skill.id === request.id)) {
+      await this.options.repository.setSkillEnabled(request.id, true)
+    }
+    return skills
   }
 
   async importSkill(request: ImportSkillRequest, signal?: AbortSignal): Promise<ImportSkillResult> {
@@ -630,6 +688,119 @@ class SkillCatalogModule {
     )
     await this.refreshRegisteredHelpers()
     return { ...outcome, skills: await this.listSkills() }
+  }
+
+  async marketplaceInstallation(
+    id: string,
+    version: string,
+    reservedNames?: string[],
+    localSkills?: readonly BundledSkill[]
+  ): Promise<SkillMarketplaceInstallation> {
+    const installation = await this.userSkills.marketplaceInstallation(
+      id,
+      version,
+      reservedNames ?? (await this.bundledSkillNames()),
+      localSkills
+    )
+    return installation.kind === 'installed'
+      ? { ...installation, localSkillId: installation.localSkillId ?? `imported-${id}` }
+      : installation
+  }
+
+  async marketplaceInstallations(
+    entries: SkillMarketplaceEntry[]
+  ): Promise<Record<string, SkillMarketplaceInstallation>> {
+    const localSkills = await this.userSkills.list()
+    const localNames = new Set(localSkills.map((skill) => skill.name))
+    const reservedNames = await this.bundledSkillNames()
+    const takenNames = new Set(
+      [...reservedNames, ...localSkills.map((skill) => skill.name)].map((name) =>
+        name.toLowerCase()
+      )
+    )
+    const installations: Record<string, SkillMarketplaceInstallation> = {}
+    // Only local candidates need content hashing; catalog size must not multiply full disk scans.
+    for (const entry of entries) {
+      if (!SAFE_SKILL_NAME.test(entry.id) || isReservedSkillName(entry.id)) {
+        installations[entry.id] = { kind: 'conflict', reason: 'invalid-name' }
+      } else if (localNames.has(entry.id)) {
+        installations[entry.id] = await this.marketplaceInstallation(
+          entry.id,
+          entry.version,
+          reservedNames,
+          localSkills
+        )
+      } else if (takenNames.has(entry.id)) {
+        installations[entry.id] = { kind: 'conflict', reason: 'name-taken' }
+      }
+    }
+    return installations
+  }
+
+  async installMarketplace(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null,
+    updateToken?: string
+  ): Promise<Pick<ImportSkillResult, 'id' | 'status'> & { refreshFailed?: boolean }> {
+    const outcome = await this.installMarketplacePackage(pkg, expectedVersion, updateToken)
+    try {
+      await this.refreshMarketplace()
+      return outcome
+    } catch {
+      // The transaction already committed; a reload failure must not invite another first install.
+      return { ...outcome, refreshFailed: true }
+    }
+  }
+
+  installMarketplacePackage(
+    pkg: MarketplacePackage,
+    expectedVersion: string | null,
+    updateToken?: string
+  ): ReturnType<UserSkillRepository['installMarketplace']> {
+    return this.bundledSkillNames().then((reservedNames) =>
+      this.userSkills.installMarketplace(
+        pkg,
+        expectedVersion,
+        reservedNames,
+        updateToken,
+        (id) => this.marketplaceImpact(id),
+        this.options.withMarketplaceImpactLock
+      )
+    )
+  }
+
+  private async marketplaceImpact(id: string): Promise<SkillMarketplaceUpdateImpact> {
+    if (!this.options.readMarketplaceSpecialists)
+      throw new Error('Specialist impact inspection is unavailable.')
+    const [items, settings] = await Promise.all([
+      this.options.readMarketplaceSpecialists(),
+      this.options.repository.getSettings()
+    ])
+    return {
+      mainEnabled: !(settings.disabledSkillIds ?? []).includes(id),
+      specialists: items.flatMap((item) =>
+        item.kind === 'reviewer'
+          ? []
+          : item.ownedSkillIds?.includes(id) ||
+              (item.capabilityMode === 'full'
+                ? !item.fullAccess.excludedSkillIds.includes(id)
+                : item.selectedCapabilities.skillIds.includes(id))
+            ? [{ id: item.id, name: item.displayName?.trim() || item.name }]
+            : []
+      )
+    }
+  }
+
+  previewMarketplaceUpdate(pkg: MarketplacePackage): Promise<SkillMarketplaceUpdatePreview> {
+    return this.bundledSkillNames().then((reservedNames) =>
+      this.userSkills.previewMarketplaceUpdate(pkg, reservedNames, (id) =>
+        this.marketplaceImpact(id)
+      )
+    )
+  }
+
+  async refreshMarketplace(): Promise<void> {
+    await this.refreshRegisteredHelpers()
   }
 
   async importSkillZip(request: ImportSkillZipRequest): Promise<ImportSkillResult> {
@@ -906,9 +1077,15 @@ class SkillCatalogModule {
           ? '~/.claude/skills'
           : '~/.codex/skills'
     const sourceLabel = `${sourceRoot}/${canonical.slug}`
+    const discovered = await this.discoverAgentHomeSkills(availableSources)
+    const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
+    const aliases = discovered.find(
+      (item) =>
+        (process.platform === 'win32' ? item.realPath.toLowerCase() : item.realPath) === pathKey
+    )?.aliases ?? [request]
     try {
       return {
-        ...(await this.userSkills.previewAgentHomeSkill(sourcePath)),
+        ...(await this.userSkills.previewAgentHomeSkill(sourcePath, canonical, aliases)),
         sourceLabel
       }
     } catch (error) {
@@ -1092,9 +1269,7 @@ class SkillCatalogModule {
     const disabled = new Set(disabledIds.filter((id) => !forcedIds.has(id)))
     await new ClaudeCodeSkillMaterializer().sync(
       configRoot,
-      (await this.catalog()).filter(
-        (skill) => skill.exposure === 'internal' || !disabled.has(skill.id)
-      ),
+      (await this.catalog()).filter((skill) => isSkillEffectivelyEnabled(skill, disabled)),
       options
     )
   }
@@ -1150,7 +1325,8 @@ class SkillCatalogModule {
       description: skill.description,
       source: skill.source,
       updatedAt: skill.updatedAt,
-      enabled: !disabled.has(skill.id),
+      enabled: isSkillEffectivelyEnabled(skill, disabled),
+      activationPolicy: trustedSkillActivationPolicy(skill.source, skill.activationPolicy),
       available: true,
       author: skill.author,
       license: skill.license,

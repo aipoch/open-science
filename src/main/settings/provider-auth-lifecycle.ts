@@ -10,6 +10,7 @@ import {
   isCodexSubscriptionProviderId,
   resolveCodexSubscriptionType
 } from '../../shared/settings'
+import { customProviderRequiresKey } from '../../shared/provider-base-url'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   clearAppOwnedCodexAuthentication,
@@ -17,6 +18,7 @@ import {
   CodexAuthController,
   ensureCodexAuthHome,
   importCodexAuthentication,
+  inspectAppOwnedCodexAuthentication,
   openCodexAuthSession,
   resolveEffectiveCodexSubscriptionTransport,
   type CodexAuthControllerPort,
@@ -32,7 +34,7 @@ import {
   type ClaudeSharedAuthControllerPort,
   type ClaudeSharedAuthStatus
 } from './claude-shared-auth'
-import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
+import { encryptKey, isCredentialStorageAvailable, maskKey, tryDecryptKey } from './crypto'
 import { getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
 import {
   buildProviderValidationPatch,
@@ -45,7 +47,7 @@ import type { StoredProvider, StoredSettings } from './types'
 const CLAUDE_SHARED_AUTH_STATUS_TTL_MS = 5_000
 const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
 const CLAUDE_SHARED_DISCONNECTED_MESSAGE =
-  'Claude is disconnected from Open Science. Sign in again to use your shared Claude profile.'
+  'Claude is disconnected from Open-Science. Sign in again to use your shared Claude profile.'
 
 type ProviderAuthLifecycleOwnerOptions = {
   repository: SettingsRepository
@@ -109,7 +111,7 @@ class ProviderAuthLifecycleOwner {
           loadToken: () => this.loadClaudeIsolatedToken(),
           saveToken: (token) => this.saveClaudeIsolatedToken(token),
           clearToken: () => this.clearClaudeIsolatedToken(),
-          isEncryptionAvailable: () => isEncryptionAvailable()
+          isEncryptionAvailable: () => isCredentialStorageAvailable()
         },
         claudePath: async () => {
           const settings = await this.repository.getSettings()
@@ -267,7 +269,7 @@ class ProviderAuthLifecycleOwner {
       return {
         ok: false,
         category: 'unknown',
-        message: 'No isolated Open Science Codex login is configured.'
+        message: 'No isolated Open-Science Codex login is configured.'
       }
     }
 
@@ -283,7 +285,7 @@ class ProviderAuthLifecycleOwner {
       return {
         ok: false,
         category: 'unknown',
-        message: 'The Open Science Codex login could not be removed.'
+        message: 'The Open-Science Codex login could not be removed.'
       }
     }
 
@@ -524,12 +526,21 @@ class ProviderAuthLifecycleOwner {
   }
 
   async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
-    if (isCodexSubscriptionProvider(provider.type)) return true
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return (
+        (await inspectAppOwnedCodexAuthentication(this.options.storageRoot)).state === 'present'
+      )
+    }
     if (provider.type === 'claude-shared') {
       if (provider.disconnectedAt !== undefined) return false
       return this.getClaudeSharedAuthStatus()
     }
 
+    // A loopback custom gateway (local model server) serves without a key, so an absent key stays
+    // usable and preflight does not block the spawn on a credential it will never have.
+    if (provider.type === 'custom' && !provider.keyRef) {
+      return !customProviderRequiresKey(provider.baseUrl)
+    }
     return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
   }
 
@@ -624,7 +635,7 @@ class ProviderAuthLifecycleOwner {
       message:
         status.message ??
         (status.mode === 'shared'
-          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open-Science login.'
           : isolatedFallback)
     }
   }

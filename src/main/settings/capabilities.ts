@@ -30,6 +30,8 @@ export type SettingsPreferencesSnapshot = {
 export type SetDataRootOptions = Readonly<{
   completeOnboarding?: boolean
   previousDataRoot?: string
+  // Main-only guard, rerun at the atomic settings publication boundary.
+  validateTarget?: () => void
 }>
 
 export interface SettingsPreferences {
@@ -72,7 +74,8 @@ export interface NotebookRuntimeSettings {
   setInstallAuthorized(
     language: NotebookLanguage,
     envId: string,
-    authorized: boolean
+    authorized: boolean,
+    library?: string
   ): Promise<RuntimeEnablement>
   getAgentEnvironmentCreationEnabled(): Promise<boolean>
   setAgentEnvironmentCreationEnabled(enabled: boolean): Promise<boolean>

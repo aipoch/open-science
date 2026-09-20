@@ -23,7 +23,7 @@ import {
 import { NotebookSessionRegistry } from './session-registry'
 import type { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, resolveEnvName } from './runtime-paths'
-import type { KernelProcessKind } from './kernel-executor'
+import type { KernelProcessKind, NotebookKernelTerminationDiagnostic } from './kernel-executor'
 import {
   createFrameNotebookLane,
   createRootNotebookLane,
@@ -34,13 +34,19 @@ import {
 import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
 import { createLogger, diagnosticErrorFields } from '../logger'
+import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 
 type RuntimeSession = NotebookSessionAggregate
 const log = createLogger('notebook:file-evidence-lifecycle')
 
 type NotebookExecutorLifecycleCallbacks = {
   onIdleShutdown: (kind?: KernelProcessKind, env?: string) => Promise<void>
-  onTerminated: (kind: KernelProcessKind, env?: string) => Promise<void>
+  onTerminated: (
+    kind: KernelProcessKind,
+    env?: string,
+    diagnostic?: NotebookKernelTerminationDiagnostic
+  ) => Promise<void>
 }
 
 type NotebookSessionLifecycleCallbacks = {
@@ -57,12 +63,15 @@ type NotebookKernelStatusPersistenceFailure = {
 }
 
 type NotebookSessionLifecycleOptions = {
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   storageRoot: string
   defaultProjectId: string
   repository: NotebookRunRepository
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
   waitForRevocationDrains: () => Promise<void>
+  ensureProcessRecovery: () => Promise<void>
+  processLifecycle: KernelProcessLifecycleOwner
   executorFactory?: (
     sessionId: string,
     lifecycle: NotebookExecutorLifecycleCallbacks
@@ -72,6 +81,11 @@ type NotebookSessionLifecycleOptions = {
   callbacks?: NotebookSessionLifecycleCallbacks
   toSessionReference: (session: RuntimeSession) => NotebookSessionReference
   onKernelStatusPersistenceFailure?: (failure: NotebookKernelStatusPersistenceFailure) => void
+  finalizeKernelEpochs?: (request: {
+    projectId: string
+    sessionId: string
+    kernelEpochIds: readonly string[]
+  }) => Promise<void>
 }
 
 type InternalNotebookSessionRequest = NotebookSessionRequest & {
@@ -101,9 +115,16 @@ const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstance
 class NotebookSessionLifecycleOwner {
   private readonly announcedAgentLaneKeys = new Set<string>()
   private readonly deletingProjectIds = new Set<string>()
+  private readonly deletingSessionIds = new Set<string>()
   private readonly pendingEnsuresByProject = new Map<string, Set<Promise<RuntimeSession>>>()
+  private readonly pendingEnsuresBySession = new Map<string, Set<Promise<RuntimeSession>>>()
   private readonly pendingOperationsByProject = new Map<string, Set<Promise<unknown>>>()
+  private readonly pendingOperationsBySession = new Map<string, Set<Promise<unknown>>>()
   private readonly operationAbortControllersByProject = new Map<string, Set<AbortController>>()
+  private readonly operationAbortControllersBySession = new Map<string, Set<AbortController>>()
+  private terminal = false
+  private shutdownAllPromise: Promise<{ reaped: boolean }> | undefined
+  private disposalPromise: Promise<{ reaped: boolean }> | undefined
 
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
@@ -125,14 +146,18 @@ class NotebookSessionLifecycleOwner {
 
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    const lane = this.laneForRequest(request)
+    let releaseAdmission: (() => void) | undefined
     try {
-      this.assertProjectAvailable(projectId)
+      this.assertScopeAvailable(projectId, request.sessionId)
+      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
     } catch (error) {
       return Promise.reject(error)
     }
-    const lane = this.laneForRequest(request)
     const ensuring = this.options.sessions.getOrCreate(lane, async () => {
-      this.assertProjectAvailable(projectId)
+      await this.options.ensureProcessRecovery()
+      this.assertDeletionAvailable(projectId, request.sessionId)
+      await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
       let document = await this.options.repository.loadOrCreate({
         projectId: projectId,
         sessionId: request.sessionId,
@@ -187,12 +212,19 @@ class NotebookSessionLifecycleOwner {
         initialTerminatedKernelInstances: document.kernel.terminatedKernelInstances,
         executor: ownedExecutor.executor,
         executorGeneration: ownedExecutor.generation,
-        lane
+        lane,
+        onKernelEpochsRetired: async (epochs) => {
+          await this.options.finalizeKernelEpochs?.({
+            projectId,
+            sessionId: request.sessionId,
+            kernelEpochIds: epochs.map(({ id }) => id)
+          })
+        }
       })
 
       try {
         await this.options.runtimeBindings.reload(session, document.runtimeBindings)
-        this.assertProjectAvailable(projectId)
+        this.assertDeletionAvailable(projectId, request.sessionId)
         return session
       } catch (error) {
         await session.shutdownExecutor().catch(() => undefined)
@@ -208,11 +240,23 @@ class NotebookSessionLifecycleOwner {
       this.pendingEnsuresByProject.get(projectId) ?? new Set<Promise<RuntimeSession>>()
     pending.add(ensuring)
     this.pendingEnsuresByProject.set(projectId, pending)
+    const sessionPending =
+      this.pendingEnsuresBySession.get(request.sessionId) ?? new Set<Promise<RuntimeSession>>()
+    sessionPending.add(ensuring)
+    this.pendingEnsuresBySession.set(request.sessionId, sessionPending)
     void ensuring
       .finally(() => {
+        releaseAdmission?.()
         pending.delete(ensuring)
         if (pending.size === 0 && this.pendingEnsuresByProject.get(projectId) === pending) {
           this.pendingEnsuresByProject.delete(projectId)
+        }
+        sessionPending.delete(ensuring)
+        if (
+          sessionPending.size === 0 &&
+          this.pendingEnsuresBySession.get(request.sessionId) === sessionPending
+        ) {
+          this.pendingEnsuresBySession.delete(request.sessionId)
         }
       })
       .catch(() => undefined)
@@ -224,8 +268,10 @@ class NotebookSessionLifecycleOwner {
     operation: (deletionSignal: AbortSignal) => Promise<Result>
   ): Promise<Result> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    let releaseAdmission: (() => void) | undefined
     try {
-      this.assertProjectAvailable(projectId)
+      this.assertScopeAvailable(projectId, request.sessionId)
+      releaseAdmission = this.options.admitSessionWork?.(projectId, request.sessionId)
     } catch (error) {
       return Promise.reject(error)
     }
@@ -234,6 +280,10 @@ class NotebookSessionLifecycleOwner {
       this.operationAbortControllersByProject.get(projectId) ?? new Set<AbortController>()
     controllers.add(controller)
     this.operationAbortControllersByProject.set(projectId, controllers)
+    const sessionControllers =
+      this.operationAbortControllersBySession.get(request.sessionId) ?? new Set<AbortController>()
+    sessionControllers.add(controller)
+    this.operationAbortControllersBySession.set(request.sessionId, sessionControllers)
     let resolveRunning!: (value: Result | PromiseLike<Result>) => void
     let rejectRunning!: (reason?: unknown) => void
     const running = new Promise<Result>((resolve, reject) => {
@@ -243,6 +293,10 @@ class NotebookSessionLifecycleOwner {
     const pending = this.pendingOperationsByProject.get(projectId) ?? new Set<Promise<unknown>>()
     pending.add(running)
     this.pendingOperationsByProject.set(projectId, pending)
+    const sessionPending =
+      this.pendingOperationsBySession.get(request.sessionId) ?? new Set<Promise<unknown>>()
+    sessionPending.add(running)
+    this.pendingOperationsBySession.set(request.sessionId, sessionPending)
     // Register before invoking the operation so a synchronous teardown can observe the lease, while
     // preserving the existing guarantee that callers start work before the method returns.
     try {
@@ -252,6 +306,7 @@ class NotebookSessionLifecycleOwner {
     }
     void running
       .finally(() => {
+        releaseAdmission?.()
         controllers.delete(controller)
         if (
           controllers.size === 0 &&
@@ -259,9 +314,23 @@ class NotebookSessionLifecycleOwner {
         ) {
           this.operationAbortControllersByProject.delete(projectId)
         }
+        sessionControllers.delete(controller)
+        if (
+          sessionControllers.size === 0 &&
+          this.operationAbortControllersBySession.get(request.sessionId) === sessionControllers
+        ) {
+          this.operationAbortControllersBySession.delete(request.sessionId)
+        }
         pending.delete(running)
         if (pending.size === 0 && this.pendingOperationsByProject.get(projectId) === pending) {
           this.pendingOperationsByProject.delete(projectId)
+        }
+        sessionPending.delete(running)
+        if (
+          sessionPending.size === 0 &&
+          this.pendingOperationsBySession.get(request.sessionId) === sessionPending
+        ) {
+          this.pendingOperationsBySession.delete(request.sessionId)
         }
       })
       .catch(() => undefined)
@@ -321,6 +390,8 @@ class NotebookSessionLifecycleOwner {
       executor: new NotebookKernelExecutor({
         ...this.options.defaultExecutorOptions(),
         platform: this.options.platform,
+        processLifecycle: this.options.processLifecycle,
+        laneKey: notebookLaneKey(lane),
         onIdleShutdown: (kind, env) => {
           void lifecycle.onIdleShutdown(kind, env).catch((error: unknown) => {
             this.options.onKernelStatusPersistenceFailure?.({
@@ -332,7 +403,15 @@ class NotebookSessionLifecycleOwner {
             })
           })
         },
-        onTerminated: (kind, env) => {
+        onTerminated: (kind, env, diagnostic) => {
+          if (diagnostic) {
+            log.warn('Notebook kernel process terminated', {
+              lane,
+              kind,
+              env,
+              ...diagnostic
+            })
+          }
           void lifecycle.onTerminated(kind, env).catch((error: unknown) => {
             this.options.onKernelStatusPersistenceFailure?.({
               operation: 'terminated',
@@ -354,7 +433,26 @@ class NotebookSessionLifecycleOwner {
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    return this.shutdownLane(this.rootLane(sessionId))
+    this.deletingSessionIds.add(sessionId)
+    const reason = new Error('Session is being deleted.')
+    for (const controller of this.operationAbortControllersBySession.get(sessionId) ?? []) {
+      controller.abort(reason)
+    }
+    await Promise.allSettled([
+      ...(this.pendingEnsuresBySession.get(sessionId) ?? []),
+      ...(this.pendingOperationsBySession.get(sessionId) ?? [])
+    ])
+    const lanes = Array.from(this.options.sessions.values())
+      .filter((session) => session.sessionId === sessionId)
+      .map((session) => session.lane)
+    const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Notebook Session cleanup failed: ' + sessionId)
+    }
+    return { sessionId, status: 'shutdown' }
   }
 
   async shutdownProject(projectId: string): Promise<void> {
@@ -392,31 +490,68 @@ class NotebookSessionLifecycleOwner {
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
     const { sessionId } = notebookLaneScope(lane)
     const key = notebookLaneKey(lane)
-    await this.options.runtimeBindings.withSessionTeardown(key, async () => {
+    const result = await this.options.runtimeBindings.withSessionTeardown(key, async () => {
       await this.options.runtimeBindings.waitForWrites(key)
       // A non-forced runtime revoke releases its binding write after scheduling kernel termination.
       // Holding the lane teardown gate while waiting closes both sides of the race: an earlier revoke
       // must finish before removal, while a later revoke cannot enter until the lane is already gone.
       await this.options.waitForRevocationDrains()
-      await this.options.sessions.remove(lane)
+      return this.options.sessions.remove(lane)
     })
+    if (!result.reaped) {
+      throw new Error(
+        `Notebook lane ${key} persistent process tree was not reaped; destructive teardown remains fenced.`
+      )
+    }
     return { sessionId, status: 'shutdown' }
   }
 
-  private assertProjectAvailable(projectId: string): void {
+  private assertScopeAvailable(projectId: string, sessionId: string): void {
+    if (this.terminal) throw new Error('Notebook runtime is disposed.')
+    this.assertDeletionAvailable(projectId, sessionId)
+  }
+
+  private assertDeletionAvailable(projectId: string, sessionId: string): void {
     if (this.deletingProjectIds.has(projectId)) {
       throw new Error('Project is being deleted.')
+    }
+    if (this.deletingSessionIds.has(sessionId)) {
+      throw new Error('Session is being deleted.')
     }
   }
 
   shutdownAll(): Promise<{ reaped: boolean }> {
-    return this.options.runtimeBindings.withGlobalTeardown(() =>
-      this.options.sessions.shutdownAll()
-    )
+    if (this.shutdownAllPromise) return this.shutdownAllPromise
+    this.abortAllOperations(new Error('Notebook runtime is shutting down.'))
+    const shutdown = this.options.runtimeBindings
+      .withGlobalTeardown(() => this.options.sessions.shutdownAll())
+      .finally(() => {
+        if (this.shutdownAllPromise === shutdown) this.shutdownAllPromise = undefined
+      })
+    this.shutdownAllPromise = shutdown
+    return shutdown
   }
 
   dispose(): Promise<{ reaped: boolean }> {
-    return this.options.runtimeBindings.withGlobalTeardown(() => this.options.sessions.dispose())
+    if (this.disposalPromise) return this.disposalPromise
+    this.beginDisposal()
+    const disposal = this.options.runtimeBindings.withGlobalTeardown(() =>
+      this.options.sessions.dispose()
+    )
+    this.disposalPromise = disposal
+    return disposal
+  }
+
+  beginDisposal(): void {
+    if (this.terminal) return
+    this.terminal = true
+    this.abortAllOperations(new Error('Notebook runtime is disposed.'))
+  }
+
+  private abortAllOperations(reason: Error): void {
+    for (const controllers of this.operationAbortControllersByProject.values()) {
+      for (const controller of controllers) controller.abort(reason)
+    }
   }
 
   activeSessions(): { projectId: string; sessionId: string }[] {
@@ -526,7 +661,7 @@ class NotebookSessionLifecycleOwner {
     const processKey = processKeyFor(kind, env)
     // The executor has already ended this concrete process. Rotate volatile dependency identity
     // even when the durable status projection fails, so a respawn cannot inherit the old namespace.
-    session.retireKernelEpoch(processKey)
+    await session.retireKernelEpoch(processKey)
     await this.persistKernelStatus(session, 'terminated', processKey)
     this.notifyChanged(session)
   }
@@ -540,7 +675,7 @@ class NotebookSessionLifecycleOwner {
     if (!session) return
     const processKey = processKeyFor(kind, env)
     session.markKernelTerminated(processKey)
-    session.retireKernelEpoch(processKey)
+    await session.retireKernelEpoch(processKey)
     await this.persistKernelStatus(session, 'terminated', processKey)
     this.notifyChanged(session)
   }

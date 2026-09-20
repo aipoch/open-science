@@ -57,6 +57,7 @@ export const relocateManagedRuntimeEnablement = ({
     }
     if (!languageChanged) continue
     relocated[language] = {
+      ...current,
       enabled,
       installAuthorized: { ...current.installAuthorized }
     }

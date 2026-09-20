@@ -91,6 +91,8 @@ describe('Codex approved handoff', () => {
         sessionId: 'codex-session',
         modes: CODEX_MODES
       }))
+      .onRequest(acp.methods.agent.session.resume, () => ({ modes: CODEX_MODES }))
+      .onRequest(acp.methods.agent.session.close, () => ({}))
       .onRequest(acp.methods.agent.session.setMode, () => ({}))
       .onRequest(acp.methods.agent.session.setConfigOption, () => ({ configOptions: [] }))
       .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
@@ -208,8 +210,8 @@ describe('Codex approved handoff', () => {
               ),
             registerSessionAlias: (aliasSessionId, sessionId) =>
               notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-            releaseSessionCapabilities: (sessionId) =>
-              notebookRpcServer.releaseSessionCapabilities(sessionId),
+            releaseSessionCapabilities: (sessionId, capabilityTokens) =>
+              notebookRpcServer.releaseSessionCapabilitiesIfOwned(sessionId, capabilityTokens),
             registerSessionSpecialist: (sessionId, specialistId) =>
               notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
             setArtifactTurnBinding: (sessionId, binding) => {

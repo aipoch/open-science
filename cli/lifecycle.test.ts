@@ -20,6 +20,7 @@ import {
   runCli,
   reportCliError,
   statusCommand,
+  startCommand,
   stopCommand,
   terminateDaemon,
   urlCommand,
@@ -119,7 +120,7 @@ describe('C01 automatic service discovery', () => {
           return {
             ok: healthy,
             status: healthy ? 200 : 503,
-            json: async () => ({ data: { appName: 'Open Science' } }),
+            json: async () => ({ data: { appName: 'Open-Science' } }),
             arrayBuffer: async () => new ArrayBuffer(0)
           }
         })
@@ -146,7 +147,7 @@ describe('C01 automatic service discovery', () => {
       vi.spyOn(process, 'kill').mockImplementation(() => true)
       const log = vi.spyOn(console, 'log').mockImplementation(() => {})
       await runCli(['start', '--no-open', '--app-path', join(tmpdir(), 'missing-open-science-app')])
-      expect(log).toHaveBeenCalledWith('Open Science is already running (PID 4242).')
+      expect(log).toHaveBeenCalledWith('Open-Science is already running (PID 4242).')
     })
   })
 
@@ -396,15 +397,61 @@ describe('headless startup', () => {
     }
   })
 
+  it('rejects a credential store selection when a daemon is already running', async () => {
+    const deps = makeDeps()
+    await expect(startCommand({ credentialStore: 'file' }, deps)).rejects.toThrow('already running')
+    expect(deps.log).not.toHaveBeenCalled()
+  })
+
+  it.each(['darwin', 'win32'])('rejects file storage before startup on %s', (platform) => {
+    vi.stubGlobal('process', Object.create(process, { platform: { value: platform } }))
+    expect(() => parseCliArgs(['start', '--credential-store=file'])).toThrow(
+      'supported only on Linux'
+    )
+    expect(parseCliArgs(['start', '--credential-store=os']).options.credentialStore).toBe('os')
+  })
+
+  it('validates and forwards explicit credential storage without changing the default', () => {
+    vi.stubGlobal('process', Object.create(process, { platform: { value: 'linux' } }))
+    for (const args of [['--credential-store=file'], ['--credential-store', 'file']]) {
+      expect(parseCliArgs(['start', ...args]).options.credentialStore).toBe('file')
+    }
+    expect(() => parseCliArgs(['start', '--credential-store=auto'])).toThrow()
+    expect(() => parseCliArgs(['run', '--credential-store=file'])).toThrow()
+    expect(() =>
+      parseCliArgs(['start', '--credential-store=file', '--credential-store', 'os'])
+    ).toThrow()
+    expect(
+      buildAppLaunchArgs(['app-root'], { credentialStore: 'file' }, 44100, { platform: 'darwin' })
+    ).toEqual(['app-root', '--credential-store=file', '--open-science-headless', '--serve=44100'])
+    expect(buildAppLaunchArgs([], {}, 44100).join(' ')).not.toContain('credential-store')
+  })
+
   it('places the no-sandbox runtime switch before the development app path', () => {
-    expect(buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100)).toEqual([
-      '--no-sandbox',
-      'app-root',
-      '--open-science-headless',
-      '--serve=44100'
-    ])
+    expect(
+      buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100, { platform: 'darwin' })
+    ).toEqual(['--no-sandbox', 'app-root', '--open-science-headless', '--serve=44100'])
     expect(buildAppLaunchArgs(['app-root'], {}, 44100)).not.toContain('--no-sandbox')
   })
+
+  it.each([
+    ['linux', {}, true],
+    ['linux', { DISPLAY: ':0' }, false],
+    ['linux', { WAYLAND_DISPLAY: 'wayland-0' }, false],
+    ['darwin', {}, false],
+    ['win32', {}, false]
+  ] as const)(
+    'selects display-free Ozone only for Linux without a display: %s %j',
+    (platform, env, expected) => {
+      const args = buildAppLaunchArgs(['app-root'], {}, 44100, { platform, env })
+      expect(args.includes('--ozone-platform=headless')).toBe(expected)
+      expect(args).not.toContain('--no-sandbox')
+      expect(args).not.toContain('--headless')
+      expect(args).toContain('--open-science-headless')
+      if (expected)
+        expect(args.indexOf('--ozone-platform=headless')).toBeLessThan(args.indexOf('app-root'))
+    }
+  )
 
   it('stops waiting as soon as the packaged app exits', async () => {
     const child = new EventEmitter()
@@ -458,7 +505,7 @@ describe('stopCommand', () => {
   it('reports not running and does nothing when no live daemon is found', async () => {
     const deps = makeDeps({ findServiceState: vi.fn().mockResolvedValue(undefined) })
     await stopCommand({}, deps)
-    expect(deps.log).toHaveBeenCalledWith('Open Science is not running.')
+    expect(deps.log).toHaveBeenCalledWith('Open-Science is not running.')
     expect(deps.fetch).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
   })
@@ -475,7 +522,7 @@ describe('stopCommand', () => {
     )
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
-    expect(deps.log).toHaveBeenCalledWith('Open Science stopped.')
+    expect(deps.log).toHaveBeenCalledWith('Open-Science stopped.')
   })
 
   it('does not signal or remove state when the process survives the graceful timeout', async () => {
@@ -485,7 +532,7 @@ describe('stopCommand', () => {
 
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
-    expect(deps.log).not.toHaveBeenCalledWith('Open Science stopped.')
+    expect(deps.log).not.toHaveBeenCalledWith('Open-Science stopped.')
   })
 
   it('fails closed without signalling when the authenticated shutdown request fails', async () => {
@@ -560,7 +607,7 @@ describe('stopCommand', () => {
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
     expect(deps.log).toHaveBeenCalledWith(
-      'Open Science web service stopped; the app is still running.'
+      'Open-Science web service stopped; the app is still running.'
     )
   })
 
@@ -604,7 +651,7 @@ describe('statusCommand', () => {
   it('prints not running and sets a non-zero exit code when the daemon is down', async () => {
     const deps = makeDeps({ findServiceState: vi.fn().mockResolvedValue(undefined) })
     await statusCommand({}, deps)
-    expect(deps.log).toHaveBeenCalledWith('Open Science is not running.')
+    expect(deps.log).toHaveBeenCalledWith('Open-Science is not running.')
     expect(process.exitCode).toBe(1)
   })
 
@@ -626,6 +673,6 @@ describe('urlCommand', () => {
 
   it('throws when the daemon is not running', async () => {
     const deps = makeDeps({ isAlive: vi.fn().mockReturnValue(false) })
-    await expect(urlCommand({}, deps)).rejects.toThrow('Open Science is not running.')
+    await expect(urlCommand({}, deps)).rejects.toThrow('Open-Science is not running.')
   })
 })

@@ -9,20 +9,63 @@ import {
   openSync,
   realpathSync
 } from 'node:fs'
-import { delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
+import { tmpdir } from 'node:os'
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+  win32
+} from 'node:path'
 
-import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
-import { buildNotebookKernelEnvironment } from './process-environment'
+import type { PackageMirror } from '../../shared/mirror'
+import { validateCustomAllowedDomain } from '../../shared/notebook-network'
+import {
+  defaultSpawn,
+  packageProcessTreeTerminated,
+  type InstallRequest,
+  type InstallSpawn
+} from './package-manager'
+import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
+import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 
 type PackageProcessSandboxOptions = Readonly<{
   processSandbox: NotebookProcessSandbox
   request: InstallRequest
   runtimeRoot: string
   storageRoot: string
-  interpreter?: Readonly<{ command: string; condaPrefix?: string }>
+  mirror?: PackageMirror
+  interpreter?: Readonly<{ command: string; condaPrefix?: string; library?: string }>
   platform?: NodeJS.Platform
+  terminateTree?: typeof terminateProcessTree
 }>
+
+const packageMirrorHosts = (mirror: PackageMirror | undefined): string[] => {
+  const hosts = [mirror?.condaChannel, mirror?.pypiIndex, mirror?.cranMirror].flatMap((value) => {
+    const hasAsciiWhitespaceOrControl = [...(value ?? '')].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint <= 0x20 || codePoint === 0x7f
+    })
+    if (!value || hasAsciiWhitespaceOrControl) return []
+    try {
+      const url = new URL(value)
+      if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) {
+        return []
+      }
+      const normalized = validateCustomAllowedDomain(url.hostname)
+      return normalized.ok ? [normalized.hostname] : []
+    } catch {
+      return []
+    }
+  })
+  return [...new Set(hosts)]
+}
 
 const PACKAGE_ENV_KEYS = [
   'CONDA_PKGS_DIRS',
@@ -40,10 +83,14 @@ const PACKAGE_ENV_KEYS = [
   'CONDA_SSL_VERIFY',
   'SSL_CERT_FILE',
   'REQUESTS_CA_BUNDLE',
-  'PIP_CERT',
+  ...PIP_TRANSPORT_ENV_KEYS,
   'CURL_CA_BUNDLE',
+  'CONDA_PREFIX',
+  'VIRTUAL_ENV',
+  'POETRY_VIRTUALENVS_CREATE',
+  'UV_PROJECT_ENVIRONMENT',
+  'UV_PYTHON_DOWNLOADS',
   'OPEN_SCIENCE_NOTEBOOK_CACHE_DIR',
-  'PIP_CACHE_DIR',
   'UV_CACHE_DIR',
   'HF_HUB_CACHE',
   'HF_DATASETS_CACHE',
@@ -70,33 +117,86 @@ const packageEnvironment = (
   platform: NodeJS.Platform
 ): NodeJS.ProcessEnv => {
   const env = buildNotebookKernelEnvironment(platform, source)
+  const packageSource =
+    platform === 'win32'
+      ? Object.fromEntries(Object.entries(source).map(([key, value]) => [key.toUpperCase(), value]))
+      : source
   for (const key of PACKAGE_ENV_KEYS) {
-    if (source[key] !== undefined) env[key] = source[key]
+    if (packageSource[key] !== undefined) env[key] = packageSource[key]
   }
+  // Only forward the owner's explicit request to disable user pip configuration.
+  const nullDevice = platform === 'win32' ? 'nul' : '/dev/null'
+  if (packageSource.PIP_CONFIG_FILE === nullDevice) env.PIP_CONFIG_FILE = nullDevice
+  if (pipReportRoot(packageSource.PIP_REPORT, platform)) env.PIP_REPORT = packageSource.PIP_REPORT
   return env
 }
 
 const externalEnvironmentRoot = (
-  interpreter: PackageProcessSandboxOptions['interpreter']
+  interpreter: PackageProcessSandboxOptions['interpreter'],
+  language: InstallRequest['language'],
+  platform: NodeJS.Platform
 ): string | undefined => {
   if (!interpreter) return undefined
-  if (interpreter.condaPrefix && isAbsolute(interpreter.condaPrefix)) return interpreter.condaPrefix
-  if (!isAbsolute(interpreter.command)) return undefined
+  const absolute = platform === 'win32' ? win32.isAbsolute : isAbsolute
+  if (interpreter.condaPrefix && absolute(interpreter.condaPrefix)) return interpreter.condaPrefix
+  if (!absolute(interpreter.command)) return undefined
+  if (language === 'r' && platform === 'win32')
+    return kernelExecutableReadRoot(interpreter.command, 'r', platform)
   return dirname(dirname(interpreter.command))
 }
 
-const absolutePath = (value: string | undefined): string[] =>
-  value && isAbsolute(value) ? [value] : []
+const absolutePath = (value: string | undefined, platform = process.platform): string[] =>
+  value && (platform === 'win32' ? win32.isAbsolute(value) : isAbsolute(value)) ? [value] : []
+
+const inside = (root: string, candidate: string, platform: NodeJS.Platform): boolean => {
+  const path = platform === 'win32' ? win32 : { resolve, sep }
+  const normalizedRoot = path.resolve(root)
+  const normalizedCandidate = path.resolve(candidate)
+  const compare = (value: string): string => (platform === 'win32' ? value.toLowerCase() : value)
+  return (
+    compare(normalizedCandidate) === compare(normalizedRoot) ||
+    compare(normalizedCandidate).startsWith(`${compare(normalizedRoot)}${path.sep}`)
+  )
+}
 
 const packageWriteRoots = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] => {
   const separator = platform === 'win32' ? win32.delimiter : delimiter
-  return PACKAGE_WRITE_PATH_KEYS.flatMap((key) =>
+  const cacheRoots = PACKAGE_WRITE_PATH_KEYS.flatMap((key) =>
     (env[key] ?? '')
       .split(separator)
       .map((path) => path.trim())
       .filter((path) => (platform === 'win32' ? win32.isAbsolute(path) : isAbsolute(path)))
       .filter(existsSync)
   )
+  // pip writes its installation report outside the environment into an owner-created
+  // private temporary directory. Authorize that directory, not the whole OS temp root.
+  const reportRoot = pipReportRoot(env.PIP_REPORT, platform)
+  return [...cacheRoots, ...(reportRoot ? [reportRoot] : [])]
+}
+
+const pipReportRoot = (
+  report: string | undefined,
+  platform: NodeJS.Platform
+): string | undefined => {
+  const path = platform === 'win32' ? win32 : { isAbsolute, dirname, basename, resolve }
+  if (!report || !path.isAbsolute(report) || path.basename(report) !== 'report.json')
+    return undefined
+  const root = path.dirname(report)
+  const parent = path.resolve(path.dirname(root))
+  const temporaryRoot = path.resolve(tmpdir())
+  if (
+    (platform === 'win32'
+      ? parent.toLowerCase() !== temporaryRoot.toLowerCase()
+      : parent !== temporaryRoot) ||
+    !/^open-science-pip-report-[A-Za-z0-9_-]+$/u.test(path.basename(root))
+  )
+    return undefined
+  try {
+    const stat = lstatSync(root)
+    return stat.isDirectory() && !stat.isSymbolicLink() ? root : undefined
+  } catch {
+    return undefined
+  }
 }
 
 const normalizeDarwinRepodataCachePermissions = (
@@ -160,14 +260,34 @@ const normalizeDarwinRepodataCachePermissions = (
 /** Routes manage_packages workers through the same network/filesystem boundary as Notebook code. */
 export const sandboxedPackageSpawn =
   (options: PackageProcessSandboxOptions): InstallSpawn =>
-  async (command, args, env, onChild, onBeforeSpawn, captureCondaJson, _cwd, spawnOptions) => {
+  async (
+    command,
+    args,
+    env,
+    onChild,
+    onBeforeSpawn,
+    captureCondaJson,
+    requestedCwd,
+    spawnOptions
+  ) => {
     spawnOptions?.signal?.throwIfAborted()
-    const { processSandbox, request, runtimeRoot, storageRoot } = options
+    const { processSandbox, request, runtimeRoot } = options
     const platform = options.platform ?? process.platform
+    assertProcessTreeSupport(platform)
     const projectedEnv = packageEnvironment(env ?? {}, platform)
+    const externalR = request.language === 'r' && Boolean(options.interpreter?.library)
+    // External R consent covers one library and the workload cache, never managed environments
+    // or inherited Conda/Mamba roots. Keep the default cwd readable without granting writes.
+    const cacheWriteRoots = externalR
+      ? absolutePath(projectedEnv.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR, platform).filter(existsSync)
+      : packageWriteRoots(projectedEnv, platform)
     normalizeDarwinRepodataCachePermissions(projectedEnv, runtimeRoot, platform)
+    const workspaceCwd =
+      request.workspaceCwd && isAbsolute(request.workspaceCwd) ? request.workspaceCwd : runtimeRoot
     const cwd =
-      request.workspaceCwd && isAbsolute(request.workspaceCwd) ? request.workspaceCwd : storageRoot
+      requestedCwd && isAbsolute(requestedCwd) && inside(workspaceCwd, requestedCwd, platform)
+        ? requestedCwd
+        : workspaceCwd
     const sandboxed = await processSandbox.wrap({
       executable: command,
       args,
@@ -177,13 +297,29 @@ export const sandboxedPackageSpawn =
       sessionId: request.sessionId ?? 'notebook-package-manager',
       projectId: request.projectId ?? 'notebook-package-manager',
       runtime: request.language,
+      allowedNetworkHosts: packageMirrorHosts(options.mirror),
       signal: spawnOptions?.signal,
+      superviseProcessTree: platform === 'win32',
       filesystem: {
-        readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],
+        readOnlyRoots: [
+          ...(externalR ? [runtimeRoot] : []),
+          ...absolutePath(dirname(command)),
+          ...absolutePath(request.workspaceCwd),
+          ...(options.interpreter?.library
+            ? absolutePath(
+                externalEnvironmentRoot(options.interpreter, request.language, platform),
+                platform
+              )
+            : [])
+        ],
         readWriteRoots: [
-          runtimeRoot,
-          ...absolutePath(externalEnvironmentRoot(options.interpreter)),
-          ...packageWriteRoots(projectedEnv, platform)
+          ...(externalR ? [] : [runtimeRoot]),
+          ...absolutePath(
+            options.interpreter?.library ??
+              externalEnvironmentRoot(options.interpreter, request.language, platform),
+            platform
+          ),
+          ...cacheWriteRoots
         ],
         deniedReadRoots: [],
         deniedWriteRoots: []
@@ -191,6 +327,7 @@ export const sandboxedPackageSpawn =
     })
     let endExecution: (() => void) | undefined
     let ended = false
+    let processesTerminated = false
     try {
       spawnOptions?.signal?.throwIfAborted()
       endExecution = sandboxed.beginExecution?.()
@@ -202,13 +339,32 @@ export const sandboxedPackageSpawn =
         onBeforeSpawn,
         captureCondaJson ?? args.includes('--json'),
         cwd,
-        spawnOptions
+        spawnOptions,
+        options.terminateTree,
+        platform,
+        sandboxed.confirmProcessTreeTermination
       )
       endExecution?.()
       ended = true
+      processesTerminated = result.processesTerminated ?? true
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
+    } catch (error) {
+      if (packageProcessTreeTerminated(error)) {
+        processesTerminated = true
+        if (sandboxed.confirmProcessTreeTermination) {
+          await sandboxed.confirmProcessTreeTermination().catch(() => false)
+        }
+      } else if (!ended && sandboxed.confirmProcessTreeTermination) {
+        processesTerminated = await sandboxed.confirmProcessTreeTermination().catch(() => false)
+      }
+      throw error
     } finally {
       if (!ended) endExecution?.()
-      sandboxed.cleanup()
+      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', {
+        processesTerminated,
+        ...(sandboxed.confirmProcessTreeTermination
+          ? { confirmTermination: sandboxed.confirmProcessTreeTermination }
+          : {})
+      })
     }
   }

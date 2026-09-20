@@ -1,9 +1,9 @@
 import type { ConfiguredModelCatalogEntry } from './configured-model-catalog'
+import { resolveProviderEffectiveModel } from './provider-reasoning-effort'
 import type { PersistedChatSession } from './session-persistence'
 import {
   canonicalSessionProviderId,
-  isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider,
+  type ProviderView,
   type ReasoningEffort,
   type SessionAgentConfiguration
 } from './settings'
@@ -32,49 +32,51 @@ const providerIdFromBackendId = (backendId: string | undefined): string | undefi
   return normalized ? canonicalSessionProviderId(normalized) : undefined
 }
 
-const isConfigurationSelectable = (
-  configuration: SessionAgentConfiguration | undefined,
-  catalog: readonly ConfiguredModelCatalogEntry[]
-): configuration is SessionAgentConfiguration =>
-  Boolean(
-    configuration &&
-    catalog.some(
-      (option) =>
-        option.selectable &&
-        option.providerId === canonicalSessionProviderId(configuration.providerId) &&
-        (configuration.model === undefined || option.model === configuration.model)
-    )
-  )
-
 const resolveSelectableConfiguration = (
   catalog: readonly ConfiguredModelCatalogEntry[],
   providerId: string | undefined,
   model: string | undefined,
-  reasoningEffort: ReasoningEffort
+  reasoningEffort: ReasoningEffort,
+  providers: readonly ProviderView[]
 ): SessionAgentConfiguration | undefined => {
   if (!providerId) return undefined
   const resolvedProviderId = canonicalSessionProviderId(providerId)
+  const provider = providers.find((candidate) => candidate.id === resolvedProviderId)
+  if (!provider) return undefined
+  const effectiveModel = model ?? resolveProviderEffectiveModel(provider, undefined)
   const option = catalog.find(
     (candidate) =>
       candidate.selectable &&
       candidate.providerId === resolvedProviderId &&
-      (model === undefined || candidate.model === model)
+      (effectiveModel === undefined || candidate.model === effectiveModel)
   )
   if (!option) return undefined
-  // Subscription defaults are account/CLI-owned. Copying the first catalog model would pin
-  // foreground turns to an explicit id while Main resume still uses provider-default.
-  const preserveAccountOwnedDefault =
-    model === undefined &&
-    (isCodexSubscriptionProvider(option.providerType) ||
-      isClaudeSubscriptionProvider(option.providerType))
+  // Persist selection intent; only execution resolves an omitted provider-owned default.
   return {
     providerId: option.providerId,
-    ...(!preserveAccountOwnedDefault && option.model ? { model: option.model } : {}),
+    ...(model !== undefined ? { model } : {}),
     reasoningEffort
   }
 }
 
+const isConfigurationSelectable = (
+  configuration: SessionAgentConfiguration | undefined,
+  catalog: readonly ConfiguredModelCatalogEntry[],
+  providers: readonly ProviderView[]
+): configuration is SessionAgentConfiguration =>
+  Boolean(
+    configuration &&
+    resolveSelectableConfiguration(
+      catalog,
+      configuration.providerId,
+      configuration.model,
+      configuration.reasoningEffort,
+      providers
+    )
+  )
+
 const resolveSessionAgentConfiguration = (input: {
+  providers: readonly ProviderView[]
   session: SessionAgentConfigurationSource
   catalog: readonly ConfiguredModelCatalogEntry[]
   activeProviderId?: string
@@ -97,7 +99,8 @@ const resolveSessionAgentConfiguration = (input: {
         input.catalog,
         preferred.providerId,
         preferred.model,
-        preferred.reasoningEffort
+        preferred.reasoningEffort,
+        input.providers
       )
     : undefined
   if (selectablePreferred) {
@@ -110,11 +113,14 @@ const resolveSessionAgentConfiguration = (input: {
     }
   }
 
+  if (preferred) return { status: 'unavailable', configuration: preferred }
+
   const fallback = resolveSelectableConfiguration(
     input.catalog,
     input.activeProviderId,
     input.activeModel,
-    input.activeReasoningEffort
+    input.activeReasoningEffort,
+    input.providers
   )
   if (fallback) {
     return { status: 'ready', configuration: fallback, changed: true }

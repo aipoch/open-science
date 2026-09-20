@@ -2,7 +2,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 
 import type {
@@ -11,30 +11,22 @@ import type {
   ArtifactWriteSource
 } from '../../shared/artifacts'
 import type {
-  ArtifactWriteReservation,
   ArtifactVersionFile,
-  CreateArtifactVersionRequest,
-  ReleaseArtifactWriteReservationRequest,
-  ReserveArtifactWriteRequest,
-  ReplayArtifactVersionRequest
+  SaveArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import {
-  ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
   artifactLiteratureRequestSchema,
-  artifactLiteratureSidecarSchema,
   type ArtifactLiteratureRequest
 } from '../../shared/artifact-literature'
 import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
 import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc } from '../local-rpc-transport'
-import { createLogger } from '../logger'
-import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
+import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 import { ArtifactRepository } from './repository'
-import { resolveAllowedImportFilePath } from './storage-access'
+import { inlineDecodedSize } from '../bounded-file-io'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
-const log = createLogger('artifacts:mcp')
 
 type ArtifactMcpEnvironment = ProjectIdScope & {
   storageRoot: string
@@ -219,10 +211,20 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
 
 type ArtifactRpcResponse<Result> = { result?: Result | null; error?: string }
 
+const serializeArtifactSaveRequest = (request: SaveArtifactVersionRequest): string => {
+  const body = JSON.stringify({ method: 'artifactSaveVersion', params: request })
+  assertWithinResourceBudget(
+    'request',
+    Buffer.byteLength(body),
+    LOCAL_RESOURCE_BUDGETS.requestBytes
+  )
+  return body
+}
+
 const callArtifactRpc = async (
   environment: ArtifactMcpEnvironment,
   capabilityToken: string,
-  request: CreateArtifactVersionRequest,
+  request: SaveArtifactVersionRequest,
   signal?: AbortSignal
 ): Promise<ArtifactVersionFile> => {
   if (!environment.rpcEndpoint) {
@@ -240,7 +242,7 @@ const callArtifactRpc = async (
         authorization: `Bearer ${capabilityToken}`,
         'content-type': 'application/json'
       },
-      body: JSON.stringify({ method: 'artifactCreateVersion', params: request }),
+      body: serializeArtifactSaveRequest(request),
       signal
     },
     'Artifact Provenance RPC'
@@ -253,97 +255,6 @@ const callArtifactRpc = async (
     )
   }
   return payload.result
-}
-
-const callArtifactReplayRpc = async (
-  environment: ArtifactMcpEnvironment,
-  capabilityToken: string,
-  request: ReplayArtifactVersionRequest,
-  signal?: AbortSignal
-): Promise<ArtifactVersionFile | undefined> => {
-  if (!environment.rpcEndpoint) {
-    throw new Error('Artifact Provenance RPC connection is not configured.')
-  }
-  const response = await fetchLocalRpc(
-    {
-      endpoint: environment.rpcEndpoint,
-      socketPath: environment.rpcSocketPath
-    },
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${capabilityToken}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({ method: 'artifactReplayVersion', params: request }),
-      signal
-    },
-    'Artifact Provenance RPC'
-  )
-  const payload = (await response.json()) as ArtifactRpcResponse<ArtifactVersionFile>
-  if (!response.ok || payload.error) {
-    throw new Error(
-      payload.error ?? `Artifact Provenance RPC failed with status ${response.status}`
-    )
-  }
-  return payload.result ?? undefined
-}
-
-const callArtifactReserveRpc = async (
-  environment: ArtifactMcpEnvironment,
-  capabilityToken: string,
-  request: ReserveArtifactWriteRequest,
-  signal?: AbortSignal
-): Promise<ArtifactWriteReservation> => {
-  if (!environment.rpcEndpoint) {
-    throw new Error('Artifact Provenance RPC connection is not configured.')
-  }
-  const response = await fetchLocalRpc(
-    { endpoint: environment.rpcEndpoint, socketPath: environment.rpcSocketPath },
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${capabilityToken}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({ method: 'artifactReserveWrite', params: request }),
-      signal
-    },
-    'Artifact write reservation RPC'
-  )
-  const payload = (await response.json()) as ArtifactRpcResponse<ArtifactWriteReservation>
-  if (!response.ok || payload.error || !payload.result) {
-    throw new Error(
-      payload.error ?? `Artifact reservation RPC failed with status ${response.status}`
-    )
-  }
-  return payload.result
-}
-
-const callArtifactReleaseRpc = async (
-  environment: ArtifactMcpEnvironment,
-  capabilityToken: string,
-  request: ReleaseArtifactWriteReservationRequest
-): Promise<void> => {
-  if (!environment.rpcEndpoint) return
-  const response = await fetchLocalRpc(
-    { endpoint: environment.rpcEndpoint, socketPath: environment.rpcSocketPath },
-    {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${capabilityToken}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({ method: 'artifactReleaseWrite', params: request })
-    },
-    'Artifact write reservation release RPC'
-  )
-  if (!response.ok) {
-    const payload = (await response.json()) as ArtifactRpcResponse<never>
-    throw new Error(
-      payload.error ?? `Artifact reservation release RPC failed with status ${response.status}`
-    )
-  }
 }
 
 // Normalizes the legacy content/encoding shape and the new source shape into one repository input.
@@ -387,55 +298,13 @@ const normalizeArtifactToolWriteInput = (
 // The kernel-relative interpretation stays first so an explicit `data/plot.png` saved by user code
 // still resolves to `<dataDir>/data/plot.png`; only a missing first candidate falls through to the
 // same current Notebook Session root, never to an unrelated workspace or process cwd.
-const isNotebookWorkingFilePath = (source: ArtifactWriteSource): boolean => {
-  if (source.kind !== 'localPath') return false
-  const segments = source.path
-    .replaceAll('\\', '/')
-    .split('/')
-    .filter((segment) => segment.length > 0 && segment !== '.')
-
-  return segments[0] === 'data' && !segments.includes('..')
-}
-
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  'code' in error &&
-  (error as { code?: unknown }).code === 'ENOENT'
-
-const readPreparedLiteratureSidecar = async (
-  source: ArtifactWriteSource,
-  allowedImportRoots: string[],
-  relativeBaseDirs: string[]
-): Promise<ReturnType<typeof artifactLiteratureSidecarSchema.parse> | undefined> => {
-  if (source.kind !== 'localPath' || !/\.(?:docx|zip)$/iu.test(source.path)) {
-    return undefined
-  }
-  const sourcePath = await resolveAllowedImportFilePath(
-    source.path,
-    allowedImportRoots,
-    relativeBaseDirs
-  )
-  const candidate = `${sourcePath}${ARTIFACT_LITERATURE_SIDECAR_SUFFIX}`
-  try {
-    await stat(candidate)
-  } catch (error) {
-    if (isMissingFileError(error)) return undefined
-    throw error
-  }
-  const sidecarPath = await resolveAllowedImportFilePath(candidate, allowedImportRoots)
-  return artifactLiteratureSidecarSchema.parse(
-    JSON.parse(await readFile(sidecarPath, 'utf8')) as unknown
-  )
-}
-
 // Writes one tool call into the current pending run selected by the main process.
 const writeArtifactFileForCurrentRun = async (
-  repository: ArtifactRepository,
+  _repository: ArtifactRepository,
   environment: ArtifactMcpEnvironment,
   input: ArtifactToolWriteInput,
   invocation: ArtifactWriteInvocation = {}
-): Promise<ArtifactFile | ArtifactVersionFile> => {
+): Promise<ArtifactVersionFile> => {
   const projectId = resolveProjectId(environment)
   const context = await readCurrentRunContext(environment.currentRunFile)
   const artifactStorageSessionId = context.artifactStorageSessionId ?? environment.sessionId
@@ -443,65 +312,21 @@ const writeArtifactFileForCurrentRun = async (
     input,
     Boolean(context.notebookDataDir || environment.allowedImportRoots[0])
   )
-  // Native Agent file tools keep writing to the session workspace even when Notebook is available,
-  // while Notebook code writes to the kernel cwd. Prefer the active Notebook locations, then fall
-  // back to the trusted session workspace so the Agent can pass the same relative path either tool
-  // returned instead of rediscovering its absolute path or duplicating the file as inline content.
-  const relativeBaseDirs = context.notebookDataDir
-    ? [
-        context.notebookDataDir,
-        ...(context.notebookSessionRoot && isNotebookWorkingFilePath(source)
-          ? [context.notebookSessionRoot]
-          : []),
-        ...environment.allowedImportRoots.slice(0, 1)
-      ]
-    : environment.allowedImportRoots.slice(0, 1)
-  const writeRequest = {
-    projectId,
-    sessionId: artifactStorageSessionId,
-    runId: context.artifactRunId,
-    filename: input.filename,
-    mimeType: input.mimeType,
-    source
+  if (
+    !environment.rpcEndpoint ||
+    !context.rpcCapabilityToken ||
+    !context.appSessionId ||
+    !context.rootFrameId ||
+    !context.agentFrameId ||
+    !context.messageBranchId ||
+    !context.runtimeSegmentId ||
+    !context.promptMessageId
+  ) {
+    throw new Error(
+      'Artifact save protocol requires a complete active run capability. Restart the Agent MCP connection.'
+    )
   }
-  const writeOptions = {
-    // The kernel's final session root (from the per-turn handoff) is the authoritative import root
-    // for notebook writes; add it to the static roots so a resolved relative path is accepted even
-    // when the env was built under a pre-start alias. Authorization-only: it must NOT also join
-    // relativeBaseDirs unless it is the bounded `data/...` workingFiles representation.
-    allowedImportRoots: context.notebookSessionRoot
-      ? [...environment.allowedImportRoots, context.notebookSessionRoot]
-      : environment.allowedImportRoots,
-    relativeBaseDirs,
-    signal: invocation.signal
-  }
-  // Old handoff files remain writable during migration. New production handoffs always include the
-  // graph locators and RPC capability; only that complete trusted envelope may create a durable
-  // Version in SQLite.
-  const missingProvenanceContext = [
-    !environment.rpcEndpoint ? 'rpcEndpoint' : undefined,
-    !context.rpcCapabilityToken ? 'rpcCapabilityToken' : undefined,
-    !context.appSessionId ? 'appSessionId' : undefined,
-    !context.rootFrameId ? 'rootFrameId' : undefined,
-    !context.agentFrameId ? 'agentFrameId' : undefined,
-    !context.messageBranchId ? 'messageBranchId' : undefined,
-    !context.runtimeSegmentId ? 'runtimeSegmentId' : undefined,
-    !context.promptMessageId ? 'promptMessageId' : undefined
-  ].filter((field): field is string => field !== undefined)
-  if (missingProvenanceContext.length > 0) {
-    log.warn('writing a legacy pending file without durable Provenance', {
-      artifactRunId: context.artifactRunId,
-      missingContext: missingProvenanceContext
-    })
-    return repository.writePendingFile(writeRequest, writeOptions)
-  }
-  const rpcCapabilityToken = context.rpcCapabilityToken!
-  const appSessionId = context.appSessionId!
-  const rootFrameId = context.rootFrameId!
-  const agentFrameId = context.agentFrameId!
-  const messageBranchId = context.messageBranchId!
-  const runtimeSegmentId = context.runtimeSegmentId!
-  const promptMessageId = context.promptMessageId!
+  const appSessionId = context.appSessionId
   const writeOperationId =
     invocation.writeOperationId ??
     (invocation.requestId !== undefined
@@ -512,117 +337,41 @@ const writeArtifactFileForCurrentRun = async (
           .digest('hex')}`
       : `artifact-write-${randomUUID()}`)
 
-  // A local path is mutable and may disappear after a successful first call. Ask SQLite whether the
-  // app-owned operation already committed before copying or reading that path. Inline content remains
-  // byte-checked below so reusing an operation with different inline bytes is still a hard conflict.
-  if (source.kind === 'localPath') {
-    const replay = await callArtifactReplayRpc(
-      environment,
-      rpcCapabilityToken,
-      {
-        projectId,
-        appSessionId,
-        artifactStorageSessionId,
-        artifactRunId: context.artifactRunId,
-        writeOperationId,
-        filename: input.filename,
-        contentType: input.mimeType,
-        producerRunId: input.producerRunId
-      },
-      invocation.signal
+  let transportedSource = source
+  if (source.kind === 'inline') {
+    const encoding = source.encoding ?? 'utf8'
+    assertWithinResourceBudget(
+      'file',
+      inlineDecodedSize(source.content, encoding),
+      LOCAL_RESOURCE_BUDGETS.artifactInlineBytes
     )
-    if (replay) return replay
-  }
-
-  const preparedLiterature = input.literature
-    ? undefined
-    : await readPreparedLiteratureSidecar(source, writeOptions.allowedImportRoots, relativeBaseDirs)
-  const literature = input.literature ?? preparedLiterature?.literature
-
-  const nativeWriteOptions = {
-    ...writeOptions,
-    reserveFile: (fileBytes: number) =>
-      callArtifactReserveRpc(
-        environment,
-        rpcCapabilityToken,
-        {
-          projectId,
-          appSessionId,
-          artifactStorageSessionId,
-          artifactRunId: context.artifactRunId,
-          writeOperationId,
-          filename: input.filename,
-          fileBytes
-        },
-        invocation.signal
-      ),
-    releaseFileReservation: (reservationId: string) =>
-      callArtifactReleaseRpc(environment, rpcCapabilityToken, {
-        projectId,
-        appSessionId,
-        artifactStorageSessionId,
-        artifactRunId: context.artifactRunId,
-        reservationId
-      })
-  }
-
-  return repository.withPendingFileTransaction(
-    writeRequest,
-    nativeWriteOptions,
-    async (_pendingFile, sourceFileObservation, _bindVersionRouting, fileDigest, reservation) => {
-      if (!reservation) throw new Error('Artifact write reservation was not created.')
-      if (preparedLiterature && preparedLiterature.contentChecksum !== fileDigest.checksum) {
-        throw new Error(
-          'Prepared citation metadata does not match this file. Run the Literature preparation tool again.'
-        )
-      }
-      const contentChecksum = fileDigest.checksum
-      const writeRequestChecksum = createHash('sha256')
-        .update(
-          JSON.stringify({
-            contentChecksum,
-            contentType: input.mimeType ?? null,
-            filename: input.filename,
-            producerRunId: input.producerRunId ?? null,
-            literature: literature ?? null,
-            sourceKind: source.kind,
-            sourceFileObservation: sourceFileObservation ?? null
-          })
-        )
-        .digest('hex')
-
-      return callArtifactRpc(
-        environment,
-        rpcCapabilityToken,
-        {
-          projectId,
-          appSessionId,
-          artifactStorageSessionId,
-          artifactRunId: context.artifactRunId,
-          writeOperationId,
-          writeRequestChecksum,
-          rootFrameId,
-          agentFrameId,
-          messageBranchId,
-          messageBranchAncestry: context.messageBranchAncestry,
-          messageAncestry: context.messageAncestry,
-          runtimeSegmentId,
-          promptMessageId,
-          agentName: context.agentName,
-          notebookSessionId: context.notebookSessionId,
-          producerRunId: input.producerRunId,
-          sourceKind: source.kind,
-          sourceFileObservation,
-          filename: input.filename,
-          contentType: input.mimeType,
-          resourceReservationId: reservation.id,
-          resourceSizeBytes: fileDigest.sizeBytes,
-          resourceChecksum: fileDigest.checksum,
-          ...(literature ? { literature } : {})
-        },
-        invocation.signal
-      )
+    transportedSource = {
+      kind: 'inline',
+      content: Buffer.from(source.content, encoding).toString('base64'),
+      encoding: 'base64'
     }
+  }
+  return callArtifactRpc(
+    environment,
+    context.rpcCapabilityToken,
+    {
+      projectId,
+      appSessionId,
+      artifactStorageSessionId,
+      artifactRunId: context.artifactRunId,
+      writeOperationId,
+      rootFrameId: context.rootFrameId,
+      agentFrameId: context.agentFrameId,
+      messageBranchId: context.messageBranchId,
+      runtimeSegmentId: context.runtimeSegmentId,
+      promptMessageId: context.promptMessageId,
+      filename: input.filename,
+      contentType: input.mimeType,
+      producerRunId: input.producerRunId,
+      literature: input.literature,
+      source: transportedSource
+    },
+    invocation.signal
   )
 }
 

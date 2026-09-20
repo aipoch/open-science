@@ -8,6 +8,7 @@ import {
   forkConversationAfterActivity,
   forkEditedConversationMessage,
   getActiveConversationContext,
+  rebindConversationGraphSessionId,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   synchronizeActiveConversationActivities,
@@ -103,6 +104,55 @@ const graphWithChildFrame = (): ReturnType<typeof createLinearConversationGraph>
 }
 
 describe('conversation graph', () => {
+  it('rebinds provisional root ownership when the runtime assigns a Session id', () => {
+    const provisional = graphWithActivityGroup()
+    const rebound = rebindConversationGraphSessionId(provisional, 'session-1', 'runtime-session-1')
+
+    expect(() => validateConversationGraph(rebound)).not.toThrow()
+    expect(rebound).toMatchObject({
+      rootFrameId: 'root-frame-runtime-session-1',
+      activeFrameId: 'root-frame-runtime-session-1',
+      frames: [
+        {
+          id: 'root-frame-runtime-session-1',
+          activeBranchId: 'message-branch-runtime-session-1'
+        }
+      ],
+      branches: [
+        {
+          id: 'message-branch-runtime-session-1',
+          agentFrameId: 'root-frame-runtime-session-1'
+        }
+      ],
+      messages: [
+        {
+          agentFrameId: 'root-frame-runtime-session-1',
+          introducedOnBranchId: 'message-branch-runtime-session-1',
+          runtimeSegmentId: 'runtime-segment-runtime-session-1'
+        }
+      ],
+      activities: [
+        {
+          agentFrameId: 'root-frame-runtime-session-1',
+          messageBranchId: 'message-branch-runtime-session-1',
+          runtimeSegmentId: 'runtime-segment-runtime-session-1'
+        }
+      ],
+      activityGroups: [
+        {
+          agentFrameId: 'root-frame-runtime-session-1',
+          messageBranchId: 'message-branch-runtime-session-1'
+        }
+      ],
+      runtimeSegments: [
+        {
+          id: 'runtime-segment-runtime-session-1',
+          agentFrameId: 'root-frame-runtime-session-1'
+        }
+      ]
+    })
+  })
+
   it('forks an edited user Message without deleting the original downstream path', () => {
     const originalMessages = [
       message('u1', 'user', 'original question', 1),

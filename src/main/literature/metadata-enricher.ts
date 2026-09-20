@@ -1,3 +1,4 @@
+import { LiteratureProviderError } from './provider-error'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 
@@ -13,7 +14,7 @@ import {
 } from '../../shared/literature'
 import { normalizeIdentifier, type LiteratureCatalog } from './catalog'
 
-type MetadataCatalog = Pick<LiteratureCatalog, 'applyMetadata' | 'get'>
+type MetadataCatalog = Pick<LiteratureCatalog, 'applyMetadata' | 'get' | 'getMetadataCommitReceipt'>
 type FetchFn = typeof fetch
 
 const CROSSREF_BASE = 'https://api.crossref.org/works/'
@@ -42,7 +43,13 @@ const crossrefMessageSchema = z
     language: z.string().optional(),
     author: z
       .array(
-        z.object({ given: z.string().optional(), family: z.string().optional() }).passthrough()
+        z
+          .object({
+            given: z.string().optional(),
+            family: z.string().optional(),
+            name: z.string().optional()
+          })
+          .passthrough()
       )
       .optional(),
     issued: dateSchema.optional(),
@@ -70,7 +77,9 @@ const pubmedSummarySchema = z
     lang: z.array(z.string()).optional(),
     issn: z.string().optional(),
     publishername: z.string().optional(),
-    authors: z.array(z.object({ name: z.string() }).passthrough()).optional(),
+    authors: z
+      .array(z.object({ name: z.string(), authtype: z.string().optional() }).passthrough())
+      .optional(),
     articleids: z
       .array(z.object({ idtype: z.string(), value: z.string() }).passthrough())
       .optional()
@@ -105,8 +114,48 @@ const pubmedDateParts = (value: string | undefined): readonly number[] | undefin
   return [Number(match[1]), ...(month > 0 ? [month] : []), ...(match[3] ? [Number(match[3])] : [])]
 }
 
+const publicationYear = (text: string): number | undefined => {
+  const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/u.exec(text.trim())
+  if (!match) return undefined
+  const year = Number(match[1])
+  const month = Number(match[2] ?? 1)
+  const day = Number(match[3] ?? 1)
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1]!
+    ? year
+    : undefined
+}
+
+const identifierText = (item: LiteratureItemInput): string =>
+  item.identifiers
+    .map(
+      ({ scheme, value, isPrimary }) => `${scheme.toUpperCase()}: ${value}${isPrimary ? ' ★' : ''}`
+    )
+    .join('; ')
+
+const reviewIdentifiers = (
+  current: LiteratureItemInput,
+  merged: ReturnType<typeof mergeCrossrefMetadata>
+): void => {
+  const key = ({ scheme, value, isPrimary }: LiteratureItemInput['identifiers'][number]): string =>
+    JSON.stringify([scheme, normalizeIdentifier(scheme, value), Boolean(isPrimary)])
+  const existingKeys = new Set(current.identifiers.map(key))
+  const incomingKeys = new Set(merged.item.identifiers.map(key))
+  const onlyAdded = [...existingKeys].every((value) => incomingKeys.has(value))
+  if (onlyAdded && existingKeys.size === incomingKeys.size) {
+    merged.item.identifiers = structuredClone(current.identifiers)
+    return
+  }
+  const existing = identifierText(current)
+  const value = identifierText(merged.item)
+  if (onlyAdded) merged.filled.push({ field: 'identifiers', value })
+  else merged.conflicts.push({ field: 'identifiers', currentValue: existing, value })
+}
+
 const creatorText = (item: LiteratureItemInput): string =>
   item.creators
+    .filter(({ creatorType }) => creatorType === 'author')
     .map((creator) =>
       creator.nameMode === 'organization'
         ? creator.literalName
@@ -117,7 +166,8 @@ const creatorText = (item: LiteratureItemInput): string =>
 const mergeCrossrefMetadata = (
   current: LiteratureItemInput,
   message: z.infer<typeof crossrefMessageSchema>,
-  overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set()
+  overwriteFields: ReadonlySet<LiteratureMetadataField> = new Set(),
+  originalDate?: string
 ): {
   item: LiteratureItemInput
   filled: LiteratureMetadataValue[]
@@ -170,7 +220,6 @@ const mergeCrossrefMetadata = (
   mergeString('title', 'title', firstText(message.title))
   mergeString('containerTitle', 'journal', firstText(message['container-title']))
   mergeString('shortTitle', 'shortTitle', firstText(message['short-title']))
-  mergeString('issuedText', 'publicationDate', formatDate(parts))
   mergeString('language', 'language', message.language ?? '')
   mergeString('url', 'url', message.URL ?? '')
   mergeTypeField('volume', 'volume', message.volume ?? '')
@@ -178,45 +227,69 @@ const mergeCrossrefMetadata = (
   mergeTypeField('pages', 'pages', message.page ?? message['article-number'] ?? '')
   mergeTypeField('publisher', 'publisher', message.publisher ?? '')
 
-  if (incomingYear !== undefined) {
-    if (item.issuedYear === undefined) {
+  // Only unambiguous numeric dates participate in automatic year inference.
+  const existingDateYear = publicationYear(item.issuedText)
+  if (item.issuedYear === undefined && existingDateYear !== undefined) {
+    item.issuedYear = existingDateYear
+    filled.push({ field: 'publicationDate', value: item.issuedText })
+  }
+  const incomingDate = originalDate ?? formatDate(parts)
+  if (
+    incomingYear !== undefined &&
+    (originalDate !== undefined || publicationYear(incomingDate) !== undefined)
+  ) {
+    const existing = item.issuedText || String(item.issuedYear ?? '')
+    const differs =
+      (item.issuedYear !== undefined && item.issuedYear !== incomingYear) ||
+      (Boolean(item.issuedText) && item.issuedText !== incomingDate)
+    if (differs && !overwriteFields.has('publicationDate')) {
+      conflicts.push({
+        field: 'publicationDate',
+        currentValue:
+          item.issuedText && item.issuedYear !== undefined && existingDateYear !== item.issuedYear
+            ? `${existing} [${item.issuedYear}]`
+            : existing,
+        value: incomingDate
+      })
+    } else if (item.issuedText !== incomingDate || item.issuedYear !== incomingYear) {
+      item.issuedText = incomingDate
       item.issuedYear = incomingYear
-      filled.push({ field: 'year', value: String(incomingYear) })
-    } else if (item.issuedYear !== incomingYear) {
-      if (overwriteFields.has('year')) {
-        item.issuedYear = incomingYear
-        filled.push({ field: 'year', value: String(incomingYear) })
-      } else {
-        conflicts.push({
-          field: 'year',
-          currentValue: String(item.issuedYear),
-          value: String(incomingYear)
-        })
-      }
+      filled.push({ field: 'publicationDate', value: incomingDate })
     }
   }
 
   const incomingCreators =
-    message.author?.flatMap(({ family, given }) =>
-      family?.trim() || given?.trim()
+    message.author?.flatMap<LiteratureItemInput['creators'][number]>(({ family, given, name }) =>
+      name?.trim()
         ? [
             {
-              nameMode: 'person' as const,
-              givenName: given?.trim() ?? '',
-              familyName: family?.trim() ?? '',
-              creatorType: 'author'
+              nameMode: 'organization',
+              literalName: name.trim(),
+              creatorType: 'author',
+              givenName: '',
+              familyName: ''
             }
           ]
-        : []
+        : family?.trim() || given?.trim()
+          ? [
+              {
+                nameMode: 'person' as const,
+                givenName: given?.trim() ?? '',
+                familyName: family?.trim() ?? '',
+                creatorType: 'author'
+              }
+            ]
+          : []
     ) ?? []
   if (incomingCreators.length > 0) {
     const incomingText = creatorText({ ...item, creators: incomingCreators })
-    if (item.creators.length === 0) {
-      item.creators = incomingCreators
+    const otherCreators = item.creators.filter(({ creatorType }) => creatorType !== 'author')
+    if (!item.creators.some(({ creatorType }) => creatorType === 'author')) {
+      item.creators = [...incomingCreators, ...otherCreators]
       filled.push({ field: 'authors', value: incomingText })
     } else if (comparable(creatorText(item)) !== comparable(incomingText)) {
       if (overwriteFields.has('authors')) {
-        item.creators = incomingCreators
+        item.creators = [...incomingCreators, ...otherCreators]
         filled.push({ field: 'authors', value: incomingText })
       } else {
         conflicts.push({ field: 'authors', currentValue: creatorText(item), value: incomingText })
@@ -240,7 +313,6 @@ const mergeCrossrefMetadata = (
     )
       continue
     item.identifiers.push(identifier)
-    filled.push({ field: identifier.scheme, value: identifier.value })
   }
 
   return { item, filled, conflicts }
@@ -302,10 +374,29 @@ const mergePubmedMetadata = (
       page: summary.pages,
       ISSN: summary.issn ? [summary.issn] : undefined,
       language: summary.lang?.[0],
-      author: summary.authors?.map(({ name }) => ({ family: name })),
+      author: summary.authors?.map(({ name, authtype }) => {
+        if (authtype === 'CollectiveAuthor') return { name }
+        // Without a dedicated suffix field, splitting these names would turn Jr/III
+        // into given-name initials in citations. Retain the original representation.
+        if (/\s+(?:Jr|Sr|II|III|IV)\.?$/iu.test(name.trim())) return { family: name }
+        // ESummary personal names use "surname initials", not Crossref's separate
+        // family/given fields. Keep compound surnames and surname particles intact.
+        const match = /^(.*?)\s+([A-Z]+)$/u.exec(name.trim())
+        if (!match) return { family: name }
+        return {
+          family: match[1],
+          given: [...match[2]].map((initial) => `${initial}.`).join(' ')
+        }
+      }),
       issued: parts ? { 'date-parts': [[...parts]] } : undefined
     },
-    overwriteFields
+    overwriteFields,
+    summary.pubdate &&
+      !/^\d{4}(?:\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+\d{1,2})?)?$/iu.test(
+        summary.pubdate.trim()
+      )
+      ? summary.pubdate.trim()
+      : undefined
   )
   addIdentifier(merged.item, 'pmid', summary.uid)
   for (const identifier of summary.articleids ?? []) {
@@ -359,19 +450,32 @@ class LiteratureMetadataEnricher {
     const response = await this.fetchFn(sourceUrl, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
       signal: AbortSignal.timeout(15_000)
     })
     if (!response.ok) {
-      throw new Error(
-        `${identifier.scheme === 'doi' ? 'Crossref' : 'PubMed'} metadata request failed with HTTP ${response.status}.`
-      )
+      await response.body?.cancel()
+      throw new LiteratureProviderError(response.status)
     }
-    const body = await response.text()
     const maxBytes =
       identifier.scheme === 'doi' ? CROSSREF_MAX_RESPONSE_BYTES : PUBMED_MAX_RESPONSE_BYTES
-    if (body.length > maxBytes) throw new Error('Metadata response is too large.')
+    if (!response.body) throw new Error('Metadata response is empty.')
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let length = 0
+    try {
+      while (true) {
+        const { done, value: chunk } = await reader.read()
+        if (done) break
+        length += chunk.byteLength
+        if (length > maxBytes) throw new Error('Metadata response is too large.')
+        chunks.push(chunk)
+      }
+    } finally {
+      await reader.cancel()
+    }
+    const body = Buffer.concat(chunks).toString('utf8')
     const overwriteFields = new Set<LiteratureMetadataField>()
     let provider: 'crossref' | 'pubmed'
     let rawMetadata: Record<string, unknown>
@@ -391,6 +495,7 @@ class LiteratureMetadataEnricher {
       rawMetadata = summary
       merged = mergePubmedMetadata(lookupItem, summary, overwriteFields)
     }
+    reviewIdentifiers(current.item, merged)
     const source: LiteratureSourceInput = {
       provider,
       externalId: value,
@@ -400,6 +505,7 @@ class LiteratureMetadataEnricher {
 
     const result: LiteratureMetadataCompletionResult = {
       mode: 'preview',
+      reviewVersion: 1,
       provider,
       sourceUrl,
       item: { ...current, item: merged.item },
@@ -419,6 +525,28 @@ class LiteratureMetadataEnricher {
     overwriteFields: readonly LiteratureMetadataField[] = []
   ): Promise<LiteratureMetadataCompletionResult> {
     const current = await this.catalog.get(review.item.id)
+    const operationId = review.reviewToken
+      ? `${review.reviewToken}:${JSON.stringify([...new Set(overwriteFields)].sort())}`
+      : undefined
+    const receipt = operationId ? await this.catalog.getMetadataCommitReceipt(operationId) : null
+    if (
+      receipt &&
+      current &&
+      current.id === review.item.id &&
+      !current.deletedAt &&
+      receipt.itemId === review.item.id &&
+      receipt.expectedMetadataRevision === review.item.metadataRevision &&
+      current.metadataRevision >= receipt.committedMetadataRevision
+    ) {
+      return {
+        mode: 'commit',
+        provider: review.provider,
+        sourceUrl: review.sourceUrl,
+        item: current,
+        filled: review.filled,
+        conflicts: review.conflicts
+      }
+    }
     if (
       !current ||
       current.id !== review.item.id ||
@@ -426,7 +554,8 @@ class LiteratureMetadataEnricher {
       current.metadataRevision !== review.item.metadataRevision
     )
       throw new Error('Reference changed. Search again and review the metadata.')
-    if (!review.source) throw new Error('Search again to refresh this older metadata review.')
+    if (!review.source || review.reviewVersion !== 1)
+      throw new Error('Search again to refresh this older metadata review.')
     const merged =
       review.provider === 'crossref'
         ? mergeCrossrefMetadata(
@@ -439,7 +568,18 @@ class LiteratureMetadataEnricher {
             pubmedSummarySchema.parse(review.source.rawMetadata),
             new Set(overwriteFields)
           )
+    // Identifier proposals are atomic: an unselected replacement must not ride along with fills.
+    const identifierConflict = review.conflicts.find(({ field }) => field === 'identifiers')
+    if (identifierConflict) {
+      if (overwriteFields.includes('identifiers'))
+        merged.filled.push({ field: 'identifiers', value: identifierConflict.value })
+      else {
+        merged.item.identifiers = structuredClone(current.item.identifiers)
+        merged.conflicts.push(identifierConflict)
+      }
+    }
     const persistedItem = await this.catalog.applyMetadata({
+      operationId,
       itemId: current.id,
       expectedMetadataRevision: review.item.metadataRevision,
       item: merged.item,

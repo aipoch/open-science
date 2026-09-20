@@ -42,10 +42,13 @@ const expectedSkillChannels = [
   'settings:delete-skill',
   'settings:import-skill',
   'settings:import-skill-zip',
+  'settings:install-skill-marketplace',
+  'settings:start-skill-marketplace-batch',
   'settings:import-skill-zip-batch'
 ] as const
 
 const expectedConnectorChannels = [
+  'settings:test-custom-server',
   'settings:list-device-credentials',
   'settings:create-device-credential',
   'settings:update-device-credential',
@@ -151,7 +154,27 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 36-command Skill, Connector, and approval inventory', () => {
+  it('dispatches batch admission through the Skill workflow for local and remote callers', async () => {
+    const { dependencies, skillMethod } = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
+    const request = {
+      snapshotId: 'a'.repeat(64),
+      items: [{ id: 'one', version: '1.0.0', expectedVersion: null }]
+    }
+    const result = { ok: false, error: 'busy' }
+    skillMethod('startSkillMarketplaceBatch').mockResolvedValue(result)
+    for (const location of ['local', 'remote'] as const) {
+      await expect(
+        router.dispatcher.invoke(
+          settingsIntegrationApplicationCommands.startSkillMarketplaceBatch,
+          invocation([request] as const, createWebCallerContext('batch-client', { location }))
+        )
+      ).resolves.toBe(result)
+    }
+    expect(skillMethod('startSkillMarketplaceBatch')).toHaveBeenCalledWith(request)
+  })
+  it('defines the exact 39-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -185,16 +208,16 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(36)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(39)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
         ...expectedSkillChannels,
-        ...expectedConnectorChannels,
+        ...expectedConnectorChannels.filter((channel) => channel !== 'settings:test-custom-server'),
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(36)
+    expect(integrationContracts).toHaveLength(38)
     expect(
       integrationContracts
         ?.filter(
@@ -594,6 +617,13 @@ describe('Settings integration application commands', () => {
         )
       )
     ).rejects.toThrow('Channel only available from the local app: settings:retry-custom-server')
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.testCustomServer,
+        invocation([{ id: 'server-1' }] as const, createTaskCallerContext({ location: 'remote' }))
+      )
+    ).rejects.toThrow('Channel only available from the local app: settings:test-custom-server')
 
     await expect(
       router.dispatcher.invoke(

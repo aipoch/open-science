@@ -290,6 +290,18 @@ describe('cancer-models / mutations_in_gene', () => {
 })
 
 describe('cancer-models / mutation_frequency', () => {
+  const coverageRoutes = (study: string, samples: string[]): Array<[string, unknown]> => [
+    [`/sample-lists/${study}_sequenced/sample-ids`, samples],
+    [
+      `/${study}_mutations/gene-panel-data/fetch`,
+      samples.map((sampleId) => ({
+        sampleId,
+        molecularProfileId: `${study}_mutations`,
+        profiled: true
+      }))
+    ]
+  ]
+
   it('computes frequency per study and buckets unknown / no-data ids, ranked by frequency', async () => {
     const fetchImpl = vi.fn(
       router([
@@ -340,7 +352,9 @@ describe('cancer-models / mutation_frequency', () => {
           'study_hi_mutations/mutations?',
           [{ sampleId: 'a' }, { sampleId: 'b' }, { sampleId: 'b' }]
         ],
-        ['study_lo_mutations/mutations?', [{ sampleId: 'a' }, { sampleId: 'b' }]]
+        ['study_lo_mutations/mutations?', [{ sampleId: 'a' }, { sampleId: 'b' }]],
+        ...coverageRoutes('study_hi', ['a', 'b', ...Array.from({ length: 8 }, (_, i) => `hi${i}`)]),
+        ...coverageRoutes('study_lo', ['a', 'b', ...Array.from({ length: 98 }, (_, i) => `lo${i}`)])
       ]) as unknown as typeof fetch
     )
     const out = (await run(
@@ -361,6 +375,333 @@ describe('cancer-models / mutation_frequency', () => {
     expect(freqs[0].frequency).toBe(0.2)
     expect(freqs[0].mutated_samples).toBe(2)
     expect(freqs[1].frequency).toBe(0.02)
+  })
+
+  const frequencyRoutes = (
+    samples: string[],
+    panelData: unknown,
+    mutations: unknown[] = []
+  ): Array<[string, unknown]> => [
+    ['/genes/PPM1D', { entrezGeneId: 8493, hugoGeneSymbol: 'PPM1D' }],
+    ['/studies/study?', { studyId: 'study', sequencedSampleCount: 10945 }],
+    [
+      '/molecular-profiles',
+      [{ molecularProfileId: 'study_mutations', molecularAlterationType: 'MUTATION_EXTENDED' }]
+    ],
+    [
+      '/studies/study/sample-lists',
+      [{ sampleListId: 'study_sequenced', category: 'all_cases_with_mutation_data' }]
+    ],
+    ['/sample-lists/study_sequenced/sample-ids', samples],
+    ['/gene-panel-data/fetch', panelData],
+    ['/mutations?', mutations],
+    ['/gene-panels/IMPACT341?', { genes: [{ entrezGeneId: 7157 }] }],
+    ['/gene-panels/IMPACT410?', { genes: [{ entrezGeneId: 7157 }, { entrezGeneId: 8493 }] }]
+  ]
+  const profiled = (sampleId: string, genePanelId?: string): Record<string, unknown> => ({
+    sampleId,
+    molecularProfileId: 'study_mutations',
+    profiled: true,
+    ...(genePanelId ? { genePanelId } : {})
+  })
+  const frequencyArgs = { gene_symbol: 'PPM1D', study_ids: ['study'] }
+
+  it('uses gene-panel coverage for the denominator and preserves rare-frequency precision', async () => {
+    // Regression from PPM1D in msk_impact_2017: IMPACT341 does not assay PPM1D.
+    const untested = Array.from({ length: 2809 }, (_, i) => `old${i}`)
+    const tested = Array.from({ length: 8136 }, (_, i) => `new${i}`)
+    const mutations = tested.slice(0, 79).map((sampleId) => ({ sampleId }))
+    mutations.push(...mutations.slice(0, 7))
+    const fetchImpl = vi.fn(
+      router(
+        frequencyRoutes(
+          [...untested, ...tested],
+          [
+            ...untested.map((id) => profiled(id, 'IMPACT341')),
+            ...tested.map((id) => profiled(id, 'IMPACT410'))
+          ],
+          mutations
+        )
+      ) as unknown as typeof fetch
+    )
+    const out = (await run('cbioportal_mutation_frequency', frequencyArgs, fetchImpl)) as {
+      frequencies: Record<string, unknown>[]
+    }
+    expect(out.frequencies[0]).toMatchObject({
+      molecular_profile_id: 'study_mutations',
+      sample_list_id: 'study_sequenced',
+      mutation_count: 86,
+      mutated_samples: 79,
+      sequenced_samples: 10945,
+      cohort_samples: 10945,
+      profiled_samples: 8136,
+      not_profiled_samples: 2809,
+      unknown_profile_samples: 0,
+      frequency: 79 / 8136,
+      frequency_status: 'available'
+    })
+    const calls = fetchImpl.mock.calls
+    const mutationUrl = new URL(
+      calls.find(([url]) => String(url).includes('/mutations?'))![0] as string
+    )
+    expect(mutationUrl.searchParams.get('sampleListId')).toBe('study_sequenced')
+    expect(mutationUrl.searchParams.get('entrezGeneId')).toBe('8493')
+    const panelRequest = calls.find(([url]) => String(url).includes('/gene-panel-data/fetch'))!
+    expect(panelRequest[1]?.method).toBe('POST')
+    expect(JSON.parse(panelRequest[1]?.body as string)).toEqual({ sampleListId: 'study_sequenced' })
+    expect(calls.filter(([url]) => String(url).includes('/gene-panels/'))).toHaveLength(2)
+  })
+
+  it.each([
+    {
+      name: 'whole-exome coverage without a panel',
+      data: [profiled('a')],
+      mutations: [{ sampleId: 'a' }],
+      tested: 1,
+      notTested: 0,
+      unknown: 0,
+      frequency: 1,
+      status: 'available'
+    },
+    {
+      name: 'tested with no mutation',
+      data: [profiled('a', 'IMPACT410')],
+      mutations: [],
+      tested: 1,
+      notTested: 0,
+      unknown: 0,
+      frequency: 0,
+      status: 'available'
+    },
+    {
+      name: 'panel excludes the gene',
+      data: [profiled('a', 'IMPACT341')],
+      mutations: [],
+      tested: 0,
+      notTested: 1,
+      unknown: 0,
+      frequency: null,
+      status: 'no_profiled_samples'
+    },
+    {
+      name: 'explicitly unprofiled',
+      data: [{ ...profiled('a'), profiled: false }],
+      mutations: [],
+      tested: 0,
+      notTested: 1,
+      unknown: 0,
+      frequency: null,
+      status: 'no_profiled_samples'
+    },
+    {
+      name: 'missing sample coverage',
+      data: [],
+      mutations: [],
+      tested: 0,
+      notTested: 0,
+      unknown: 1,
+      frequency: null,
+      status: 'incomplete_coverage'
+    },
+    {
+      name: 'missing profiled flag',
+      data: [{ sampleId: 'a', molecularProfileId: 'study_mutations' }],
+      mutations: [],
+      tested: 0,
+      notTested: 0,
+      unknown: 1,
+      frequency: null,
+      status: 'incomplete_coverage'
+    },
+    {
+      name: 'different molecular profile',
+      data: [{ ...profiled('a'), molecularProfileId: 'study_cna' }],
+      mutations: [],
+      tested: 0,
+      notTested: 0,
+      unknown: 1,
+      frequency: null,
+      status: 'incomplete_coverage'
+    },
+    {
+      name: 'conflicting coverage records',
+      data: [profiled('a'), { ...profiled('a'), profiled: false }, profiled('a')],
+      mutations: [],
+      tested: 0,
+      notTested: 0,
+      unknown: 1,
+      frequency: null,
+      status: 'incomplete_coverage'
+    },
+    {
+      name: 'unknown gene panel',
+      data: [profiled('a', 'missing')],
+      mutations: [],
+      tested: 0,
+      notTested: 0,
+      unknown: 1,
+      frequency: null,
+      status: 'incomplete_coverage'
+    },
+    {
+      name: 'panel response without genes',
+      data: [profiled('a', 'incomplete')],
+      mutations: [],
+      tested: 0,
+      notTested: 0,
+      unknown: 1,
+      frequency: null,
+      status: 'incomplete_coverage'
+    },
+    {
+      name: 'mutation outside the selected cohort',
+      data: [profiled('a')],
+      mutations: [{ sampleId: 'outside' }],
+      tested: 1,
+      notTested: 0,
+      unknown: 0,
+      frequency: null,
+      status: 'inconsistent_mutation_data'
+    },
+    {
+      name: 'mutation outside the gene panel',
+      data: [profiled('a', 'IMPACT341')],
+      mutations: [{ sampleId: 'a' }],
+      tested: 0,
+      notTested: 1,
+      unknown: 0,
+      frequency: null,
+      status: 'inconsistent_mutation_data'
+    },
+    {
+      name: 'mutation without a sample id',
+      data: [profiled('a')],
+      mutations: [{}],
+      tested: 1,
+      notTested: 0,
+      unknown: 0,
+      frequency: null,
+      status: 'inconsistent_mutation_data'
+    }
+  ])(
+    'distinguishes $name',
+    async ({ data, mutations, tested, notTested, unknown, frequency, status }) => {
+      const fetchImpl = router([
+        ...frequencyRoutes(['a'], data, mutations),
+        ['/gene-panels/missing?', '__404__'],
+        ['/gene-panels/incomplete?', {}]
+      ]) as unknown as typeof fetch
+      const out = (await run('cbioportal_mutation_frequency', frequencyArgs, fetchImpl)) as {
+        frequencies: Record<string, unknown>[]
+      }
+      expect(out.frequencies[0]).toMatchObject({
+        cohort_samples: 1,
+        profiled_samples: tested,
+        not_profiled_samples: notTested,
+        unknown_profile_samples: unknown,
+        frequency,
+        frequency_status: status
+      })
+    }
+  )
+
+  it('does not produce a partial-cohort frequency when one sample has unknown coverage', async () => {
+    const fetchImpl = router(
+      frequencyRoutes(['a', 'b'], [profiled('a')], [{ sampleId: 'a' }])
+    ) as unknown as typeof fetch
+    const out = (await run('cbioportal_mutation_frequency', frequencyArgs, fetchImpl)) as {
+      frequencies: Record<string, unknown>[]
+    }
+    expect(out.frequencies[0]).toMatchObject({
+      cohort_samples: 2,
+      profiled_samples: 1,
+      unknown_profile_samples: 1,
+      mutated_samples: 1,
+      frequency: null,
+      frequency_status: 'incomplete_coverage'
+    })
+  })
+
+  it('reports an empty selected cohort as unassessed even if the study has sequenced samples', async () => {
+    const out = (await run(
+      'cbioportal_mutation_frequency',
+      frequencyArgs,
+      router(frequencyRoutes([], [])) as unknown as typeof fetch
+    )) as { frequencies: Record<string, unknown>[] }
+    expect(out.frequencies[0]).toMatchObject({
+      sequenced_samples: 10945,
+      cohort_samples: 0,
+      profiled_samples: 0,
+      frequency: null,
+      frequency_status: 'no_profiled_samples'
+    })
+  })
+
+  it('ranks by unrounded gene-profiled frequency with null last and reuses shared panels', async () => {
+    const studies = [
+      { id: 'a_lower', size: 10001 },
+      { id: 'z_higher', size: 10000 },
+      { id: 'empty', size: 0 }
+    ]
+    const routes: Array<[string, unknown]> = [
+      ['/genes/PPM1D', { entrezGeneId: 8493 }],
+      ['/gene-panels/shared?', { genes: [{ entrezGeneId: 8493 }] }]
+    ]
+    for (const { id, size } of studies) {
+      const sampleIds = Array.from({ length: size }, (_, i) => `sample${i}`)
+      routes.push(
+        [`/studies/${id}?`, { studyId: id, sequencedSampleCount: 20000 }],
+        [
+          `/studies/${id}/molecular-profiles`,
+          [{ molecularProfileId: `${id}_mutations`, molecularAlterationType: 'MUTATION_EXTENDED' }]
+        ],
+        [
+          `/studies/${id}/sample-lists`,
+          [{ sampleListId: `${id}_all`, category: 'all_cases_in_study' }]
+        ],
+        [`/sample-lists/${id}_all/sample-ids`, [...sampleIds, ...sampleIds.slice(0, 1)]],
+        [`/${id}_mutations/mutations?`, size ? [{ sampleId: 'sample0' }] : []],
+        [
+          `/${id}_mutations/gene-panel-data/fetch`,
+          [
+            ...sampleIds.map((sampleId) => ({
+              ...profiled(sampleId, 'shared'),
+              molecularProfileId: `${id}_mutations`
+            })),
+            { ...profiled('outside', 'shared'), molecularProfileId: `${id}_mutations` }
+          ]
+        ]
+      )
+    }
+    const fetchImpl = vi.fn(router(routes) as unknown as typeof fetch)
+    const out = (await run(
+      'cbioportal_mutation_frequency',
+      {
+        gene_symbol: 'PPM1D',
+        study_ids: ['empty', 'a_lower', 'z_higher']
+      },
+      fetchImpl
+    )) as { frequencies: Record<string, unknown>[] }
+    expect(out.frequencies.map((f) => [f.study_id, f.frequency])).toEqual([
+      ['z_higher', 1 / 10000],
+      ['a_lower', 1 / 10001],
+      ['empty', null]
+    ])
+    expect(out.frequencies[0].profiled_samples).toBe(10000)
+    expect(
+      fetchImpl.mock.calls.filter(([url]) => String(url).includes('/gene-panels/'))
+    ).toHaveLength(1)
+  })
+
+  it('propagates coverage service failures instead of falling back to the study denominator', async () => {
+    const fetchRoutes = router(frequencyRoutes(['a'], [profiled('a', 'IMPACT410')]))
+    const fetchImpl = (async (url: string) => {
+      if (url.includes('/gene-panels/')) throw new Error('coverage service unavailable')
+      return fetchRoutes(url)
+    }) as unknown as typeof fetch
+    await expect(run('cbioportal_mutation_frequency', frequencyArgs, fetchImpl)).rejects.toThrow(
+      'coverage service unavailable'
+    )
   })
 })
 
@@ -585,8 +926,12 @@ describe.skipIf(!process.env.LIVE_API)('cancer-models / LIVE cBioPortal', () => 
     })) as Record<string, unknown>
     expect((out.frequencies as unknown[]).length).toBeGreaterThan(0)
     for (const f of out.frequencies as Record<string, unknown>[]) {
-      expect(f).toHaveProperty('frequency')
-      expect(f).toHaveProperty('sequenced_samples')
+      expect(f.frequency_status).toBe('available')
+      expect(f.frequency).toBe((f.mutated_samples as number) / (f.profiled_samples as number))
+      expect(f.cohort_samples).toBe(
+        (f.profiled_samples as number) + (f.not_profiled_samples as number)
+      )
+      expect(f.unknown_profile_samples).toBe(0)
     }
   }, 60000)
 

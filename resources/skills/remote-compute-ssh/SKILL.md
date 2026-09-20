@@ -6,8 +6,9 @@ license: Apache-2.0
 
 This skill covers remote compute over SSH, including direct execution and Slurm submission:
 listing hosts, creating handles, running short remote commands (callCommand), reading/writing host
-knowledge docs, and the full async job lifecycle — submit → harvest → analysis turn → publish
-artifacts.
+knowledge docs, and the full async job lifecycle — submit → save `job_id` → read non-blocking
+snapshots by that ID →
+harvest → analysis turn → publish artifacts.
 
 **Where host.compute runs:** `host.compute` lives ONLY on the control-plane REPL kernel — run
 every example below with the `repl_execute` tool (JavaScript), the same kernel that hosts
@@ -58,25 +59,38 @@ const result = await c.callCommand('<shell command>', '<one-line intent for the 
 })
 // result → { exit_code, stdout, stderr, truncated }
 
-// Read the host knowledge doc and resource probe snapshot on demand.
+// Read the persisted operation instructions and the independent resource probe snapshot.
+// doc is always the exact saved text (including '' before instructions are saved).
 // probe is explicitly null when this host has never been probed.
 const info = await host.compute.details('ssh:<alias>', { mode: 'read' })
 
-// Append a note to the host knowledge doc (agent writes; 32 KB cap enforced)
+// Append a note to the persisted host knowledge doc (agent writes; 32 KB cap enforced).
+// Append changes only doc; it never copies or changes probe observations.
 await host.compute.details('ssh:<alias>', {
   mode: 'append',
   text: '\n## Note\nlearned X on <date>'
 })
 
-// Replace the entire host knowledge doc (oldText must match the current doc exactly)
+// Alternatively, replace the entire host knowledge doc. Read again before replacing,
+// especially if you appended above: oldText must match the persisted doc exactly.
+const latest = await host.compute.details('ssh:<alias>', { mode: 'read' })
 await host.compute.details('ssh:<alias>', {
   mode: 'replace',
   text: '<new full doc>',
-  oldText: info.doc // from the read above
+  oldText: latest.doc
 })
 ```
 
-With `loginShell: true`, the remote Bash login profiles run first and then Open Science attempts to
+Treat `doc` as operation instructions and durable host knowledge. Treat `probe` as a dated
+observation: resource values may change, and detecting a scheduler does not authorize submitting a
+job or select an account, partition, or queue. On a document mismatch or `details_conflict` error,
+read again and merge your draft with the latest document before retrying. A resource-only probe
+refresh does not change `doc` or cause a replacement conflict. After writing, read again to verify
+the saved contents. A successful append or replace result is only `{ ok: true }`. The write result
+does not contain `doc` or `probe`; always read again to verify the exact persisted `doc` rather than
+reading fields from the write result.
+
+With `loginShell: true`, the remote Bash login profiles run first and then Open-Science attempts to
 source `~/.bashrc` when it is readable. A `.bashrc` can deliberately return early for non-interactive
 shells, so variables declared after such a guard are not available. A missing `.bashrc` is a no-op.
 Set `loginShell: false` to run the command without either initialization step. Initialization failures
@@ -86,8 +100,10 @@ are reported through the normal command result/error behavior.
 
 Use `submitJob` for long-running computations (minutes to hours). It returns immediately with a
 `job_id`; the job runs on the remote host in the background. When the job finishes, the app
-automatically harvests the outputs and initiates a new analysis turn. Do not poll for completion;
-perform only the single bounded immediate-failure check below, then return control to the user.
+automatically harvests the outputs and initiates a new analysis turn if you have not already read
+the terminal result. Save the exact `job_id` from the submission result in your working context;
+there is intentionally no historical Job scan for rediscovering it. Status and result reads use
+only that saved ID and return non-blocking local snapshots.
 
 For a local input, `src` is relative to the Agent Session workspace—the same workspace used by file
 writing tools. Write a script or small generated input there, then pass its relative path. Open
@@ -126,28 +142,44 @@ const job = await c.submitJob(
   }
 )
 // job → { job_id, provider_id, status: 'submitted' | 'queued', remote_workdir }
-// Give dispatch enough time to expose an immediately broken script, then fetch one result snapshot.
-await new Promise((resolve) => setTimeout(resolve, 2000))
-// result() is a non-blocking local DB/directory read in every state; it never waits for completion,
-// triggers SSH, or starts another harvest. Fetching it once exposes immediate stderr/error details.
-const initial = await c.attachJob(job.job_id).result()
-return initial
+const savedJobId = job.job_id // retain this exact id for the later dependent step
+return { ...job, job_id: savedJobId }
 ```
 
-### Immediate failure check after submission
+### Read a saved Job snapshot
 
-Wait exactly once for 2 seconds (`setTimeout(..., 2000)`), then call `.result()` exactly once. The
-result read is non-blocking for `submitted` and `running` jobs and includes status, stdout, stderr,
-and error details already persisted by dispatch. This catches syntax errors, missing executables,
-and other scripts that fail as soon as they start without waiting for a long-running job or starting
-a second harvest. **Do not wait again** and do not turn this into a polling loop: after printing the
-snapshot, end the cell and let the app own the rest of the lifecycle.
+Use the saved ID when the Job's state or result is relevant. `.status()` and `.result()` are
+non-blocking local reads in every state; neither waits for completion, triggers SSH, or starts
+another harvest. `.result()` also includes harvested file lists. Both calls report
+`follow_up_delivery`. A final `.result()` read returns `suppressed` when it prevents the fallback,
+or `committed` when that fallback already crossed its dispatch fence. A `.status()` snapshot remains
+`pending` because it omits harvested file lists. Use the submission's exact ID rather than searching
+old Jobs.
+
+```javascript
+const snapshot = await c.attachJob(savedJobId).result()
+if (!snapshot.result_final) {
+  return {
+    job_id: savedJobId,
+    status: snapshot.status,
+    result_final: false,
+    follow_up_delivery: snapshot.follow_up_delivery
+  }
+}
+return snapshot
+```
+
+Treat only `result_final: true` as the final result; a provider-terminal status can still be waiting
+for local harvest. The app owns provider polling and harvest in the background. An unread final
+result is delivered in a later Agent Turn. A final `.result()` snapshot reports
+`follow_up_delivery: 'suppressed'` when it suppresses that fallback, or `committed` if automatic
+delivery already won the race and remains authoritative. `.status()` never consumes the full result.
 
 ### Direct SSH or Slurm
 
 The Compute Host's configured execution mode selects how every job is launched. `direct_ssh` runs
 the command as a detached process on the SSH target. `slurm` submits it with `sbatch`; put the
-cluster's required `#SBATCH` directives at the top of `command`. Open Science owns submission,
+cluster's required `#SBATCH` directives at the top of `command`. Open-Science owns submission,
 scheduler-status polling, cancellation, and harvest. Do not call `sbatch`, `squeue`, or `scancel`
 around `submitJob` yourself.
 
@@ -157,11 +189,11 @@ rejects the script, report the returned error and
 the concrete next step (for example, add an account or partition directive). Do not silently rerun
 the workload directly on a login node.
 
-Open Science accepts ordinary single-job directives such as partition, account, CPUs, memory, and
+Open-Science accepts ordinary single-job directives such as partition, account, CPUs, memory, and
 GPUs. Set `timeoutSeconds` for the workload runtime. You may set the scheduler allocation limit with
-one `#SBATCH --time=value` directive; when it is absent, Open Science derives a default allocation
-limit from `timeoutSeconds`. Open Science owns the job name, working directory, stdout, and stderr
-directives. Avoid job arrays because one Open Science job tracks one scheduler job and one output
+one `#SBATCH --time=value` directive; when it is absent, Open-Science derives a default allocation
+limit from `timeoutSeconds`. Open-Science owns the job name, working directory, stdout, and stderr
+directives. Avoid job arrays because one Open-Science job tracks one scheduler job and one output
 harvest. Submit independent work as separate jobs and use the Session concurrency limit when needed.
 
 For Slurm, request resources with one `#SBATCH --option=value` directive per line (or a value-free
@@ -173,24 +205,20 @@ The non-blocking job `status()` and `result()` snapshots include `scheduler_job_
 `error_code` on failure, and `last_poll_error` when observation or submission recovery needs
 attention. A pending reason or delayed accounting row does not mean the workload failed. If a
 submission is unconfirmed, use the reported job identity and provider diagnostics before deciding
-whether to submit again; Open Science does not automatically submit a duplicate.
+whether to submit again; Open-Science does not automatically submit a duplicate.
 
 ### Environment activation
 
-The optional `environment` value is a logical name, not a shell command. Open Science sources
-`~/.openscience/environments/<name>.sh` before the workload for direct and Slurm jobs. Names are
+The optional `environment` value is a logical name, not a shell command. Open-Science sources
+`~/.open-science/environments/<name>.sh` before the workload for direct and Slurm jobs. Names are
 1–64 letters, numbers, periods, underscores, or hyphens and must start with a letter or number.
 The file and every software/cache path it references must be visible on the execution node.
 
 If a submission reports that this activation file is missing, load the Compute Environment Setup
 Skill to prepare exact setup, repair, and removal instructions for the user or host administrator
-to run outside Open Science. Validate the user-managed activation after they apply the plan, then
+to run outside Open-Science. Validate the user-managed activation after they apply the plan, then
 retry. Do not guess a conda name, add an inline install to the science job, or hide activation in
 `.bashrc`. Omit `environment` when the command deliberately uses the host's default environment.
-
-**End the cell after that one check. Do NOT write a polling loop.** The app runs the poller and harvest in the
-background. When the job finishes, the app automatically starts a new analysis turn in this
-conversation — the conversation is NOT locked while the job runs, so the user can keep chatting.
 
 ### Harvest safety boundaries
 
@@ -201,12 +229,9 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 ### Behavior boundaries
 
 - **While the job runs:** the conversation is open. The user can send messages; you can handle
-  other tasks. No blocking wait.
-- **When the job finishes:** the app initiates a new analysis turn automatically. You do not
-  trigger this — it happens without any action on your part.
-- **Do NOT write** a loop calling `attachJob().status()` to wait for completion. That is the
-  app's job, not yours. Writing such a loop would block the conversation for the entire job
-  duration.
+  other tasks. Each status/result query returns immediately with the current local snapshot.
+- **When the job finishes:** if you did not actively read its terminal result, the app initiates a
+  new analysis turn automatically. You do not trigger this fallback.
 
 ### Check job status (non-blocking read, for informational use)
 
@@ -215,10 +240,12 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 const handle = c.attachJob(job.job_id)
 const s = await handle.status()
 // s → {
-//   job_id, scheduler_job_id?, status, cancellation_status?, exit_code,
-//   error_code?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir
+//   job_id, scheduler_job_id?, status, result_final, cancellation_status?, exit_code,
+//   error_code?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir,
+//   follow_up_delivery: 'pending'
 // }
 // status: 'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+// result_final is the authority for whether local harvest is complete; status alone is not.
 ```
 
 To stop one active job, request durable cancellation through the same handle:
@@ -255,14 +282,14 @@ When the app initiates the analysis turn, it provides the `job_id`, `status`, an
 const c = host.compute.create('ssh:<alias>')
 const r = await c.attachJob(job_id).result()
 // r → {
-//   job_id, status, exit_code,
+//   job_id, status, result_final, exit_code,
 //   local_output_root: '/absolute/path/to/this/notebook/session',
 //   producer_run_id: 'notebook-run-...',
 //   featured_files: ['hpc/<job_id>/featured/out.result', ...],   // Notebook Session-relative
 //   hidden_files:   ['hpc/<job_id>/hidden/run.log', ...],
 //   output_files:   [...featured_files, ...hidden_files],         // featured first
 //   left_on_remote: [{ uri: 'ssh:<alias>/<abs_path>', size_mb: 420, reason: 'residency:remote' }],
-//   remote_workdir: '.openscience/jobs/<job_id>',
+//   remote_workdir: '.open-science/jobs/<job_id>',
 //   stdout_tail: '...last 64 KB...',
 //   stderr_tail: '...last 64 KB...'
 // }
@@ -358,12 +385,11 @@ for (const seed of [0, 1, 2, 3, 4]) {
   )
   jobs.push(job.job_id)
 }
-return jobs // end the cell — no waiting, no loop
+return jobs // preserve every exact ID for later status/result reads
 ```
 
-The app triggers one analysis turn per job completion (or a merged turn for simultaneous
-completions). **Do NOT write a loop collecting all results** — each analysis turn handles
-its job independently.
+The app may trigger an analysis turn for each unread completion (or a merged turn for simultaneous
+completions). A final result read reports whether that Job's follow-up was suppressed or committed.
 
 ## Session concurrency control
 
@@ -407,8 +433,9 @@ try {
 
 ## Typical first-contact workflow
 
-1. `await host.compute.details(provider_id, { mode: 'read' })` — a `## Resources` skeleton means
-   first contact; populated sections mean prior sessions did the legwork, trust them.
+1. `await host.compute.details(provider_id, { mode: 'read' })` — read saved operation instructions
+   from `doc` and inspect the separate, dated `probe` observation. An empty `doc` means no
+   instructions have been saved; it says nothing about whether the host has been probed.
 2. Bind once: `const c = host.compute.create(provider_id)`.
 3. Run one batched probe: `await c.callCommand('id; module avail 2>&1 | head -40', '<intent>')`.
 4. Append what you learned via `await host.compute.details(..., { mode: 'append' })`.

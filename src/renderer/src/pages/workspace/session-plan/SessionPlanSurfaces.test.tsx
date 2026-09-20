@@ -250,7 +250,8 @@ describe('Session Plan renderer surfaces', () => {
 
       await waitFor(() => expect(onSubmitResponse).toHaveBeenCalledWith(text))
       expect(onRespond).not.toHaveBeenCalled()
-      expect(view.container.querySelector('article')).toBeNull()
+      // The callback is observed before its awaited continuation commits the submitted state.
+      await waitFor(() => expect(view.container.querySelector('article')).toBeNull())
     }
   )
 

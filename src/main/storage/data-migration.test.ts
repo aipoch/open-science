@@ -53,6 +53,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 import type { MigrationProgress } from '../../shared/storage'
 import { copyAndVerify, deleteSources, validateMigrationSourceLinks } from './data-migration'
+import { MIGRATABLE_DATA_DIRS } from './data-directories'
 
 let from: string
 let to: string
@@ -88,6 +89,27 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 describe('validateMigrationSourceLinks', () => {
+  it('moves model receipts, installed weights and resumable downloads with the data root', async () => {
+    const files = [
+      'models/pdf-tables/active.json',
+      'models/pdf-tables/revisions/v1/detection.onnx',
+      'models/pdf-tables/staging/v2/detection.onnx.part'
+    ]
+    for (const file of files) {
+      await mkdir(dirname(join(from, file)), { recursive: true })
+      await writeFile(join(from, file), file)
+    }
+    expect(
+      await copyAndVerify({
+        from,
+        to,
+        dirs: [...MIGRATABLE_DATA_DIRS],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+    ).toMatchObject({ ok: true })
+    for (const file of files) expect(await readFile(join(to, file), 'utf8')).toBe(file)
+  })
   it.each(['external', 'missing external', 'unselected subtree', 'indirect escape'])(
     'rejects a relative reference to %s before copying',
     async (kind) => {

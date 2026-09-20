@@ -269,12 +269,14 @@ const ReportErrorDialog = ({
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border-200 bg-bg-000 px-2.5 text-sm font-medium text-text-100 hover:bg-bg-200 hover:text-text-000"
               onClick={handleCopy}
             >
-              {copied ? (
-                <Check className="size-4" aria-hidden="true" />
-              ) : (
-                <Copy className="size-4" aria-hidden="true" />
-              )}
-              {copied ? t('Copied') : t('Copy details')}
+              <span key={String(copied)} className="button-feedback">
+                {copied ? (
+                  <Check className="size-4" aria-hidden="true" />
+                ) : (
+                  <Copy className="size-4" aria-hidden="true" />
+                )}
+                {copied ? t('Copied') : t('Copy details')}
+              </span>
             </button>
             <a
               href={consented ? issueUrl : undefined}

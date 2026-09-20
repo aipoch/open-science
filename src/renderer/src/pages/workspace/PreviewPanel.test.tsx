@@ -1,5 +1,7 @@
+import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
+import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 // @vitest-environment jsdom
-import { act, StrictMode } from 'react'
+import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -19,33 +21,57 @@ import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>
-  )
+  ),
+  ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  ResizableHandle: (): React.JSX.Element => <div data-testid="resize-handle" />
 }))
+
+const pdfPreviewReport = vi.hoisted(() => ({ pageCount: 2 as number | undefined, props: vi.fn() }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
   PreviewFileContent: ({
     item,
     activeAnnotations,
-    onAddAnnotation
+    onAddAnnotation,
+    onPdfReadingPositionChange
   }: {
     item: PreviewFileItem
     activeAnnotations?: readonly Annotation[]
     onAddAnnotation?: (annotation: Annotation) => void
-  }): React.JSX.Element => (
-    <button
-      type="button"
-      data-testid="file-content"
-      data-annotation-count={activeAnnotations?.length ?? 0}
-      onClick={() => activeAnnotations?.[0] && onAddAnnotation?.(activeAnnotations[0])}
-    >
-      file:{item.format}:{item.source ?? 'artifact'}:{item.name}:{item.path}
-    </button>
-  )
+    onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
+  }): React.JSX.Element => {
+    pdfPreviewReport.props({ item, onPdfReadingPositionChange })
+    useEffect(() => {
+      if (item.format === 'pdf' && pdfPreviewReport.pageCount !== undefined) {
+        onPdfReadingPositionChange?.({ pageNumber: 1, pageCount: pdfPreviewReport.pageCount })
+      }
+    }, [item.format, onPdfReadingPositionChange])
+    return (
+      <button
+        type="button"
+        data-testid="file-content"
+        data-annotation-count={activeAnnotations?.length ?? 0}
+        onClick={() => activeAnnotations?.[0] && onAddAnnotation?.(activeAnnotations[0])}
+      >
+        file:{item.format}:{item.source ?? 'artifact'}:{item.name}:{item.path}
+      </button>
+    )
+  }
 }))
 
 vi.mock('./previews/PreviewToolContent', () => ({
-  PreviewToolContent: ({ item }: { item: PreviewToolItem }): React.JSX.Element => (
-    <div data-testid="tool-content">tool:{item.toolKind ?? 'unknown'}</div>
+  PreviewToolContent: ({
+    item,
+    isActive
+  }: {
+    item: PreviewToolItem
+    isActive?: boolean
+  }): React.JSX.Element => (
+    <div data-testid="tool-content" data-active={isActive}>
+      tool:{item.toolKind ?? 'unknown'}
+    </div>
   )
 }))
 
@@ -84,12 +110,23 @@ const createSourceItem = (overrides: Partial<PreviewSourceItem> = {}): PreviewSo
 })
 
 describe('PreviewPanel', () => {
+  const getRetryButton = (): HTMLButtonElement => {
+    const button = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="preview-tab-action-error"] button'
+      )
+    ).find((button) => button.textContent === 'Retry')
+    if (!button) throw new Error('Retry button not found')
+    return button
+  }
   let container: HTMLDivElement
   let root: Root
   let sourcePreviewListener: ((state: Record<string, unknown>) => void) | undefined
   let releaseSourcePreview: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
+    pdfPreviewReport.pageCount = 2
+    pdfPreviewReport.props.mockClear()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     releaseSourcePreview = vi.fn()
     window.api = {
@@ -171,6 +208,170 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[data-testid="file-content"]')).toBe(content)
     expect(content.dataset.annotationCount).toBe('1')
   })
+
+  const openFullscreenFile = async (): Promise<HTMLElement> => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    await renderPanel({ activeAnnotations: [] })
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Open full screen preview of file-1.png"]')!
+        .click()
+    })
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dialog).not.toBeNull()
+    expect(document.activeElement).toBe(dialog)
+    return dialog
+  }
+
+  it('preserves fullscreen content focus when annotation props change', async () => {
+    const dialog = await openFullscreenFile()
+    const content = dialog.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+    content.focus()
+    expect(document.activeElement).toBe(content)
+    await act(async () => {
+      root.render(
+        <PreviewPanel
+          panelRef={{ current: null }}
+          defaultSize="40%"
+          minSize="30%"
+          onResize={vi.fn()}
+          activeAnnotations={[]}
+        />
+      )
+    })
+    expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(dialog.querySelector('[data-testid="file-content"]')).toBe(content)
+    expect(document.activeElement).toBe(content)
+  })
+
+  it('keeps fullscreen open for Escape during composition', async () => {
+    const dialog = await openFullscreenFile()
+    const content = dialog.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+    content.focus()
+    await act(async () => {
+      content.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+          isComposing: true
+        })
+      )
+    })
+    expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(document.activeElement).toBe(content)
+  })
+
+  it.each(['preventDefault', 'stopPropagation'] as const)(
+    'keeps fullscreen open when content consumes Escape with %s',
+    async (consume) => {
+      const dialog = await openFullscreenFile()
+      const content = dialog.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+      content.focus()
+      const handler = vi.fn((event: KeyboardEvent) => event[consume]())
+      content.addEventListener('keydown', handler)
+      try {
+        await act(async () => {
+          content.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          )
+        })
+        expect(handler).toHaveBeenCalledOnce()
+        expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+      } finally {
+        content.removeEventListener('keydown', handler)
+      }
+    }
+  )
+
+  it('wraps backward tab navigation from the initial fullscreen surface', async () => {
+    const dialog = await openFullscreenFile()
+    const buttons = dialog.querySelectorAll<HTMLButtonElement>('button:not([disabled])')
+    expect(buttons.length).toBeGreaterThan(0)
+    const event = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => {
+      dialog.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(buttons[buttons.length - 1])
+  })
+
+  it.each(['file', 'tool'] as const)(
+    'keeps %s fullscreen Tab boundaries local and restores its tab after Escape',
+    async (kind) => {
+      let dialog: HTMLElement
+      if (kind === 'file') dialog = await openFullscreenFile()
+      else {
+        usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({}))
+        await renderPanel()
+        await act(async () => usePreviewWorkbenchStore.getState().setToolItemExpanded('tool-1'))
+        dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+      }
+      // Tool content may supply its own controls; no private hook export is needed.
+      const first = document.createElement('input')
+      const last = document.createElement('button')
+      dialog.prepend(first)
+      dialog.append(last)
+      const tab = async (start: HTMLElement, shiftKey: boolean): Promise<void> => {
+        start.focus()
+        const event = new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey,
+          bubbles: true,
+          cancelable: true
+        })
+        await act(async () => {
+          start.dispatchEvent(event)
+        })
+        expect(event.defaultPrevented).toBe(true)
+      }
+      await tab(dialog, true)
+      expect(document.activeElement).toBe(last)
+      await tab(last, false)
+      expect(document.activeElement).toBe(first)
+      await tab(first, true)
+      expect(document.activeElement).toBe(last)
+
+      const upper = document.createElement('button')
+      document.body.append(upper)
+      try {
+        upper.focus()
+        const upperTab = new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+        upper.dispatchEvent(upperTab)
+        expect(upperTab.defaultPrevented).toBe(false)
+        expect(document.activeElement).toBe(upper)
+        upper.addEventListener('keydown', () => first.focus(), { once: true })
+        await act(async () =>
+          upper.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          )
+        )
+        expect(dialog.getAttribute('role')).toBe('dialog')
+        expect(document.activeElement).toBe(first)
+      } finally {
+        upper.remove()
+      }
+      await act(async () =>
+        first.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+      )
+      expect(container.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.activeElement).toBe(container.querySelector('[role="tab"]'))
+      first.remove()
+      last.remove()
+    }
+  )
 
   const renderTwoFileTabs = async (): Promise<void> => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
@@ -359,6 +560,87 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
   })
+
+  it.each([
+    ['loaded', '[data-source-preview-header-external]'],
+    ['failed', '[data-source-preview-header-external]'],
+    ['failed', '[data-source-preview-error] button']
+  ] as const)(
+    'opens the displayed source URL after a %s navigation via %s',
+    async (phase, selector) => {
+      const sourceItem = createSourceItem()
+      const currentUrl = 'https://example.com/supplement'
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+      await renderPanel()
+      const iframe = container.querySelector('[data-source-preview-frame]')
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await act(async () => {
+          sourcePreviewListener!({
+            sourceUrl: sourceItem.url,
+            currentUrl,
+            navigationId: 2,
+            phase,
+            httpStatusCode: phase === 'failed' ? 404 : 200,
+            httpStatusText: phase === 'failed' ? 'Not Found' : 'OK',
+            ...(phase === 'failed' ? { failure: 'http' } : {})
+          })
+        })
+        expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
+          currentUrl
+        )
+        const button = [...container.querySelectorAll<HTMLButtonElement>(selector)].find(
+          (candidate) =>
+            candidate.getAttribute('aria-label') === 'Open source in browser' ||
+            candidate.textContent === 'Open source in browser'
+        )
+        expect(button).toBeDefined()
+        await act(async () => button!.click())
+        expect(open).toHaveBeenLastCalledWith(currentUrl, '_blank', 'noreferrer')
+        expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+        expect(iframe?.getAttribute('src')).toBe(sourceItem.url)
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>('[data-source-preview-header-close]')!.click()
+        })
+        expect(releaseSourcePreview).toHaveBeenCalledWith(sourceItem.url)
+      } finally {
+        open.mockRestore()
+      }
+    }
+  )
+
+  it.each(['http://example.com/paper', 'javascript:alert(1)', 'invalid'])(
+    'keeps the HTTPS fallback for an invalid current source URL: %s',
+    async (currentUrl) => {
+      const sourceItem = createSourceItem()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+      await renderPanel()
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await act(async () => {
+          sourcePreviewListener!({
+            sourceUrl: sourceItem.url,
+            currentUrl,
+            navigationId: 1,
+            phase: 'loaded',
+            httpStatusCode: 200,
+            httpStatusText: 'OK'
+          })
+        })
+        expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
+          sourceItem.url
+        )
+        await act(async () => {
+          container
+            .querySelector<HTMLButtonElement>('[data-source-preview-header-external]')!
+            .click()
+        })
+        expect(open).toHaveBeenCalledWith(sourceItem.url, '_blank', 'noreferrer')
+      } finally {
+        open.mockRestore()
+      }
+    }
+  )
 
   it('does not grant remote source previews permission to open popup windows', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
@@ -1020,6 +1302,7 @@ describe('PreviewPanel', () => {
     // as the local file browser's current directory.
     const toolContent = container.querySelector('[data-testid="tool-content"]')
     expect(toolContent).not.toBeNull()
+    expect(toolContent?.getAttribute('data-active')).toBe('true')
     const toolPanel = container.querySelector(`#${panelId('tool-1')}`)
     expect(toolPanel?.hasAttribute('hidden')).toBe(false)
 
@@ -1029,6 +1312,7 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-testid="file-content"]')).not.toBeNull()
     expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(true)
+    expect(toolContent?.getAttribute('data-active')).toBe('false')
     expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
 
     await act(async () => {
@@ -1036,7 +1320,10 @@ describe('PreviewPanel', () => {
     })
 
     expect(container.querySelector(`#${panelId('tool-1')}`)?.hasAttribute('hidden')).toBe(false)
+    expect(toolContent?.getAttribute('data-active')).toBe('true')
     expect(container.querySelector('[data-testid="tool-content"]')).toBe(toolContent)
+    await act(async () => usePreviewWorkbenchStore.getState().collapsePanel())
+    expect(toolContent?.getAttribute('data-active')).toBe('false')
   })
 
   it('activates a different tab on click and swaps the rendered content', async () => {
@@ -1205,6 +1492,281 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
   })
 
+  it.each(['before', 'after'] as const)(
+    'shows a restored Side chat when preview persistence finishes %s hydration',
+    async (order) => {
+      const store = usePreviewWorkbenchStore.getState()
+      store.activateProject('default')
+      const restorePreview = (): void => {
+        usePreviewWorkbenchStore
+          .getState()
+          .activateProject('default', { items: [], panelState: 'collapsed' })
+      }
+      if (order === 'before') restorePreview()
+      window.api.sideChat = {
+        list: vi.fn(async () => ({
+          revision: 1,
+          chats: [
+            {
+              revision: 1,
+              sideSessionId: 'saved-side',
+              parentSessionId: 'saved-parent',
+              projectId: 'default',
+              running: false,
+              entries: [
+                {
+                  id: 'saved-answer',
+                  kind: 'message',
+                  role: 'assistant',
+                  text: 'Answer retained across restart'
+                }
+              ]
+            }
+          ]
+        })),
+        close: vi.fn(),
+        onEvent: vi.fn(() => () => undefined)
+      } as unknown as Window['api']['sideChat']
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <SideChatProvider>
+            <PreviewPanel
+              panelRef={{ current: null }}
+              defaultSize="40%"
+              minSize="30%"
+              onResize={vi.fn()}
+            />
+          </SideChatProvider>
+        )
+      )
+      if (order === 'after') act(restorePreview)
+      expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+      expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+        'Side chat'
+      )
+      const panel = container.querySelector('[data-testid="side-chat-panel"]')
+      expect(panel?.textContent).toContain('Answer retained across restart')
+      expect(panel?.querySelector('textarea')).not.toBeNull()
+      expect(window.api.sideChat.close).not.toHaveBeenCalled()
+      act(() => usePreviewWorkbenchStore.getState().collapsePanel())
+      expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+    }
+  )
+
+  it('keeps sibling Side chat tab names fixed when conversations differ', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('default')
+    window.api.sideChat = {
+      list: vi.fn(async () => ({
+        revision: 2,
+        chats: ['Compare cohorts', 'Check confidence intervals'].map((text, index) => ({
+          revision: index + 1,
+          sideSessionId: `side-${index + 1}`,
+          parentSessionId: 'parent-session',
+          projectId: 'default',
+          running: false,
+          entries: [
+            {
+              id: `user-${index + 1}`,
+              kind: 'message' as const,
+              role: 'user' as const,
+              text
+            }
+          ]
+        }))
+      })),
+      close: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    } as unknown as Window['api']['sideChat']
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <SideChatProvider>
+          <PreviewPanel
+            panelRef={{ current: null }}
+            defaultSize="40%"
+            minSize="30%"
+            onResize={vi.fn()}
+          />
+        </SideChatProvider>
+      )
+    )
+
+    const labels = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)
+    expect(labels).toEqual(['Side chat', 'Side chat'])
+  })
+
+  it('renders a live Side chat and its independent composer inside the right panel', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'default',
+          name: 'Default',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'right-parent',
+          projectId: 'default',
+          title: 'Main analysis',
+          description: 'Compare the two cohorts',
+          cwd: '/workspace',
+          status: 'idle',
+          createdAt: 1,
+          updatedAt: 1,
+          messages: [
+            {
+              id: 'right-user',
+              eventIds: [],
+              role: 'user',
+              content: 'Compare the two cohorts',
+              status: 'complete',
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        } satisfies ChatSession
+      ]
+    })
+    const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    usePreviewWorkbenchStore.getState().activateProject('default')
+    window.api.sideChat = {
+      start: vi.fn(async () => ({
+        sideSessionId: 'right-side',
+        frameworkId: 'claude-code' as const
+      })),
+      send: vi.fn(),
+      close: vi.fn(),
+      cancel: vi.fn(),
+      onEvent: vi.fn(() => () => undefined)
+    } as unknown as Window['api']['sideChat']
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'right-parent', projectId: 'default' })
+      return null
+    }
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <SideChatProvider>
+          <Harness />
+          <PreviewPanel
+            panelRef={{ current: null }}
+            defaultSize="40%"
+            minSize="30%"
+            onResize={vi.fn()}
+          />
+        </SideChatProvider>
+      )
+    )
+    await act(async () => {
+      await chat.start('Question in the right panel')
+    })
+    const panel = container.querySelector('#right-panel [data-testid="side-chat-panel"]')
+    expect(panel).not.toBeNull()
+    expect(panel?.textContent).toContain('Question in the right panel')
+    expect(panel?.querySelector('textarea')).not.toBeNull()
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      'Side chat'
+    )
+    expect(container.querySelector('[role="tab"]')?.textContent).not.toContain('Main analysis')
+    const viewMain = panel!.querySelector<HTMLButtonElement>('[aria-label="View main session"]')!
+    await act(async () => viewMain.click())
+    expect(openSession).toHaveBeenCalledWith('default', 'right-parent', 'user')
+    await act(async () => viewMain.focus())
+    expect(document.body.textContent).toContain('Main analysis')
+    expect(document.body.textContent).toContain('Compare the two cohorts')
+    openSession.mockRestore()
+  })
+
+  it('switches to a matching Side chat after a drag hover and cancels a departed hover', async () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.upsertAndActivateItem(
+      createToolItem({
+        id: 'side-one',
+        sideChatId: 'one',
+        toolKind: 'side-chat',
+        projectId: 'default',
+        title: 'Side chat'
+      })
+    )
+    store.upsertAndActivateItem(
+      createToolItem({
+        id: 'side-two',
+        sideChatId: 'two',
+        toolKind: 'side-chat',
+        projectId: 'default',
+        title: 'Side chat'
+      })
+    )
+    await renderPanel()
+    const unregister = annotationTransfers.register('hover-source', {
+      read: () => ({
+        projectId: 'default',
+        parentSessionId: 'session-1',
+        annotation: {
+          id: 'quote',
+          kind: 'text',
+          target: 'agent',
+          quote: 'Evidence',
+          source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message' }
+        }
+      }),
+      remove: vi.fn()
+    })
+    annotationTransfers.begin('hover-source')
+    vi.useFakeTimers()
+    const tab = container.querySelector('[role="tab"][aria-selected="false"]')!
+    const hover = (): void => {
+      const event = new Event('dragover', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: { types: [ANNOTATION_DRAG_TYPE] } })
+      tab.dispatchEvent(event)
+    }
+    act(() => {
+      hover()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('side-two')
+    act(() => {
+      tab.dispatchEvent(new Event('dragleave', { bubbles: true }))
+      vi.runOnlyPendingTimers()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('side-two')
+    act(() => {
+      hover()
+      vi.runOnlyPendingTimers()
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('side-one')
+    annotationTransfers.cancel()
+    unregister()
+  })
+
+  it('navigates to a Side chat parent from its shared context menu', async () => {
+    const openSession = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(true)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createToolItem({
+        id: 'side-chat-tab',
+        projectId: 'default',
+        sessionId: 'side-parent',
+        toolKind: 'side-chat',
+        title: 'Side chat'
+      })
+    )
+    await renderPanel()
+    expect(container.querySelector('[role="tab"] [aria-label="View main session"]')).toBeNull()
+    await openTabContextMenu(0)
+    await clickMenuCommand('view-session')
+    expect(openSession).toHaveBeenCalledTimes(1)
+    expect(openSession).toHaveBeenLastCalledWith('default', 'side-parent', 'user')
+    openSession.mockRestore()
+  })
+
   it('opens a tab menu on right-click without activating the tab', async () => {
     await renderTwoFileTabs()
 
@@ -1234,6 +1796,99 @@ describe('PreviewPanel', () => {
     expect(
       document.body.querySelector('[data-testid="preview-tab-context-menu"] [role="separator"]')
     ).toBeNull()
+  })
+
+  it.each([undefined, 1, 2])(
+    'gates the PDF tab reading entry for %s confirmed pages',
+    async (pageCount) => {
+      pdfPreviewReport.pageCount = pageCount
+      useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+      usePreviewWorkbenchStore.getState().activateProject('project-1')
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          projectId: 'project-1',
+          format: 'pdf',
+          name: 'paper.pdf',
+          title: 'paper.pdf',
+          selectedVersionId: 'version-1'
+        })
+      )
+      await renderPanel()
+      await openTabContextMenu(0)
+      expect(menuCommands().includes('toggle-pdf-context')).toBe(pageCount === 2)
+      expect(menuCommands()).toContain('download')
+    }
+  )
+
+  it('keeps confirmed inactive PDF counts and invalidates replaced or reopened tabs', async () => {
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    const pdf = createFileItem({
+      projectId: 'project-1',
+      format: 'pdf',
+      name: 'paper.pdf',
+      title: 'paper.pdf',
+      selectedVersionId: 'version-1'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(pdf)
+    await renderPanel()
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({}))
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).toContain('toggle-pdf-context')
+
+    pdfPreviewReport.pageCount = undefined
+    await act(async () => {
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem({ ...pdf, selectedVersionId: 'version-2' })
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
+    await act(async () => {
+      pdfPreviewReport.props.mock.calls
+        .at(-1)?.[0]
+        .onPdfReadingPositionChange({ pageNumber: 1, pageCount: 2 })
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).toContain('toggle-pdf-context')
+
+    const current = usePreviewWorkbenchStore.getState().items.find((entry) => entry.id === pdf.id)!
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().removeItem(pdf.id)
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(current)
+    })
+    await openTabContextMenu(1)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
+  })
+
+  it('does not reuse a previous project PDF count', async () => {
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    const pdf = createFileItem({
+      projectId: 'project-1',
+      format: 'pdf',
+      name: 'paper.pdf',
+      title: 'paper.pdf',
+      selectedVersionId: 'version-1'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(pdf)
+    await renderPanel()
+    await openTabContextMenu(0)
+    expect(menuCommands()).toContain('toggle-pdf-context')
+
+    pdfPreviewReport.pageCount = undefined
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateProject('project-2')
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem({ ...pdf, projectId: 'project-2' })
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
   })
 
   it('leads a linkable PDF tab menu with Read with agent and links through it', async () => {
@@ -1307,6 +1962,80 @@ describe('PreviewPanel', () => {
     window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
   })
 
+  it('disables the PDF tab command while linking is pending', async () => {
+    let finish!: () => void
+    const linkPdfContext = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    window.api.sessions = {
+      linkPdfContext,
+      unlinkPdfContext: vi.fn()
+    } as unknown as Window['api']['sessions']
+    window.api.artifacts = {
+      getLineage: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['artifacts']
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: { version: 1, revision: 1 },
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const focusListener = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        format: 'pdf',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        artifactId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      })
+    )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    expect(menuCommands()[0]).toBe('toggle-pdf-context')
+    expect(
+      document.body.querySelector('[data-action-id="toggle-pdf-context"]')?.textContent
+    ).toContain('Read with agent')
+
+    await clickMenuCommand('toggle-pdf-context')
+
+    try {
+      expect(linkPdfContext).toHaveBeenCalledTimes(1)
+      await openTabContextMenu(0)
+      const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
+      expect(command).not.toBeNull()
+      expect(command?.getAttribute('aria-disabled')).toBe('true')
+      await clickMenuCommand('toggle-pdf-context')
+      expect(linkPdfContext).toHaveBeenCalledTimes(1)
+    } finally {
+      await act(async () => finish())
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    }
+    await openTabContextMenu(0)
+    expect(
+      document.body
+        .querySelector('[data-action-id="toggle-pdf-context"]')
+        ?.getAttribute('aria-disabled')
+    ).not.toBe('true')
+  })
+
   it('routes the PDF tab command through the Composer Reading history port when provided', async () => {
     const linkPdfContext = vi.fn()
     const onLinkReadingContext = vi.fn().mockResolvedValue(undefined)
@@ -1372,67 +2101,77 @@ describe('PreviewPanel', () => {
     expect(document.activeElement).toBe(document.getElementById('preview-tab-item-1'))
   })
 
-  it('labels the PDF tab command Remove PDF from context when the tab is the current binding', async () => {
-    usePreviewWorkbenchStore.getState().activateProject('project-1')
-    window.api.artifacts = {
-      getLineage: vi.fn().mockResolvedValue(undefined)
-    } as unknown as Window['api']['artifacts']
-    useSessionStore.setState({
-      sessions: [
-        {
-          id: 'session-1',
-          projectId: 'project-1',
-          title: 'Session',
-          cwd: '/workspace',
-          status: 'idle',
-          messages: [],
-          runtimeContext: {
-            version: 1,
-            revision: 1,
-            pdfContext: {
+  it.each([undefined, 1])(
+    'keeps the linked PDF tab removal command with %s confirmed pages',
+    async (pageCount) => {
+      pdfPreviewReport.pageCount = pageCount
+      const unlinkPdfContext = vi.fn().mockResolvedValue(undefined)
+      window.api.sessions = { unlinkPdfContext } as unknown as Window['api']['sessions']
+      usePreviewWorkbenchStore.getState().activateProject('project-1')
+      window.api.artifacts = {
+        getLineage: vi.fn().mockResolvedValue(undefined)
+      } as unknown as Window['api']['artifacts']
+      useSessionStore.setState({
+        sessions: [
+          {
+            id: 'session-1',
+            projectId: 'project-1',
+            title: 'Session',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: [],
+            runtimeContext: {
               version: 1,
-              bindings: [
-                {
-                  version: 1,
-                  bindingId: 'binding-1',
-                  sourceKind: 'artifact-version',
-                  sourceFileId: 'artifact-1',
-                  sourceVersionId: 'version-1',
-                  sourceSessionId: 'session-1',
-                  name: 'paper.pdf',
-                  mimeType: 'application/pdf',
-                  sizeBytes: 12,
-                  checksum: 'checksum-1',
-                  linkedAt: 1
-                }
-              ]
-            }
-          },
-          createdAt: 1,
-          updatedAt: 1
-        } as ChatSession
-      ],
-      selectedSessionId: 'session-1'
-    })
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
-      createFileItem({
-        format: 'pdf',
-        title: 'paper.pdf',
-        name: 'paper.pdf',
-        artifactId: 'artifact-1',
-        selectedVersionId: 'version-1',
-        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+              revision: 1,
+              pdfContext: {
+                version: 1,
+                bindings: [
+                  {
+                    version: 1,
+                    bindingId: 'binding-1',
+                    sourceKind: 'artifact-version',
+                    sourceFileId: 'artifact-1',
+                    sourceVersionId: 'version-1',
+                    sourceSessionId: 'session-1',
+                    name: 'paper.pdf',
+                    mimeType: 'application/pdf',
+                    sizeBytes: 12,
+                    checksum: 'checksum-1',
+                    linkedAt: 1
+                  }
+                ]
+              }
+            },
+            createdAt: 1,
+            updatedAt: 1
+          } as ChatSession
+        ],
+        selectedSessionId: 'session-1'
       })
-    )
-    await renderPanel()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          format: 'pdf',
+          title: 'paper.pdf',
+          name: 'paper.pdf',
+          artifactId: 'artifact-1',
+          selectedVersionId: 'version-1',
+          path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+        })
+      )
+      await renderPanel()
 
-    await openTabContextMenu(0)
+      await openTabContextMenu(0)
 
-    const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
-    expect(command?.textContent).toContain('Remove PDF from context')
-    // Unlink is reversible, so it never takes the danger styling.
-    expect(command?.className).not.toContain('danger')
-  })
+      const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
+      expect(command?.textContent).toContain('Remove PDF from context')
+      // Unlink is reversible, so it never takes the danger styling.
+      expect(command?.className).not.toContain('danger')
+      await clickMenuCommand('toggle-pdf-context')
+      expect(unlinkPdfContext).toHaveBeenCalledWith(
+        expect.objectContaining({ bindingId: 'binding-1' })
+      )
+    }
+  )
 
   it('omits the reading-context command for non-PDF and non-linkable tabs', async () => {
     useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
@@ -1551,5 +2290,350 @@ describe('PreviewPanel', () => {
     expect(stageLocalPath).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'notes.md', sourcePath: '/tmp/notes.md' })
     )
+  })
+  it.each([
+    ['download', 'Could not download this file.'],
+    ['copy-path', 'Could not copy the file path.'],
+    ['save-as-artifact', 'Could not save this file as an artifact.']
+  ])('shows a retryable failure for %s from an inactive tab', async (command, title) => {
+    const failure = new Error('File operation denied')
+    const rejectOperation = vi.fn().mockRejectedValue(failure)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    Object.assign(navigator, { clipboard: { writeText: rejectOperation } })
+    if (command === 'download') window.api.saveManagedFile = rejectOperation
+    if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = rejectOperation
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'local-file',
+        source: 'local',
+        name: 'notes.png',
+        title: 'notes.png',
+        path: '/workspace/notes.png'
+      })
+    )
+    await renderPanel()
+    try {
+      await openTabContextMenu(1)
+      await clickMenuCommand(command)
+      expect(rejectOperation).toHaveBeenCalledTimes(1)
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      const notice = container.querySelector('[data-testid="preview-tab-action-error"]')
+      expect(notice?.closest('[hidden]')).toBeNull()
+      expect(notice?.querySelector('[role="alert"]')?.textContent).toContain(title)
+      expect(document.body.textContent).toContain(title)
+      expect(document.body.textContent).toContain(failure.message)
+      const retry = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Try again' || button.textContent === 'Retry'
+      )
+      expect(retry).toBeDefined()
+      // Retry still targets the original file after its tab has been removed.
+      await act(async () => usePreviewWorkbenchStore.getState().removeItem('local-file'))
+      await act(async () => retry!.click())
+      expect(rejectOperation).toHaveBeenCalledTimes(2)
+      expect(document.body.textContent).toContain(title)
+      let finish!: () => void
+      rejectOperation.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      await act(async () => retry!.click())
+      expect(retry!.disabled).toBe(true)
+      await act(async () => retry!.click())
+      expect(rejectOperation).toHaveBeenCalledTimes(3)
+      const request = rejectOperation.mock.calls[2][0]
+      if (command === 'copy-path') expect(request).toBe('/workspace/notes.png')
+      else
+        expect(request).toEqual(
+          expect.objectContaining(
+            command === 'download'
+              ? { path: '/workspace/notes.png' }
+              : { sourcePath: '/workspace/notes.png' }
+          )
+        )
+      await act(async () => finish())
+      expect(document.body.textContent).not.toContain(title)
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it.each(['download', 'copy-path', 'save-as-artifact'])(
+    'clears the failure after %s succeeds from the menu',
+    async (command) => {
+      const operation = vi.fn().mockRejectedValueOnce(new Error('File operation denied'))
+      Object.assign(navigator, { clipboard: { writeText: operation } })
+      if (command === 'download') window.api.saveManagedFile = operation
+      if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = operation
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+      await renderPanel()
+
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).not.toBeNull()
+
+      operation.mockResolvedValue({ saved: true })
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      expect(operation).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+    }
+  )
+
+  it.each(['download', 'copy-path', 'save-as-artifact'])(
+    'disables the same menu command while %s is being retried',
+    async (command) => {
+      let finish!: () => void
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Permission denied'))
+        .mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            })
+        )
+      Object.assign(navigator, { clipboard: { writeText: operation } })
+      if (command === 'download') window.api.saveManagedFile = operation
+      if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = operation
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+      await renderPanel()
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      const retry = getRetryButton()
+      await act(async () => retry.click())
+      expect(operation).toHaveBeenCalledTimes(2)
+      try {
+        await openTabContextMenu(0)
+        const menuAction = document.body.querySelector(`[data-action-id="${command}"]`)
+        expect(menuAction?.getAttribute('aria-disabled')).toBe('true')
+        await clickMenuCommand(command)
+        expect(operation).toHaveBeenCalledTimes(2)
+      } finally {
+        await act(async () => finish())
+      }
+      await openTabContextMenu(0)
+      expect(
+        document.body.querySelector(`[data-action-id="${command}"]`)?.getAttribute('aria-disabled')
+      ).not.toBe('true')
+    }
+  )
+
+  it('focuses the remaining active tab after closing the focused tab from its menu', async () => {
+    await renderTwoFileTabs()
+    container.querySelector<HTMLButtonElement>('[role="tab"]')!.focus()
+    await openTabContextMenu(0)
+    await clickMenuCommand('close')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
+    const remaining = document.getElementById('preview-tab-item-2')
+    expect(remaining).not.toBeNull()
+    expect(document.activeElement).toBe(remaining)
+  })
+  it('keeps download cancellation silent', async () => {
+    vi.mocked(window.api.saveManagedFile).mockResolvedValue({ saved: false })
+    await renderTwoFileTabs()
+    await openTabContextMenu(0)
+    await clickMenuCommand('download')
+    expect(window.api.saveManagedFile).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+  })
+
+  it('hands focus to the composer after the last tab is closed from its menu', async () => {
+    const composer = document.createElement('textarea')
+    document.body.appendChild(composer)
+    const focusComposer = (): void => composer.focus()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    await renderPanel()
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('close')
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+      expect(document.activeElement).toBe(composer)
+    } finally {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+      composer.remove()
+    }
+  })
+  it.each([false, true])(
+    'discards a previous project action failure (late rejection: %s)',
+    async (late) => {
+      useNavigationStore.setState({ activeProjectId: 'project-a' })
+      usePreviewWorkbenchStore.getState().activateProject('project-a')
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          source: 'local',
+          projectId: 'project-a'
+        })
+      )
+      let reject!: (error: Error) => void
+      const save = vi.fn(
+        () =>
+          new Promise<never>((_, fail) => {
+            reject = fail
+          })
+      )
+      window.api.uploads.stageLocalPath = save
+      await renderPanel()
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-a' }))
+      const rejectSave = async (): Promise<void> => {
+        await act(async () => reject(new Error('Project A save failed')))
+      }
+      if (!late) {
+        await rejectSave()
+        expect(container.querySelector('[data-testid="preview-tab-action-error"]')).not.toBeNull()
+      }
+      await act(async () => {
+        useNavigationStore.setState({ activeProjectId: 'project-b' })
+        usePreviewWorkbenchStore.getState().activateProject('project-b')
+      })
+      if (late) await rejectSave()
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+      await act(async () => {
+        useNavigationStore.setState({ activeProjectId: 'project-a' })
+        usePreviewWorkbenchStore.getState().activateProject('project-a')
+      })
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+      expect(save).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('rejects a stale retry click after navigation changes projects', async () => {
+    useNavigationStore.setState({ activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.getState().activateProject('project-a')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+    const save = vi.fn().mockRejectedValue(new Error('Project A save failed'))
+    window.api.uploads.stageLocalPath = save
+    await renderPanel()
+    await openTabContextMenu(0)
+    await clickMenuCommand('save-as-artifact')
+    const retry = getRetryButton()
+    expect(retry).not.toBeNull()
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'project-b' })
+      retry.click()
+    })
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+  it('keeps retry progress scoped to the current project failure', async () => {
+    let finishA: (() => void) | undefined
+    let finishB: (() => void) | undefined
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Project A save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishA = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('Project B save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishB = resolve
+          })
+      )
+    window.api.uploads.stageLocalPath = save
+    const openProject = (projectId: string): void => {
+      useNavigationStore.setState({ activeProjectId: projectId })
+      usePreviewWorkbenchStore.getState().activateProject(projectId)
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          source: 'local',
+          projectId,
+          id: projectId
+        })
+      )
+    }
+    openProject('project-a')
+    await renderPanel()
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => getRetryButton().click())
+      expect(save).toHaveBeenCalledTimes(2)
+      await act(async () => openProject('project-b'))
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      expect(save).toHaveBeenCalledTimes(3)
+      expect(getRetryButton().disabled).toBe(false)
+      await act(async () => getRetryButton().click())
+      expect(save).toHaveBeenCalledTimes(4)
+      await act(async () => finishA?.())
+      expect(getRetryButton().disabled).toBe(true)
+      await act(async () => finishB?.())
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+    } finally {
+      await act(async () => {
+        finishA?.()
+        finishB?.()
+      })
+    }
+  })
+
+  it('keeps each concurrent retry disabled in its tab menu', async () => {
+    let finishFirst!: () => void
+    let finishSecond!: () => void
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('First save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFirst = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('Second save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSecond = resolve
+          })
+      )
+    window.api.uploads.stageLocalPath = save
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'second-local-file',
+        source: 'local',
+        name: 'second.txt',
+        title: 'second.txt',
+        path: '/workspace/second.txt'
+      })
+    )
+    await renderPanel()
+
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => getRetryButton().click())
+      await openTabContextMenu(1)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => getRetryButton().click())
+
+      await openTabContextMenu(0)
+      expect(
+        document.body
+          .querySelector('[data-action-id="save-as-artifact"]')
+          ?.getAttribute('aria-disabled')
+      ).toBe('true')
+    } finally {
+      await act(async () => {
+        finishFirst?.()
+        finishSecond?.()
+      })
+    }
   })
 })

@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePreviewFileContent } from './usePreviewFileContent'
+import { PreviewInitialPosition } from './PreviewInitialPosition'
 
 const Probe = (): React.JSX.Element => {
   const state = usePreviewFileContent({
@@ -72,6 +73,26 @@ describe('usePreviewFileContent', () => {
     await act(async () => root?.unmount())
     container.remove()
     vi.unstubAllGlobals()
+  })
+
+  it('opens a search match at its byte position and leaves ordinary previews at the beginning', async () => {
+    const bytes = new TextEncoder().encode('group,count\nA,2')
+    vi.mocked(fetch).mockImplementation(async (_url, options) => {
+      const range = new Headers(options?.headers).get('Range')!
+      const start = Number(range.match(/bytes=(\d+)/)![1])
+      return new Response(bytes.slice(start), { status: 206 })
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <PreviewInitialPosition value={{ offset: 6, startingLineNumber: 1 }}>
+          <Probe />
+        </PreviewInitialPosition>
+      )
+    )
+    expect(container.textContent).toBe('count\nA,2')
+    await act(async () => root.render(<Probe />))
+    expect(container.textContent).toBe('group,count\nA,2')
   })
 
   it.each([
@@ -181,6 +202,20 @@ describe('usePreviewFileContent', () => {
     }
   )
 
+  it('does not describe an expired protocol capability as a missing file', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const FailureProbe = (): React.JSX.Element => {
+      const state = usePreviewFileContent({ source: 'local', path: '/available.txt' })
+      return <div>{state.status === 'error' ? String(state.error) : state.status}</div>
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<FailureProbe />))
+    expect(container.textContent).not.toMatch(/ENOENT|no longer available/)
+    expect(window.api.previewResources.release).toHaveBeenCalledOnce()
+    log.mockRestore()
+  })
+
   it('keeps project and session scope when acquiring a version-backed upload', async () => {
     root = createRoot(container)
     await act(async () => root.render(<Probe />))
@@ -189,8 +224,7 @@ describe('usePreviewFileContent', () => {
       projectId: 'project-1',
       source: 'upload',
       fileId: 'upload-file-1',
-      versionId: 'upload-version-1',
-      maxBytes: 1024 * 1024
+      versionId: 'upload-version-1'
     })
     expect(fetch).toHaveBeenCalledWith('https://preview.test/upload-file-1', {
       cache: 'no-store',

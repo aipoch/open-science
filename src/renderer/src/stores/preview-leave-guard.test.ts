@@ -63,4 +63,22 @@ describe('preview leave guard coordinator', () => {
     expect(otherAction).not.toHaveBeenCalled()
     expect(otherGuard).toHaveBeenCalledOnce()
   })
+  it('requires every page guard to approve before running the unload action', () => {
+    const action = vi.fn()
+    const approvals: Array<() => boolean | void> = []
+    for (const scope of ['first', 'second']) {
+      previewLeaveGuards.register(scope, (next) => {
+        approvals.push(next)
+        return false
+      })
+    }
+    previewLeaveGuards.requestAll(action)
+    expect(action).not.toHaveBeenCalled()
+    expect(approvals).toHaveLength(1)
+    approvals[0]()
+    expect(action).not.toHaveBeenCalled()
+    expect(approvals).toHaveLength(2)
+    approvals[1]()
+    expect(action).toHaveBeenCalledOnce()
+  })
 })

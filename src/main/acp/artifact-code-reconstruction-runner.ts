@@ -116,6 +116,23 @@ export class ArtifactCodeReconstructionRunner {
         result.model,
         result.usage
       )
+      // Usage is already recorded even when a partial response cannot be committed as a script.
+      if (result.stopReason !== 'end_turn') {
+        switch (result.stopReason) {
+          case 'cancelled':
+            throw new Error('Code reconstruction was cancelled. Try generating the script again.')
+          case 'refusal':
+            throw new Error('The selected model refused code reconstruction. Try another model.')
+          case 'max_tokens':
+            throw new Error(
+              'Code reconstruction reached the model output limit. Try another model.'
+            )
+          default:
+            throw new Error(
+              'Code reconstruction did not finish normally. Try generating the script again.'
+            )
+        }
+      }
       return {
         text: result.text,
         frameworkId: result.frameworkId,

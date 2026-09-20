@@ -57,11 +57,14 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     outsideRoot = undefined
   })
 
-  const createFixture = async (source: 'artifact' | 'upload'): Promise<SourceFixture> => {
+  const createFixture = async (
+    source: 'artifact' | 'upload',
+    content?: [Buffer, Buffer]
+  ): Promise<SourceFixture> => {
     const fileId = `${source}-file-1`
     const versionIds: [string, string] = [`${source}-v1`, `${source}-v2`]
-    const first = Buffer.from('\ufefffirst\r\nline\r\n')
-    const second = Buffer.from('second\n')
+    const first = content?.[0] ?? Buffer.from('\ufefffirst\r\nline\r\n')
+    const second = content?.[1] ?? Buffer.from('second\n')
     const storageKeys = versionIds.map(
       (versionId) => `${source}s/project-1/session-1/${fileId}/versions/${versionId}/content`
     )
@@ -152,6 +155,49 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     return { source, fileId, versionIds }
   }
+
+  it.each([
+    ['artifact', true],
+    ['upload', true],
+    ['artifact', false],
+    ['upload', false]
+  ] as const)(
+    'reports a BOM-only change for %s versions (base BOM: %s)',
+    async (source, baseBom) => {
+      const fixture = await createFixture(source, [
+        Buffer.from(`${baseBom ? '\ufeff' : ''}print(1)\n`),
+        Buffer.from(`${baseBom ? '' : '\ufeff'}print(1)\n`)
+      ])
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = { source, projectId: 'project-1', fileId: fixture.fileId }
+      const base = await service.inspect({ ...identity, versionId: fixture.versionIds[0] })
+      const selected = await service.inspect({ ...identity, versionId: fixture.versionIds[1] })
+      expect(base.textFormat?.hasUtf8Bom).toBe(baseBom)
+      expect(selected.textFormat?.hasUtf8Bom).toBe(!baseBom)
+      expect(base.text).toBe(selected.text)
+      expect(selected.canDiff).toBe(true)
+      const result = await service.diffText({
+        ...identity,
+        versionId: fixture.versionIds[1],
+        requestId: `${source}-bom-only`
+      })
+      expect(result.lines).toEqual([
+        {
+          kind: 'context',
+          oldLineNumber: 1,
+          newLineNumber: 1,
+          segments: [{ kind: 'context', text: 'print(1)\n' }]
+        }
+      ])
+      expect(result).toMatchObject({
+        baseFormat: { hasUtf8Bom: baseBom },
+        selectedFormat: { hasUtf8Bom: !baseBom }
+      })
+    }
+  )
 
   it.each(['artifact', 'upload'] as const)(
     'bounds the initial %s history response for a frequently edited file',

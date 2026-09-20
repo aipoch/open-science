@@ -54,8 +54,8 @@ const makeRepo = (
   clearScratchRoot: ReturnType<typeof vi.fn>
   updateConcurrencyLimit: ReturnType<typeof vi.fn>
 } => {
-  const updateProbeResult = vi.fn(() => Promise.resolve())
-  const updateDetails = vi.fn(() => Promise.resolve())
+  const updateProbeResult = vi.fn(() => Promise.resolve(true))
+  const updateDetails = vi.fn(() => Promise.resolve(true))
   const updateScratchPinned = vi.fn(() => Promise.resolve())
   const clearScratchRoot = vi.fn(() => Promise.resolve())
   const updateConcurrencyLimit = vi.fn(() => Promise.resolve())
@@ -122,7 +122,7 @@ describe('ComputeService host profile facade', () => {
     })
     await expect(service.getDetails('ssh:biowulf')).resolves.toEqual({
       doc: 'current details',
-      isSkeleton: false
+      probeResult: undefined
     })
     await service.replaceDetails('ssh:biowulf', {
       text: 'replacement',
@@ -137,14 +137,25 @@ describe('ComputeService host profile facade', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: true, cpus: 4 }),
-      'scheduler_cluster'
+      'scheduler_cluster',
+      'host-1',
+      undefined
     )
-    expect(updateDetails).toHaveBeenNthCalledWith(1, 'ssh:biowulf', 'replacement', 'user')
+    expect(updateDetails).toHaveBeenNthCalledWith(
+      1,
+      'ssh:biowulf',
+      'replacement',
+      'user',
+      'host-1',
+      'current details'
+    )
     expect(updateDetails).toHaveBeenNthCalledWith(
       2,
       'ssh:biowulf',
       'current details\nappendix',
-      'agent'
+      'agent',
+      'host-1',
+      'current details'
     )
     expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '/portable/scratch')
     expect(clearScratchRoot).toHaveBeenCalledWith('ssh:biowulf')
@@ -282,6 +293,48 @@ describe('ComputeService.list', () => {
 })
 
 describe('ComputeService job workflow facade', () => {
+  it('rejects export-locked submissions before reading hosts or requesting approval', async () => {
+    const { repo } = makeRepo()
+    const runner = makeFakeRunner({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      timedOut: false
+    })
+    const service = new ComputeService({
+      runner,
+      repository: repo,
+      admitSessionWork: () => {
+        throw new Error('Session locked for export')
+      }
+    })
+    await expect(
+      service.submitJob('ssh:biowulf', 'test', 'true', {}, { projectId: 'p', sessionId: 's' })
+    ).rejects.toThrow('locked for export')
+    expect(repo.get).not.toHaveBeenCalled()
+    expect(runner.run).not.toHaveBeenCalled()
+  })
+
+  it('holds admission until submit validation settles and releases it after failure', async () => {
+    const release = vi.fn()
+    const { repo } = makeRepo()
+    const service = new ComputeService({
+      runner: makeFakeRunner({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+        timedOut: false
+      }),
+      repository: repo,
+      admitSessionWork: () => release
+    })
+    await expect(
+      service.submitJob('ssh:biowulf', 'test', 'true', {}, { projectId: 'p', sessionId: 's' })
+    ).rejects.toThrow('ComputeJobRepository')
+    expect(release).toHaveBeenCalledOnce()
+  })
   it('preserves all job workflow operations and the stable update sink', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
@@ -341,6 +394,7 @@ describe('ComputeService job workflow facade', () => {
         }
       ),
       setSessionLimit,
+      getQueueBlockedReason: vi.fn(async () => undefined),
       getStatus: vi.fn(async () => ({
         session_limit: 7,
         active_count: 0,

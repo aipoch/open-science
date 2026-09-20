@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, readFileSync, type Dirent, type Stats } from 'node:fs'
-import { chmod, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -451,7 +451,21 @@ const replaceManagedOpencodeRoot = async (
   }
 
   try {
-    await renamePath(stagedRoot, root)
+    try {
+      await renamePath(stagedRoot, root)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error
+      // A Windows sharing lock can block rename while permitting reads. Copy the complete
+      // staged runtime into the final location and roll back if that copy cannot finish.
+      try {
+        await cp(stagedRoot, root, { recursive: true })
+      } catch (copyError) {
+        await rm(root, { recursive: true, force: true }).catch(() => undefined)
+        throw copyError
+      }
+      // The caller cleans its owned scratch tree; a lingering source lock must not discard
+      // the complete published copy or prevent removal on the next install/uninstall.
+    }
   } catch (swapError) {
     if (backedUp) {
       try {

@@ -1,3 +1,7 @@
+import {
+  observeProviderFailure,
+  type ProviderFailureObserver
+} from './provider-failure-observation'
 import type { ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -43,6 +47,7 @@ type ProviderErrorSnapshot = Readonly<{
 
 export type OpenAiProviderBridgeTarget = Readonly<{
   id: string
+  onProviderFailure?: ProviderFailureObserver
   wire: keyof typeof WIRE_PATH
   endpoint: string
   key?: string
@@ -192,6 +197,7 @@ export class OpenAiProviderBridge {
       return
     }
 
+    const startedAt = Date.now()
     const upstream = await fetchProviderRequest(this.fetchImpl, endpoint, {
       method: 'POST',
       headers: headersToForward,
@@ -203,6 +209,16 @@ export class OpenAiProviderBridge {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal
       })
+      await observeProviderFailure(
+        target.onProviderFailure,
+        {
+          model: target.model,
+          endpoint: target.wire === 'responses' ? 'responses' : 'openai',
+          startedAt
+        },
+        upstream.status,
+        upstreamBody.complete ? upstreamBody.body.toString('utf8') : undefined
+      )
       delete headers['content-encoding']
       if (!upstreamBody.complete) headers['content-type'] = 'application/json'
       const bodyToReplay = upstreamBody.complete

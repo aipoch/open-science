@@ -4,7 +4,6 @@ import {
   describeInvalidLocalPath,
   describeLocalListingError,
   isLocalPathRoot,
-  isPathWithin,
   isSensitiveLocalPath,
   localDriveRootFor,
   parentLocalPath,
@@ -227,30 +226,6 @@ describe('describeLocalListingError', () => {
   })
 })
 
-describe('isPathWithin', () => {
-  it('matches the root itself and descendants', () => {
-    expect(isPathWithin('/data', '/data')).toBe(true)
-    expect(isPathWithin('/data/x/y', '/data')).toBe(true)
-  })
-
-  it('does not match siblings sharing a prefix', () => {
-    expect(isPathWithin('/data2/x', '/data')).toBe(false)
-    expect(isPathWithin('/data', '/data/x')).toBe(false)
-  })
-
-  it('tolerates trailing separators on the root', () => {
-    expect(isPathWithin('/data/x', '/data/')).toBe(true)
-    expect(isPathWithin('/data', '/data/')).toBe(true)
-  })
-
-  it('treats Windows separators as separators', () => {
-    expect(isPathWithin('C:\\data\\x', 'C:\\data')).toBe(true)
-    expect(isPathWithin('C:\\data2\\x', 'C:\\data')).toBe(false)
-    // Mixed forms of the same path still match after separator normalization.
-    expect(isPathWithin('C:/data/x', 'C:\\data')).toBe(true)
-  })
-})
-
 describe('localDriveRootFor', () => {
   const posixDrives: LocalDrive[] = [
     { path: '/', label: '/' },
@@ -324,4 +299,10 @@ describe('validateGrantCandidate', () => {
       reason: 'is-home'
     })
   })
+})
+
+it('preserves POSIX backslashes when comparing a grant with Home', () => {
+  expect(validateGrantCandidate('/Users/research\\home', '/Users/research/home', 'darwin')).toEqual(
+    { ok: true }
+  )
 })

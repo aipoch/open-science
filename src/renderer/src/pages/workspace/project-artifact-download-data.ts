@@ -1,25 +1,21 @@
 import type {
   GetProjectFilesOverviewRequest,
-  ListProjectFilesRequest,
+  ReadProjectExportFilesRequest,
   ProjectFileItem,
-  ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesOverview
 } from '../../../../shared/project-files'
 
 type ListAllProjectFilesOptions = {
   getOverview: (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
-  listFiles: (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
+  readExportFiles: (request: ReadProjectExportFilesRequest) => Promise<ProjectFileItem[]>
   repairIndex: (request: { projectId: string }) => Promise<void>
   projectId: string
 }
 
-const PROJECT_FILE_PAGE_LIMIT = 100
-
-// Collects every Artifact and Upload in one Project through the flat 'all' collection, hiding cursor
-// traversal so the download action receives one complete snapshot. Mirrors listAllSessionArtifacts.
+// Repairs the legacy index when needed, then reads one consistent export selection.
 const listAllProjectFiles = async ({
   getOverview,
-  listFiles,
+  readExportFiles,
   repairIndex,
   projectId
 }: ListAllProjectFilesOptions): Promise<ProjectFileItem[]> => {
@@ -32,21 +28,7 @@ const listAllProjectFiles = async ({
     }
   }
 
-  const files: ProjectFileItem[] = []
-  let cursor: string | undefined
-
-  do {
-    const page = await listFiles({
-      projectId,
-      collection: { kind: 'all' },
-      ...(cursor ? { cursor } : {}),
-      limit: PROJECT_FILE_PAGE_LIMIT
-    })
-    files.push(...page.items)
-    cursor = page.nextCursor
-  } while (cursor)
-
-  return files
+  return readExportFiles({ projectId })
 }
 
 export { listAllProjectFiles }

@@ -44,7 +44,8 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(onRetry).toHaveBeenCalledOnce()
   })
 
-  it('does not promise automatic repair for quarantined Session authority', () => {
+  it('explains blocked Compute dispatch and offers a recheck without promising repair', () => {
+    const onRetry = vi.fn()
     act(() =>
       root.render(
         <SessionCatalogRecoveryAlert
@@ -52,7 +53,7 @@ describe('SessionCatalogRecoveryAlert', () => {
             kind: 'damaged-authority',
             affectedFiles: [{ projectId: 'project-a', fileName: 'session-1.json' }]
           }}
-          onRetry={vi.fn()}
+          onRetry={onRetry}
         />
       )
     )
@@ -60,7 +61,13 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(container.textContent).toContain('Project archive needs attention')
     expect(container.textContent).toContain('A damaged saved conversation was moved aside')
     expect(container.textContent).toContain('You can still permanently delete the project')
-    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    expect(container.textContent).toContain('Compute jobs in affected Sessions may remain queued')
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    expect(retry?.textContent).toBe('Recheck saved conversations')
+    act(() => retry?.click())
+    expect(onRetry).toHaveBeenCalledOnce()
     const dismiss = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-dismiss"]'
     )
@@ -165,9 +172,9 @@ describe('SessionCatalogRecoveryAlert', () => {
       )
     )
 
-    expect(container.textContent).toContain('Open Science update required')
+    expect(container.textContent).toContain('Open-Science update required')
     expect(container.textContent).toContain(
-      'A saved conversation requires a newer version of Open Science'
+      'A saved conversation requires a newer version of Open-Science'
     )
     expect(container.textContent).toContain('files stay unchanged')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()

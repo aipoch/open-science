@@ -226,6 +226,15 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     }
   )
   window.webContents.on(
+    'did-navigate-in-page',
+    (_event, url, _isMainFrame, processId, routingId) => {
+      sourcePreviewLoadMonitor.navigateInPage(
+        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
+        url
+      )
+    }
+  )
+  window.webContents.on(
     'did-frame-navigate',
     (_event, url, httpResponseCode, httpStatusText, _isMainFrame, processId, routingId) => {
       sourcePreviewLoadMonitor.finishNavigation(
@@ -270,7 +279,7 @@ const createMainWindow = (
     height: 960,
     minWidth: 1100,
     minHeight: 720,
-    title: 'Open Science'
+    title: 'Open-Science'
   })
   if (opts) configureMainWindow(window, opts)
 
@@ -375,7 +384,7 @@ const createMainWindow = (
         buttons: [translate('Reload', { context: 'window' }), translate('Close window')],
         defaultId: 0,
         cancelId: 1,
-        title: 'Open Science',
+        title: 'Open-Science',
         message: translate('The app window stopped responding repeatedly.'),
         detail: translate(
           'Automatic recovery has been paused. Reloading returns this window to the home screen; background work may still be running.'
@@ -631,6 +640,20 @@ const createMainWindow = (
       // confirm dialog, Linux hides to tray, and everyone else closes.
       window.close()
     }
+  })
+
+  // Electron otherwise silently refuses a dirty page's close/reload. Only an explicit discard
+  // overrides beforeunload; hiding to tray never reaches this event.
+  window.webContents.on('will-prevent-unload', (event) => {
+    const choice = dialog.showMessageBoxSync(window, {
+      type: 'warning',
+      buttons: [translate('Cancel'), translate('Discard changes')],
+      defaultId: 0,
+      cancelId: 0,
+      title: translate('Discard unsaved changes?'),
+      message: translate('Your unsaved changes will be lost.')
+    })
+    if (choice === 1) event.preventDefault()
   })
 
   // Close handling. classifyClose decides synchronously: darwin and mid-quit close instantly; 'hide'

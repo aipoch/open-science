@@ -26,6 +26,18 @@ const makeDeps = (overrides: Partial<BackendShutdownDeps> = {}): BackendShutdown
   ...overrides
 })
 
+it.each([undefined, null])(
+  'refuses a malformed Notebook teardown without rejecting: %s',
+  async (value) => {
+    const deps = makeDeps()
+    vi.mocked(deps.notebook.shutdownAll).mockResolvedValue(value as unknown as { reaped: boolean })
+    await expect(new BackendShutdownCoordinator(deps).runForUpdateGate()).resolves.toEqual({
+      completed: true,
+      reaped: false
+    })
+  }
+)
+
 describe('shutdownBackends', () => {
   afterEach(() => {
     vi.useRealTimers()

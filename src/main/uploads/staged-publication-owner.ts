@@ -153,17 +153,16 @@ class StagedPublicationOwner {
       throw new Error('Legacy Upload authority is unavailable for orphan recovery.')
     }
 
-    const finalized = await Promise.all(
-      attachments.map(async (attachment) => {
-        if (this.options.getClient) {
-          return this.publishAttachment(safeProjectId, safeSessionId, attachment, options)
-        }
-        return this.finalizeAttachment(safeSessionId, attachment)
-      })
-    )
-    return finalized.filter(
-      (attachment): attachment is UploadedAttachment => attachment !== undefined
-    )
+    const finalized: UploadedAttachment[] = []
+    // SQLite has one writer. Do not let a batch consume its transaction wait budget
+    // queueing behind its own files; retries recover already-published identities.
+    for (const attachment of attachments) {
+      const published = this.options.getClient
+        ? await this.publishAttachment(safeProjectId, safeSessionId, attachment, options)
+        : await this.finalizeAttachment(safeSessionId, attachment)
+      if (published) finalized.push(published)
+    }
+    return finalized
   }
 
   // Converts one pending attachment record into a durable Session-owned upload record.

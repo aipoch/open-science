@@ -286,7 +286,10 @@ test('loads managed image previews from Project files', async ({ app }) => {
   await expect(page.getByRole('button', { name: `Remove attachment ${IMAGE_NAME}` })).toBeVisible()
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached image.')
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+  // File previews depend on the committed upload, not on the agent finishing its reply.
+  await expect(
+    page.getByRole('button', { name: `Preview uploaded attachment ${IMAGE_NAME}`, exact: true })
+  ).toBeVisible()
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   const image = page.getByRole('img', { name: `Preview of ${IMAGE_NAME}` })
@@ -298,7 +301,8 @@ test('loads managed image previews from Project files', async ({ app }) => {
 
 test.describe('Workspace dividers', () => {
   test.beforeEach(async ({ app }) => {
-    const page = await app.completeOnboarding()
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
     await createProject(page)
     const directory = await realpath(await app.createTestDirectory('resize-preview'))
     await writeFile(`${directory}/resize.txt`, 'Resize preview content')
@@ -455,4 +459,54 @@ test.describe('Workspace dividers', () => {
       ).toHaveAttribute('data-separator', 'disabled')
     })
   }
+})
+
+test('preserves expanded uploads after saving a file version', async ({ app }, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+
+  for (let batch = 0; batch < 4; batch += 1) {
+    const attachments = Array.from({ length: 10 }, (_, index) => ({
+      name: `research-${String(batch * 10 + index).padStart(2, '0')}.md`,
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Research notes\n\nOriginal findings.')
+    }))
+    await page.locator('input[type="file"][multiple]').setInputFiles(attachments)
+    await expect(page.getByRole('button', { name: /^Remove attachment research-/ })).toHaveCount(10)
+    await sendPrompt(page, `Keep research batch ${batch}.`, 'Deterministic reply:')
+  }
+
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  const files = page.getByTestId('files-view')
+  const rows = files.getByRole('button', { name: /^Preview uploaded file/ })
+  await expect(rows).toHaveCount(20)
+  await files.getByRole('button', { name: 'Load more uploaded files' }).click()
+  await expect(rows).toHaveCount(40)
+  const previousLabels = await rows.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('aria-label')).sort()
+  )
+  await files
+    .getByRole('button', { name: 'Preview uploaded file research-00.md', exact: true })
+    .click()
+  const preview = page.getByRole('dialog', { name: 'Preview research-00.md', exact: true })
+  await saveTextVersion(
+    preview,
+    '# Research notes\n\nOriginal findings.',
+    '# Research notes\n\nUpdated findings.',
+    'research-00.md'
+  )
+  await expect(
+    preview.getByTestId('managed-preview-version-navigation').getByText('v2', { exact: true })
+  ).toBeVisible()
+  await preview.getByRole('button', { name: 'Close preview of research-00.md' }).click()
+  await expect(rows).toHaveCount(40)
+  expect(
+    await rows.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('aria-label')).sort()
+    )
+  ).toEqual(previousLabels)
+  await rows.last().scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('expanded-uploads-after-save.png') })
 })

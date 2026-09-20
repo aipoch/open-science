@@ -6,7 +6,8 @@ import {
   renderConversationHtml,
   renderConversationMarkdown,
   sanitizeExportFilename,
-  sanitizeExportMarkdown
+  sanitizeExportMarkdown,
+  serializeConversationExportContent
 } from './conversation-export'
 import type { PersistedChatSession } from './session-persistence'
 
@@ -65,6 +66,69 @@ const createSession = (): PersistedChatSession => ({
 })
 
 describe('conversation export projection', () => {
+  it('ignores only the Session update time when comparing reviewed export content', () => {
+    const session = createSession()
+    const updated = { ...session, updatedAt: session.updatedAt + 1 }
+    expect(serializeConversationExportContent(updated)).toBe(
+      serializeConversationExportContent(session)
+    )
+    expect(createConversationExportDocument(updated, 0).updatedAt).toBe(updated.updatedAt)
+  })
+
+  it.each([
+    [
+      'title',
+      (session: PersistedChatSession) => {
+        session.title = 'Changed title'
+      }
+    ],
+    [
+      'creation time',
+      (session: PersistedChatSession) => {
+        session.createdAt += 1
+      }
+    ],
+    [
+      'message text',
+      (session: PersistedChatSession) => {
+        session.messages[1].content = 'Changed answer'
+      }
+    ],
+    [
+      'message time',
+      (session: PersistedChatSession) => {
+        session.messages[1].createdAt += 1
+      }
+    ],
+    [
+      'message order',
+      (session: PersistedChatSession) => {
+        session.messages.reverse()
+      }
+    ],
+    [
+      'attachment',
+      (session: PersistedChatSession) => {
+        session.artifacts![0].name = 'changed.pdf'
+      }
+    ],
+    [
+      'image',
+      (session: PersistedChatSession) => {
+        session.messages[0].images = [
+          { id: 'image-1', mimeType: 'image/png', data: 'AAAA', byteLength: 3 }
+        ]
+      }
+    ]
+  ] as const)('still detects changes to %s in reviewed content', (_field, mutate) => {
+    const original = createSession()
+    const changed = createSession()
+    mutate(changed)
+    expect(serializeConversationExportContent(changed)).not.toBe(
+      serializeConversationExportContent(original)
+    )
+  })
+
   it('removes complete provider think blocks while preserving ordinary Markdown', () => {
     expect(
       sanitizeExportMarkdown(
@@ -75,6 +139,69 @@ describe('conversation export projection', () => {
 
   it('removes an unterminated provider think block through the end of the response', () => {
     expect(sanitizeExportMarkdown('before <think>unfinished private reasoning')).toBe('before')
+  })
+
+  it.each(['user', 'agent'] as const)(
+    'preserves executable whitespace in %s code exports',
+    (role) => {
+      const session = createSession()
+      const code = '```python\nvalue = """first\n\n\nsecond"""\nassert value.count("\\n") == 3\n```'
+      session.messages = [{ ...session.messages[0], role, content: code }]
+      const document = createConversationExportDocument(session, 0)
+      expect(document.messages[0].markdown).toBe(code)
+      expect(renderConversationMarkdown(document)).toContain(code)
+      expect(renderConversationHtml(document)).toContain('first\n\n\nsecond')
+    }
+  )
+
+  it('preserves literal reasoning tags in code and the scientific conclusion after them', () => {
+    const content =
+      'The literal tag `<think>` begins the XML example.\n\nThe measured result is 42.'
+    const session = createSession()
+    session.messages = [{ ...session.messages[1], content }]
+    expect(createConversationExportDocument(session, 0).messages[0].markdown).toBe(content)
+  })
+
+  it.each([
+    '```xml\n<think>literal</think>\n```',
+    '~~~~xml\n<think>literal\n~~~~~',
+    '```xml\n<think>literal',
+    '    <think>literal</think>\n    second line',
+    'Use ``a `<think>` tag`` in the example.'
+  ])('preserves Markdown code tokens verbatim: %s', (code) => {
+    expect(sanitizeExportMarkdown(code)).toBe(code)
+  })
+
+  it.each([
+    '> ~~~xml\n> <think>literal</think>\n> ~~~',
+    '> ```xml\n> <think>literal</think>\n> ```',
+    '> > ~~~xml\n> > <think>literal</think>\n> > ~~~',
+    '- first\n- second\n\n  > ~~~xml\n  > <think>literal</think>\n  > ~~~',
+    '> ~~~xml\r\n> <think>literal</think>\r\n> ~~~',
+    '> ~~~xml\n> <think>literal',
+    '> 😀 example\n>\n> ~~~xml\n> <think>literal</think>\n> ~~~',
+    '- XML example:\n\n  ~~~xml\n  <think>literal</think>\n  ~~~'
+  ])('preserves literal reasoning tags in nested fenced code: %s', (content) => {
+    const session = createSession()
+    session.messages = [{ ...session.messages[1], content }]
+    expect(createConversationExportDocument(session, 0).messages[0].markdown).toBe(content)
+  })
+
+  it('filters reasoning around quoted code without changing the code source', () => {
+    const code = '> ~~~xml\n> <think>literal</think>\n> ~~~'
+    expect(
+      sanitizeExportMarkdown(`<think>private</think>\n\n${code}\n\n<think>private</think>`)
+    ).toBe(code)
+    expect(sanitizeExportMarkdown(`<think>private\n${code}\n</think>\n\nConclusion.`)).toBe(
+      'Conclusion.'
+    )
+    expect(sanitizeExportMarkdown(`> <think>private</think>\n>\n${code}`)).toBe(`> \n>\n${code}`)
+  })
+
+  it('still removes real reasoning that contains code', () => {
+    expect(
+      sanitizeExportMarkdown('<think>private\n```txt\nsecret\n```\n</think>\n\nConclusion.')
+    ).toBe('Conclusion.')
   })
 
   it('projects only user-facing active messages and attachment names', () => {
@@ -349,4 +476,12 @@ describe('conversation export projection', () => {
     expect(sanitizeExportFilename('界'.repeat(80))).toBe('界'.repeat(80))
     expect(sanitizeExportFilename(`${'界'.repeat(81)}tail`)).toBe(`${'界'.repeat(79)}...`)
   })
+})
+
+it('reserves a filename byte budget for package dates and extensions without splitting Unicode', () => {
+  const title = sanitizeExportFilename('🧪研究'.repeat(100), 220)
+  const filename = `${title}-2026-09-11.science`
+  expect(new TextEncoder().encode(filename).length).toBeLessThanOrEqual(255)
+  expect(filename).toMatch(/-2026-09-11\.science$/)
+  expect(title).not.toContain('\uFFFD')
 })

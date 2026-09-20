@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client'
 
-import type { ContentRepository } from '../storage/content-repository'
+import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
+import type { ContentReadLease, ContentRepository } from '../storage/content-repository'
 
 type ResolvedLiteratureAttachmentVersion = Readonly<{
   itemId: string
@@ -18,11 +19,42 @@ type ResolvedLiteratureAttachmentVersion = Readonly<{
 
 type LiteratureAttachmentAuthorityOptions = Readonly<{
   getClient: () => Promise<PrismaClient>
-  content: Pick<ContentRepository, 'verify'>
+  content: Pick<ContentRepository, 'verify' | 'openLease'>
+  packages?: {
+    resolveVersion: (versionId: string) => Promise<ResolvedLiteratureAttachmentVersion | undefined>
+    openContent: (versionId: string) => Promise<ContentReadLease>
+  }
 }>
+
+class LiteratureAttachmentUnavailableError extends Error {}
 
 class LiteratureAttachmentAuthority {
   constructor(private readonly options: LiteratureAttachmentAuthorityOptions) {}
+
+  async openReference(reference: string): Promise<ContentReadLease> {
+    const versionId = parseLiteratureAttachmentVersionReference(reference)
+    if (!versionId) throw new Error('Invalid Literature attachment reference.')
+    return this.openContent(versionId)
+  }
+
+  async openContent(versionId: string): Promise<ContentReadLease> {
+    const version = await this.resolveVersion(versionId)
+    if (!version)
+      throw new LiteratureAttachmentUnavailableError('Literature attachment is unavailable.')
+    const client = await this.options.getClient()
+    const row = await client.literatureAttachmentVersion.findUnique({ where: { id: versionId } })
+    if (!row && this.options.packages) return this.options.packages.openContent(versionId)
+    if (!row)
+      throw new LiteratureAttachmentUnavailableError('Literature attachment is unavailable.')
+    const lease = await this.options.content.openLease(row.contentBlobId)
+    if (lease.checksum !== version.checksum || lease.size !== version.sizeBytes) {
+      await lease.close()
+      throw new LiteratureAttachmentUnavailableError(
+        'Literature attachment content identity changed.'
+      )
+    }
+    return lease
+  }
 
   async resolveVersion(
     versionId: string
@@ -35,11 +67,12 @@ class LiteratureAttachmentAuthority {
         contentBlob: { select: { storageKey: true } }
       }
     })
-    if (!version || version.attachment.item.deletedAt) return undefined
+    if (!version) return this.options.packages?.resolveVersion(versionId)
+    if (version.attachment.item.deletedAt) return undefined
 
     const verification = await this.options.content.verify(version.contentBlobId)
     if (verification.state !== 'available') {
-      throw new Error(
+      throw new LiteratureAttachmentUnavailableError(
         `Literature attachment content is unavailable: ${versionId} (${verification.reason})`
       )
     }
@@ -50,7 +83,9 @@ class LiteratureAttachmentAuthority {
       content.storageKey !== version.contentBlob.storageKey ||
       (content.contentType !== undefined && content.contentType !== version.contentType)
     ) {
-      throw new Error('Literature Attachment Version does not match its Content Blob authority.')
+      throw new LiteratureAttachmentUnavailableError(
+        'Literature Attachment Version does not match its Content Blob authority.'
+      )
     }
 
     return {
@@ -69,5 +104,5 @@ class LiteratureAttachmentAuthority {
   }
 }
 
-export { LiteratureAttachmentAuthority }
+export { LiteratureAttachmentAuthority, LiteratureAttachmentUnavailableError }
 export type { LiteratureAttachmentAuthorityOptions, ResolvedLiteratureAttachmentVersion }

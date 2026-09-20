@@ -75,10 +75,19 @@ describe('Compute Job remote cleanup migration', () => {
         '0030_literature_foundation',
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
-        '0033_compute_job_harvest_retry'
+        '0033_compute_job_harvest_retry',
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt',
+        '0040_literature_collection_revision',
+        '0041_bookmarks',
+        '0042_classification_usage'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0033_compute_job_harvest_retry'
+      to: '0042_classification_usage'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

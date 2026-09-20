@@ -10,6 +10,11 @@ import type {
 } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ProjectFilesClient } from './mutation-projection'
+import {
+  SEARCH_FILE_EXTENSIONS,
+  type SearchFileFormat,
+  type SearchSort
+} from '../../shared/search-text'
 
 const MAX_PAGE_LIMIT = 100
 
@@ -35,19 +40,25 @@ type GroupCursor = {
 type SearchArtifactCursor = {
   version: 2
   kind: 'globalArtifacts'
+  source?: ProjectFileSource | 'all'
+  sessionId?: string
   primaryProjectIds: string[]
   queryKey: string
   sortAtMs: string
   seq: number
+  rank?: number
 }
 
 type NormalizedSearch = {
   filenameContains?: string
   excludedSessionIds: string[]
   queryKey: string
+  updatedAfter?: number
+  format?: SearchFileFormat
+  sort?: SearchSort
 }
 
-type CatalogCursor = { sortAtMs: string; seq: number }
+type CatalogCursor = { sortAtMs: string; seq: number; rank?: number }
 
 type AuthoritativeCatalogQuery = {
   projectIds: string[]
@@ -89,11 +100,38 @@ const normalizeSearch = (search: unknown): NormalizedSearch | undefined => {
     throw new Error('Project files search must be at most 256 characters.')
   }
   const excludedSessionIds = normalizeExcludedSessionIds(search.excludedSessionIds)
-  if (!filenameContains && excludedSessionIds.length === 0) return undefined
+  if (
+    search.updatedAfter !== undefined &&
+    (typeof search.updatedAfter !== 'number' ||
+      !Number.isSafeInteger(search.updatedAfter) ||
+      search.updatedAfter < 0)
+  )
+    throw new Error('Invalid search date.')
+  if (
+    search.format !== undefined &&
+    (typeof search.format !== 'string' || !Object.hasOwn(SEARCH_FILE_EXTENSIONS, search.format))
+  )
+    throw new Error('Invalid search file format.')
+  if (search.sort !== undefined && search.sort !== 'relevance' && search.sort !== 'recent')
+    throw new Error('Invalid search sort.')
+  const updatedAfter = search.updatedAfter as number | undefined
+  const format = search.format as SearchFileFormat | undefined
+  const sort = search.sort as SearchSort | undefined
+  if (
+    !filenameContains &&
+    excludedSessionIds.length === 0 &&
+    updatedAfter === undefined &&
+    !format &&
+    !sort
+  )
+    return undefined
   return {
     ...(filenameContains ? { filenameContains } : {}),
     excludedSessionIds,
-    queryKey: `${filenameContains ? foldAsciiCase(filenameContains) : ''}\u0000${excludedSessionIds.join('\u0000')}`
+    updatedAfter,
+    format,
+    sort,
+    queryKey: `${filenameContains ? foldAsciiCase(filenameContains) : ''}\u0000${excludedSessionIds.join('\u0000')}${updatedAfter !== undefined || format || sort ? `\u0000${JSON.stringify([updatedAfter, format, sort])}` : ''}`
   }
 }
 
@@ -316,20 +354,51 @@ const authoritativeCatalogPredicates = (
   const excludedSessionsPredicate = query.search?.excludedSessionIds.length
     ? Prisma.sql`AND file."sessionId" NOT IN (${Prisma.join(query.search.excludedSessionIds)})`
     : Prisma.empty
-  const cursorPredicate = query.cursor
+  const datePredicate =
+    query.search?.updatedAfter !== undefined
+      ? Prisma.sql`AND file."sortAtMs" >= ${BigInt(query.search.updatedAfter)}`
+      : Prisma.empty
+  const formatPredicate = query.search?.format
+    ? Prisma.sql`AND (${Prisma.join(
+        SEARCH_FILE_EXTENSIONS[query.search.format].map(
+          (ext) => Prisma.sql`lower(file."displayName") LIKE ${`%.${ext}`}`
+        ),
+        ' OR '
+      )})`
+    : Prisma.empty
+  const recentCursor = query.cursor
     ? Prisma.sql`AND (
         file."sortAtMs" < ${BigInt(query.cursor.sortAtMs)}
         OR (file."sortAtMs" = ${BigInt(query.cursor.sortAtMs)} AND file."seq" < ${query.cursor.seq})
       )`
     : Prisma.empty
+  const rank = fileRelevanceSql(query.search)
+  const cursorPredicate =
+    query.cursor?.rank !== undefined
+      ? Prisma.sql`AND (${rank} < ${query.cursor.rank} OR (${rank} = ${query.cursor.rank} AND (1 = 1 ${recentCursor})))`
+      : recentCursor
   return Prisma.sql`
     ${sourcePredicate}
     ${sourceFilePredicate}
     ${sessionPredicate}
     ${filenamePredicate}
     ${excludedSessionsPredicate}
+    ${datePredicate}
+    ${formatPredicate}
     ${cursorPredicate}
   `
+}
+
+const fileRelevanceSql = (search: NormalizedSearch | undefined): Prisma.Sql =>
+  search?.sort === 'relevance' && search.filenameContains
+    ? Prisma.sql`CASE WHEN lower(file."displayName") = lower(${search.filenameContains}) THEN 3 WHEN instr(lower(file."displayName"), lower(${search.filenameContains})) = 1 THEN 2 ELSE 1 END`
+    : Prisma.sql`CAST(0 AS INTEGER)`
+
+const fileSearchRank = (name: string, search: NormalizedSearch | undefined): number | undefined => {
+  if (search?.sort !== 'relevance' || !search.filenameContains) return undefined
+  const title = foldAsciiCase(name),
+    query = foldAsciiCase(search.filenameContains)
+  return title === query ? 3 : title.startsWith(query) ? 2 : 1
 }
 
 const normalizeCatalogRows = (rows: Array<ManagedFile & { seq: number | bigint }>): ManagedFile[] =>
@@ -351,7 +420,7 @@ const queryAuthoritativeFiles = async (
     FROM "AuthoritativeFile" AS file
     WHERE 1 = 1
       ${predicates}
-    ORDER BY file."sortAtMs" DESC, file."seq" DESC
+    ORDER BY ${fileRelevanceSql(query.search)} DESC, file."sortAtMs" DESC, file."seq" DESC
     ${limit}
   `)
   return normalizeCatalogRows(rows)
@@ -535,7 +604,9 @@ const decodeGroupCursor = (cursor: string, request: ListArtifactGroupsRequest): 
 const decodeSearchArtifactCursor = (
   cursor: string,
   primaryProjectIds: string[],
-  search: NormalizedSearch | undefined
+  search: NormalizedSearch | undefined,
+  source: ProjectFileSource | 'all' = 'artifact',
+  sessionId?: string
 ): SearchArtifactCursor => {
   const value = parseCursor(cursor)
   const expectedQueryKey = search?.queryKey ?? ''
@@ -544,6 +615,8 @@ const decodeSearchArtifactCursor = (
     !isRecord(value) ||
     value.version !== 2 ||
     value.kind !== 'globalArtifacts' ||
+    (value.source ?? 'artifact') !== source ||
+    value.sessionId !== sessionId ||
     JSON.stringify(value.primaryProjectIds) !== JSON.stringify(primaryProjectIds) ||
     typeof value.queryKey !== 'string' ||
     typeof value.sortAtMs !== 'string' ||
@@ -557,6 +630,12 @@ const decodeSearchArtifactCursor = (
     throw new Error('Project files cursor does not match the requested search.')
   }
 
+  if (
+    search?.sort === 'relevance' &&
+    search.filenameContains &&
+    (typeof value.rank !== 'number' || ![1, 2, 3].includes(value.rank))
+  )
+    throw new Error('Invalid search rank cursor.')
   return value as SearchArtifactCursor
 }
 
@@ -625,6 +704,7 @@ export {
   decodeGroupCursor,
   decodeSearchArtifactCursor,
   encodeCursor,
+  fileSearchRank,
   getAuthoritativeOverviewCounts,
   listAuthoritativeArtifactGroups,
   listAuthoritativeFiles,

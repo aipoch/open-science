@@ -1,3 +1,4 @@
+import { assertLiteratureAttachmentsUnreferenced } from './literature-attachment-removal'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
@@ -13,6 +14,8 @@ import {
   type SaveSessionManifestRequest,
   type FailTaskSessionRunRequest,
   type SettleTaskSessionCompletionRequest,
+  type BindTaskSessionRequest,
+  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest,
   type UpdateSessionArchiveRequest,
   type SessionRuntimeContext,
@@ -90,7 +93,10 @@ import { sanitizeRendererSaveSessionOptions } from './renderer-save-options'
 import { mutateSessionDetailsAuthority } from './session-details-authority'
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
-  loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
+  loadAllWithDiagnostics(options?: {
+    mode?: 'repair' | 'read-only'
+    quarantinedIsIncomplete?: boolean
+  }): Promise<{
     result: LoadAllSessionsResult
     isComplete: boolean
     warnings?: SessionLoadWarning[]
@@ -111,7 +117,8 @@ type SessionMutationRepository = {
   }>
   loadSessionWithDiagnostics(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    options?: { mode?: 'repair' | 'read-only'; preserveRuntimeState?: boolean }
   ): Promise<
     | { status: 'found'; session: PersistedChatSession }
     | { status: 'missing' }
@@ -121,7 +128,11 @@ type SessionMutationRepository = {
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
-  ): Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession>
+  saveSessionWithBindingRepair?(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -149,6 +160,9 @@ type SessionFileIndex = {
 }
 
 type SessionProvenancePersistence = {
+  recoverLegacySessionGraph?(
+    session: PersistedChatSession
+  ): Promise<PersistedChatSession | undefined>
   validateFinalizedMessageBindings(session: PersistedChatSession): Promise<void>
   captureFinalizedMessages(session: PersistedChatSession): Promise<void>
   reconcileSessionDeletions(activeSessions: PersistedChatSession[]): Promise<void>
@@ -178,6 +192,10 @@ const emitRecoverableDiagnostic = (
 // Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
 // without allowing a late save to race or revive durable deletion authority.
 class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
+  private readonly exportingSessions = new Map<
+    string,
+    { projectId: string; released: Promise<void> }
+  >()
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
@@ -202,7 +220,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     private readonly computeJobs?: ComputeJobDeletionParticipant,
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher,
     onDelegationPolicyUpdated?: (session: PersistedChatSession) => void,
-    private readonly workspaceOwnership?: SessionWorkspaceOwnership
+    private readonly workspaceOwnership?: SessionWorkspaceOwnership,
+    preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.stateOwner = new SessionPersistenceStateOwner({
@@ -216,11 +235,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       notifyFilesChanged: (event) => this.notifyFilesChanged(event),
       notifyRuntimeContextSessionUpdated: (session) =>
         publishSessionUpdate(session, 'runtime-context'),
+      notifyRuntimeTranscriptSessionUpdated: (session) =>
+        publishSessionUpdate(session, 'runtime-transcript'),
       notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session)
     })
     this.sideChatOwner = new SessionSideChatPersistenceOwner({
       repository,
-      assertMutable: (projectId, sessionId) => this.assertMutable(projectId, sessionId, 'mutate'),
+      assertMutable: (projectId, sessionId, projectionOnly) =>
+        this.assertMutable(projectId, sessionId, 'mutate', projectionOnly),
       recordSession: (session) => this.stateOwner.recordSession(session),
       notifySessionUpdated: (session) => publishSessionUpdate(session, 'runtime-context')
     })
@@ -232,6 +254,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       uploads,
       computeJobs,
       workspaceOwnership,
+      preparePackageDeletion,
       log,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
@@ -276,6 +299,23 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
+  // Non-owning read for consumers that observe transcripts but must never repair them (reviewer's
+  // stale-verdict check and fix-loop refresh). `mode: 'read-only'` is required, not cosmetic:
+  // `readSessionFile` quarantines unless `quarantineInvalidFiles === false`, so a plain read would
+  // let a non-owner rename a corrupt live session file outside this coordinator's write lane.
+  // Returns undefined for missing/unreadable instead of throwing, so callers can degrade.
+  readSessionSnapshot(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession | undefined> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      return loaded.status === 'found' ? structuredClone(loaded.session) : undefined
+    })
+  }
+
   loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(projectId, sessionId, async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
@@ -283,6 +323,21 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
       }
       return structuredClone(loaded.session)
+    })
+  }
+
+  // Package publication commits through its own recovery journal. Adopt only durable authority
+  // into this live catalog before the new Session is exposed to runtime admission or renderers.
+  adoptPublishedSession(projectId: string, sessionId: string): Promise<void> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status !== 'found') {
+        throw new Error(`Cannot adopt a published ${loaded.status} Session.`)
+      }
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, loaded.session)
+      this.stateOwner.invalidateBindingTopology(projectId, sessionId)
+      this.stateOwner.recordSession(loaded.session)
     })
   }
 
@@ -532,6 +587,32 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  withUnreferencedLiteratureAttachment<Result>(
+    attachmentId: string,
+    remove: () => Promise<Result>
+  ): Promise<Result> {
+    return this.operationScheduler.runGlobal(async () => {
+      const scan = await this.repository.loadAllWithDiagnostics({
+        mode: 'read-only',
+        quarantinedIsIncomplete: true
+      })
+      assertLiteratureAttachmentsUnreferenced(scan, [attachmentId])
+      return remove()
+    })
+  }
+
+  withLiteratureAttachmentRemoval<Result>(
+    remove: (assertUnreferenced: (attachmentIds: readonly string[]) => void) => Promise<Result>
+  ): Promise<Result> {
+    return this.operationScheduler.runGlobal(async () => {
+      const scan = await this.repository.loadAllWithDiagnostics({
+        mode: 'read-only',
+        quarantinedIsIncomplete: true
+      })
+      return remove((attachmentIds) => assertLiteratureAttachmentsUnreferenced(scan, attachmentIds))
+    })
+  }
+
   readSessionRuntimeContext(projectId: string, sessionId: string): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.readRuntimeContext(projectId, sessionId)
@@ -585,6 +666,18 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
       this.stateOwner.patchRuntimeContext(command)
+    )
+  }
+
+  bindTaskSession(command: BindTaskSessionRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.bindTaskSession(command)
+    )
+  }
+
+  admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
+      this.stateOwner.admitTaskTurn(command)
     )
   }
 
@@ -755,19 +848,33 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // Persists authoritative JSON before updating the derived index. If indexing fails, the save stays
   // durable, the caller receives the error for its normal retry path, and Files is reset to show its
   // incomplete state rather than silently presenting stale metadata as complete.
-  saveSession(
+  async saveSession(
     session: PersistedChatSession,
     options: SaveSessionOptions = {},
     authority: SessionSaveAuthority = { taskRunCommit: false }
   ): Promise<PersistedChatSession> {
-    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
-      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-      return this.stateOwner.saveSession(
-        session,
-        sanitizeRendererSaveSessionOptions(options),
-        authority
+    // A renderer may already have a delayed projection save when another client reserves export.
+    // Wait outside the scheduler lane so browsing/global reads and unrelated Sessions stay usable.
+    for (;;) {
+      const result = await this.operationScheduler.runSession(
+        session.projectId,
+        session.id,
+        async () => {
+          const reservation = this.exportingSessions.get(sessionKey(session.projectId, session.id))
+          if (reservation) return { released: reservation.released }
+          await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+          return {
+            saved: await this.stateOwner.saveSession(
+              session,
+              sanitizeRendererSaveSessionOptions(options, session),
+              authority
+            )
+          }
+        }
       )
-    })
+      if (result.saved) return result.saved
+      await result.released
+    }
   }
 
   saveSessionSpecialistBinding(
@@ -857,6 +964,26 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  // Drain earlier writes in the existing persistence lane before freezing this Session.
+  reserveSessionExport(projectId: string, sessionId: string): Promise<() => void> {
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      this.assertMutable(projectId, sessionId, 'mutate')
+      const key = sessionKey(projectId, sessionId)
+      let release!: () => void
+      const reservation = {
+        projectId,
+        released: new Promise<void>((resolve) => {
+          release = resolve
+        })
+      }
+      this.exportingSessions.set(key, reservation)
+      return () => {
+        if (this.exportingSessions.get(key) === reservation) this.exportingSessions.delete(key)
+        release()
+      }
+    })
+  }
+
   runSessionMutation<Result>(
     projectId: string,
     sessionId: string,
@@ -871,6 +998,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
     })
+  }
+
+  mutateRuntimeSession(
+    scope: { projectId: string; sessionId: string },
+    mutate: (session: PersistedChatSession) => PersistedChatSession
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(scope.projectId, scope.sessionId, () =>
+      this.stateOwner.mutateRuntimeSession(scope, mutate)
+    )
   }
 
   retryArtifactFinalization(
@@ -923,6 +1059,12 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
     return this.operationScheduler.runProject(projectId, async (scope) => {
+      if (
+        [...this.exportingSessions.values()].some(
+          (reservation) => reservation.projectId === projectId
+        )
+      )
+        throw new Error('This Project contains a Session locked for export.')
       this.deletedProjects.add(projectId)
       try {
         return await this.deletionOwner.deleteProjectSessions(
@@ -1027,6 +1169,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       sessionId,
       async () => {
         const key = sessionKey(projectId, sessionId)
+        // A committed deletion may need to retry its remaining cleanup. Only an active export
+        // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
+        if (this.exportingSessions.has(key))
+          throw new Error('This Session is locked while its research package is being exported.')
         this.deletedSessions.add(key)
         const deletion = await this.deletionOwner
           .deleteSession(projectId, sessionId)
@@ -1066,7 +1212,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
-  private assertMutable(projectId: string, sessionId: string, operation: 'save' | 'mutate'): void {
+  private assertMutable(
+    projectId: string,
+    sessionId: string,
+    operation: 'save' | 'mutate',
+    projectionOnly = false
+  ): void {
+    if (!projectionOnly && this.exportingSessions.has(sessionKey(projectId, sessionId)))
+      throw new Error('This Session is locked while its research package is being exported.')
     if (this.deletedProjects.has(projectId)) {
       throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
     }
@@ -1101,7 +1254,10 @@ type SessionCatalog = Pick<
   SessionPersistenceCoordinator,
   'containsMessageOnActiveBranch' | 'loadSessionForContinuation' | 'sessionProjectId'
 >
-type SessionMutation = Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction'>
+type SessionMutation = Pick<
+  SessionPersistenceCoordinator,
+  'appendUserMessageToInteraction' | 'mutateRuntimeSession'
+>
 type SessionRuntimeContextCommands = Pick<
   SessionPersistenceCoordinator,
   'readSessionRuntimeContext' | 'patchSessionRuntimeContext'

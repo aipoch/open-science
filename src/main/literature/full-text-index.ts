@@ -1,3 +1,8 @@
+import {
+  acquireDataRootWriter,
+  isMigrationPending,
+  withDataRootWrite
+} from '../storage/migration-state'
 import { createHash } from 'node:crypto'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -246,9 +251,17 @@ class LiteratureFullTextIndex {
   ): () => Promise<void> {
     let maintenance = Promise.resolve()
     const schedule = (operation: () => Promise<void>): void => {
-      maintenance = maintenance.then(operation).catch((error) => {
-        onError(error)
-      })
+      maintenance = maintenance
+        .then(async () => {
+          if (isMigrationPending()) return
+          const release = acquireDataRootWriter()
+          try {
+            await withDataRootWrite(operation)
+          } finally {
+            release()
+          }
+        })
+        .catch(onError)
     }
     schedule(() => LiteratureFullTextIndex.sweepExpired(storageRoot))
     const flushTimer = setInterval(
@@ -264,12 +277,8 @@ class LiteratureFullTextIndex {
     return async () => {
       clearInterval(flushTimer)
       clearInterval(sweepTimer)
+      schedule(() => LiteratureFullTextIndex.flushPendingAccesses(storageRoot))
       await maintenance
-      try {
-        await LiteratureFullTextIndex.flushPendingAccesses(storageRoot)
-      } catch (error) {
-        onError(error)
-      }
     }
   }
 

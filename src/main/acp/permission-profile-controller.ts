@@ -84,7 +84,7 @@ const resolvePermissionProfileApplication = (
         ...(!nativeAuto
           ? {
               message:
-                'This model does not provide native auto review. Open Science will auto-approve only clearly low-risk workspace operations.'
+                'This model does not provide native auto review. Open-Science will auto-approve only clearly low-risk workspace operations.'
             }
           : {})
       }

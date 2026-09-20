@@ -17,13 +17,10 @@ const artifact = (id: string): ProjectFileItem => ({
 })
 
 describe('Session Artifact download data', () => {
-  it('loads every page in one Source Session collection', async () => {
+  it('reads every session export member from one snapshot', async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => artifact(`artifact-${index}`))
     const finalArtifact = artifact('artifact-100')
-    const listFiles = vi
-      .fn()
-      .mockResolvedValueOnce({ items: firstPage, nextCursor: 'page-2', totalCount: 101 })
-      .mockResolvedValueOnce({ items: [finalArtifact], totalCount: 101 })
+    const readExportFiles = vi.fn().mockResolvedValue([...firstPage, finalArtifact])
     const getOverview = vi.fn().mockResolvedValue({
       totalCount: 101,
       uploadCount: 0,
@@ -36,23 +33,16 @@ describe('Session Artifact download data', () => {
     await expect(
       listAllSessionArtifacts({
         getOverview,
-        listFiles,
+        readExportFiles,
         repairIndex,
         projectId: 'project-1',
         sessionId: 'session-1'
       })
     ).resolves.toEqual([...firstPage, finalArtifact])
     expect(repairIndex).not.toHaveBeenCalled()
-    expect(listFiles).toHaveBeenNthCalledWith(1, {
+    expect(readExportFiles).toHaveBeenCalledExactlyOnceWith({
       projectId: 'project-1',
-      collection: { kind: 'sessionArtifacts', sessionId: 'session-1' },
-      limit: 100
-    })
-    expect(listFiles).toHaveBeenNthCalledWith(2, {
-      projectId: 'project-1',
-      collection: { kind: 'sessionArtifacts', sessionId: 'session-1' },
-      cursor: 'page-2',
-      limit: 100
+      sessionId: 'session-1'
     })
   })
 
@@ -74,12 +64,12 @@ describe('Session Artifact download data', () => {
         isIndexComplete: true
       })
     const repairIndex = vi.fn().mockResolvedValue(undefined)
-    const listFiles = vi.fn().mockResolvedValue({ items: [artifact('artifact-1')], totalCount: 1 })
+    const readExportFiles = vi.fn().mockResolvedValue([artifact('artifact-1')])
 
     await expect(
       listAllSessionArtifacts({
         getOverview,
-        listFiles,
+        readExportFiles,
         repairIndex,
         projectId: 'project-1',
         sessionId: 'session-1'
@@ -87,6 +77,6 @@ describe('Session Artifact download data', () => {
     ).resolves.toEqual([artifact('artifact-1')])
     expect(repairIndex).toHaveBeenCalledWith({ projectId: 'project-1' })
     expect(getOverview).toHaveBeenCalledTimes(2)
-    expect(listFiles).toHaveBeenCalledTimes(1)
+    expect(readExportFiles).toHaveBeenCalledTimes(1)
   })
 })

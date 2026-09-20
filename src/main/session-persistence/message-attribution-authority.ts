@@ -1,5 +1,6 @@
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import {
+  isAgentResultDeliveryAttribution,
   isComputeJobCompletionAttribution,
   isComputeJobCompletionPresentation,
   isReviewerCorrectionAttribution,
@@ -23,7 +24,8 @@ const evidenceFromMessage = (
 ): TrustedAttributionEvidence | undefined =>
   message.role === 'user' &&
   (isReviewerCorrectionAttribution(message.attribution) ||
-    isComputeJobCompletionAttribution(message.attribution))
+    isComputeJobCompletionAttribution(message.attribution) ||
+    isAgentResultDeliveryAttribution(message.attribution))
     ? { attribution: message.attribution, content: message.content }
     : undefined
 
@@ -71,7 +73,8 @@ export class MainMessageAttributionAuthority {
       !event.messageId ||
       typeof event.text !== 'string' ||
       (!isReviewerCorrectionAttribution(event.attribution) &&
-        !isComputeJobCompletionAttribution(event.attribution))
+        !isComputeJobCompletionAttribution(event.attribution) &&
+        !isAgentResultDeliveryAttribution(event.attribution))
     ) {
       return
     }

@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync } from 'node:fs'
+import { lstat, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { app, BrowserWindow, dialog, shell } from 'electron'
@@ -9,11 +10,14 @@ import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   isNewer,
   selectDownload,
+  UPDATE_INSTALLATION_REQUIRED,
+  type UpdateApplyOptions,
   type UpdateDownloadOptions,
   type UpdateStatus
 } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
 import type { Logger } from '../logger'
+import { createMacInstallationGuard } from '../mac-installation'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'
 import { canStartUpdateDownload, toAvailableUpdateStatus, type UpdateStrategy } from './strategy'
@@ -27,6 +31,7 @@ type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
 ) => void
 
 export type UpdateServiceDeps = {
+  installationGuard?: (interactive: boolean) => boolean
   fetchImpl?: typeof fetch
   platform?: NodeJS.Platform
   arch?: string
@@ -104,6 +109,7 @@ export class UpdateService implements UpdateStrategy {
   private readonly openExternal: (url: string) => Promise<void>
   private readonly removeFile: (path: string) => Promise<void>
   private readonly log: Logger
+  private readonly installationGuard: (interactive: boolean) => boolean
   private readonly translate: NativeTranslator
   // Per-session set of target paths that have already been downloaded once this run. The first
   // download to a given path removes any pre-existing <target>.part and validator sidecar so a restart
@@ -129,6 +135,7 @@ export class UpdateService implements UpdateStrategy {
     this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
     this.log = deps.log ?? NOOP_LOGGER
     this.translate = deps.translate ?? englishNativeTranslator
+    this.installationGuard = deps.installationGuard ?? createMacInstallationGuard()
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'installer' }
   }
 
@@ -157,6 +164,13 @@ export class UpdateService implements UpdateStrategy {
 
   // Manifest flow always applies via an installer, so stamp applyKind here so every broadcast status
   // carries it (the renderer picks the "Open installer" vs "Restart" action off this field).
+  private blockForInstallation(interactive: boolean): boolean {
+    if (!this.installationGuard(interactive)) return false
+    this.setStatus({ ...this.status, state: 'error', error: UPDATE_INSTALLATION_REQUIRED })
+    this.log.warn('update requires installation', { reason: 'read-only-volume' })
+    return true
+  }
+
   private setStatus(next: UpdateStatus): void {
     this.status = { ...next, applyKind: 'installer' }
     this.broadcast('update:status', this.status)
@@ -252,6 +266,7 @@ export class UpdateService implements UpdateStrategy {
     }
     if (this.downloadAbort) return this.status
     if (!canStartUpdateDownload(this.status)) return this.status
+    if (this.blockForInstallation(!options.nonInteractive)) return this.status
 
     const { download } = this.status
     if (!download) return this.status
@@ -369,6 +384,7 @@ export class UpdateService implements UpdateStrategy {
           },
           signal: abort.signal
         })
+        if (abort.signal.aborted || this.downloadAbort !== abort) return
         this.setStatus({
           ...this.status,
           state: 'ready',
@@ -420,11 +436,11 @@ export class UpdateService implements UpdateStrategy {
   // Opens the downloaded installer. A missing file drops back to 'available' for re-download. When
   // the file still exists but the OS cannot open it, keep the ready artifact and surface the reason so
   // the user can retry without another transfer. With no artifact, open the public download page.
-  apply(): Promise<UpdateStatus> {
+  apply(options?: UpdateApplyOptions): Promise<UpdateStatus> {
     if (this.applyLifecycle) return this.applyLifecycle
 
     const admittedStatus = this.status
-    const lifecycle = this.applyAdmitted(admittedStatus)
+    const lifecycle = Promise.resolve().then(() => this.applyAdmitted(admittedStatus, options))
     this.applyLifecycle = lifecycle
     const clearLifecycle = (): void => {
       if (this.applyLifecycle === lifecycle) this.applyLifecycle = undefined
@@ -433,47 +449,68 @@ export class UpdateService implements UpdateStrategy {
     return lifecycle
   }
 
-  private async applyAdmitted(admittedStatus: UpdateStatus): Promise<UpdateStatus> {
+  private async applyAdmitted(
+    admittedStatus: UpdateStatus,
+    options?: UpdateApplyOptions
+  ): Promise<UpdateStatus> {
+    if (this.status !== admittedStatus) return this.status
+    if (this.blockForInstallation(options?.relaunch !== false)) return this.status
+    let ownedStatus = admittedStatus
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
       fields: { strategy: 'manifest' }
     })
     try {
       const { localPath, download } = admittedStatus
-      if (localPath) {
+      if (localPath && download) {
+        this.setStatus({ ...admittedStatus, state: 'applying', error: undefined })
+        ownedStatus = this.status
         operation.phase('verify-installer')
-        if (this.fileExists(localPath)) {
+        let verified = false
+        try {
+          if (this.fileExists(localPath)) {
+            const stat = await lstat(localPath)
+            if (stat.isFile() && stat.size === download.size) {
+              const hash = createHash('sha256')
+              for await (const chunk of createReadStream(localPath)) hash.update(chunk)
+              verified = hash.digest('hex') === download.sha256.toLowerCase()
+            }
+          }
+        } catch {
+          // Missing/unreadable or replaced files must go through download again.
+        }
+        if (this.status !== ownedStatus) return this.status
+        if (verified) {
           operation.phase('open-installer')
           const error = await this.openPath(localPath)
-          if (!error) {
-            if (this.status === admittedStatus && admittedStatus.error) {
-              this.setStatus({ ...admittedStatus, error: undefined })
-            }
-            operation.complete({ result: 'installer-opened' })
-            return this.status
+          if (this.status === ownedStatus) {
+            this.setStatus({
+              ...admittedStatus,
+              state: 'ready',
+              error: error
+                ? this.translate('Could not open the update installer: {{error}}', { error })
+                : undefined
+            })
           }
-          operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
-          if (this.status !== admittedStatus) return this.status
-          this.setStatus({
-            ...admittedStatus,
-            state: 'ready',
-            error: this.translate('Could not open the update installer: {{error}}', { error })
-          })
+          if (error) operation.fail(new Error('Installer open failed'), { reason: 'open-failed' })
+          else operation.complete({ result: 'installer-opened' })
           return this.status
-        } else {
-          operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
         }
+        operation.fail(new Error('Installer integrity check failed'), {
+          reason: 'installer-invalid'
+        })
       } else if (download) {
         operation.fail(new Error('Installer unavailable'), { reason: 'installer-missing' })
       }
 
+      if (this.status !== ownedStatus) return this.status
       if (download) {
         this.setStatus({
           ...admittedStatus,
           state: 'available',
           localPath: undefined,
           progress: undefined,
-          error: undefined
+          error: 'The installer is missing or has changed. Download the update again.'
         })
       } else {
         operation.phase('open-download-page')
@@ -482,6 +519,9 @@ export class UpdateService implements UpdateStrategy {
       }
       return this.status
     } catch (error) {
+      if (this.status === ownedStatus && ownedStatus.state === 'applying') {
+        this.setStatus({ ...admittedStatus, state: 'ready' })
+      }
       operation.fail(error, { result: 'error' })
       throw error
     }

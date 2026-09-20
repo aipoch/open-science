@@ -8,7 +8,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
-const PreviewZoomControls = ({ reduceMotion }: { reduceMotion: boolean }): React.JSX.Element => {
+const PreviewZoomControls = ({
+  reduceMotion,
+  tooltipClassName
+}: {
+  reduceMotion: boolean
+  tooltipClassName?: string
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const { zoomIn, zoomOut, resetTransform } = useControls()
   const actions = [
@@ -38,7 +44,7 @@ const PreviewZoomControls = ({ reduceMotion }: { reduceMotion: boolean }): React
                 <Icon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{label}</TooltipContent>
+            <TooltipContent className={tooltipClassName}>{label}</TooltipContent>
           </Tooltip>
         ))}
       </div>
@@ -46,7 +52,13 @@ const PreviewZoomControls = ({ reduceMotion }: { reduceMotion: boolean }): React
   )
 }
 
-const ZoomablePreview = ({ children }: { children: React.ReactNode }): React.JSX.Element => {
+const ZoomablePreview = ({
+  children,
+  tooltipClassName
+}: {
+  children: React.ReactNode
+  tooltipClassName?: string
+}): React.JSX.Element => {
   const reduceMotion = prefersReducedMotion()
 
   return (
@@ -62,7 +74,7 @@ const ZoomablePreview = ({ children }: { children: React.ReactNode }): React.JSX
       }}
       panning={{ velocityDisabled: true }}
     >
-      <PreviewZoomControls reduceMotion={reduceMotion} />
+      <PreviewZoomControls reduceMotion={reduceMotion} tooltipClassName={tooltipClassName} />
       <TransformComponent
         wrapperClass="!size-full cursor-grab active:cursor-grabbing"
         contentClass="!size-full"

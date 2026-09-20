@@ -302,13 +302,14 @@ export function checkPrPolicy({
   commitMessages = commitSubjects,
   scope = 'all'
 }) {
-  if (eventName !== 'pull_request') return { ok: true, violations: [] }
+  if (!['pull_request', 'merge_group'].includes(eventName)) return { ok: true, violations: [] }
 
   const violations = []
+  // The merge queue squashes with the PR title, so the title is validated for both events.
   if (scope !== 'commits' && !subjectPattern.test(title ?? '')) {
     violations.push({ kind: 'title', subject: title ?? '' })
   }
-  if (scope !== 'title') {
+  if (scope !== 'title' && eventName === 'pull_request') {
     for (const [index, subject] of commitSubjects.entries()) {
       if (!subjectPattern.test(subject)) violations.push({ kind: 'commit', subject })
       if (/\)!:/.test(subject) && !/^BREAKING CHANGE:\s+\S.*$/m.test(commitMessages[index] ?? '')) {

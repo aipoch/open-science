@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { waitFor } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
+import { literatureItemInputSchema } from '../../../../shared/literature'
+import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import type { PropsWithChildren } from 'react'
 import {
   useSessionStore,
@@ -65,7 +67,11 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock } = vi.hoisted(() => ({ agentMarkdownRenderMock: vi.fn() }))
+const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock } = vi.hoisted(() => ({
+  agentMarkdownRenderMock: vi.fn(),
+  endScrollTargetMock: vi.fn(),
+  scrollToEndMock: vi.fn()
+}))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -173,9 +179,30 @@ vi.mock('@/components/ui/message-scroller', () => {
         size?: string
       }
     >
-  >(function MockMessageScrollerButton({ children, direction = 'end', size, ...props }, ref) {
+  >(function MockMessageScrollerButton(
+    { children, direction = 'end', size, onClick, ...props },
+    ref
+  ) {
     return (
-      <button ref={ref} type="button" data-direction={direction} data-size={size} {...props}>
+      <button
+        ref={ref}
+        type="button"
+        data-direction={direction}
+        data-size={size}
+        {...props}
+        onClick={(event) => {
+          onClick?.(event)
+          // Match the primitive: it measures the mounted end synchronously after the callback.
+          if (direction === 'end')
+            endScrollTargetMock(
+              Array.from(
+                event.currentTarget.parentElement?.querySelectorAll('[data-message-id]') ?? []
+              )
+                .at(-1)
+                ?.getAttribute('data-message-id')
+            )
+        }}
+      >
         {children ?? `Scroll to ${direction}`}
       </button>
     )
@@ -189,7 +216,7 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerItem: Item,
     MessageScrollerButton: Button,
     useMessageScroller: () => ({
-      scrollToEnd: vi.fn(),
+      scrollToEnd: scrollToEndMock,
       scrollToMessage: vi.fn(),
       scrollToStart: vi.fn()
     })
@@ -447,6 +474,62 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     vi.unstubAllGlobals()
     container.remove()
   })
+
+  it.each([false, true])(
+    'opens Literature metadata with package=%s independently of bookmark scope',
+    async (packaged) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const getLiteratureItem = vi.fn().mockResolvedValue(undefined)
+      Object.assign(window.api, { literature: { get: getLiteratureItem } })
+      const title = 'Saved Literature paper'
+      const session = createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            parts: [
+              {
+                type: 'literature',
+                itemId: 'item-1',
+                metadataRevision: 1,
+                item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title })
+              }
+            ]
+          })
+        ],
+        ...(packaged
+          ? {
+              packageOrigin: {
+                importId: 'import-1',
+                sourceProjectId: 'source-project',
+                sourceSessionId: 'source-session',
+                importedAt: 1,
+                manifestChecksum: 'a'.repeat(64)
+              }
+            }
+          : {})
+      })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          // Imported packages deliberately have no bookmark scope in WorkspacePage.
+          <BookmarksProvider>
+            <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+          </BookmarksProvider>
+        )
+      })
+      await act(async () => {
+        fireEvent.click(container.querySelector(`[aria-label="Open ${title}"]`)!)
+      })
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog?.textContent).toContain(title)
+      if (packaged) {
+        expect(dialog?.textContent).toContain('Saved reference metadata from the Session package.')
+        expect(getLiteratureItem).not.toHaveBeenCalled()
+      } else {
+        expect(getLiteratureItem).toHaveBeenCalledWith('item-1')
+      }
+    }
+  )
 
   it('keeps every transcript row a direct MessageScrollerItem child of the content element', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
@@ -1626,6 +1709,68 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
     expect(completion.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
       0
+    )
+  })
+
+  it('reruns a failed historical card with its original scope branch', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const run = vi.fn().mockResolvedValue({ started: true })
+    window.api.reviewer.run = run
+    const messages = [
+      createMessage({ id: 'original-user', sortIndex: 1 }),
+      createMessage({
+        id: 'original-answer',
+        role: 'agent',
+        responseToMessageId: 'original-user',
+        sortIndex: 2
+      }),
+      createMessage({ id: 'newer-user', sortIndex: 3 })
+    ]
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        id: 'historical-error',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'original-answer',
+        scope: {
+          turnMessageId: 'original-answer',
+          messageBranchId: 'original-branch',
+          blocks: [],
+          artifactVersionIds: []
+        },
+        lifecycle: 'error',
+        outcome: null,
+        errorMessage: 'Temporary failure',
+        model: 'test',
+        reviewerLog: [],
+        checks: [],
+        createdAt: 1000,
+        updatedAt: 1000
+      }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Re-run review'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => {
+      retry!.click()
+    })
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnMessageId: 'original-answer',
+        scopeTurnMessageId: 'original-answer',
+        scopeMessageBranchId: 'original-branch',
+        origin: 'manual'
+      })
     )
   })
 
@@ -3854,6 +3999,63 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     })
   })
 
+  it('requests the exact Artifact Version for a generated image thumbnail', async () => {
+    const enterViewport = installIntersectionObserver()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' }))
+      })
+    )
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Created the image',
+          artifactIds: ['artifact-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'artifact-version-1',
+          artifactId: 'managed-artifact-1',
+          versionId: 'artifact-version-1',
+          isPublished: true,
+          kind: 'managed-file',
+          path: '/workspace/chart.png',
+          fileUrl: 'file:///workspace/chart.png',
+          name: 'chart.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mtimeMs: 1710000000100
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+    await act(async () => {
+      enterViewport()
+      await Promise.resolve()
+    })
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'default',
+      fileId: 'managed-artifact-1',
+      versionId: 'artifact-version-1',
+      mimeType: 'image/png'
+    })
+  })
+
   it('does not fall back to a path-only thumbnail read for a legacy artifact', async () => {
     const enterViewport = installIntersectionObserver()
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
@@ -4059,7 +4261,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
       status: 'running',
-      activeRun: { promptMessageId: 'prompt-2', startedAt: 1710000000200 },
+      activeRun: { promptMessageId: 'prompt-4', startedAt: 1710000000200 },
       messages: [
         createMessage({ id: 'prompt-1', content: 'First prompt' }),
         createMessage({
@@ -4068,7 +4270,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           content: 'First response',
           responseToMessageId: 'prompt-1'
         }),
-        createMessage({ id: 'prompt-2', content: 'Second prompt' })
+        createMessage({ id: 'prompt-2', content: 'Second prompt' }),
+        createMessage({ id: 'prompt-3', content: 'Third prompt' }),
+        createMessage({ id: 'prompt-4', content: 'Fourth prompt' })
       ]
     })
 
@@ -4083,12 +4287,459 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(rail).not.toBeNull()
     expect(rail?.className).toContain('hidden')
     expect(rail?.className).toContain('md:block')
-    expect(rail?.querySelectorAll('button')).toHaveLength(2)
+    expect(rail?.querySelectorAll('button')).toHaveLength(4)
     expect(
       Array.from(rail?.querySelectorAll('button span') ?? []).every((indicator) =>
         indicator.classList.contains('scale-x-[0.4]')
       )
     ).toBe(true)
+  })
+
+  it.each([
+    { count: 2, kind: 'messages' },
+    { count: 80, kind: 'messages' },
+    { count: 80, kind: 'activities' }
+  ])(
+    'retains the reading nodes when $count $kind arrive away from the bottom',
+    async ({ count, kind }) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const messages = Array.from({ length: 240 + count }, (_, index) =>
+        createMessage({
+          id: `reading-${index + 1}`,
+          content: `Reading message ${index + 1}`,
+          createdAt: 1710000000000 + index,
+          updatedAt: 1710000000000 + index
+        })
+      )
+      const render = async (length: number): Promise<void> => {
+        await act(async () =>
+          root.render(
+            <WorkspaceMessageScroller
+              activeSession={createSession({
+                status: 'idle',
+                messages: messages.slice(0, kind === 'activities' ? 240 : length),
+                activities:
+                  kind === 'activities'
+                    ? Array.from({ length: length - 240 }, (_, index) =>
+                        createActivity({
+                          id: `appended-activity-${index}`,
+                          activityGroupId: `appended-group-${index}`,
+                          status: 'completed',
+                          createdAt: 1710000001000 + index,
+                          sortIndex: 1000 + index
+                        })
+                      )
+                    : []
+              })}
+              onSendEditedMessage={vi.fn()}
+            />
+          )
+        )
+      }
+      root = createRoot(container)
+      await render(240)
+      const rows = Array.from(container.querySelectorAll('[data-message-id^="reading-"]'))
+      expect(rows).toHaveLength(80)
+      const viewport = container.querySelector<HTMLElement>(
+        '[data-testid="message-scroller-viewport"]'
+      )!
+      Object.defineProperties(viewport, {
+        clientHeight: { configurable: true, value: 800 },
+        scrollHeight: { configurable: true, value: 10_000 },
+        scrollTop: { configurable: true, writable: true, value: 9200 }
+      })
+      await act(async () =>
+        viewport.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -120 }))
+      )
+      viewport.scrollTop = 9000
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      viewport.scrollTop = 5000
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      scrollToEndMock.mockClear()
+      await render(240 + count)
+      expect(scrollToEndMock).not.toHaveBeenCalled()
+      expect(rows.filter((node) => node.isConnected)).toHaveLength(80)
+    }
+  )
+
+  it.each(['layout', 'wheel', 'touch', 'keyboard', 'scrollbar'] as const)(
+    'updates the live tail after %s scrolling without overriding reader intent',
+    async (input) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      root = createRoot(container)
+      const messages = Array.from({ length: 121 }, (_, index) =>
+        createMessage({
+          id: `restore-${index}`,
+          content: `Restore message ${index}`,
+          createdAt: 1710000000000 + index,
+          updatedAt: 1710000000000 + index
+        })
+      )
+      const render = async (length: number): Promise<void> => {
+        await act(async () =>
+          root.render(
+            <WorkspaceMessageScroller
+              activeSession={createSession({
+                messages: messages.slice(0, length),
+                agentPromptInFlight: true,
+                awaitingFirstAgentOutput: true
+              })}
+              onSendEditedMessage={vi.fn()}
+            />
+          )
+        )
+      }
+      await render(120)
+      const viewport = container.querySelector<HTMLDivElement>(
+        '[data-testid="message-scroller-viewport"]'
+      )!
+      Object.defineProperties(viewport, {
+        clientHeight: { configurable: true, value: 800 },
+        scrollHeight: { configurable: true, value: 10000 },
+        scrollTop: { configurable: true, writable: true, value: input === 'layout' ? 9100 : 9200 }
+      })
+      expect(container.textContent).toContain('Thinking')
+      if (input !== 'layout') {
+        const event =
+          input === 'wheel'
+            ? new WheelEvent('wheel', { bubbles: true, deltaY: -100 })
+            : input === 'keyboard'
+              ? new KeyboardEvent('keydown', { bubbles: true, key: 'PageUp' })
+              : new Event(input === 'touch' ? 'touchmove' : 'pointerdown', { bubbles: true })
+        await act(async () => viewport.dispatchEvent(event))
+        viewport.scrollTop = 9100
+      }
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      scrollToEndMock.mockClear()
+      await render(121)
+      const latest = container.querySelector('[data-message-id="restore-120"]')
+      if (input === 'layout') {
+        expect(latest).not.toBeNull()
+        expect(container.textContent).toContain('Thinking')
+        expect(scrollToEndMock).toHaveBeenCalled()
+      } else {
+        expect(latest).toBeNull()
+        expect(container.textContent).not.toContain('Thinking')
+        expect(scrollToEndMock).not.toHaveBeenCalled()
+      }
+      expect(container.querySelectorAll('[data-message-id^="restore-"]')).toHaveLength(80)
+    }
+  )
+
+  it.each([
+    'wheel-down',
+    'wheel-horizontal',
+    'ArrowDown',
+    'PageDown',
+    'End',
+    ' ',
+    'pointer-click',
+    'nested-wheel',
+    'nested-touch',
+    'editable-ArrowUp'
+  ])('keeps mounting the live tail after %s input without viewport movement', async (input) => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const messages = Array.from({ length: 121 }, (_, index) =>
+      createMessage({ id: `no-op-${index}`, content: `Message ${index}`, createdAt: index + 1 })
+    )
+    const render = async (length: number): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({
+              messages: messages.slice(0, length),
+              agentPromptInFlight: true,
+              awaitingFirstAgentOutput: true
+            })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render(120)
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 10000 },
+      scrollTop: { configurable: true, writable: true, value: 9200 }
+    })
+    const nested = document.createElement(input.startsWith('editable') ? 'textarea' : 'div')
+    nested.style.overflowY = 'auto'
+    Object.defineProperties(nested, {
+      clientHeight: { value: 100 },
+      scrollHeight: { value: 1000 },
+      scrollTop: { writable: true, value: 500 }
+    })
+    viewport.appendChild(nested)
+    const target = input.startsWith('nested') || input.startsWith('editable') ? nested : viewport
+    const event = input.includes('wheel')
+      ? new WheelEvent('wheel', {
+          bubbles: true,
+          deltaY: input === 'wheel-horizontal' ? 0 : input === 'nested-wheel' ? -100 : 100,
+          deltaX: input === 'wheel-horizontal' ? 100 : 0
+        })
+      : input === 'nested-touch'
+        ? new Event('touchmove', { bubbles: true })
+        : input === 'pointer-click'
+          ? new Event('pointerdown', { bubbles: true })
+          : new KeyboardEvent('keydown', {
+              bubbles: true,
+              key: input === 'editable-ArrowUp' ? 'ArrowUp' : input
+            })
+    await act(async () => target.dispatchEvent(event))
+    if (input.startsWith('nested')) {
+      nested.scrollTop = 400
+      await act(async () => nested.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
+    // The outer viewport did not move: the browser emits no viewport scroll event.
+    await render(121)
+    expect(container.querySelector('[data-message-id="no-op-120"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-message-id^="no-op-"]')).toHaveLength(80)
+    expect(container.textContent).toContain('Thinking')
+    nested.remove()
+  })
+
+  it('mounts only the tail when an initially empty session receives long history', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const render = async (messages: ChatMessage[]): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render([])
+    await render(
+      Array.from({ length: 240 }, (_, index) =>
+        createMessage({
+          id: `hydrated-${index}`,
+          content: `History ${index}`,
+          createdAt: 1710000000000 + index
+        })
+      )
+    )
+    expect(container.querySelectorAll('[data-message-id^="hydrated-"]')).toHaveLength(80)
+    expect(container.querySelector('[data-message-id="hydrated-0"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="hydrated-239"]')).not.toBeNull()
+  })
+
+  it('leaves ordinary transcript growth to the native scroller anchor policy', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const messages = [createMessage({})]
+    const render = async (): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages: [...messages] })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render()
+    scrollToEndMock.mockClear()
+    messages.push(createMessage({ id: 'ordinary-append', createdAt: 1710000000001 }))
+    await render()
+    expect(scrollToEndMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps new replies mounted within a short reading window', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const messages = [createMessage({})]
+    const render = async (): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages: [...messages] })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render()
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 600 }
+    })
+    await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    const original = container.querySelector('[data-message-id]')
+    scrollToEndMock.mockClear()
+    messages.push(createMessage({ id: 'ordinary-append', createdAt: 1710000000001 }))
+    await render()
+    expect(container.querySelector('[data-message-id="ordinary-append"]')).not.toBeNull()
+    expect(original?.isConnected).toBe(true)
+    expect(scrollToEndMock).not.toHaveBeenCalled()
+  })
+
+  it('mounts the latest window before the end button measures its scroll target', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `end-message-${index + 1}`,
+        content: `End message ${index + 1}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    )
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')!.click()
+    )
+    expect(container.querySelector('[data-message-id="end-message-240"]')).toBeNull()
+    endScrollTargetMock.mockClear()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-direction="end"]')!.click()
+    )
+    expect(endScrollTargetMock).toHaveBeenLastCalledWith('end-message-240')
+    scrollToEndMock.mockClear()
+    const appended = [
+      ...messages,
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage({
+          id: `new-end-${index}`,
+          content: `New end ${index}`,
+          createdAt: 1710000001000 + index,
+          updatedAt: 1710000001000 + index
+        })
+      )
+    ]
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages: appended })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[data-message-id="new-end-79"]')).not.toBeNull()
+    expect(scrollToEndMock).toHaveBeenCalledWith({ behavior: 'auto' })
+  })
+
+  it('retains the run selected during find after closing find', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `find-reading-${index + 1}`,
+        content: `Find reading ${index + 1}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[data-message-id="find-reading-1"]')).toBeNull()
+    await act(async () => showWindowFindListener?.())
+    const target = container.querySelector('[data-message-id="find-reading-1"]')!
+    expect(target).not.toBeNull()
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    viewport.scrollTo = vi.fn()
+    const firstRun = document.body.querySelector<HTMLButtonElement>('[aria-label^="Go to run 1:"]')!
+    expect(firstRun).not.toBeNull()
+    await act(async () => firstRun.click())
+    expect(viewport.scrollTo).toHaveBeenCalled()
+    await act(async () => hideWindowFindListener?.())
+    expect(target.isConnected).toBe(true)
+    expect(
+      container.querySelectorAll('[data-message-id^="find-reading-"]').length
+    ).toBeLessThanOrEqual(80)
+  })
+
+  it('collapses only the selected contiguous segment of a named tool group', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const { projectActivityGroupStart, projectToolActivity } =
+      await import('@/stores/session-store-run-activity-helpers')
+    const { createWorkspaceConversationTimeline } =
+      await import('./workspace-conversation-timeline')
+    let session = projectActivityGroupStart(
+      createSession({ messages: [createMessage({})] }),
+      'named-reading',
+      'Inspect sources',
+      'message-1'
+    )
+    for (const [index, id] of ['read-before', 'question-between', 'read-after'].entries()) {
+      session = projectToolActivity(session, {
+        sessionId: session.id,
+        toolCallId: id,
+        eventId: `event-${id}`,
+        promptMessageId: 'message-1',
+        title: id,
+        status: 'completed',
+        toolKind: 'read',
+        timestamp: 1710000000100 + index,
+        ...(index === 1
+          ? {
+              elicitation: {
+                message: 'Choose a source',
+                fields: [{ id: 'source', label: 'Source', kind: 'text' as const }],
+                state: 'answered' as const,
+                answers: [{ fieldId: 'source', value: 'Both' }]
+              }
+            }
+          : {})
+      })
+    }
+    expect(session.activities?.map((item) => item.activityGroupId)).toEqual(
+      Array(3).fill('named-reading')
+    )
+    const segments = createWorkspaceConversationTimeline(session).filter(
+      (item) => item.type === 'activity-group'
+    )
+    expect(segments).toHaveLength(2)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    root = createRoot(container)
+    try {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      )
+      const headings = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')
+      ).filter((button) => button.textContent?.includes('Inspect sources'))
+      expect(headings).toHaveLength(2)
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'true'
+      ])
+      await act(async () => headings[0].click())
+      expect
+        .soft(headings.map((button) => button.getAttribute('aria-expanded')))
+        .toEqual(['false', 'true'])
+      expect.soft(new Set(segments.map((item) => item.id)).size).toBe(2)
+      expect.soft(errors.mock.calls.some((call) => call.join(' ').includes('same key'))).toBe(false)
+    } finally {
+      errors.mockRestore()
+    }
   })
 
   it('mounts a bounded long transcript and reveals an older run on demand', async () => {
@@ -4219,6 +4870,89 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     })
 
     expect(rawOutputReads).toBeLessThanOrEqual(itemCount * 8)
+  })
+
+  it.each([
+    { status: 'running' as const },
+    { status: 'idle' as const, compacting: true },
+    { status: 'idle' as const, fixLoopActive: true },
+    { status: 'idle' as const, branchSwitchBlocked: true },
+    { status: 'idle' as const, conversationGraphSyncBlocked: true },
+    { status: 'waiting-for-user' as const },
+    { status: 'waiting-permission' as const },
+    { status: 'waiting-plan-approval' as const }
+  ])('disables revision navigation while editing remains available: %j', async (blocked) => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const { WorkspaceMessageEditStateProvider } = await import('./workspace-message-edit-state')
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          status: 'idle',
+          messages: [createMessage({ id: 'original', content: 'Original prompt' })]
+        })
+      ],
+      selectedSessionId: 'session-1'
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'original')
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'session-1', content: 'Edited prompt' })
+    const running = useSessionStore.getState().sessions[0]
+    expect(running.status).toBe('running')
+    const branchId = running.conversationGraph!.frames[0].activeBranchId
+    useSessionStore.setState({ sessions: [{ ...running, activeRun: undefined, ...blocked }] })
+    const onSendEditedMessage = vi.fn()
+    const Parent = (): React.JSX.Element => {
+      const activeSession = useSessionStore((state) => state.sessions[0])
+      return (
+        <WorkspaceMessageEditStateProvider canEditMessage={true}>
+          <WorkspaceMessageScroller
+            activeSession={activeSession}
+            onSendEditedMessage={onSendEditedMessage}
+          />
+        </WorkspaceMessageEditStateProvider>
+      )
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<Parent />))
+    const previous = (): HTMLButtonElement => {
+      const button = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Previous message revision"]'
+      )
+      if (!button) throw new Error('Previous revision button missing')
+      return button
+    }
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit message"]')?.disabled
+    ).toBe(false)
+    expect.soft(previous().disabled).toBe(true)
+    await act(async () => previous().click())
+    expect(useSessionStore.getState().sessions[0].conversationGraph!.frames[0].activeBranchId).toBe(
+      branchId
+    )
+
+    await act(async () => {
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          compacting: false,
+          fixLoopActive: false,
+          branchSwitchBlocked: false,
+          conversationGraphSyncBlocked: false
+        }))
+      }))
+    })
+    expect(previous().disabled).toBe(false)
+    await act(async () => useSessionStore.getState().setBranchSwitchBlocked('session-1', true))
+    expect(previous().disabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit message"]')?.disabled
+    ).toBe(false)
+    await act(async () => useSessionStore.getState().setBranchSwitchBlocked('session-1', false))
+    expect(previous().disabled).toBe(false)
+    await act(async () => previous().click())
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Original prompt')
   })
 
   it('renders a long conversation graph without rescanning it for every visible revision', async () => {

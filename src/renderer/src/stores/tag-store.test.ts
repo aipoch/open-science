@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { TagSnapshot } from '../../../shared/tags'
 import { createInitialTagState, useTagStore } from './tag-store'
@@ -709,4 +709,157 @@ describe('tag store', () => {
       expect(useTagStore.getState().tags).toEqual(tags)
     }
   )
+})
+
+describe('overlapping authoritative updates', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((a) => {
+      resolve = a
+    })
+    return { promise, resolve }
+  }
+  const tag = (revision: number, name: string): TagSnapshot => ({
+    revision,
+    tags: [
+      { id: 'tag-1', name, iconKey: 'tag', colorKey: 'gray', createdAt: 1, updatedAt: revision }
+    ],
+    assignments: []
+  })
+
+  it.each(['create', 'update', 'delete', 'reorder', 'setAssignment'] as const)(
+    'keeps the newer event read after a stale %s reply',
+    async (operation) => {
+      useTagStore.setState({
+        ...createInitialTagState(),
+        ...tag(1, 'initial'),
+        status: 'ready'
+      } as never)
+      const write = deferred<ReturnType<typeof tag>>()
+      const read = deferred<ReturnType<typeof tag>>()
+      const intermediate = deferred<ReturnType<typeof tag>>()
+      let changed!: (event: { revision: number }) => void
+      vi.stubGlobal('window', {
+        api: {
+          tags: {
+            [operation]: () => write.promise,
+            snapshot: vi
+              .fn()
+              .mockReturnValueOnce(intermediate.promise)
+              .mockReturnValueOnce(read.promise),
+            onChanged: (fn: (event: { revision: number }) => void) => {
+              changed = fn
+              return () => {}
+            }
+          }
+        }
+      })
+      const store = useTagStore.getState()
+      const saving =
+        operation === 'create'
+          ? store.create({ name: 'local', iconKey: 'tag', colorKey: 'gray' })
+          : operation === 'update'
+            ? store.update({
+                id: 'tag-1',
+                name: 'local',
+                iconKey: 'tag',
+                colorKey: 'gray',
+                expectedUpdatedAt: 1
+              })
+            : operation === 'delete'
+              ? store.delete('tag-1')
+              : operation === 'reorder'
+                ? store.reorder({ tagIds: ['tag-1'] })
+                : store.setAssignment({
+                    tagId: 'tag-1',
+                    resourceType: 'catalog.skill',
+                    resourceId: 'skill-1',
+                    assigned: true
+                  })
+      const remove = useTagStore.getState().listen()
+      changed({ revision: 3 })
+      intermediate.resolve(tag(3, 'remote-3'))
+      await intermediate.promise
+      await Promise.resolve()
+      expect(useTagStore.getState().revision).toBe(3)
+      changed({ revision: 4 })
+      write.resolve(tag(2, 'local'))
+      await saving
+      read.resolve(tag(4, 'remote-4'))
+      await read.promise
+      await Promise.resolve()
+      expect(useTagStore.getState()).toMatchObject({
+        revision: 4,
+        tags: [{ name: 'remote-4' }],
+        status: 'ready'
+      })
+      remove()
+    }
+  )
+})
+
+it('retains a newer event read even when the command reply is still acceptable', async () => {
+  let changed!: (event: { revision: number }) => void
+  let resolveRead!: (snapshot: TagSnapshot) => void
+  let resolveWrite!: (snapshot: TagSnapshot) => void
+  setTagsApi({
+    onChanged: vi.fn((listener) => {
+      changed = listener
+      return () => undefined
+    }),
+    update: vi.fn(
+      () =>
+        new Promise<TagSnapshot>((resolve) => {
+          resolveWrite = resolve
+        })
+    ),
+    snapshot: vi.fn(
+      () =>
+        new Promise<TagSnapshot>((resolve) => {
+          resolveRead = resolve
+        })
+    )
+  })
+  useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+  const remove = useTagStore.getState().listen()
+  const saving = useTagStore
+    .getState()
+    .update({ id: 'custom', name: 'local', iconKey: 'tag', colorKey: 'gray', expectedUpdatedAt: 1 })
+  changed({ revision: 3 })
+  resolveWrite(favoriteSnapshot(2))
+  await saving
+  resolveRead(favoriteSnapshot(3))
+  await Promise.resolve()
+  await Promise.resolve()
+  remove()
+  expect(useTagStore.getState().revision).toBe(3)
+})
+
+it('keeps a committed mutation ready when an earlier load rejects', async () => {
+  let rejectRead!: (error: Error) => void
+  const tag = {
+    id: 'custom-tag',
+    name: 'Original',
+    iconKey: 'tag' as const,
+    colorKey: 'gray' as const,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  setTagsApi({
+    snapshot: vi.fn(
+      () =>
+        new Promise<TagSnapshot>((_, reject) => {
+          rejectRead = reject
+        })
+    ),
+    delete: vi.fn().mockResolvedValue(favoriteSnapshot(2))
+  })
+  useTagStore.setState({ ...favoriteSnapshot(1), tags: [tag], status: 'ready' })
+  const reading = useTagStore.getState().load()
+  await useTagStore.getState().delete(tag.id)
+  rejectRead(new Error('earlier read failed'))
+  await reading
+  expect(useTagStore.getState()).toMatchObject({ revision: 2, status: 'ready', error: undefined })
 })

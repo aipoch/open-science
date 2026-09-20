@@ -179,7 +179,7 @@ const getFastaRows = (content: string): string[] => {
 
   if (currentSequence) rows.push(currentSequence)
 
-  if (rows.length > 1) return rows.slice(0, 6)
+  if (rows.length > 1) return rows.slice(0, 6).map((row) => row.slice(0, 8))
 
   return rows[0]?.match(/.{1,8}/g)?.slice(0, 6) ?? []
 }

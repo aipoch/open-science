@@ -1,4 +1,4 @@
-import type { i18n } from 'i18next'
+import type { BackendModule, i18n } from 'i18next'
 
 import {
   COMMON_NAMESPACE,
@@ -6,7 +6,7 @@ import {
   initializeI18nInstance,
   NATIVE_NAMESPACE
 } from '../../shared/i18n/core'
-import type { Locale } from '../../shared/locale'
+import { isLocale, type Locale } from '../../shared/locale'
 import { nativeResources } from './resources'
 
 export type NativeTranslateOptions = Record<string, string | number | undefined> & {
@@ -17,10 +17,30 @@ export type NativeTranslateOptions = Record<string, string | number | undefined>
 
 export type NativeTranslator = (key: string, options?: NativeTranslateOptions) => string
 
+// Preference writes must not commit a locale whose bundled catalog cannot be loaded.
+export const prepareNativeLocale = (locale: Locale): void => {
+  if (locale !== 'en') void nativeResources[locale]
+}
+
+const nativeBackend: BackendModule = {
+  type: 'backend',
+  init: () => {},
+  read(locale, namespace, callback) {
+    if (
+      !isLocale(locale) ||
+      locale === 'en' ||
+      (namespace !== COMMON_NAMESPACE && namespace !== NATIVE_NAMESPACE)
+    ) {
+      callback(null, {})
+      return
+    }
+    callback(null, nativeResources[locale][namespace])
+  }
+}
+
 export const createNativeI18n = (locale: Locale): i18n =>
-  initializeI18nInstance(createI18nInstance(), {
+  initializeI18nInstance(createI18nInstance().use(nativeBackend), {
     locale,
-    resources: nativeResources,
     namespaces: [NATIVE_NAMESPACE, COMMON_NAMESPACE],
     defaultNamespace: NATIVE_NAMESPACE,
     fallbackNamespaces: [COMMON_NAMESPACE]

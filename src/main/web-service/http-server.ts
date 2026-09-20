@@ -156,8 +156,22 @@ type WebServerOptions = {
         | 'updateProjectSessionDefaults'
         | 'getSessionConfiguration'
         | 'updateSessionConfiguration'
+        | 'listConnectors'
+        | 'getConnector'
+        | 'setConnectorEnabled'
+        | 'addConnector'
+        | 'updateConnector'
+        | 'removeConnector'
+        | 'testConnector'
+        | 'listCredentials'
+        | 'createCredential'
+        | 'updateCredential'
         | 'getAgentRouting'
         | 'updateAgentRouting'
+        | 'doctor'
+        | 'bootstrap'
+        | 'installCli'
+        | 'listRuntimes'
       >
     >
   waitUntilTasksReady?: () => Promise<void>
@@ -420,7 +434,7 @@ const publicApplicationCommandError = (
     : { code: 'command-failed', message: INTERNAL_SERVER_ERROR_MESSAGE }
 
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
-  if (error.code === 'invalid-command-arguments') return 400
+  if (error.code === 'invalid-command-arguments' || error.code.startsWith('csl-')) return 400
   if (error.code === 'command-unavailable') return 404
   if (error.code === 'session-details-conflict') return 409
   if (error.code === 'session-revision-conflict') return 409
@@ -528,12 +542,13 @@ const webRpcError = (
   response: ServerResponse,
   status: number,
   code: WebRpcErrorCode,
-  message: string
+  message: string,
+  parameters?: ApplicationCommandError['parameters']
 ): void => {
   json(response, status, {
     protocolVersion: WEB_RPC_PROTOCOL_VERSION,
     ok: false,
-    error: { code, message }
+    error: { code, message, ...(parameters ? { parameters } : {}) }
   })
 }
 
@@ -977,6 +992,103 @@ const handleTaskApiRequest = async (
   tasks.runWithCallerContext(callerContext, async () => {
     try {
       await waitUntilTasksReady?.()
+      if (url.pathname === '/api/v1/doctor' && request.method === 'GET' && tasks.doctor) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.doctor()
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
+      if (url.pathname === '/api/v1/bootstrap' && request.method === 'POST' && tasks.bootstrap) {
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.bootstrap(
+          body as import('../../shared/bootstrap').BootstrapRequest
+        )
+        json(response, 200, { data })
+        return true
+      }
+      if (url.pathname === '/api/v1/cli/install' && request.method === 'POST' && tasks.installCli) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data: await tasks.installCli() })
+        return true
+      }
+      if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const data = await tasks.listRuntimes()
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, { data })
+        return true
+      }
+      const connectorMatch = url.pathname.match(
+        /^\/api\/v1\/connectors(?:\/([^/]+)(?:\/(enabled|test))?)?$/
+      )
+      const credentialMatch = url.pathname.match(/^\/api\/v1\/credentials(?:\/([^/]+))?$/)
+      if (connectorMatch || credentialMatch) {
+        const match = connectorMatch ?? credentialMatch!
+        const id = match[1] ? decodeURIComponent(match[1]) : undefined
+        const action = match[2]
+        let body: unknown
+        if (['POST', 'PATCH', 'PUT'].includes(request.method ?? '') && action !== 'test') {
+          body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            throw new TaskApiError('invalid_request', 'Configuration must be a JSON object.')
+          }
+        }
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        let operation: (() => Promise<unknown>) | undefined
+        if (connectorMatch) {
+          if (!id && request.method === 'GET' && tasks.listConnectors)
+            operation = () => tasks.listConnectors!()
+          else if (!id && request.method === 'POST' && tasks.addConnector)
+            operation = () =>
+              tasks.addConnector!(body as Parameters<HeadlessTaskApi['addConnector']>[0])
+          else if (id && !action && request.method === 'GET' && tasks.getConnector)
+            operation = () => tasks.getConnector!(id)
+          else if (id && !action && request.method === 'PATCH' && tasks.updateConnector)
+            operation = () =>
+              tasks.updateConnector!(id, body as Parameters<HeadlessTaskApi['updateConnector']>[1])
+          else if (id && !action && request.method === 'DELETE' && tasks.removeConnector)
+            operation = () => tasks.removeConnector!(id)
+          else if (
+            id &&
+            action === 'enabled' &&
+            request.method === 'PUT' &&
+            tasks.setConnectorEnabled
+          )
+            operation = () => tasks.setConnectorEnabled!(id, (body as { enabled: boolean }).enabled)
+          else if (id && action === 'test' && request.method === 'POST' && tasks.testConnector)
+            operation = () => tasks.testConnector!(id)
+        } else {
+          if (!id && request.method === 'GET' && tasks.listCredentials)
+            operation = () => tasks.listCredentials!()
+          else if (!id && request.method === 'POST' && tasks.createCredential)
+            operation = () =>
+              tasks.createCredential!(body as Parameters<HeadlessTaskApi['createCredential']>[0])
+          else if (id && request.method === 'PATCH' && tasks.updateCredential)
+            operation = () =>
+              tasks.updateCredential!(
+                id,
+                body as Parameters<HeadlessTaskApi['updateCredential']>[1]
+              )
+        }
+        if (operation) {
+          const data = await operation()
+          assertExternalAuthorizationCurrent(externalAuthorization)
+          json(response, 200, { data })
+          return true
+        }
+      }
       if (url.pathname === '/api/v1/projects' && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, { data: await tasks.listProjects() })
@@ -1388,6 +1500,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         json(response, 200, {
           ...(auth.ok ? options.bootstrap : remoteWebBootstrap(options.bootstrap)),
           webCallerLocation: auth.ok ? 'local' : 'remote',
+          draftScope: createHash('sha256')
+            .update(options.token)
+            .update('\0')
+            .update(clientPrincipalId)
+            .digest('hex'),
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
           rpcChannels,
@@ -1481,7 +1598,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             response,
             400,
             'invalid_request',
-            error instanceof SyntaxError ? 'Request body must be valid JSON.' : String(error)
+            error instanceof SyntaxError
+              ? 'Request body must be valid JSON.'
+              : 'Failed to read request body.'
           )
           return
         }
@@ -1554,6 +1673,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             callerContext,
             parsed.data.args
           )
+          assertExternalAuthorizationCurrent(externalAuthorization)
           json(
             response,
             200,
@@ -1565,6 +1685,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             MAX_WEB_RPC_RESPONSE_BYTES
           )
         } catch (error) {
+          // A delayed error may carry the same private data as a successful result.
+          if (externalAuthorization && !externalAuthorization.isCurrent()) {
+            webRpcError(response, 401, 'invalid_request', 'Remote access authorization expired.')
+            return
+          }
           log.warn('web rpc rejected', {
             channel,
             surface: callerContext.surface,
@@ -1582,7 +1707,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           const publicError = publicApplicationCommandError(error)
           const status =
             error instanceof ApplicationCommandError ? applicationCommandErrorStatus(error) : 500
-          webRpcError(response, status, publicError.code, publicError.message)
+          webRpcError(
+            response,
+            status,
+            publicError.code,
+            publicError.message,
+            publicError.parameters
+          )
         } finally {
           request.off('aborted', releaseDisconnectedClient)
           response.off('close', releaseDisconnectedClient)

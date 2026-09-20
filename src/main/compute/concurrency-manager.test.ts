@@ -21,7 +21,7 @@ const createMockJobRepo = (): ComputeJobRepository =>
     findNonTerminalByProvider: vi.fn(),
     findTerminalUnharvested: vi.fn(),
     hasActiveJobsForProvider: vi.fn(),
-    findBySession: vi.fn(),
+    findSessionConcurrencyJobs: vi.fn(),
     findPendingNotifications: vi.fn(),
     markNotificationsConsumed: vi.fn()
   }) as unknown as ComputeJobRepository
@@ -88,7 +88,7 @@ describe('ConcurrencyManager', () => {
         undefined,
         undefined,
         {
-          load: async () => [],
+          resolve: async () => ({ status: 'ready', limit: null, revision: 0 }),
           save: async () => {
             throw new Error('Session write failed')
           }
@@ -110,7 +110,7 @@ describe('ConcurrencyManager', () => {
         onJobUpdated,
         undefined,
         undefined,
-        { load: async () => [], save }
+        { resolve: async () => ({ status: 'ready', limit: null, revision: 0 }), save }
       )
 
       await durableManager.projectPersistedSessionLimit('session-1', 2)
@@ -185,83 +185,261 @@ describe('ConcurrencyManager', () => {
     })
   })
 
-  it('keeps queued reconciliation stopped when durable limits cannot be restored', async () => {
+  it.each(['direct', 'slurm'] as const)(
+    'isolates an unavailable owner for %s and recovers its queue without a catalog read',
+    async (executionMode) => {
+      let blocked = true
+      const jobs = [
+        {
+          execution_mode: executionMode,
+          job_id: 'bad-job',
+          session_id: 'bad',
+          project_id: 'old',
+          provider_id: 'host',
+          status: 'queued'
+        },
+        {
+          execution_mode: executionMode,
+          job_id: 'good-job',
+          session_id: 'good',
+          project_id: 'new',
+          provider_id: 'host',
+          status: 'queued'
+        }
+      ] as ComputeJob[]
+      vi.mocked(jobRepo.findQueuedJobs).mockImplementation(async () =>
+        jobs.filter((job) => job.status === 'queued')
+      )
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      vi.mocked(jobRepo.updateIfStatus).mockImplementation(async (id, _status, updates) => {
+        const job = jobs.find((job) => job.job_id === id)!
+        job.status = updates.status!
+        return job
+      })
+      const durableManager = new ConcurrencyManager(
+        jobRepo,
+        hostRepo,
+        dispatchJob,
+        undefined,
+        undefined,
+        undefined,
+        {
+          resolve: async (sessionId) =>
+            blocked && sessionId === 'bad'
+              ? { status: 'blocked', reason: 'unavailable' }
+              : { status: 'ready', limit: null, revision: 0 },
+          save: async () => {}
+        }
+      )
+      await durableManager.startQueueReconciliation()
+      await durableManager.reconcileQueuedJobs()
+      expect(dispatchJob).toHaveBeenCalledTimes(1)
+      expect(dispatchJob).toHaveBeenCalledWith('good-job', expect.any(Function))
+      expect(await durableManager.getQueueBlockedReason('bad', 'old')).toBe(
+        'session_policy_unavailable'
+      )
+      blocked = false
+      await durableManager.reconcileQueuedJobs()
+      expect(dispatchJob).toHaveBeenCalledTimes(2)
+      expect(await durableManager.getQueueBlockedReason('bad', 'old')).toBeUndefined()
+      await durableManager.stopQueueReconciliation()
+    }
+  )
+
+  it('serializes fresh policy reads with durable setting writes, without restoring a stale map', async () => {
+    let limit = 2
     const durableManager = new ConcurrencyManager(
       jobRepo,
       hostRepo,
       dispatchJob,
-      onJobUpdated,
       undefined,
-      undefined,
-      {
-        load: async () => {
-          throw new Error('Session catalog unavailable')
-        },
-        save: async () => undefined
-      }
-    )
-
-    await expect(durableManager.startQueueReconciliation()).rejects.toThrow(
-      'Session catalog unavailable'
-    )
-    await durableManager.reconcileQueuedJobs()
-    expect(jobRepo.findQueuedJobs).not.toHaveBeenCalled()
-  })
-
-  it('queues new admissions when durable limits cannot be restored', async () => {
-    const durableManager = new ConcurrencyManager(
-      jobRepo,
-      hostRepo,
-      dispatchJob,
-      onJobUpdated,
       undefined,
       undefined,
       {
-        load: async () => {
-          throw new Error('Session catalog unavailable')
-        },
-        save: async () => undefined
+        resolve: async () => ({ status: 'ready', limit, revision: 0 }),
+        save: async (_id, next) => {
+          limit = next
+        }
       }
     )
+    vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
+    vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
     vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
-    vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
-    vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
-    const commit = vi.fn(async () => undefined)
-
-    await expect(durableManager.startQueueReconciliation()).rejects.toThrow(
-      'Session catalog unavailable'
+    await durableManager.startQueueReconciliation()
+    const setting = durableManager.setSessionLimit('session-1', 1)
+    const commit = vi.fn(async () => {})
+    const admission = durableManager.admit(
+      { sessionId: 'session-1', projectId: 'project-1', providerId: 'host' },
+      commit
     )
-    await expect(
-      durableManager.admit({ sessionId: 'session-1', providerId: 'ssh:cluster-a' }, commit)
-    ).resolves.toBe('queued')
+    await setting
+    expect(await admission).toBe('queued')
     expect(commit).toHaveBeenCalledWith('queued')
+    await durableManager.stopQueueReconciliation()
   })
 
-  it('does not hold the admission lock while loading durable limits', async () => {
-    const managerRef: { current?: ConcurrencyManager } = {}
+  it('cannot dispatch when shutdown occurs during an owner policy read', async () => {
+    let finish!: () => void
+    let entered!: () => void
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve
+    })
     const durableManager = new ConcurrencyManager(
       jobRepo,
       hostRepo,
       dispatchJob,
-      onJobUpdated,
+      undefined,
       undefined,
       undefined,
       {
-        load: async () => {
-          await managerRef.current?.clearProjectedSessionLimits(['deleted-session'])
-          return [['session-1', 1]]
+        resolve: async () => {
+          entered()
+          await new Promise<void>((resolve) => {
+            finish = resolve
+          })
+          return { status: 'ready', limit: null, revision: 0 }
         },
-        save: async () => undefined
+        save: async () => {}
       }
     )
-    managerRef.current = durableManager
+    vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+    vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+    await durableManager.startQueueReconciliation()
+    await durableManager.reconcileQueuedJobs()
+    const commit = vi.fn(async () => {})
+    const admission = durableManager.admit(
+      { sessionId: 'session', projectId: 'project', providerId: 'host' },
+      commit
+    )
+    await reading
+    await durableManager.stopQueueReconciliation()
+    finish()
+    expect(await admission).toBe('queued')
+    await durableManager.startQueueReconciliation({ retryFailedOnly: true })
+    expect(await durableManager.getQueueBlockedReason('session', 'project')).toBe('runtime_stopped')
+  })
 
+  it('automatically retries recovered policy but never resumes a deletion-paused owner', async () => {
+    vi.useFakeTimers()
+    let available = false
+    const job = {
+      job_id: 'retry',
+      session_id: 'session',
+      project_id: 'project',
+      provider_id: 'host',
+      status: 'queued'
+    } as ComputeJob
+    vi.mocked(jobRepo.findQueuedJobs).mockImplementation(async () =>
+      job.status === 'queued' ? [job] : []
+    )
+    vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+    vi.mocked(jobRepo.updateIfStatus).mockImplementation(async (_id, _expected, updates) => {
+      job.status = updates.status!
+      return job
+    })
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      undefined,
+      undefined,
+      undefined,
+      {
+        resolve: async () =>
+          available
+            ? { status: 'ready', limit: null, revision: 0 }
+            : { status: 'blocked', reason: 'unavailable' },
+        save: async () => {}
+      }
+    )
+    try {
+      await durableManager.startQueueReconciliation()
+      await durableManager.reconcileQueuedJobs()
+      expect(dispatchJob).not.toHaveBeenCalled()
+      await durableManager.pauseOwner({ projectId: 'project', sessionId: 'session' })
+      available = true
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(dispatchJob).not.toHaveBeenCalled()
+      durableManager.resumeOwner({ projectId: 'project', sessionId: 'session' })
+      await durableManager.reconcileQueuedJobs()
+      expect(dispatchJob).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(dispatchJob).toHaveBeenCalledTimes(1)
+    } finally {
+      await durableManager.stopQueueReconciliation()
+      vi.useRealTimers()
+    }
+  })
+
+  it('a policy read failure cannot bypass the global queue capacity', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      undefined,
+      undefined,
+      undefined,
+      {
+        resolve: async () => {
+          throw new Error('read failed')
+        },
+        save: async () => {}
+      }
+    )
+    vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
+    await durableManager.startQueueReconciliation()
+    const commit = vi.fn(async () => {})
+    expect(
+      await durableManager.admit(
+        { sessionId: 'session', projectId: 'project', providerId: 'host' },
+        commit
+      )
+    ).toBe('queue_full')
+    expect(commit).not.toHaveBeenCalled()
+    await durableManager.stopQueueReconciliation()
+  })
+
+  it('never holds the admission lock across Session persistence callbacks', async () => {
+    const durableManager: ConcurrencyManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      undefined,
+      undefined,
+      undefined,
+      {
+        resolve: async () => ({ status: 'ready', limit: 1, revision: 0 }),
+        save: async () => {
+          await durableManager.clearProjectedSessionLimits(['removed'])
+        }
+      }
+    )
+    await durableManager.startQueueReconciliation()
+    await durableManager.setSessionLimit('session', 1)
+    await durableManager.stopQueueReconciliation()
+  })
+
+  it('rejects a mismatched owner without creating a Job row', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      undefined,
+      undefined,
+      undefined,
+      {
+        resolve: async () => ({ status: 'blocked', reason: 'identity-conflict' }),
+        save: async () => {}
+      }
+    )
+    await durableManager.startQueueReconciliation()
+    const commit = vi.fn(async () => {})
     await expect(
-      Promise.race([
-        durableManager.startQueueReconciliation().then(() => 'restored' as const),
-        new Promise<'timed_out'>((resolve) => setTimeout(() => resolve('timed_out'), 100))
-      ])
-    ).resolves.toBe('restored')
+      durableManager.admit({ sessionId: 'session', projectId: 'wrong', providerId: 'host' }, commit)
+    ).rejects.toThrow('ownership conflicts')
+    expect(commit).not.toHaveBeenCalled()
+    await durableManager.stopQueueReconciliation()
   })
 
   describe('enqueue - global queue limit', () => {
@@ -687,7 +865,7 @@ describe('ConcurrencyManager', () => {
     it('returns accurate session status', async () => {
       await manager.setSessionLimit('session-1', 5)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
-      vi.mocked(jobRepo.findBySession).mockResolvedValue([
+      vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'queued' } as ComputeJob,
         { provider_id: 'ssh:cluster-b', status: 'queued' } as ComputeJob
       ])
@@ -708,7 +886,7 @@ describe('ConcurrencyManager', () => {
 
     it('returns null session_limit when not set', async () => {
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
-      vi.mocked(jobRepo.findBySession).mockResolvedValue([])
+      vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([])
 
       const status = await manager.getStatus('session-1')
 
@@ -719,7 +897,7 @@ describe('ConcurrencyManager', () => {
 
     it('uses default ceiling of 10 when host.concurrencyLimit is undefined', async () => {
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(1)
-      vi.mocked(jobRepo.findBySession).mockResolvedValue([
+      vi.mocked(jobRepo.findSessionConcurrencyJobs).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'running' } as ComputeJob
       ])
       vi.mocked(hostRepo.get).mockResolvedValue({

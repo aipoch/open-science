@@ -1,3 +1,10 @@
+import { McpClientManager } from '../../connectors/mcp-client-manager'
+import {
+  classifyCustomMcpFailure,
+  hasUsableCustomMcpCredentials,
+  isCustomMcpServerRouteSafe,
+  toCustomMcpConfig
+} from '../../connectors/custom-mcp-bootstrap'
 import type {
   AuthenticateCustomServerRequest,
   CreateDeviceCredentialRequest,
@@ -22,6 +29,7 @@ import type { SettingsService } from '../service'
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
   | 'getConnectors'
+  | 'saveCustomServerOAuthState'
   | 'listConnectors'
   | 'listDeviceCredentials'
   | 'deviceCredentialConsumerIds'
@@ -61,6 +69,19 @@ type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promi
   Awaited<ReturnType<ConnectorSettingsWorkflowStore[Method]>>
 >
 
+const SPAWN_FAILURE_CODES = new Set(['ENOENT', 'EACCES', 'ENOEXEC'])
+
+const spawnFailureCode = (error: unknown): string | undefined => {
+  let current = error
+  for (let depth = 0; depth < 6; depth++) {
+    if (!current || typeof current !== 'object') return undefined
+    const code = (current as NodeJS.ErrnoException).code
+    if (code && SPAWN_FAILURE_CODES.has(code)) return code
+    current = (current as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
 // Owns Connector mutation follow-up ordering, including the security barrier and derived projection.
 // Every safety-critical effect is required; unsupported hosts must inject an explicit no-op adapter.
 class ConnectorSettingsWorkflows {
@@ -70,6 +91,109 @@ class ConnectorSettingsWorkflows {
     private readonly settings: ConnectorSettingsWorkflowStore,
     private readonly effects: ConnectorSettingsWorkflowEffects
   ) {}
+
+  async testCustomServer(
+    request: { id: string },
+    callerSignal?: AbortSignal
+  ): Promise<{
+    success: boolean
+    toolCount?: number
+    message: string
+    stage: 'configuration' | 'startup' | 'handshake' | 'discovery'
+    code:
+      | 'unsupported'
+      | 'invalid_configuration'
+      | 'credentials_unavailable'
+      | 'ok'
+      | 'cancelled'
+      | 'timeout'
+      | 'authentication'
+      | 'startup_failed'
+      | 'handshake_failed'
+      | 'discovery_failed'
+  }> {
+    const servers = (await this.settings.getConnectors())?.customMcpServers ?? []
+    const server = servers.find((item) => item.id === request.id)
+    if (!server)
+      return {
+        success: false,
+        stage: 'configuration',
+        code: 'unsupported',
+        message:
+          'Diagnostics require an existing custom MCP Connector. Bundled Connector live tests are not supported.'
+      }
+    if (!isCustomMcpServerRouteSafe(server, servers))
+      return {
+        success: false,
+        stage: 'configuration',
+        code: 'invalid_configuration',
+        message: 'Connector configuration is invalid.'
+      }
+    if (!hasUsableCustomMcpCredentials(server))
+      return {
+        success: false,
+        stage: 'configuration',
+        code: 'credentials_unavailable',
+        message:
+          'Connector credentials are unavailable. Re-enter them using secure credential storage.'
+      }
+    // A probe must not reset or populate the shared runtime client cache.
+    const manager = new McpClientManager({
+      saveOAuthState: (id, state, fingerprint, secretRef) =>
+        this.settings.saveCustomServerOAuthState(id, state, fingerprint, secretRef)
+    })
+    const timeout = AbortSignal.timeout(10_000)
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout
+    const progress: { stage: 'startup' | 'handshake' | 'discovery' } = { stage: 'handshake' }
+    try {
+      const tools = await manager.listTools(toCustomMcpConfig(server), signal, () => {
+        progress.stage = 'discovery'
+      })
+      return {
+        success: true,
+        stage: 'discovery',
+        code: 'ok',
+        toolCount: tools.length,
+        message: 'MCP connection and tool discovery succeeded. Business tools were not executed.'
+      }
+    } catch (error) {
+      // Only OS spawn codes prove a startup failure. Early exits and malformed initialize replies
+      // remain handshake failures; never guess a phase from server-supplied text.
+      if (
+        server.transport === 'stdio' &&
+        progress.stage === 'handshake' &&
+        spawnFailureCode(error)
+      ) {
+        progress.stage = 'startup'
+      }
+      const code = callerSignal?.aborted
+        ? 'cancelled'
+        : signal.aborted
+          ? 'timeout'
+          : classifyCustomMcpFailure(error) === 'unauthenticated'
+            ? 'authentication'
+            : progress.stage === 'startup'
+              ? 'startup_failed'
+              : progress.stage === 'discovery'
+                ? 'discovery_failed'
+                : 'handshake_failed'
+      const messages = {
+        cancelled: 'MCP diagnostic cancelled.',
+        timeout: 'MCP connection timed out.',
+        authentication:
+          'MCP authentication failed. Authenticate the existing credential before retrying.',
+        startup_failed:
+          'MCP process could not start. Check the command, executable permissions, and PATH.',
+        handshake_failed:
+          'MCP initialization failed. Check the endpoint, transport, network, and server protocol support.',
+        discovery_failed:
+          'MCP connected, but the tool catalog could not be read. Check server tools/list support and retry.'
+      }
+      return { success: false, stage: progress.stage, code, message: messages[code] }
+    } finally {
+      await manager.closeAll()
+    }
+  }
 
   async setConnectorEnabled(
     request: SetConnectorEnabledRequest

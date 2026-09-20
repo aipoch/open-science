@@ -8,7 +8,8 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 
 import type { CodexSubscriptionTransport } from '../../shared/settings'
-import { terminateProcessTree } from '../process-tree'
+import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import { spawnCodexWithInstallAdmission } from './managed-codex'
 import { codexSubscriptionStorageDir } from './codex-paths'
 import { augmentedPathEnv } from './shell-path'
 import { clearSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
@@ -272,16 +273,16 @@ export const projectSafeCodexProviderRoute = (configToml: string): string | unde
   return route ? serializeLegacyCodexProviderRoute(route) : undefined
 }
 
-const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
-const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
-const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
-const IMPORTED_ROUTE_PROVIDER_END = '# Open Science: end imported Codex provider'
-const IMPORTED_ROUTE_PRESERVED_LINE = '# Open Science: preserved Codex config '
+const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open-Science: begin imported Codex route selection'
+const IMPORTED_ROUTE_SELECTION_END = '# Open-Science: end imported Codex route selection'
+const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open-Science: begin imported Codex provider'
+const IMPORTED_ROUTE_PROVIDER_END = '# Open-Science: end imported Codex provider'
+const IMPORTED_ROUTE_PRESERVED_LINE = '# Open-Science: preserved Codex config '
 const CODEX_FILE_CREDENTIAL_STORE = 'cli_auth_credentials_store = "file"'
-const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open Science: begin Codex transport route selection'
-const TRANSPORT_ROUTE_SELECTION_END = '# Open Science: end Codex transport route selection'
-const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open Science: begin Codex transport provider'
-const TRANSPORT_ROUTE_PROVIDER_END = '# Open Science: end Codex transport provider'
+const TRANSPORT_ROUTE_SELECTION_BEGIN = '# Open-Science: begin Codex transport route selection'
+const TRANSPORT_ROUTE_SELECTION_END = '# Open-Science: end Codex transport route selection'
+const TRANSPORT_ROUTE_PROVIDER_BEGIN = '# Open-Science: begin Codex transport provider'
+const TRANSPORT_ROUTE_PROVIDER_END = '# Open-Science: end Codex transport provider'
 const CODEX_TRANSPORT_PROVIDER_IDS = [
   'open-science-chatgpt-https',
   'open-science-chatgpt-websocket'
@@ -344,36 +345,47 @@ const serializeCodexCredentialStore = (
 const serializeCodexFileCredentialStore = (existingConfigToml: string): string =>
   serializeCodexCredentialStore(existingConfigToml, 'file')
 
+// Persisted pre-brand markers remain technical compatibility identities. Match only complete
+// known marker lines; ordinary comments and user TOML values keep their original spelling.
+const legacyMarker = (marker: string): string =>
+  marker.replace('# Open-Science:', '# Open Science:')
+const matchesMarker = (line: string, marker: string): boolean =>
+  line === marker || line === legacyMarker(marker)
+
 const restoreCompleteMarkedBlock = (lines: string[], begin: string, end: string): string[] => {
   const result = [...lines]
-  let beginIndex = result.indexOf(begin)
+  let beginIndex = result.findIndex((line) => matchesMarker(line, begin))
 
   while (beginIndex >= 0) {
-    const relativeEndIndex = result.slice(beginIndex + 1).indexOf(end)
+    const relativeEndIndex = result
+      .slice(beginIndex + 1)
+      .findIndex((line) => matchesMarker(line, end))
     if (relativeEndIndex < 0) break
 
     const endIndex = beginIndex + relativeEndIndex + 1
     const preservedLines = result.slice(beginIndex + 1, endIndex).flatMap((line) => {
-      if (!line.startsWith(IMPORTED_ROUTE_PRESERVED_LINE)) return []
+      const prefix = [
+        IMPORTED_ROUTE_PRESERVED_LINE,
+        legacyMarker(IMPORTED_ROUTE_PRESERVED_LINE)
+      ].find((candidate) => line.startsWith(candidate))
+      if (!prefix) return []
       try {
-        const preservedLine = JSON.parse(
-          line.slice(IMPORTED_ROUTE_PRESERVED_LINE.length)
-        ) as unknown
+        const preservedLine = JSON.parse(line.slice(prefix.length)) as unknown
         return typeof preservedLine === 'string' ? [preservedLine] : []
       } catch {
         return []
       }
     })
     result.splice(beginIndex, relativeEndIndex + 2, ...preservedLines)
-    beginIndex = result.indexOf(begin)
+    beginIndex = result.findIndex((line) => matchesMarker(line, begin))
   }
 
   return result
 }
 
 const hasCompleteMarkedBlock = (lines: string[], begin: string, end: string): boolean => {
-  const beginIndex = lines.indexOf(begin)
-  return beginIndex >= 0 && lines.slice(beginIndex + 1).includes(end)
+  const beginIndex = lines.findIndex((line) => matchesMarker(line, begin))
+  return beginIndex >= 0 && lines.slice(beginIndex + 1).some((line) => matchesMarker(line, end))
 }
 
 const isOwnedTransportProviderId = (value: unknown): boolean =>
@@ -627,6 +639,92 @@ type CodexAuthenticationSnapshot = Readonly<{
   providerRoute?: ImportedCodexProviderRoute
 }>
 
+export type CodexStoredAuthInspection =
+  { state: 'present' } | { state: 'missing' } | { state: 'invalid' } | { state: 'unreadable' }
+
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim() !== ''
+
+const isRfc3339 = (value: unknown): value is string =>
+  isNonEmptyString(value) &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+  !Number.isNaN(Date.parse(value))
+
+const isJwt = (value: unknown): value is string => {
+  if (!isNonEmptyString(value)) return false
+  const parts = value.split('.')
+  if (parts.length !== 3 || parts.some((part) => part === '')) return false
+  try {
+    return isJsonObject(JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')))
+  } catch {
+    return false
+  }
+}
+
+const hasCodexCredentialMaterial = (value: unknown): boolean => {
+  if (!isJsonObject(value)) return false
+  const auth = value
+  const inferredMode =
+    typeof auth.personal_access_token === 'string'
+      ? 'personalAccessToken'
+      : isJsonObject(auth.bedrock_api_key)
+        ? 'bedrockApiKey'
+        : typeof auth.OPENAI_API_KEY === 'string'
+          ? 'apikey'
+          : 'chatgpt'
+  const mode = auth.auth_mode ?? inferredMode
+
+  if (mode === 'apikey') return isNonEmptyString(auth.OPENAI_API_KEY)
+  if (mode === 'personalAccessToken') return isNonEmptyString(auth.personal_access_token)
+  if (mode === 'agentIdentity') {
+    if (isJwt(auth.agent_identity)) return true
+    return (
+      isJsonObject(auth.agent_identity) &&
+      isNonEmptyString(auth.agent_identity.agent_runtime_id) &&
+      isNonEmptyString(auth.agent_identity.agent_private_key) &&
+      isNonEmptyString(auth.agent_identity.account_id) &&
+      isNonEmptyString(auth.agent_identity.chatgpt_user_id) &&
+      isNonEmptyString(auth.agent_identity.plan_type) &&
+      typeof auth.agent_identity.chatgpt_account_is_fedramp === 'boolean'
+    )
+  }
+  if (mode === 'bedrockApiKey') {
+    return (
+      isJsonObject(auth.bedrock_api_key) &&
+      isNonEmptyString(auth.bedrock_api_key.api_key) &&
+      isNonEmptyString(auth.bedrock_api_key.region)
+    )
+  }
+  if (mode !== 'chatgpt' && mode !== 'chatgptAuthTokens') return false
+  return (
+    isJsonObject(auth.tokens) &&
+    isJwt(auth.tokens.id_token) &&
+    isNonEmptyString(auth.tokens.access_token) &&
+    isNonEmptyString(auth.tokens.refresh_token) &&
+    isRfc3339(auth.last_refresh)
+  )
+}
+
+export const inspectAppOwnedCodexAuthentication = async (
+  storageRoot: string
+): Promise<CodexStoredAuthInspection> => {
+  try {
+    const content = await readFile(
+      join(codexSubscriptionStorageDir(storageRoot), 'auth.json'),
+      'utf8'
+    )
+    const parsed = JSON.parse(content) as unknown
+    return hasCodexCredentialMaterial(parsed) ? { state: 'present' } : { state: 'invalid' }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'missing' }
+    if (error instanceof SyntaxError) return { state: 'invalid' }
+    return { state: 'unreadable' }
+  }
+}
+
 const readCodexAuthenticationSnapshot = async (
   sourceHome: string,
   required: boolean
@@ -640,7 +738,15 @@ const readCodexAuthenticationSnapshot = async (
     const parsed = JSON.parse(content) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
   } catch (error) {
-    if (!required && (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (!required) return undefined
+      // A missing auth.json most often means Codex keeps its credential in the OS credential store
+      // (macOS Keychain / Windows Credential Manager / Linux keyring). Name that boundary instead of
+      // surfacing a generic import failure that reads like a required second sign-in.
+      throw new Error(
+        'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
+      )
+    }
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }
 
@@ -693,7 +799,7 @@ const writeCodexAuthenticationSnapshot = async (
 
 // Provider setup imports an existing login plus the safe, non-secret subset of its active provider
 // route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
-// provider config remain outside Open Science.
+// provider config remain outside Open-Science.
 export const importCodexAuthentication = async (
   sourceHome: string,
   destinationHome: string
@@ -1011,12 +1117,18 @@ export const openCodexAuthSession = async ({
   if (isJavaScript) env.ELECTRON_RUN_AS_NODE = '1'
   if (nativePath) env.CODEX_PATH = nativePath
 
-  const child = spawn(command, args, {
-    env,
-    shell: needsShell,
-    stdio: 'pipe',
-    windowsHide: true
-  })
+  const child = spawnCodexWithInstallAdmission(
+    [adapterPath, ...(nativePath ? [nativePath] : [])],
+    () =>
+      spawn(command, args, {
+        env,
+        shell: needsShell,
+        stdio: 'pipe',
+        detached: process.platform !== 'win32',
+        windowsHide: true
+      })
+  )
+  if (process.platform !== 'win32') registerOwnedPosixProcessGroup(child)
   const stream = acp.ndJsonStream(
     Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
     Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>

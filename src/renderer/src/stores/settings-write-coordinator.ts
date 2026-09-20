@@ -1,3 +1,7 @@
+import type { SettingsWriteErrorCode } from '../../../shared/settings'
+
+export type { SettingsWriteErrorCode }
+
 export type SettingsWriteKey =
   | 'activeProvider'
   | 'agentFramework'
@@ -14,6 +18,9 @@ export type SettingsWriteKey =
   | 'appIcon'
   | 'projectFilesFilter'
 
+// Stable machine codes for failed writes live in shared/settings.ts (re-exported above). The
+// display layer translates by code, so no English message text ever crosses the store boundary
+// or gets string-compared to decide a translation.
 export type OptimisticSettingsWriteKey =
   | 'reasoningEffort'
   | 'sessionDetailsModel'
@@ -33,7 +40,7 @@ type SettingsWriteToken = {
 
 type SettingsWriteFailure = {
   id: number
-  message: string
+  code: SettingsWriteErrorCode
 }
 
 type OptimisticSettingsWriteState<T> = {
@@ -44,7 +51,7 @@ type OptimisticSettingsWriteState<T> = {
 export type SettingsWrite = {
   isCurrent: () => boolean
   succeed: () => void
-  fail: (message: string) => void
+  fail: (code: SettingsWriteErrorCode) => void
 }
 
 export type OptimisticSettingsWrite<T> = SettingsWrite & {
@@ -79,22 +86,22 @@ export const createSettingsWriteCoordinator = (
   let failureId = 0
 
   const currentError = (): string | undefined => {
-    const messages = [...failures.values()]
+    const codes = [...failures.values()]
       .sort((left, right) => left.id - right.id)
-      .map((failure) => failure.message)
+      .map((failure) => failure.code)
 
-    return messages.length > 0 ? messages.join(' ') : undefined
+    return codes.length > 0 ? codes.join(' ') : undefined
   }
 
   const isCurrent = (token: SettingsWriteToken): boolean =>
     generations.get(token.key) === token.generation
 
-  const settle = (token: SettingsWriteToken, error?: string): void => {
+  const settle = (token: SettingsWriteToken, code?: SettingsWriteErrorCode): void => {
     if (!isCurrent(token)) return
 
-    if (error) {
+    if (code) {
       failureId += 1
-      failures.set(token.key, { id: failureId, message: error })
+      failures.set(token.key, { id: failureId, code })
     } else {
       for (const [failureKey, failureAtStart] of token.failuresAtStart) {
         if (failures.get(failureKey)?.id === failureAtStart) failures.delete(failureKey)
@@ -118,7 +125,7 @@ export const createSettingsWriteCoordinator = (
     return {
       isCurrent: () => isCurrent(token),
       succeed: () => settle(token),
-      fail: (message) => settle(token, message)
+      fail: (code) => settle(token, code)
     }
   }
 

@@ -28,7 +28,7 @@ test('stages a verified data-root move and recovers on discard', async ({ app })
     return { migration, staged, discarded }
   }, parent)
 
-  expect(result.migration).toEqual({ ok: true })
+  expect(result.migration).toEqual({ ok: true, cleanupPending: false })
   expect(result.staged).toMatchObject({ kind: 'recover', recoveryStatus: 'verified' })
   expect(result.discarded.kind).toBe('move')
 

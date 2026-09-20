@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { setI18nLocale } from '@/i18n'
+import { setI18nLocale, prepareI18nLocale } from '@/i18n'
 import {
   applyHtmlLang,
   LANGUAGE_STORAGE_KEY,
@@ -26,6 +26,7 @@ let operation = 0
 let confirmedOperation = 0
 let pendingOperation: number | undefined
 let broadcastVersion = 0
+let applicationVersion = 0
 
 export const useLocaleStore = create<LocaleStore>(() => ({
   ...confirmed,
@@ -39,13 +40,20 @@ export const useLocaleStore = create<LocaleStore>(() => ({
       const state = useLocaleStore.getState()
       confirmed = { preference: state.preference, locale: state.locale }
     }
-    applyLocaleSnapshot({ preference, locale: resolveLocalePreference(preference) })
+    applicationVersion += 1
     useLocaleStore.setState({ saveFailed: false })
-    if (!localeApi) return
-
     pendingOperation = currentOperation
     void (async () => {
       try {
+        const locale = resolveLocalePreference(preference)
+        const preparing = prepareI18nLocale(locale)
+        if (preparing) await preparing
+        if (currentOperation !== operation) return
+        applyLocaleSnapshot({ preference, locale })
+        if (!localeApi) {
+          confirmed = { preference, locale }
+          return
+        }
         const snapshot = await localeApi.setPreference({ preference })
         // Broadcasts are delivered in Main commit order. A delayed command reply must not replace
         // a newer broadcast or successful command, even when the user picks the same value again.
@@ -67,10 +75,20 @@ export const useLocaleStore = create<LocaleStore>(() => ({
 }))
 
 const applyLocaleSnapshot = (snapshot: LocalePreferenceSnapshot, persist = true): void => {
-  setI18nLocale(snapshot.locale)
-  applyHtmlLang(snapshot.locale)
-  if (persist) persistPreference(snapshot.preference)
-  useLocaleStore.setState(snapshot)
+  const version = ++applicationVersion
+  const apply = (): void => {
+    if (version !== applicationVersion) return
+    setI18nLocale(snapshot.locale)
+    applyHtmlLang(snapshot.locale)
+    if (persist) persistPreference(snapshot.preference)
+    useLocaleStore.setState(snapshot)
+  }
+  const preparing = prepareI18nLocale(snapshot.locale)
+  if (preparing) {
+    void preparing.then(apply).catch(() => {
+      if (version === applicationVersion) useLocaleStore.setState({ saveFailed: true })
+    })
+  } else apply()
 }
 
 let stopLocalePreferenceSync: (() => void) | undefined
@@ -116,7 +134,10 @@ export const startLocalePreferenceSync = (): (() => void) => {
       )
         return
       const preference = resolvePreference()
-      applyLocaleSnapshot({ preference, locale: resolveLocalePreference(preference) }, false)
+      operation += 1
+      pendingOperation = undefined
+      confirmed = { preference, locale: resolveLocalePreference(preference) }
+      applyLocaleSnapshot(confirmed, false)
     }
     window.addEventListener('storage', onStorage)
     unsubscribe = () => window.removeEventListener('storage', onStorage)
@@ -124,6 +145,7 @@ export const startLocalePreferenceSync = (): (() => void) => {
 
   const stop = (): void => {
     active = false
+    applicationVersion += 1
     unsubscribe()
     if (stopLocalePreferenceSync === stop) stopLocalePreferenceSync = undefined
   }

@@ -212,6 +212,17 @@ export class NotebookEnvironmentOperations {
     return this.withLease(kind, environment, 'shared', operation)
   }
 
+  async acquireBindingLease(environment: string): Promise<EnvironmentLease> {
+    // Binding already owns a session write slot. Never wait for a mutation that may need that
+    // slot to publish repair/revocation: refuse the selection before stopping its old kernel.
+    if (this.leases.hasExclusive(environment)) {
+      throw new Error(
+        `ENVIRONMENT_MUTATION_ALREADY_PENDING: an environment mutation is running or queued for "${environment}". Retry selecting this runtime after it finishes.`
+      )
+    }
+    return this.leases.acquire(environment, 'shared').granted
+  }
+
   runMutation<T>(
     environment: string,
     operation: () => Promise<T>,
@@ -243,25 +254,31 @@ export class NotebookEnvironmentOperations {
   async revokeRuntime(
     language: NotebookLanguage,
     runtimeId: string,
-    options: { force?: boolean } = {}
+    options: { force?: boolean; waitForDrain?: boolean } = {}
   ): Promise<void> {
     // A pending selection can enter or leave this runtime. Match after the lane's earlier binding
     // writes settle, rather than omitting a not-yet-published selection from revocation.
     const targetSessions = Array.from(this.options.sessions())
+    const drains: Promise<void>[] = []
     await this.options.bindings.runWrites(
       targetSessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         for (const session of targetSessions) {
           if (!Array.from(this.options.sessions()).includes(session)) continue
-          const revocation = await this.options.bindings.revoke(
-            session,
-            language,
-            runtimeId,
-            () => {
-              const environment = runEnvironment(session, language)
-              return { environment, processKey: processKey(language, environment) }
-            }
-          )
+          let revocation = await this.options.bindings.revoke(session, language, runtimeId, () => {
+            const environment = runEnvironment(session, language)
+            return { environment, processKey: processKey(language, environment) }
+          })
+          // An unavailable binding prevents new work, but does not prove its old kernel exited.
+          // Permission removal must retry teardown after an earlier drain/termination failure.
+          if (
+            !revocation &&
+            options.waitForDrain &&
+            session.runtimeBinding(language)?.runtimeId === runtimeId
+          ) {
+            const environment = runEnvironment(session, language)
+            revocation = { environment, processKey: processKey(language, environment) }
+          }
           if (!revocation) continue
 
           const { environment, processKey: revokedProcessKey } = revocation
@@ -289,29 +306,57 @@ export class NotebookEnvironmentOperations {
                 ...errorLogFields(error),
                 environment
               })
+              if (options.waitForDrain) throw error
             }
           })
           this.revocationDrains.add(drain)
-          void drain.finally(() => this.revocationDrains.delete(drain))
+          drains.push(drain)
+          void drain.then(
+            () => this.revocationDrains.delete(drain),
+            () => this.revocationDrains.delete(drain)
+          )
         }
       }
     )
+    if (options.waitForDrain) await Promise.all(drains)
   }
 
   waitForRevocationDrains(): Promise<void> {
     return Promise.all(Array.from(this.revocationDrains)).then(() => undefined)
   }
 
-  recommendRestart(language: NotebookLanguage, environment: string): void {
-    this.restartRecommendations.add(processKey(language, environment))
+  recommendRestart(
+    language: NotebookLanguage,
+    environment: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): void {
+    this.restartRecommendations.add(
+      this.restartRecommendationKey(processKey(language, environment), scope)
+    )
   }
 
-  clearRestartRecommendations(processKeys: Iterable<string>): void {
-    for (const key of processKeys) this.restartRecommendations.delete(key)
+  clearRestartRecommendations(
+    processKeys: Iterable<string>,
+    scope?: { sessionId: string; runtimeId: string }
+  ): void {
+    for (const key of processKeys)
+      this.restartRecommendations.delete(this.restartRecommendationKey(key, scope))
   }
 
-  isRestartRecommended(environmentProcessKey: string): boolean {
-    return this.restartRecommendations.has(environmentProcessKey)
+  isRestartRecommended(
+    environmentProcessKey: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): boolean {
+    return this.restartRecommendations.has(
+      this.restartRecommendationKey(environmentProcessKey, scope)
+    )
+  }
+
+  private restartRecommendationKey(
+    key: string,
+    scope?: { sessionId: string; runtimeId: string }
+  ): string {
+    return scope ? JSON.stringify([key, scope.runtimeId, scope.sessionId]) : key
   }
 
   isRepairBlocked(environmentKey: string): boolean {

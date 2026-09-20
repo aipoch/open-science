@@ -7,7 +7,7 @@ type AppMcpServerDefinition = {
   rememberedPermission?: false
 }
 
-// App-owned MCP identity stays canonical inside Open Science. Framework-specific names are projected
+// App-owned MCP identity stays canonical inside Open-Science. Framework-specific names are projected
 // only at the agent-facing seam so permissions, grants, policy, and diagnostics keep one stable key.
 const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
   {
@@ -55,7 +55,7 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
   {
     canonicalName: 'open-science-literature',
     openCodeName: 'open_science_literature',
-    tools: ['read_document']
+    tools: ['read_document', 'list_pdf_elements', 'read_pdf_element']
   },
   {
     canonicalName: 'open-science-library',

@@ -1,3 +1,7 @@
+import {
+  observeProviderFailure,
+  type ProviderFailureObserver
+} from './provider-failure-observation'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 
@@ -15,7 +19,10 @@ import {
   streamChatToResponses,
   upstreamErrorMessage
 } from './responses-response-adapter'
-import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
+import type {
+  ResponsesBridgeNamespacedTool,
+  ResponsesReplyReasoning
+} from './responses-protocol-types'
 import {
   selectChatSkills,
   type ChatSkillSelectorCandidate,
@@ -34,6 +41,7 @@ import {
 } from './provider-error-replay'
 import { fetchProviderRequest } from './provider-fetch'
 import type { SkillSelectorUsageObservation } from '../agent-framework'
+import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   readBoundedResponseText,
@@ -49,6 +57,7 @@ type JsonObject = Record<string, any>
 const log = createLogger('acp-bridge')
 
 export type ResponsesBridgeTarget = {
+  onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
   vendorId?: OfficialVendorId
@@ -67,7 +76,7 @@ export type ResponsesBridgeTarget = {
 
 export type ResponsesBridgeModelTarget = Pick<
   ResponsesBridgeTarget,
-  'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort'
+  'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort' | 'onProviderFailure'
 >
 
 export type ResponsesBridgeConnection = {
@@ -96,6 +105,14 @@ export type ResponsesBridgeOptions = {
 type BridgeFetch = typeof fetch
 const DEFAULT_REASONING_CACHE_MAX_ENTRIES = 4_096
 const DEFAULT_REASONING_CACHE_MAX_CHARACTERS = 8 * 1024 * 1024
+const PLAN_GENERATE_BRIDGE_ALIAS = modelFacingAppMcpToolName(
+  'codex',
+  'open-science-plan',
+  'generate_plan',
+  true
+)
+const REQUEST_LOCAL_PLAN_NAMESPACE = PLAN_GENERATE_BRIDGE_ALIAS.slice(0, -'__generate_plan'.length)
+const REQUEST_LOCAL_PLAN_TOOL_NAMES = new Set(['generate_plan', 'update_step_status'])
 
 // The upstream Chat Completions endpoint. `target.baseUrl` is already the resolved OpenAI base (an
 // official vendor's exact versioned base, or a custom root normalized to `<root>/v1`), so this only
@@ -105,10 +122,12 @@ const chatUrl = (value: string): string => appendChatCompletions(value)
 export class ResponsesBridge {
   private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
   private target: ResponsesBridgeTarget
-  // reasoning_content produced with each tool call, partitioned by Codex's prompt_cache_key (its
-  // provider Session id) before call_id. The bridge is shared across Sessions, and providers may
-  // reuse call ids, so a bridge-global call-id map would mix otherwise unrelated histories.
-  private readonly reasoningByPromptCacheKey = new Map<string, Map<string, string>>()
+  // Cache both text and tool output identities, scoped by Codex's provider Session id. Items from
+  // one upstream reply share an object so replay can restore its assistant message without guessing.
+  private readonly reasoningByPromptCacheKey = new Map<
+    string,
+    Map<string, ResponsesReplyReasoning>
+  >()
   private reasoningCacheEntryCount = 0
   private reasoningCacheCharacterCount = 0
   private readonly reviewerSessionKeys = new Set<string>()
@@ -276,67 +295,84 @@ export class ResponsesBridge {
     this.reasoningCacheCharacterCount = 0
   }
 
-  private reasoningForRequest(promptCacheKey: string | undefined): Map<string, string> | undefined {
+  private reasoningForRequest(
+    promptCacheKey: string | undefined
+  ): Map<string, ResponsesReplyReasoning> | undefined {
     if (!promptCacheKey) return undefined
     return this.reasoningByPromptCacheKey.get(promptCacheKey)
   }
 
   private reconcileReasoningForRequest(promptCacheKey: string | undefined, input: unknown): void {
     if (!promptCacheKey) return
-    const reasoningByCallId = this.reasoningByPromptCacheKey.get(promptCacheKey)
-    if (!reasoningByCallId) return
+    const reasoningByItemId = this.reasoningByPromptCacheKey.get(promptCacheKey)
+    if (!reasoningByItemId) return
 
-    const retainedCallIds = new Set<string>()
+    const retainedItemIds = new Set<string>()
     if (Array.isArray(input)) {
       for (const item of input) {
         if (!item || typeof item !== 'object' || !('type' in item)) continue
-        if (item.type !== 'function_call') continue
-        const callId = 'call_id' in item ? item.call_id : 'id' in item ? item.id : undefined
-        if (callId !== undefined && callId !== null) retainedCallIds.add(String(callId))
+        if (item.type === 'function_call') {
+          const callId = 'call_id' in item ? item.call_id : 'id' in item ? item.id : undefined
+          if (callId !== undefined && callId !== null) {
+            retainedItemIds.add(JSON.stringify(['function_call', String(callId)]))
+          }
+        } else if (
+          item.type === 'message' &&
+          'role' in item &&
+          item.role === 'assistant' &&
+          'id' in item &&
+          typeof item.id === 'string'
+        ) {
+          retainedItemIds.add(JSON.stringify(['message', item.id]))
+        }
       }
     }
 
-    for (const [callId, reasoning] of reasoningByCallId) {
-      if (retainedCallIds.has(callId)) continue
-      reasoningByCallId.delete(callId)
+    for (const [callId, reasoning] of reasoningByItemId) {
+      if (retainedItemIds.has(callId)) continue
+      reasoningByItemId.delete(callId)
       this.reasoningCacheEntryCount -= 1
-      this.reasoningCacheCharacterCount -= reasoning.length
+      this.reasoningCacheCharacterCount -= reasoning.text.length
     }
-    if (reasoningByCallId.size === 0) {
+    if (reasoningByItemId.size === 0) {
       this.reasoningByPromptCacheKey.delete(promptCacheKey)
       return
     }
 
     // Refresh this Session's insertion order so overflow evicts the least recently used scope.
     this.reasoningByPromptCacheKey.delete(promptCacheKey)
-    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByCallId)
+    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByItemId)
   }
 
-  // Records this turn's reasoning against its Session-scoped tool-call ids so the next request can
+  // Records this turn's reasoning against its Session-scoped text and tool ids so the next request can
   // pass it back to thinking-mode providers. Missing prompt_cache_key fails closed: without a stable
   // Session boundary, cached reasoning cannot be replayed safely.
   private cacheReasoning(
     promptCacheKey: string | undefined,
     reasoning: string,
-    callIds: string[]
+    callIds: string[],
+    messageId?: string
   ): void {
-    if (!promptCacheKey || !reasoning || callIds.length === 0) return
-    let reasoningByCallId = this.reasoningByPromptCacheKey.get(promptCacheKey)
-    if (!reasoningByCallId) {
-      reasoningByCallId = new Map()
+    if (!promptCacheKey || !reasoning || (callIds.length === 0 && !messageId)) return
+    let reasoningByItemId = this.reasoningByPromptCacheKey.get(promptCacheKey)
+    if (!reasoningByItemId) {
+      reasoningByItemId = new Map()
     } else {
       this.reasoningByPromptCacheKey.delete(promptCacheKey)
     }
-    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByCallId)
+    this.reasoningByPromptCacheKey.set(promptCacheKey, reasoningByItemId)
 
-    for (const callId of callIds) {
-      const previous = reasoningByCallId.get(callId)
+    const replyReasoning: ResponsesReplyReasoning = { text: reasoning }
+    const itemIds = callIds.map((callId) => JSON.stringify(['function_call', callId]))
+    if (messageId) itemIds.push(JSON.stringify(['message', messageId]))
+    for (const itemId of itemIds) {
+      const previous = reasoningByItemId.get(itemId)
       if (previous !== undefined) {
-        this.reasoningCacheCharacterCount -= previous.length
+        this.reasoningCacheCharacterCount -= previous.text.length
       } else {
         this.reasoningCacheEntryCount += 1
       }
-      reasoningByCallId.set(callId, reasoning)
+      reasoningByItemId.set(itemId, replyReasoning)
       this.reasoningCacheCharacterCount += reasoning.length
     }
     this.enforceReasoningCacheLimits()
@@ -363,7 +399,7 @@ export class ResponsesBridge {
       if (!oldest) continue
       for (const reasoning of oldest.values()) {
         this.reasoningCacheEntryCount -= 1
-        this.reasoningCacheCharacterCount -= reasoning.length
+        this.reasoningCacheCharacterCount -= reasoning.text.length
       }
     }
   }
@@ -377,6 +413,7 @@ export class ResponsesBridge {
       return
     }
 
+    const target = this.target
     const body = (await request.readJsonObject()) as JsonObject
     const promptCacheKey =
       typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
@@ -391,15 +428,44 @@ export class ResponsesBridge {
     if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
     if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
     if (hostMessageScoped) this.scopedHostMessageSessionKeys.add(promptCacheKey!)
+    // This app-owned MCP server carries the current session's Skill allowlist. Preserve its
+    // request-local schema; a backend-wide declaration would outlive Specialist scope changes.
+    const skillNamespace = Array.isArray(body.tools)
+      ? body.tools.find((tool) => tool?.type === 'namespace' && tool.name === 'mcp__skills')
+      : undefined
+    const skillLoader = Array.isArray(skillNamespace?.tools)
+      ? skillNamespace.tools.find(
+          (tool: JsonObject) => tool?.type === 'function' && tool.name === 'load_skill'
+        )
+      : undefined
+    const skillTools: ResponsesBridgeNamespacedTool[] = skillLoader
+      ? [{ ...skillLoader, namespace: 'mcp__skills' }]
+      : []
+    // The Plan MCP server is provisioned per Session, so its namespace is authoritative only for
+    // this request. Forward the two public tools only when Codex advertises that live capability;
+    // never promote them into the bridge-wide fallback catalog.
+    const planNamespace = Array.isArray(body.tools)
+      ? body.tools.find(
+          (tool) => tool?.type === 'namespace' && tool.name === REQUEST_LOCAL_PLAN_NAMESPACE
+        )
+      : undefined
+    const planTools: ResponsesBridgeNamespacedTool[] = Array.isArray(planNamespace?.tools)
+      ? planNamespace.tools
+          .filter(
+            (tool: JsonObject) =>
+              tool?.type === 'function' && REQUEST_LOCAL_PLAN_TOOL_NAMES.has(String(tool.name))
+          )
+          .map((tool: JsonObject) => ({ ...tool, namespace: REQUEST_LOCAL_PLAN_NAMESPACE }))
+      : []
     const namespacedTools = reviewerScoped
-      ? (this.target.reviewerScope?.namespacedTools ?? [])
+      ? (target.reviewerScope?.namespacedTools ?? [])
       : toolLessScoped
         ? []
         : hostMessageScoped
           ? hostMessageTools
           : hostMessageBoundaryActive
             ? []
-            : (this.target.namespacedTools ?? [])
+            : [...(target.namespacedTools ?? []), ...skillTools, ...planTools]
     // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
     // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
     // can call only the scope-bounded reviewer HTTP MCP functions.
@@ -407,20 +473,42 @@ export class ResponsesBridge {
       reviewerScoped || toolLessScoped || hostMessageScoped || hostMessageBoundaryActive
         ? { ...body, tools: [], tool_choice: 'auto' }
         : body
-    const reasoningByCallId = this.reasoningForRequest(promptCacheKey)
+    const reasoningByItemId = this.reasoningForRequest(promptCacheKey)
     const chatRequest = responsesToChatRequest(
       scopedBody,
-      this.target.model,
-      reasoningByCallId,
+      target.model,
+      reasoningByItemId,
       namespacedTools,
       {
-        reasoningEffortOverride: this.target.reasoningEffort,
-        vendorId: this.target.vendorId,
-        reasoningEffortTransport: this.target.reasoningEffortTransport
+        reasoningEffortOverride: target.reasoningEffort,
+        vendorId: target.vendorId,
+        reasoningEffortTransport: target.reasoningEffortTransport
       }
     )
     const chatRequestBody = JSON.stringify(chatRequest)
-    const replayKey = providerRequestFingerprint(this.target.baseUrl, chatRequestBody)
+    // Go requires conversation affinity. The Responses-to-Chat translation removes
+    // prompt_cache_key, so carry the existing Codex identity across the HTTP boundary.
+    // Never replace a missing conversation identity with a shared or per-request UUID.
+    const goSession =
+      target.vendorId === 'opencode-go'
+        ? (request.headers['x-opencode-session'] ?? request.headers['session-id'] ?? promptCacheKey)
+        : undefined
+    if (
+      target.vendorId === 'opencode-go' &&
+      (typeof goSession !== 'string' ||
+        !/^[\x21-\x7e]+$/.test(goSession) ||
+        goSession.includes(','))
+    ) {
+      json(response, 400, {
+        error: { message: 'OpenCode Go requires a valid conversation session ID.' }
+      })
+      return
+    }
+    const replayKey = providerRequestFingerprint(
+      target.baseUrl,
+      chatRequestBody,
+      typeof goSession === 'string' ? goSession : ''
+    )
     this.reconcileReasoningForRequest(promptCacheKey, body.input)
 
     // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
@@ -429,6 +517,22 @@ export class ResponsesBridge {
     // catalog model); an empty outgoingToolNames with a non-empty incoming set means the bridge
     // filtered them.
     const incomingTools = Array.isArray(body.tools) ? (body.tools as JsonObject[]) : []
+    const incomingNamespaces = incomingTools
+      .filter((tool) => tool?.type === 'namespace')
+      .slice(0, 32)
+      .map((namespace) => ({
+        name:
+          typeof namespace.name === 'string'
+            ? namespace.name.slice(0, 128)
+            : '(missing namespace name)',
+        toolNames: Array.isArray(namespace.tools)
+          ? namespace.tools
+              .slice(0, 64)
+              .map((tool: JsonObject) =>
+                typeof tool?.name === 'string' ? tool.name.slice(0, 128) : '(missing tool name)'
+              )
+          : []
+      }))
     const outgoingTools = Array.isArray(chatRequest.tools)
       ? (chatRequest.tools as JsonObject[])
       : []
@@ -441,6 +545,10 @@ export class ResponsesBridge {
         ...new Set(incomingTools.map((tool) => String(tool?.type ?? '(missing)')))
       ],
       incomingToolCount: incomingTools.length,
+      incomingNamespaces: incomingNamespaces.map((namespace) => namespace.name),
+      incomingNamespaceToolNames: incomingNamespaces.flatMap((namespace) =>
+        namespace.toolNames.map((toolName) => `${namespace.name}/${toolName}`)
+      ),
       outgoingToolNames,
       reviewerScoped,
       hostMessageScoped,
@@ -449,7 +557,10 @@ export class ResponsesBridge {
 
     const headers: Record<string, string> = {
       'content-type': 'application/json',
-      ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+      ...(target.key ? { authorization: `Bearer ${target.key}` } : {}),
+      ...(typeof goSession === 'string'
+        ? { 'x-opencode-session': goSession, 'user-agent': 'open-science/codex-bridge' }
+        : {})
     }
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {
@@ -462,7 +573,8 @@ export class ResponsesBridge {
       })
       return
     }
-    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(this.target.baseUrl), {
+    const startedAt = Date.now()
+    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(target.baseUrl), {
       method: 'POST',
       headers,
       body: chatRequestBody,
@@ -470,6 +582,12 @@ export class ResponsesBridge {
     })
     if (!upstream.ok) {
       const errorBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
+      await observeProviderFailure(
+        target.onProviderFailure,
+        { model: chatRequest.model, endpoint: 'openai', startedAt },
+        upstream.status,
+        errorBody.complete ? errorBody.body.toString('utf8') : undefined
+      )
       const message = errorBody.complete
         ? upstreamErrorMessage(errorBody.body.toString('utf8'), upstream.status)
         : `Provider request failed with status ${upstream.status}`
@@ -491,14 +609,14 @@ export class ResponsesBridge {
       return
     }
     if (chatRequest.stream) {
-      const { reasoning, callIds } = await streamChatToResponses(
+      const { reasoning, callIds, messageId } = await streamChatToResponses(
         upstream,
         response,
         String(body.model ?? ''),
         namespacedTools,
         this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
       )
-      this.cacheReasoning(promptCacheKey, reasoning, callIds)
+      this.cacheReasoning(promptCacheKey, reasoning, callIds, messageId)
       return
     }
     const completion = JSON.parse(
@@ -515,7 +633,8 @@ export class ResponsesBridge {
     this.cacheReasoning(
       promptCacheKey,
       typeof message.reasoning_content === 'string' ? message.reasoning_content : '',
-      toolCalls.map((item) => String(item.call_id))
+      toolCalls.map((item) => String(item.call_id)),
+      outputItems.find((item) => item.type === 'message')?.id
     )
     log.info('bridge turn completed (json)', {
       model: chatRequest.model,

@@ -9,8 +9,12 @@ import type {
   AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookCell,
+  NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundRunResult,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
+  NotebookProjectActivity,
+  NotebookProjectActivityRequest,
   NotebookRestartRequest,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -46,6 +50,7 @@ type NotebookShutdownResult = { sessionId: string; status: 'shutdown' }
 
 type NotebookCommandRuntime = {
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
+  getProjectActivity(request: NotebookProjectActivityRequest): NotebookProjectActivity
   inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
   getSessionReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
@@ -58,10 +63,17 @@ type NotebookCommandRuntime = {
   exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult>
   restart(request: NotebookRestartRequest): Promise<NotebookSessionState>
   shutdown(request: NotebookSessionRequest): Promise<NotebookShutdownResult>
+  getBackgroundRun(
+    request: NotebookBackgroundRunLookupRequest
+  ): Promise<NotebookBackgroundRunResult>
+  cancelBackgroundRun(
+    request: NotebookBackgroundRunLookupRequest
+  ): Promise<NotebookBackgroundRunResult>
 }
 
 type NotebookCommandWorkflows = {
   state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
+  projectActivity(request: NotebookProjectActivityRequest): Promise<NotebookProjectActivity>
   inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot>
   reference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
@@ -74,6 +86,12 @@ type NotebookCommandWorkflows = {
   exportIpynbAll(request: ExportNotebookAllRequest): Promise<ExportNotebookAllResult>
   restart(request: NotebookRestartRequest): Promise<NotebookSessionState>
   shutdown(request: NotebookSessionRequest): Promise<NotebookShutdownResult>
+  getBackgroundRun(
+    request: NotebookBackgroundRunLookupRequest
+  ): Promise<NotebookBackgroundRunResult>
+  cancelBackgroundRun(
+    request: NotebookBackgroundRunLookupRequest
+  ): Promise<NotebookBackgroundRunResult>
 }
 
 const withoutTrustedTurnContext = <
@@ -103,6 +121,7 @@ const createNotebookCommandWorkflows = (
   // These projections can initialize a previously unseen Notebook session and persist run.json,
   // so they share the same data-root admission as explicit mutation commands.
   state: (request) => withDataRootWrite(() => runtime.state(request)),
+  projectActivity: async (request) => runtime.getProjectActivity(request),
   inspectNamespace: (request) =>
     withDataRootWrite(() => runtime.inspectNamespace(withoutTrustedTurnContext(request))),
   reference: (request) => runtime.getSessionReference(request),
@@ -117,7 +136,9 @@ const createNotebookCommandWorkflows = (
   exportIpynb: (request) => runtime.exportIpynb(request),
   exportIpynbAll: (request) => runtime.exportIpynbAll(request),
   restart: (request) => withDataRootWrite(() => runtime.restart(request)),
-  shutdown: (request) => withDataRootWrite(() => runtime.shutdown(request))
+  shutdown: (request) => withDataRootWrite(() => runtime.shutdown(request)),
+  getBackgroundRun: (request) => runtime.getBackgroundRun(request),
+  cancelBackgroundRun: (request) => withDataRootWrite(() => runtime.cancelBackgroundRun(request))
 })
 
 export { createNotebookCommandWorkflows }

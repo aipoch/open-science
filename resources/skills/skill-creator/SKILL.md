@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Create, revise, evaluate, publish, and improve Open Science Skills through the native JavaScript host.skills composer. Use when the user wants a reusable workflow, an existing Skill changed, test cases or benchmarks for a Skill, or better Skill triggering.
+description: Create, revise, evaluate, publish, and improve Open-Science Skills through the native JavaScript host.skills composer. Use when the user wants a reusable workflow, an existing Skill changed, test cases or benchmarks for a Skill, or better Skill triggering.
 ---
 
 # Skill Creator

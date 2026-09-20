@@ -1,3 +1,4 @@
+import { RuntimeWriterOwner } from './runtime-writer'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -6,7 +7,8 @@ import {
   SessionRevisionConflictError,
   SessionSizeLimitError,
   SessionDeletionCommittedError,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type LoadAllSessionsResult
 } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 import {
@@ -15,6 +17,10 @@ import {
   type ProjectSessionDeletion
 } from '../projects/deletion-coordinator'
 import type { ReviewRepository } from '../reviewer/repository'
+import { ConcurrencyManager } from '../compute/concurrency-manager'
+import type { ComputeJobRepository } from '../compute/job-repository'
+import type { ComputeHostRepository } from '../compute/repository'
+import type { ComputeJob } from '../../shared/compute'
 
 const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registrationFailure } =
   vi.hoisted(() => ({
@@ -421,6 +427,99 @@ describe('session persistence IPC handlers', () => {
     >()
   })
 
+  it.each(['list', 'loadAll', 'searchMessages'] as const)(
+    'rechecks failed Compute restoration through %s after Session recovery',
+    async (read) => {
+      let corrupt = true
+      let activeCount = 0
+      const catalog = (): LoadAllSessionsResult => ({
+        sessions: [],
+        manifest: { version: 1 as const },
+        diagnostics: {
+          isComplete: true,
+          isProjectDeletionRecoveryComplete: true,
+          warnings: corrupt
+            ? [
+                {
+                  kind: 'corrupt' as const,
+                  projectId: 'old-project',
+                  fileName: 'old.json',
+                  recovered: true
+                }
+              ]
+            : []
+        }
+      })
+      const job = {
+        job_id: 'queued-job',
+        session_id: 'new-session',
+        project_id: 'new-project',
+        provider_id: 'host',
+        status: 'queued'
+      } as ComputeJob
+      const dispatch = vi.fn(async () => undefined)
+      const manager = new ConcurrencyManager(
+        {
+          findQueuedJobs: async () => (job.status === 'queued' ? [job] : []),
+          countActiveBySession: async () => activeCount,
+          findSessionConcurrencyJobs: async () => [job],
+          countActiveByProvider: async () => 0,
+          updateIfStatus: async () => {
+            job.status = 'submitted'
+            return job
+          }
+        } as unknown as ComputeJobRepository,
+        { get: async () => ({ concurrencyLimit: 20 }) } as unknown as ComputeHostRepository,
+        dispatch,
+        undefined,
+        undefined,
+        undefined,
+        {
+          resolve: async () =>
+            corrupt
+              ? { status: 'blocked', reason: 'unavailable' }
+              : { status: 'ready', limit: 1, revision: 0 },
+          save: async () => undefined
+        }
+      )
+      const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+        {
+          loadAll: async () => catalog(),
+          list: async () => catalog()
+        } as unknown as SessionPersistenceBackend,
+        createMockReviewRepository(),
+        new MainMessageAttributionAuthority(),
+        async () => {
+          await manager.startQueueReconciliation({ retryFailedOnly: true }).catch(() => undefined)
+        }
+      )
+      // The search catalog must retry the same recovery path as the ordinary Session list.
+      const readCatalog = async (): Promise<void> => {
+        if (read === 'searchMessages') {
+          await handlers.searchMessages({ query: '', projectIds: [], limit: 10 })
+        } else {
+          await handlers[read]()
+        }
+      }
+      await manager.startQueueReconciliation()
+      await readCatalog()
+      await manager.reconcileQueuedJobs()
+      expect(dispatch).not.toHaveBeenCalled()
+      // A valid replacement now supersedes the retained quarantine; no deletion is involved.
+      corrupt = false
+      activeCount = 1
+      await readCatalog()
+      await manager.reconcileQueuedJobs()
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(await manager.getStatus('new-session')).toMatchObject({ session_limit: 1 })
+      expect(await manager.getStatus('new-session')).not.toHaveProperty('queue_blocked_reason')
+      activeCount = 0
+      await manager.reconcileQueuedJobs()
+      expect(dispatch).toHaveBeenCalledWith('queued-job', expect.any(Function))
+      await manager.stopQueueReconciliation()
+    }
+  )
+
   it('routes each command to the repository', async () => {
     const session = createSession()
     const loadResult = { sessions: [session], manifest: { version: 1 as const } }
@@ -472,6 +571,7 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -494,6 +594,74 @@ describe('session persistence IPC handlers', () => {
     })
 
     expect(saveSession).toHaveBeenCalledWith(session)
+  })
+
+  it('accepts only append-user commands backed by the submitted Session', async () => {
+    const message = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Research this.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1710000000001,
+      updatedAt: 1710000000001
+    }
+    const session = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [message]
+    })
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const saveSession = vi.fn(async () => ({ created: false, session }))
+    const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
+      loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession,
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+    const command = {
+      id: 'append-prompt-1',
+      kind: 'append-user' as const,
+      timestamp: 1710000000001,
+      branchId: session.conversationGraph!.branches[0].id,
+      message: { id: message.id, role: 'user' as const, content: 'Untrusted replacement' }
+    }
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 7 } }, session, {
+        conversationCommands: [command]
+      })
+    ).resolves.toEqual({ ok: true, result: session })
+
+    expect(saveSession).toHaveBeenCalledWith(session, {
+      conversationCommands: [{ ...command, message }]
+    })
+
+    saveSession.mockClear()
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 7 } }, session, {
+        conversationCommands: [
+          {
+            ...command,
+            id: 'append-missing-prompt',
+            message: { id: 'missing-prompt', role: 'user', content: 'Not in the Session' }
+          }
+        ]
+      })
+    ).rejects.toThrow('Conversation command user Message is absent from the submitted Session')
+    expect(saveSession).not.toHaveBeenCalled()
   })
 
   it('accepts Reviewer Correction attribution only from main-owned runtime evidence', async () => {
@@ -576,6 +744,73 @@ describe('session persistence IPC handlers', () => {
     }
     const restored = (await handlers.saveSession(rendererReloadSave)).session
     expect(restored.messages[0]?.attribution).toEqual(correctionAttribution)
+  })
+
+  it('accepts Agent result delivery attribution only from main-owned runtime evidence', async () => {
+    const deliveryAttribution = {
+      kind: 'application' as const,
+      feature: 'background-results' as const,
+      purpose: 'agent-result-delivery' as const,
+      deliveryKey: 'agent-result-delivery:continuation-1',
+      deliveryIds: ['delivery-1']
+    }
+    const attributedMessage = {
+      id: 'continuation-1',
+      role: 'user' as const,
+      content: 'A background task has finished. Continue from its result.',
+      status: 'complete' as const,
+      eventIds: [],
+      attribution: deliveryAttribution,
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const submittedSession = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [attributedMessage]
+    })
+    let durable: PersistedChatSession | undefined
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = session
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const authority = new MainMessageAttributionAuthority()
+    const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+      repository,
+      createMockReviewRepository(),
+      authority
+    )
+
+    const rejected = (await handlers.saveSession(submittedSession)).session
+    expect(rejected.messages[0]).not.toHaveProperty('attribution')
+    expect(rejected.conversationGraph?.messages[0]).not.toHaveProperty('attribution')
+
+    durable = undefined
+    authority.recordRuntimeEvent('project-a', {
+      id: 'event-continuation-1',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      sessionId: submittedSession.id,
+      messageId: attributedMessage.id,
+      role: 'user',
+      text: attributedMessage.content,
+      attribution: deliveryAttribution
+    })
+    const accepted = (await handlers.saveSession(submittedSession)).session
+    expect(accepted.messages[0]?.attribution).toEqual(deliveryAttribution)
+    expect(accepted.conversationGraph?.messages[0]?.attribution).toEqual(deliveryAttribution)
+
+    durable = accepted
+    authority.clear()
+    const reloaded = (await handlers.saveSession(accepted)).session
+    expect(reloaded.messages[0]?.attribution).toEqual(deliveryAttribution)
+    expect(reloaded.conversationGraph?.messages[0]?.attribution).toEqual(deliveryAttribution)
   })
 
   it('keeps Compute completion presentation across history without trusting renderer attribution', async () => {
@@ -753,6 +988,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-all',
       'sessions:list',
       'sessions:load-usage',
+      'sessions:search-messages',
       'sessions:load-one',
       'sessions:save-session',
       'sessions:save-manifest',
@@ -802,6 +1038,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue(loadResult),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -831,6 +1068,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -865,6 +1103,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -933,6 +1172,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -967,6 +1207,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -989,6 +1230,40 @@ describe('session persistence IPC handlers', () => {
       }
     })
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
+  it('uses the shared runtime writer fence on the desktop persistence transport', async () => {
+    const session = createSession()
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
+      saveSession: vi.fn().mockResolvedValue({ created: false, session }),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const writer = new RuntimeWriterOwner()
+    const lease = writer.claim('electron:1')
+    registerSessionPersistenceIpcHandlers(
+      repository,
+      createMockReviewRepository(),
+      undefined,
+      undefined,
+      undefined,
+      writer
+    )
+    const save = ipcHandlers.get('sessions:save-session')!
+    await expect(
+      save({ sender: { id: 2 } }, session, { runtimeWriterToken: lease.token })
+    ).rejects.toMatchObject({ code: 'SESSION_RUNTIME_WRITER_LOST' })
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    await expect(
+      save({ sender: { id: 1 } }, session, { runtimeWriterToken: lease.token })
+    ).resolves.toEqual({ ok: true, result: session })
+    await expect(save({ sender: { id: 2 } }, session)).resolves.toEqual({
+      ok: true,
+      result: session
+    })
+    expect(repository.saveSession).toHaveBeenCalledTimes(2)
   })
 
   it('captures the lifecycle origin before awaiting a durable save', async () => {

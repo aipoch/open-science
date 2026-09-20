@@ -1,4 +1,8 @@
-import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
+import type {
+  NotebookEnvironmentLock,
+  NotebookKernelMetadata,
+  NotebookLanguage
+} from '../../shared/notebook'
 import type {
   EnvironmentInfo,
   ManageEnvironmentsRequest,
@@ -18,7 +22,14 @@ type NotebookEnvironmentManager = {
     request?: Extract<ManageEnvironmentsRequest, { action: 'create' }>,
     signal?: AbortSignal
   ) => Promise<EnvironmentInfo>
-  listEnvironments: () => EnvironmentInfo[]
+  createNamedEnvironmentFromLock?: (
+    name: string,
+    language: NotebookLanguage,
+    lock: NotebookEnvironmentLock,
+    lockChecksum: string,
+    request?: { projectId?: string }
+  ) => Promise<{ environment: EnvironmentInfo; reused: boolean }>
+  listEnvironments: (signal?: AbortSignal) => EnvironmentInfo[] | Promise<EnvironmentInfo[]>
   removeEnvironment: (name: string) => void
 }
 
@@ -104,31 +115,22 @@ class NotebookEnvironmentManagementOwner {
           signal
         )
       }
-      case 'list':
-        return { environments: manager.listEnvironments() }
+      case 'list': {
+        const environments = await manager.listEnvironments(signal)
+        signal?.throwIfAborted()
+        return { environments }
+      }
       case 'remove': {
         const name = assertSafeEnvName(request.name)
-        if (this.isLive(name)) {
-          throw new Error(
-            `Environment "${name}" is in use by a running kernel — restart the notebook or ` +
-              'wait for the run to finish before removing it.'
-          )
-        }
-        const blockingBinding = this.blockingBinding(name)
-        if (blockingBinding) {
-          const bindingState = blockingBinding.status === 'active' ? 'an active' : 'a revoking'
-          throw new Error(
-            `Environment "${name}" cannot be removed because Session ` +
-              `"${blockingBinding.sessionId}" has ${bindingState} Runtime Binding ` +
-              'to it. Switch that Session to another Runtime Environment first.'
-          )
-        }
+        this.assertUnused(name)
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
         return this.options.environmentOperations.runMutation(
           name,
           async () => {
             signal?.throwIfAborted()
+            this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
+            this.assertUnused(name)
             manager.removeEnvironment(name)
             this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
             return { removed: { name } }
@@ -139,14 +141,80 @@ class NotebookEnvironmentManagementOwner {
     }
   }
 
-  private isLive(name: string): boolean {
+  async importLock(input: {
+    projectId?: string
+    language: NotebookLanguage
+    lock: NotebookEnvironmentLock
+    lockChecksum: string
+  }): Promise<{ environmentName: string; reused: boolean }> {
+    const manager = this.manager
+    if (!manager?.createNamedEnvironmentFromLock) {
+      throw new Error('Environment lock import is unavailable.')
+    }
+    if (input.language !== 'python' && input.language !== 'r') {
+      throw new Error('An imported environment requires Python or R.')
+    }
+    const name = assertSafeEnvName(`repro-${input.lockChecksum.slice(0, 12)}`)
+    await this.options.ensureRecovered()
+    this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
+    return this.options.environmentOperations.runMutation(name, async () => {
+      const result = await manager.createNamedEnvironmentFromLock!(
+        name,
+        input.language,
+        input.lock,
+        input.lockChecksum,
+        input.projectId ? { projectId: input.projectId } : undefined
+      )
+      return { environmentName: result.environment.name, reused: result.reused }
+    })
+  }
+
+  private assertUnused(name: string): void {
+    const liveKernel = this.liveKernel(name)
+    if (liveKernel) {
+      throw new Error(
+        `Environment "${name}" is in use by a live ${liveKernel.language} Kernel ` +
+          `(status: ${liveKernel.status}) in Session "${liveKernel.sessionId}". ` +
+          'Waiting for a Run to finish leaves an idle Kernel alive. In that Session, use ' +
+          'list_notebook_runtimes then notebook_switch_runtime with the language and an exact ' +
+          'runtimeId for another Runtime Environment, or notebook_shutdown to stop its Kernels. ' +
+          'These actions clear the affected Kernel memory. If a Runtime Binding still blocks removal, ' +
+          'switch that binding to another environment.'
+      )
+    }
+    const blockingBinding = this.blockingBinding(name)
+    if (blockingBinding) {
+      const bindingState = blockingBinding.status === 'active' ? 'an active' : 'a revoking'
+      throw new Error(
+        `Environment "${name}" cannot be removed because Session ` +
+          `"${blockingBinding.sessionId}" has ${bindingState} Runtime Binding ` +
+          'to it. In that Session, use list_notebook_runtimes then notebook_switch_runtime with ' +
+          'the language and an exact runtimeId for another Runtime Environment. Switching clears ' +
+          'the previous Kernel memory.'
+      )
+    }
+  }
+
+  private liveKernel(name: string):
+    | {
+        sessionId: string
+        language: string
+        status: NotebookKernelMetadata['lastKnownStatus']
+      }
+    | undefined {
     for (const session of this.options.sessions()) {
       for (const [processKey, status] of session.kernelStatusEntries()) {
         if (processKey === 'repl' || status === 'terminated') continue
-        if (processKey.slice(processKey.indexOf(':') + 1) === name) return true
+        if (processKey.slice(processKey.indexOf(':') + 1) === name) {
+          return {
+            sessionId: session.sessionId,
+            language: processKey.slice(0, processKey.indexOf(':')),
+            status
+          }
+        }
       }
     }
-    return false
+    return undefined
   }
 
   private blockingBinding(

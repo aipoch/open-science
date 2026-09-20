@@ -8,6 +8,7 @@ import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:
 import { dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -28,16 +29,27 @@ const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 const usage = `Usage: open-science <command> [options]
 
 Commands:
+  init        Create the local CLI configuration directory
   start       Start the headless backend and localhost web UI
   stop        Gracefully stop the backend
   status      Show backend status
   url         Print the authenticated web URL
   update      Check, download, and apply an application update
+  doctor --json  Inspect headless readiness
+  runtime list          List detected Agent runtimes
+  runtime install codex   Prepare the app-managed Codex runtime
+  provider add --type official --vendor openai --model <id> --api-key-env <ENV>
+  connector configure literature --openalex-key-env <ENV>
+  cli install            Install the PATH launcher
   codex login [--force]
+  connector list | show <id> | enable <id> | disable <id>
+  connector add | update <id>      Read configuration JSON from stdin
+  connector remove <id> | test <id>
+  credential list | add | update <id>  Read credential JSON from stdin for writes
   project list
   project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
   project update <id-or-name> [--name <name>] [--description <text>] [--agent-context <text> | --agent-context-file <path> | --clear-agent-context]
-  project session-defaults show <id-or-name>
+  project session-defaults show <id-or-name>  Automation new-session defaults
   project session-defaults update <id-or-name> [session options]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--compute-host <provider-id>] [--wait]
   run status <run-id>
@@ -57,8 +69,9 @@ Commands:
 
 Options:
   --port <port>          Web service port (default: 44100)
-  --app-path <path>      Installed Open Science executable
+  --app-path <path>      Installed Open-Science executable
   --config-root <path>   Config directory override
+  --profile <path>       Alias for --config-root (portable CLI profile)
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
@@ -71,7 +84,7 @@ Options:
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --provider <provider-id>  Configured Main provider
   --model <model-id>       Main model
-  --provider-default-model Use the provider-owned default model
+  --provider-default-model Follow the provider-owned default model
   --reasoning-effort <effort>  default, low, medium, high, xhigh, or max
   --skill <id>           Force-load a skill for this run (repeatable)
   --compute-host <provider-id>  Select a Compute Host execution target (repeatable)
@@ -88,7 +101,7 @@ Options:
   --reviewer-inherit | --reviewer-provider <id> --reviewer-model <id> [--reviewer-effort <effort>]
   --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
-  --clear-delegation | --clear-specialist  Clear one Project Session default
+  --clear-delegation | --clear-specialist  Clear one automation new-session default
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Stop waiting after this many milliseconds
@@ -96,6 +109,7 @@ Options:
   --jsonl                With run --wait, stream one machine-readable event per line
   --output <path>        Artifact download destination
   --yes                  Confirm the offline rollback conversion
+  --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start/update only)
   --force                Sign in again even when Codex credentials already exist
@@ -105,9 +119,15 @@ Options:
 // Flags that take a value, mapped to their camelCase option key (explicit so new hyphenated flags
 // can't collide the way a generic slice/replace would).
 const VALUE_OPTIONS = {
+  '--credential-store': 'credentialStore',
   '--port': 'port',
   '--app-path': 'appPath',
   '--config-root': 'configRoot',
+  '--profile': 'configRoot',
+  '--type': 'providerType',
+  '--vendor': 'vendor',
+  '--api-key-env': 'apiKeyEnv',
+  '--openalex-key-env': 'openAlexKeyEnv',
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
@@ -138,12 +158,58 @@ const VALUE_OPTIONS = {
   '--output': 'output'
 }
 
-const TASK_COMMANDS = new Set(['project', 'run', 'session', 'settings', 'plan', 'artifacts'])
-const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'settings', 'plan', 'artifacts'])
+const TASK_COMMANDS = new Set([
+  'doctor',
+  'runtime',
+  'project',
+  'run',
+  'session',
+  'settings',
+  'plan',
+  'artifacts',
+  'connector',
+  'credential',
+  'runtime',
+  'provider',
+  'cli'
+])
+const GROUP_COMMANDS = new Set([
+  'codex',
+  'runtime',
+  'project',
+  'session',
+  'settings',
+  'plan',
+  'artifacts',
+  'connector',
+  'credential',
+  'runtime',
+  'provider',
+  'cli'
+])
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
+  ['doctor', 0],
+  ['runtime list', 0],
+  ['runtime install', 1],
+  ['provider add', 0],
+  ['connector configure', 1],
+  ['cli install', 0],
+  ['connector list', 0],
+  ['connector show', 1],
+  ['connector enable', 1],
+  ['connector disable', 1],
+  ['connector add', 0],
+  ['connector update', 1],
+  ['connector remove', 1],
+  ['connector test', 1],
+  ['credential list', 0],
+  ['credential add', 0],
+  ['credential update', 1],
+
   ['start', 0],
+  ['init', 0],
   ['stop', 0],
   ['status', 0],
   ['url', 0],
@@ -210,7 +276,11 @@ export const parseCliArgs = (argv) => {
   const positionals = []
   while (args.length > 0) {
     const arg = args.shift()
-    if (arg === '--no-open') options.open = false
+    if (arg.startsWith('--credential-store=')) {
+      if (options.credentialStore !== undefined)
+        throw new CliUsageError('Specify --credential-store only once.')
+      options.credentialStore = arg.slice('--credential-store='.length)
+    } else if (arg === '--no-open') options.open = false
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
     else if (arg === '--yes') options.yes = true
@@ -267,6 +337,8 @@ export const parseCliArgs = (argv) => {
     else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
       const value = args.shift()
       if (!value) throw new CliUsageError(`${arg} requires a value.`)
+      if (arg === '--credential-store' && options.credentialStore !== undefined)
+        throw new CliUsageError('Specify --credential-store only once.')
       options[VALUE_OPTIONS[arg]] = value
     } else if (arg.startsWith('-')) {
       throw new CliUsageError(`Unknown option: ${arg}`)
@@ -336,6 +408,12 @@ export const parseCliArgs = (argv) => {
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
+  if (command === 'doctor' && !options.json) {
+    throw new CliUsageError('doctor requires --json.')
+  }
+  if (command === 'runtime' && subcommand !== 'list' && subcommand !== 'install') {
+    throw new CliUsageError(`Unknown command: runtime ${subcommand ?? ''}`.trimEnd())
+  }
   if (options.json && (command === 'start' || command === 'url')) {
     throw new CliUsageError(`--json is not supported for ${command}.`)
   }
@@ -356,6 +434,15 @@ export const parseCliArgs = (argv) => {
   }
   if (options.cancelOnTimeout && options.timeoutMs === undefined) {
     throw new CliUsageError('--cancel-on-timeout requires --timeout-ms.')
+  }
+  if (
+    options.credentialStore !== undefined &&
+    (command !== 'start' || !['os', 'file'].includes(options.credentialStore))
+  ) {
+    throw new CliUsageError('--credential-store requires start and a value of os or file.')
+  }
+  if (options.credentialStore === 'file' && process.platform !== 'linux') {
+    throw new CliUsageError('--credential-store=file is supported only on Linux.')
   }
   if (options.noSandbox && command !== 'start' && command !== 'update') {
     throw new CliUsageError('--no-sandbox requires start or update.')
@@ -437,7 +524,7 @@ export const parseCliArgs = (argv) => {
   }
   const sessionOptionPresent =
     options.provider !== undefined ||
-    options.model !== undefined ||
+    (options.model !== undefined && !(command === 'provider' && subcommand === 'add')) ||
     options.providerDefaultModel ||
     options.reasoningEffort !== undefined ||
     options.approvalProfile !== undefined ||
@@ -506,6 +593,22 @@ export const isProcessAlive = (pid) => {
   } catch (error) {
     return error.code === 'EPERM'
   }
+}
+
+export const initCommand = async (options, deps = DEFAULT_DEPS) => {
+  const app = await (deps.locateApp ?? locateApp)({ appPath: options.appPath })
+  if (app.packaged && options.configRoot) {
+    throw new Error('--config-root is only supported for development builds.')
+  }
+  const configRoot = resolveConfigRoot({
+    override: options.configRoot,
+    packaged: app.packaged,
+    env: app.packaged ? {} : process.env
+  })
+  await mkdir(configRoot, { recursive: true, mode: 0o700 })
+  const result = { configRoot, initialized: true }
+  deps.log(options.json ? JSON.stringify(result) : `Open-Science is initialized at ${configRoot}.`)
+  return result
 }
 
 const authenticatedUrl = async (state, deps = DEFAULT_DEPS) => {
@@ -650,9 +753,19 @@ const readLogTail = async (logPath) => {
 
 export const openLaunchLog = (logPath) => openSync(logPath, 'w')
 
-export const buildAppLaunchArgs = (appArgs, options, port) => [
+export const buildAppLaunchArgs = (
+  appArgs,
+  options,
+  port,
+  { platform = process.platform, env = process.env } = {}
+) => [
   ...(options.noSandbox ? ['--no-sandbox'] : []),
+  // No-window mode alone still initializes X11. Select Ozone's display-free backend on servers.
+  ...(platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY
+    ? ['--ozone-platform=headless']
+    : []),
   ...appArgs,
+  ...(options.credentialStore ? [`--credential-store=${options.credentialStore}`] : []),
   // `--open-science-headless` instead of `--headless`: Chromium consumes `--headless` and renders
   // native menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
   '--open-science-headless',
@@ -665,7 +778,7 @@ const sandboxFailurePattern =
 export const formatStartupFailure = (outcome, logTail, options) => {
   if (!options.noSandbox && sandboxFailurePattern.test(logTail)) {
     return [
-      'Open Science could not start because Chromium sandboxing is unavailable on this host.',
+      'Open-Science could not start because Chromium sandboxing is unavailable on this host.',
       logTail,
       'This can occur when an AppImage mount cannot provide the SUID permissions required by Chromium; some Linux hosts also restrict unprivileged user namespaces.',
       'For an explicit rootless fallback, run "open-science start --no-sandbox" or retry an update with "open-science update --no-sandbox".',
@@ -674,19 +787,23 @@ export const formatStartupFailure = (outcome, logTail, options) => {
       .filter(Boolean)
       .join('\n\n')
   }
-  if (outcome.kind === 'error') return `Could not start Open Science: ${outcome.error.message}`
+  if (outcome.kind === 'error') return `Could not start Open-Science: ${outcome.error.message}`
 
   const exitStatus = outcome.signal
     ? ` after receiving ${outcome.signal}`
     : ` with exit code ${outcome.code ?? 'unknown'}`
-  return `Open Science exited before becoming healthy${exitStatus}.${logTail ? `\n\n${logTail}` : ''}`
+  return `Open-Science exited before becoming healthy${exitStatus}.${logTail ? `\n\n${logTail}` : ''}`
 }
 
-const startCommand = async (options, deps = DEFAULT_DEPS) => {
+export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   const existing = await findCurrentState(options, deps)
   if (await healthCheck(existing, deps)) {
+    if (options.credentialStore !== undefined)
+      throw new Error(
+        'Open-Science is already running. Stop it before selecting a credential store.'
+      )
     const url = await authenticatedUrl(existing, deps)
-    deps.log(`Open Science is already running (PID ${existing.pid}).`)
+    deps.log(`Open-Science is already running (PID ${existing.pid}).`)
     if (options.open) openBrowser(url)
     else deps.log('Run "open-science url" to print a browser login URL.')
     return { state: existing, started: false }
@@ -718,6 +835,10 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
   if (options.noSandbox) {
     deps.warn("Warning: --no-sandbox disables Chromium's process sandbox and reduces security.")
   }
+  if (options.credentialStore === 'file')
+    deps.warn(
+      'Settings credentials will be stored unencrypted in local files. Use this option at every start; existing encrypted credentials are not migrated. Compute credentials still require OS secure storage.'
+    )
   const child = spawn(app.command, buildAppLaunchArgs(app.args, options, port), {
     detached: true,
     stdio: ['ignore', logFd, logFd],
@@ -735,12 +856,12 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
       throw new Error(formatStartupFailure(startup, logTail, options))
     }
     throw new Error(
-      `Open Science did not become healthy within ${START_TIMEOUT_MS / 1000}s.${logTail ? `\n\n${logTail}` : ''}`
+      `Open-Science did not become healthy within ${START_TIMEOUT_MS / 1000}s.${logTail ? `\n\n${logTail}` : ''}`
     )
   }
   const state = startup.state
   const url = await authenticatedUrl(state, deps)
-  deps.log(`Open Science started (PID ${state.pid}).`)
+  deps.log(`Open-Science started (PID ${state.pid}).`)
   if (options.open) openBrowser(url)
   else deps.log('Run "open-science url" to print a browser login URL.')
   return { state, started: true }
@@ -768,7 +889,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
   if (!state) {
     deps.log(
-      options.json ? JSON.stringify({ result: 'already-stopped' }) : 'Open Science is not running.'
+      options.json ? JSON.stringify({ result: 'already-stopped' }) : 'Open-Science is not running.'
     )
     return
   }
@@ -789,7 +910,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
 
   if (!shutdownAccepted) {
     throw new Error(
-      `Could not safely stop Open Science (PID ${state.pid}); the authenticated shutdown request was not accepted, so no process signal was sent.`
+      `Could not safely stop Open-Science (PID ${state.pid}); the authenticated shutdown request was not accepted, so no process signal was sent.`
     )
   }
 
@@ -799,14 +920,14 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     const stopped = await waitForWebServiceStopped(state, deps, STOP_TIMEOUT_MS)
     if (!stopped) {
       throw new Error(
-        `Could not stop the Open Science web service (PID ${state.pid}); the app is still serving.`
+        `Could not stop the Open-Science web service (PID ${state.pid}); the app is still serving.`
       )
     }
     await deps.removeState(state.configRoot)
     deps.log(
       options.json
         ? JSON.stringify({ result: 'web-service-stopped' })
-        : 'Open Science web service stopped; the app is still running.'
+        : 'Open-Science web service stopped; the app is still running.'
     )
     return
   }
@@ -821,11 +942,11 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
   // the state in place and fail loudly so the user isn't told it stopped when it didn't.
   if (!stopped) {
     throw new Error(
-      `Could not stop Open Science (PID ${state.pid}); it is still running, so no process signal was sent.`
+      `Could not stop Open-Science (PID ${state.pid}); it is still running, so no process signal was sent.`
     )
   }
   await deps.removeState(state.configRoot)
-  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open Science stopped.')
+  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open-Science stopped.')
 }
 
 export const statusCommand = async (options, deps = DEFAULT_DEPS) => {
@@ -834,16 +955,16 @@ export const statusCommand = async (options, deps = DEFAULT_DEPS) => {
   if (options.json) {
     deps.log(JSON.stringify(running ? { running: true, ...state } : { running: false }, null, 2))
   } else if (running) {
-    deps.log(`Open Science is running (PID ${state.pid}, port ${state.port}).`)
+    deps.log(`Open-Science is running (PID ${state.pid}, port ${state.port}).`)
   } else {
-    deps.log('Open Science is not running.')
+    deps.log('Open-Science is not running.')
   }
   if (!running) process.exitCode = 1
 }
 
 export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
-  if (!(await healthCheck(state, deps))) throw new Error('Open Science is not running.')
+  if (!(await healthCheck(state, deps))) throw new Error('Open-Science is not running.')
   deps.log(await authenticatedUrl(state, deps))
 }
 
@@ -894,7 +1015,7 @@ const TASK_DEPS = {
   connect: (options) => connectToOpenScience(options),
   readFile: (path) => readFile(path, 'utf8'),
   readBinaryFile: (path) => readFile(path),
-  readStdin: () => readFile(0, 'utf8'),
+  readStdin: () => readStreamText(process.stdin),
   writeDownload,
   log: (...args) => console.log(...args),
   warn: (...args) => console.warn(...args),
@@ -944,12 +1065,12 @@ export const rollbackCommand = async (options, dependencies = {}) => {
     deps.log(JSON.stringify(manifest))
     return
   }
-  deps.log(`Prepared an isolated Open Science ${manifest.targetVersion} rollback.`)
+  deps.log(`Prepared an isolated Open-Science ${manifest.targetVersion} rollback.`)
   deps.log(`Rollback Data Root: ${manifest.rollbackDataRoot}`)
   deps.log(`Preserved newer Config Root: ${manifest.preservedConfigRoot}`)
   deps.log(`Preserved newer Data Root: ${manifest.preservedDataRoot}`)
   deps.log(`Converted Sessions: ${manifest.sessionsConverted}`)
-  deps.log(`You can now install and start Open Science ${manifest.targetVersion}.`)
+  deps.log(`You can now install and start Open-Science ${manifest.targetVersion}.`)
 }
 
 const UPDATE_DOWNLOAD_PAGE = 'https://www.aipoch.com/open-science'
@@ -979,12 +1100,12 @@ const supportsApplicationCommand = async (client, channel) => {
 const invokeApplicationCommand = async (client, channel, args = []) => {
   const bootstrap = await updateBootstrap(client)
   if (!Array.isArray(bootstrap.rpcChannels) || !bootstrap.rpcChannels.includes(channel)) {
-    throw new OpenScienceApiError(`Open Science does not support ${channel}.`, {
+    throw new OpenScienceApiError(`Open-Science does not support ${channel}.`, {
       code: 'command_unavailable'
     })
   }
   if (!Number.isInteger(bootstrap.rpcProtocolVersion)) {
-    throw new OpenScienceApiError('Open Science does not expose a compatible RPC protocol.', {
+    throw new OpenScienceApiError('Open-Science does not expose a compatible RPC protocol.', {
       code: 'command_unavailable'
     })
   }
@@ -1004,7 +1125,7 @@ const invokeApplicationCommand = async (client, channel, args = []) => {
   try {
     payload = await response.json()
   } catch {
-    throw new OpenScienceApiError('Open Science RPC returned an invalid response.', {
+    throw new OpenScienceApiError('Open-Science RPC returned an invalid response.', {
       code: 'invalid_response',
       status: response.status
     })
@@ -1015,12 +1136,12 @@ const invokeApplicationCommand = async (client, channel, args = []) => {
     typeof payload?.ok !== 'boolean'
   ) {
     throw new OpenScienceApiError(
-      payload?.error?.message ?? 'Open Science RPC returned an invalid response.',
+      payload?.error?.message ?? 'Open-Science RPC returned an invalid response.',
       { code: payload?.error?.code ?? 'invalid_response', status: response.status }
     )
   }
   if (!payload.ok) {
-    throw new OpenScienceApiError(payload.error?.message ?? 'Open Science command failed.', {
+    throw new OpenScienceApiError(payload.error?.message ?? 'Open-Science command failed.', {
       code: payload.error?.code ?? 'command_failed',
       status: response.status
     })
@@ -1078,14 +1199,14 @@ export const updateCommand = async (options, dependencies = {}) => {
   if (!bootstrap.rpcCapabilities?.includes(UPDATE_CLI_RPC_CAPABILITY)) {
     const status = { current: bootstrap.appVersion ?? 'unknown' }
     result = updateResult(status, 'manual-action-required', {
-      nextAction: `Install the latest Open Science release from ${UPDATE_DOWNLOAD_PAGE}, then run this command again.`
+      nextAction: `Install the latest Open-Science release from ${UPDATE_DOWNLOAD_PAGE}, then run this command again.`
     })
   } else if (!(await supports('update:check'))) {
     throw new Error(
-      'The running Open Science version advertises update CLI support without update:check.'
+      'The running Open-Science version advertises update CLI support without update:check.'
     )
   } else {
-    if (!options.json) deps.log('Checking for Open Science updates...')
+    if (!options.json) deps.log('Checking for Open-Science updates...')
     let status = await deps.invokeCommand(client, 'update:check')
     if (status.state === 'error') throw new Error(status.error ?? 'Update check failed.')
 
@@ -1097,11 +1218,11 @@ export const updateCommand = async (options, dependencies = {}) => {
       if (status.state === 'available') {
         if (!(await supports('update:download'))) {
           result = updateResult(status, 'manual-action-required', {
-            nextAction: `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+            nextAction: `Install Open-Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
           })
         } else {
           if (!options.json) {
-            deps.log(`Open Science ${status.latest ?? 'update'} is available. Downloading...`)
+            deps.log(`Open-Science ${status.latest ?? 'update'} is available. Downloading...`)
           }
           status = await downloadWithProgress(client, options, deps)
           if (status.state === 'error') throw new Error(status.error ?? 'Update download failed.')
@@ -1119,12 +1240,12 @@ export const updateCommand = async (options, dependencies = {}) => {
           result = updateResult(status, 'manual-action-required', {
             ...(installerPath ? { installerPath } : {}),
             nextAction: installerPath
-              ? `Run the installer at ${installerPath}, then start Open Science again.`
-              : `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+              ? `Run the installer at ${installerPath}, then start Open-Science again.`
+              : `Install Open-Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
           })
         } else if (!(await supports('update:apply'))) {
           result = updateResult(status, 'manual-action-required', {
-            nextAction: `Install Open Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
+            nextAction: `Install Open-Science ${status.latest ?? 'from the latest release'} manually from ${UPDATE_DOWNLOAD_PAGE}.`
           })
         } else {
           if (!options.json) deps.log('Applying the update without opening the desktop app...')
@@ -1161,12 +1282,12 @@ export const updateCommand = async (options, dependencies = {}) => {
     if (attachedToDesktopApp) {
       result = {
         ...result,
-        nextAction: `Quit the running Open Science app, then run the installer at ${result.installerPath} and start Open Science again.`
+        nextAction: `Quit the running Open-Science app, then run the installer at ${result.installerPath} and start Open-Science again.`
       }
     } else if (requiresManualStop) {
       result = {
         ...result,
-        nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open Science again.`
+        nextAction: `Run "open-science stop", then run the installer at ${result.installerPath} and start Open-Science again.`
       }
     }
   }
@@ -1181,16 +1302,16 @@ export const updateCommand = async (options, dependencies = {}) => {
 
 const formatUpdateResult = (result) => {
   if (result.outcome === 'up-to-date') {
-    return `Open Science ${result.current} is up to date.`
+    return `Open-Science ${result.current} is up to date.`
   }
   if (result.outcome === 'install-started') {
-    return `Installation of Open Science ${result.latest ?? 'update'} was handed off to the platform updater. The desktop app will not be opened; verify the installed version after the updater exits.`
+    return `Installation of Open-Science ${result.latest ?? 'update'} was handed off to the platform updater. The desktop app will not be opened; verify the installed version after the updater exits.`
   }
   if (result.outcome === 'blocked') {
     return `Update blocked by active research: ${result.blockedBy.join(', ')}.`
   }
   return [
-    `Open Science ${result.latest ?? result.current} requires a manual install.`,
+    `Open-Science ${result.latest ?? result.current} requires a manual install.`,
     result.installerPath ? `Installer: ${result.installerPath}` : undefined,
     result.nextAction
   ]
@@ -1258,7 +1379,7 @@ const emitRunEvent = (event, options, deps) => {
     deps.log(JSON.stringify(event))
   } else if (event.type === 'stream.resync-required') {
     deps.warn(
-      'Run event history could not be fully replayed. Final Run state will still be read from Open Science.'
+      'Run event history could not be fully replayed. Final Run state will still be read from Open-Science.'
     )
   } else if (event.type === 'run.progress') {
     if (event.data?.heartbeat) {
@@ -1278,7 +1399,7 @@ const emitRunEvent = (event, options, deps) => {
     if (message) deps.log(message)
   } else if (event.type === 'permission.requested') {
     deps.warn(
-      'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
+      'Run is waiting for approval. Approve the request in Open-Science Desktop or the Web UI.'
     )
   } else if (
     event.type === 'run.event' &&
@@ -1376,7 +1497,134 @@ const assertNoClearConflict = (clear, present, label) => {
 export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
-  const client = await deps.connect({ configRoot: options.configRoot })
+  let client
+  try {
+    client = await deps.connect({ configRoot: options.configRoot })
+  } catch (error) {
+    if (command !== 'doctor' || error?.code !== 'daemon_unavailable' || error?.status !== undefined)
+      throw error
+    deps.log(
+      JSON.stringify({
+        ready: false,
+        checks: { daemon: { status: 'missing' } },
+        next: [{ code: 'daemon_unavailable', argv: ['start', '--no-open'] }]
+      })
+    )
+    deps.setExitCode(3)
+    return
+  }
+
+  if (command === 'doctor') {
+    deps.log(JSON.stringify(await client.doctor()))
+    return
+  }
+
+  if (command === 'runtime' && subcommand === 'list') {
+    const runtimes = await client.listRuntimes()
+    if (options.json) {
+      deps.log(JSON.stringify(runtimes))
+    } else {
+      deps.log('FRAMEWORK\tSTATUS\tVERSION\tSOURCE')
+      for (const runtime of runtimes) {
+        deps.log(
+          `${runtime.framework}\t${runtime.status}\t${runtime.version ?? '-'}\t${runtime.source ?? '-'}`
+        )
+      }
+    }
+    return
+  }
+
+  if (command === 'cli' && subcommand === 'install') {
+    outputValue(await client.installCli(), options, deps)
+    return
+  }
+  if (
+    command === 'runtime' ||
+    command === 'provider' ||
+    (command === 'connector' && subcommand === 'configure')
+  ) {
+    const readSecret = (name) => {
+      if (!name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+        throw new CliUsageError('Name a credential environment variable.')
+      const key = (dependencies.env ?? process.env)[name]?.trim()
+      if (!key) throw new CliUsageError('The credential environment variable is empty.')
+      return key
+    }
+    let request
+    if (command === 'runtime' && subcommand === 'install' && positionals[0] === 'codex')
+      request = { action: 'runtime' }
+    else if (
+      command === 'provider' &&
+      subcommand === 'add' &&
+      options.providerType === 'official' &&
+      options.vendor === 'openai' &&
+      options.model
+    ) {
+      request = { action: 'provider', key: readSecret(options.apiKeyEnv), model: options.model }
+    } else if (command === 'connector' && positionals[0] === 'literature')
+      request = { action: 'openalex', key: readSecret(options.openAlexKeyEnv) }
+    else
+      throw new CliUsageError(
+        'Supported setup commands: runtime install codex; provider add --type official --vendor openai --model <id> --api-key-env <ENV>; connector configure literature --openalex-key-env <ENV>.'
+      )
+    const result = await client.bootstrap(request, { timeoutMs: 600_000 })
+    if (!result.ok)
+      throw Object.assign(new Error(`Setup failed: ${result.code}.`), { code: result.code })
+    outputValue(result, options, deps)
+    return
+  }
+
+  if (command === 'connector' || command === 'credential') {
+    const id = positionals[0]
+    const actions =
+      command === 'connector'
+        ? ['list', 'show', 'enable', 'disable', 'add', 'update', 'remove', 'test']
+        : ['list', 'add', 'update']
+    if (!actions.includes(subcommand))
+      throw new CliUsageError(`Unknown command: ${command} ${subcommand ?? ''}`)
+    if (!['list', 'add'].includes(subcommand) && !id) throw new CliUsageError('An ID is required.')
+    let input
+    if (subcommand === 'add' || subcommand === 'update') {
+      if (deps.stdinIsTTY)
+        throw new CliUsageError('Pipe a JSON configuration object through stdin.')
+      try {
+        input = JSON.parse(await deps.readStdin())
+      } catch {
+        throw new CliUsageError('Stdin must contain a valid JSON configuration object.')
+      }
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new CliUsageError('Stdin must contain a JSON configuration object.')
+      }
+    }
+    let result
+    if (command === 'credential') {
+      if (subcommand === 'list') result = await client.listCredentials()
+      else if (subcommand === 'add') result = await client.createCredential(input)
+      else result = await client.updateCredential(id, input)
+    } else {
+      if (subcommand === 'list') result = await client.listConnectors()
+      else if (subcommand === 'show') result = await client.getConnector(id)
+      else if (subcommand === 'enable' || subcommand === 'disable')
+        result = await client.setConnectorEnabled(id, subcommand === 'enable')
+      else if (subcommand === 'add') result = await client.addConnector(input)
+      else if (subcommand === 'update') result = await client.updateConnector(id, input)
+      else if (subcommand === 'remove') result = await client.removeConnector(id)
+      else result = await client.testConnector(id)
+    }
+    // Preserve every safe status/configuration field in both output formats.
+    deps.log(JSON.stringify(result, null, options.json ? undefined : 2))
+    if (
+      !options.json &&
+      command === 'connector' &&
+      ['add', 'update', 'remove', 'enable', 'disable'].includes(subcommand)
+    ) {
+      deps.log(
+        'Connector settings saved. Existing session refresh follows the configured agent framework; start a new session if its tool list is unchanged.'
+      )
+    }
+    if (subcommand === 'test' && result?.success === false) deps.setExitCode(1)
+    return
+  }
 
   if (command === 'project' && subcommand === 'list') {
     outputValue(await client.listProjects(), options, deps)
@@ -1659,7 +1907,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
             if (abortController.signal.aborted) return
             const message = error instanceof Error ? error.message : String(error)
             deps.warn(
-              `Run event stream stopped: ${message} Final Run state will still be read from Open Science.`
+              `Run event stream stopped: ${message} Final Run state will still be read from Open-Science.`
             )
           }
         )
@@ -1779,7 +2027,8 @@ export const runCli = async (argv = process.argv.slice(2), dependencies = {}) =>
     console.log(usage)
     return
   }
-  if (command === 'start') await startCommand(options)
+  if (command === 'init') await initCommand(options)
+  else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)

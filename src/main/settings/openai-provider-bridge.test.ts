@@ -154,6 +154,117 @@ describe('OpenAiProviderBridge', () => {
     ])
   })
 
+  it.each([
+    [400, { error: { code: 'model_not_found', message: 'synthetic-secret' } }, 'model-not-found'],
+    [404, { error: { type: 'model_not_found' } }, 'model-not-found'],
+    [400, { error: { type: 'invalid_request_error', message: 'model not found' } }, undefined],
+    [403, { error: { type: 'permission_error' } }, 'auth'],
+    [404, { error: { type: 'not_found_error' } }, undefined],
+    [429, { error: { type: 'rate_limit_error' } }, undefined],
+    [500, { error: { type: 'server_error' } }, undefined]
+  ] as const)(
+    'reports only definitive failure for upstream %s %j',
+    async (status, body, category) => {
+      const onProviderFailure = vi.fn()
+      const target: OpenAiProviderBridgeTarget = {
+        id: 'provider/model-a',
+        wire: 'responses',
+        endpoint: 'https://provider.example.test/v1/responses',
+        model: 'model-a',
+        onProviderFailure
+      }
+      const bridge = new OpenAiProviderBridge([target], target.id, async () =>
+        Response.json(body, { status })
+      )
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      const response = await fetch(`${connection.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ input: 'hello' })
+      })
+      expect(response.status).toBe(status >= 429 ? status : 400)
+      if (category)
+        expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+          startedAt: expect.any(Number),
+          category,
+          status,
+          model: 'model-a',
+          endpoint: 'responses'
+        })
+      else expect(onProviderFailure).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the failed request observer when its target changes during the request', async () => {
+    const firstObserver = vi.fn()
+    const nextObserver = vi.fn()
+    let finish!: (response: Response) => void
+    let started!: () => void
+    const accepted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const targets: OpenAiProviderBridgeTarget[] = ['first', 'next'].map((name, index) => ({
+      id: name,
+      wire: 'responses',
+      endpoint: `https://${name}.example.test/v1/responses`,
+      model: `${name}-model`,
+      onProviderFailure: index ? nextObserver : firstObserver
+    }))
+    const bridge = new OpenAiProviderBridge(targets, 'first', async () => {
+      started()
+      return new Promise((resolve) => {
+        finish = resolve
+      })
+    })
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const pending = fetch(`${connection.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'hello' })
+    })
+    await accepted
+    expect(bridge.setTarget('next')).toBe(true)
+    finish(Response.json({ error: { type: 'authentication_error' } }, { status: 401 }))
+    expect((await pending).status).toBe(400)
+    expect(firstObserver).toHaveBeenCalledExactlyOnceWith({
+      startedAt: expect.any(Number),
+      category: 'auth',
+      status: 401,
+      model: 'first-model',
+      endpoint: 'responses'
+    })
+    expect(nextObserver).not.toHaveBeenCalled()
+  })
+
+  it('preserves the original failure response if health persistence fails', async () => {
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      model: 'model-a',
+      onProviderFailure: async () => {
+        throw new Error('synthetic-secret-in-persistence-error')
+      }
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, async () =>
+      Response.json({ error: { type: 'authentication_error' } }, { status: 401 })
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'hello' })
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: { type: 'authentication_error' } })
+  })
+
   it('filters Fetch Metadata headers before invoking the upstream fetch', async () => {
     let upstreamHeaders: Headers | undefined
     const fetchImpl: typeof fetch = async (_input, init) => {
@@ -179,7 +290,9 @@ describe('OpenAiProviderBridge', () => {
         authorization: `Bearer ${connection.token}`,
         'content-type': 'application/json',
         'sec-fetch-site': 'same-origin',
-        'x-request-id': 'request-1'
+        'x-request-id': 'request-1',
+        'session-id': 'codex-conversation',
+        'x-opencode-session': 'opencode-conversation'
       },
       body: JSON.stringify({ model: 'ignored', input: [] })
     })
@@ -187,9 +300,12 @@ describe('OpenAiProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+    expect(upstreamHeaders?.get('session-id')).toBe('codex-conversation')
+    expect(upstreamHeaders?.get('x-opencode-session')).toBe('opencode-conversation')
   })
 
   it('replays an identical deterministic provider error without a second upstream request', async () => {
+    const onProviderFailure = vi.fn()
     const fetchImpl = vi.fn(async () =>
       Response.json(
         { error: { type: 'authentication_error', message: 'Incorrect API key provided' } },
@@ -201,6 +317,7 @@ describe('OpenAiProviderBridge', () => {
       wire: 'responses',
       endpoint: 'https://provider.example.test/v1/responses',
       key: 'wrong-key',
+      onProviderFailure,
       model: 'model-a'
     }
     const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
@@ -226,6 +343,13 @@ describe('OpenAiProviderBridge', () => {
       error: { type: 'authentication_error', message: 'Incorrect API key provided' }
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
+      startedAt: expect.any(Number),
+      category: 'auth',
+      status: 401,
+      model: 'model-a',
+      endpoint: 'responses'
+    })
   })
 
   it('labels a bounded fallback error as JSON on the first response and replay', async () => {
@@ -410,4 +534,34 @@ describe('OpenAiProviderBridge', () => {
       ]
     })
   })
+})
+
+it('refuses a persisted remote HTTP target before forwarding a prompt or credential', async () => {
+  const upstream = vi.fn<typeof fetch>(async () => new Response('{}'))
+  const bridge = new OpenAiProviderBridge(
+    [
+      {
+        id: 'legacy',
+        wire: 'chat-completions',
+        endpoint: 'http://remote-gateway.invalid/v1/chat/completions',
+        key: 'PRIVATE_KEY_CANARY',
+        model: 'test-model'
+      }
+    ],
+    'legacy',
+    upstream
+  )
+  const connection = await bridge.start()
+  try {
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'PRIVATE_RESEARCH_CANARY' }] })
+    })
+    expect(upstream).not.toHaveBeenCalled()
+    expect(response.ok).toBe(false)
+    expect(await response.text()).toContain('HTTPS')
+  } finally {
+    await bridge.close()
+  }
 })

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Debian package-owned CLI entry. The desktop executable keeps its existing path.
+set -eu
+launcher=$(readlink -f "$0")
+app_dir=$(dirname "$(dirname "$launcher")")
+export OPEN_SCIENCE_APP_PATH="$app_dir/open-science"
+export ELECTRON_RUN_AS_NODE=1
+exec "$OPEN_SCIENCE_APP_PATH" "$app_dir/resources/cli/index.mjs" "$@"

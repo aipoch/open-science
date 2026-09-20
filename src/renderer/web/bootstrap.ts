@@ -1,6 +1,10 @@
+import {
+  configureComposerDraftStorage,
+  preserveComposerDraftsForRecovery
+} from '@/pages/workspace/composer-draft-storage'
 import { flushSync } from 'react-dom'
 import {
-  ApplicationCommandError,
+  unwrapApplicationCommandOutcome,
   isApplicationCommandErrorCode
 } from '../../shared/application-command-contract'
 import {
@@ -25,10 +29,10 @@ import {
 } from '../../shared/file-save'
 import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import { installWebRendererContracts } from './api-installer'
-import { i18next, initI18n } from '@/i18n'
+import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
-import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
+import openScienceLogoSvg from '../../main/remote-access/open-science-logo.svg?raw'
 
 // Apply the saved theme before the (async) web API install and the app import below, so the page
 // doesn't paint in light mode and then flip to dark. The Electron renderer does the same at the top
@@ -38,14 +42,14 @@ applyTheme(resolveInitialTheme())
 // Language, for the same reason. Detection reads the *browser's* language list, which describes the
 // person reading the page — the backend host's OS locale may be something else entirely.
 const initialLocale = resolveInitialLocale()
-initI18n(initialLocale)
 const t = i18next.t.bind(i18next)
 applyHtmlLang(initialLocale)
 document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
 
-const AUTHORIZATION_EXPIRED_MESSAGE = t(
-  'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.'
-)
+const authorizationExpiredMessage = (): string =>
+  t(
+    'Access authorization has expired. Reopen the Web link from Open-Science on the host computer, or return to the remote access entry page to pair again.'
+  )
 
 class AuthorizationExpiredError extends Error {}
 
@@ -59,8 +63,14 @@ const WEB_BLOB_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 const EVENT_CONNECTION_ATTEMPTS = 8
 const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
+  'storage:migrate',
   'notebook:execute',
   'notebook:run-cell',
+  'specialist:package-upload-begin',
+  'specialist:package-upload-preview',
+  'specialist:package-upload-abort',
+  'specialist:package-install',
+  'specialist:package-cancel',
   'settings:install-claude',
   'settings:install-codebuddy',
   'settings:install-codex',
@@ -80,8 +90,6 @@ const setConnectionMessage = (message: string): void => {
   const element = connectionMessage()
   if (element) element.textContent = message
 }
-
-setConnectionMessage(t('Connecting to remote computer…'))
 
 const connectionLogo = document.getElementById('open-science-connection-logo')
 if (connectionLogo) {
@@ -117,7 +125,10 @@ const withRequestTimeout = async <T>(
 }
 
 const responseError = (response: Response, body: string, fallback: string): Error => {
-  if (response.status === 401) return new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE)
+  if (response.status === 401) {
+    requireAuthorization()
+    return new AuthorizationExpiredError(authorizationExpiredMessage())
+  }
   try {
     const payload = JSON.parse(body) as {
       error?: string | { message?: string }
@@ -156,7 +167,7 @@ const fetchBootstrap = async (): Promise<unknown> => {
           throw responseError(
             response,
             await response.text(),
-            `Open Science returned HTTP ${response.status}.`
+            `Open-Science returned HTTP ${response.status}.`
           )
         }
         return await response.json()
@@ -168,7 +179,7 @@ const fetchBootstrap = async (): Promise<unknown> => {
   }
   throw lastError instanceof Error
     ? lastError
-    : new Error('Unable to initialize Open Science Remote.')
+    : new Error('Unable to initialize Open-Science Remote.')
 }
 
 const showConnectionFailure = (error: unknown): void => {
@@ -238,7 +249,13 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
   const { response, body } = await (
     DOMAIN_OWNED_WEB_RPC_CHANNELS.has(channel)
       ? request(connectionSignal)
-      : withRequestTimeout(WEB_RPC_TIMEOUT_MS, request)
+      : withRequestTimeout(
+          WEB_RPC_TIMEOUT_MS,
+          request,
+          channel === 'uploads:append-transfer' || channel === 'uploads:transfer-status'
+            ? connectionSignal
+            : undefined
+        )
   ).catch((error: unknown) => {
     // Aborting fetch does not confirm that the business operation was canceled or failed.
     throw new DOMException(
@@ -254,12 +271,12 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
   } catch {
     if (!response.ok) throw responseError(response, body, `RPC ${channel} failed`)
     throw new Error(
-      'Open Science returned an invalid response. Try reconnecting to the remote computer.'
+      'Open-Science returned an invalid response. Try reconnecting to the remote computer.'
     )
   }
   if (!payload.ok) {
     if (isApplicationCommandErrorCode(payload.error.code)) {
-      throw new ApplicationCommandError(payload.error.code, payload.error.message)
+      return unwrapApplicationCommandOutcome(payload)
     }
     throw responseError(response, body, payload.error.message)
   }
@@ -289,6 +306,7 @@ type EventCursor = {
 let eventCursor: EventCursor
 let eventReconnectAttempt = 0
 let eventRecoveryRequired = false
+let activeEventSocket: WebSocket | undefined
 
 const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
   window.dispatchEvent(
@@ -296,6 +314,14 @@ const publishEventConnectionPhase = (phase: WebEventConnectionPhase): void => {
       detail: { phase }
     })
   )
+}
+
+const requireAuthorization = (): void => {
+  preserveComposerDraftsForRecovery()
+  eventRecoveryRequired = true
+  eventConnectionController.abort(new AuthorizationExpiredError(authorizationExpiredMessage()))
+  publishEventConnectionPhase('authorization-required')
+  activeEventSocket?.close(1000, 'Authorization required')
 }
 
 const requireEventReload = (socket: WebSocket): void => {
@@ -319,6 +345,9 @@ const connectEvents = (): void => {
   url.searchParams.set('after', String(eventCursor.latestSequence))
   url.searchParams.set('liveness', '1')
   const socket = new WebSocket(url.toString())
+  activeEventSocket = socket
+  let closed = false
+  const isCurrent = (): boolean => !closed && eventConnectionController === connectionLease
   const expireConnection = (): void => {
     if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
       connectionLease.abort(new DOMException('Event stream liveness timed out.', 'TimeoutError'))
@@ -332,10 +361,12 @@ const connectEvents = (): void => {
   }
 
   socket.addEventListener('open', () => {
+    if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
     publishEventConnectionPhase('replaying')
   })
   socket.addEventListener('message', (event) => {
+    if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
     let decoded: unknown
     try {
@@ -386,8 +417,14 @@ const connectEvents = (): void => {
     flushSync(() => publishEventConnectionPhase('live'))
     window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
   })
-  socket.addEventListener('close', () => {
+  socket.addEventListener('close', (event) => {
+    if (!isCurrent()) return
+    closed = true
     window.clearTimeout(idleTimeout)
+    if (event.code === 1008) {
+      requireAuthorization()
+      return
+    }
     if (eventConnectionController === connectionLease && !connectionLease.signal.aborted) {
       connectionLease.abort(new DOMException('Event stream disconnected.', 'NetworkError'))
     }
@@ -437,10 +474,11 @@ const installWebApi = async (): Promise<EventCursor> => {
   const parsedBootstrap = webRpcBootstrapSchema.safeParse(await fetchBootstrap())
   if (!parsedBootstrap.success) {
     throw new Error(
-      `Incompatible Open Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
+      `Incompatible Open-Science Web RPC protocol. Expected version ${WEB_RPC_PROTOCOL_VERSION}.`
     )
   }
   const bootstrap = parsedBootstrap.data
+  configureComposerDraftStorage(bootstrap.draftScope)
   const callerLocation =
     bootstrap.webCallerLocation ??
     (bootstrap.rpcCapabilities?.includes(WEB_RPC_CAPABILITY_UPDATE_CLI_V1) ? 'local' : 'remote')
@@ -552,11 +590,15 @@ const eventConsumersReady = new Promise<void>((resolve) => {
 })
 
 try {
+  await prepareI18nLocale(initialLocale)
+  initI18n(initialLocale)
+  setConnectionMessage(t('Connecting to remote computer…'))
   eventCursor = await installWebApi()
   await import('../src/main')
   await eventConsumersReady
   publishEventConnectionPhase('connecting')
   connectEvents()
 } catch (error) {
+  if (!i18next.isInitialized) initI18n('en')
   showConnectionFailure(error)
 }

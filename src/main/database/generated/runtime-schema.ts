@@ -15,6 +15,25 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );`,
+  `CREATE TABLE IF NOT EXISTS "bookmarks" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "sourceKind" TEXT NOT NULL,
+    "sourceId" TEXT NOT NULL,
+    "sourceJson" TEXT NOT NULL,
+    "selectorJson" TEXT NOT NULL,
+    "quote" TEXT,
+    "note" TEXT NOT NULL DEFAULT '',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "bookmarks_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "bookmarks_identity_check" CHECK (length(trim("id")) > 0 AND length(trim("projectId")) > 0 AND length(trim("sessionId")) > 0 AND length(trim("sourceId")) > 0),
+    CONSTRAINT "bookmarks_kind_check" CHECK ("kind" IN ('text', 'pdf-text', 'pdf-region') AND "sourceKind" IN ('agent-message', 'session-item', 'project-file', 'artifact-version', 'upload-version', 'literature-attachment-version')),
+    CONSTRAINT "bookmarks_json_check" CHECK (json_valid("sourceJson") AND json_type("sourceJson") = 'object' AND json_valid("selectorJson") AND json_type("selectorJson") = 'object' AND length("sourceJson") <= 65536 AND length("selectorJson") <= 65536),
+    CONSTRAINT "bookmarks_content_check" CHECK (length("note") <= 2000 AND ("quote" IS NULL OR length("quote") BETWEEN 1 AND 4000) AND ("kind" != 'text' OR "quote" IS NOT NULL))
+);`,
   `CREATE TABLE IF NOT EXISTS "SessionNumberSequence" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "nextNumber" INTEGER NOT NULL,
@@ -117,7 +136,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 
     PRIMARY KEY ("sessionId", "eventId"),
     CONSTRAINT "SessionAuxiliaryTurnUsage_identity_check" CHECK (length(trim("sessionId")) > 0 AND length(trim("eventId")) > 0 AND length(trim("frameworkId")) > 0 AND ("model" IS NULL OR length(trim("model")) > 0)),
-    CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction')),
+    CONSTRAINT "SessionAuxiliaryTurnUsage_source_check" CHECK ("source" IN ('reviewer', 'side-chat', 'vision', 'session-details', 'host-llm', 'artifact-code-reconstruction', 'context-compaction', 'classification')),
     CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" IS NOT NULL AND "cachedWriteTokens" IS NOT NULL AND "cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionRun" (
@@ -330,10 +349,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "state" TEXT NOT NULL DEFAULT 'staging',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "verifiedAt" DATETIME,
+    "lastVerificationFailure" TEXT,
+    "lastVerificationAttemptAt" DATETIME,
     CONSTRAINT "ContentBlob_state_check" CHECK ("state" IN ('staging', 'available', 'quarantined')),
     CONSTRAINT "ContentBlob_sizeBytes_check" CHECK ("sizeBytes" >= 0)
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureItem" (
+    "normalizedTitle" TEXT NOT NULL DEFAULT '',
+    "normalizedAbstract" TEXT NOT NULL DEFAULT '',
+    "normalizedContainerTitle" TEXT NOT NULL DEFAULT '',
     "id" TEXT NOT NULL PRIMARY KEY,
     "itemType" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -380,6 +404,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "filename" TEXT NOT NULL,
     "contentType" TEXT NOT NULL,
     "sizeBytes" BIGINT NOT NULL,
+    "provenanceJson" TEXT,
     "checksum" TEXT NOT NULL,
     "pageCount" INTEGER,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -388,6 +413,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureAttachmentVersion_shape_check" CHECK ("versionNumber" >= 1 AND length(trim("filename")) > 0 AND length(trim("contentType")) > 0 AND "sizeBytes" >= 0 AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*' AND ("pageCount" IS NULL OR "pageCount" >= 1))
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureCreator" (
+    "normalizedDisplayName" TEXT NOT NULL DEFAULT '',
     "id" TEXT NOT NULL PRIMARY KEY,
     "nameMode" TEXT NOT NULL,
     "givenName" TEXT NOT NULL DEFAULT '',
@@ -441,12 +467,23 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureInboxCandidate_shape_check" CHECK (length(trim("dedupeKey")) > 0 AND length(trim("itemType")) > 0 AND length(trim("title")) > 0 AND length(trim("metadataChecksum")) > 0 AND length(trim("origin")) > 0 AND ("issuedYear" IS NULL OR "issuedYear" BETWEEN 0 AND 9999) AND json_valid("candidateJson") AND json_type("candidateJson") = 'object'),
     CONSTRAINT "LiteratureInboxCandidate_lifecycle_check" CHECK (("state" = 'pending' AND "acceptedItemId" IS NULL AND "settledAt" IS NULL) OR ("state" = 'accepted' AND "acceptedItemId" IS NOT NULL AND "settledAt" IS NOT NULL) OR ("state" = 'dismissed' AND "acceptedItemId" IS NULL AND "settledAt" IS NOT NULL))
 );`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureCandidateDiscovery" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "candidateId" TEXT NOT NULL,
+    "contextKey" TEXT NOT NULL,
+    "origin" TEXT NOT NULL,
+    "projectId" TEXT,
+    "sessionId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "LiteratureCandidateDiscovery_candidateId_fkey" FOREIGN KEY ("candidateId") REFERENCES "LiteratureInboxCandidate" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "LiteratureInboxPdf" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "candidateId" TEXT NOT NULL,
     "contentBlobId" TEXT NOT NULL,
     "filename" TEXT NOT NULL,
     "sizeBytes" BIGINT NOT NULL,
+    "provenanceJson" TEXT,
     "checksum" TEXT NOT NULL,
     "pageCount" INTEGER NOT NULL,
     "sourceUrl" TEXT NOT NULL,
@@ -469,6 +506,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureSourceRecord_shape_check" CHECK ((("itemId" IS NOT NULL AND "inboxCandidateId" IS NULL) OR ("itemId" IS NULL AND "inboxCandidateId" IS NOT NULL)) AND length(trim("provider")) > 0 AND ("externalId" IS NULL OR length(trim("externalId")) > 0) AND ("sourceUrl" IS NULL OR length(trim("sourceUrl")) > 0) AND length(trim("metadataChecksum")) > 0 AND json_valid("rawMetadataJson") AND json_type("rawMetadataJson") = 'object')
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureCollection" (
+    "revision" INTEGER NOT NULL DEFAULT 1,
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "nameKey" TEXT NOT NULL,
@@ -933,10 +971,40 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "MemoryEntry_scope_check" CHECK ("categoryId" IS NOT NULL OR "projectId" IS NOT NULL),
     CONSTRAINT "MemoryEntry_source_check" CHECK (("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL AND "projectId" IS NOT NULL)),
     CONSTRAINT "MemoryEntry_revision_check" CHECK ("revision" >= 1)
+);`,
+  `CREATE TABLE IF NOT EXISTS "BackgroundResultDelivery" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "sourceKind" TEXT NOT NULL,
+    "sourceId" TEXT NOT NULL,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "agentFrameId" TEXT,
+    "state" TEXT NOT NULL,
+    "attemptCount" INTEGER NOT NULL DEFAULT 0,
+    "claimToken" TEXT,
+    "claimExpiresAt" DATETIME,
+    "continuationMessageId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "BackgroundResultDelivery_sourceKind_check" CHECK ("sourceKind" IN ('local-run', 'compute-job')),
+    CONSTRAINT "BackgroundResultDelivery_state_check" CHECK ("state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'consumed', 'needs-attention')),
+    CONSTRAINT "BackgroundResultDelivery_identity_check" CHECK (length(trim("id")) > 0 AND length(trim("sourceId")) > 0 AND length(trim("projectId")) > 0 AND length(trim("sessionId")) > 0),
+    CONSTRAINT "BackgroundResultDelivery_attemptCount_check" CHECK ("attemptCount" >= 0),
+    CONSTRAINT "BackgroundResultDelivery_claimLifecycle_check" CHECK ((("state" IN ('claimed', 'dispatching') AND "claimToken" IS NOT NULL AND length(trim("claimToken")) > 0 AND "claimExpiresAt" IS NOT NULL) OR ("state" NOT IN ('claimed', 'dispatching') AND "claimToken" IS NULL AND "claimExpiresAt" IS NULL))),
+    CONSTRAINT "BackgroundResultDelivery_continuation_check" CHECK (("continuationMessageId" IS NULL OR length(trim("continuationMessageId")) > 0) AND ("state" <> 'dispatching' OR "continuationMessageId" IS NOT NULL) AND ("state" <> 'waiting-result' OR "continuationMessageId" IS NULL))
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureMetadataCommitReceipt" (
+    "operationId" TEXT NOT NULL PRIMARY KEY,
+    "itemId" TEXT NOT NULL,
+    "expectedMetadataRevision" INTEGER NOT NULL,
+    "committedMetadataRevision" INTEGER NOT NULL,
+    CONSTRAINT "LiteratureMetadataCommitReceipt_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
 ] as const
 
 const RUNTIME_SCHEMA_INDEX_DDLS = [
+  `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_createdAt_id_idx" ON "bookmarks"("projectId", "sessionId", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_sourceKind_sourceId_idx" ON "bookmarks"("projectId", "sessionId", "sourceKind", "sourceId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "Session_number_key" ON "Session"("number");`,
   `CREATE INDEX IF NOT EXISTS "Session_projectId_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("projectId", "deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
   `CREATE INDEX IF NOT EXISTS "Session_deletedAtMs_archivedAtMs_updatedAtMs_id_idx" ON "Session"("deletedAtMs", "archivedAtMs", "updatedAtMs", "id");`,
@@ -996,11 +1064,14 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxCandidate_state_createdAt_idx" ON "LiteratureInboxCandidate"("state", "createdAt");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxCandidate_sourceProjectId_sourceSessionId_idx" ON "LiteratureInboxCandidate"("sourceProjectId", "sourceSessionId");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxCandidate_acceptedItemId_idx" ON "LiteratureInboxCandidate"("acceptedItemId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureCandidateDiscovery_projectId_sessionId_idx" ON "LiteratureCandidateDiscovery"("projectId", "sessionId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCandidateDiscovery_candidateId_contextKey_key" ON "LiteratureCandidateDiscovery"("candidateId", "contextKey");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureInboxPdf_contentBlobId_idx" ON "LiteratureInboxPdf"("contentBlobId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureInboxPdf_candidateId_checksum_key" ON "LiteratureInboxPdf"("candidateId", "checksum");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureSourceRecord_itemId_provider_idx" ON "LiteratureSourceRecord"("itemId", "provider");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureSourceRecord_inboxCandidateId_provider_idx" ON "LiteratureSourceRecord"("inboxCandidateId", "provider");`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureSourceRecord_provider_externalId_key" ON "LiteratureSourceRecord"("provider", "externalId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureSourceRecord_itemId_provider_externalId_key" ON "LiteratureSourceRecord"("itemId", "provider", "externalId");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureSourceRecord_inboxCandidateId_provider_externalId_key" ON "LiteratureSourceRecord"("inboxCandidateId", "provider", "externalId");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureCollection_parentId_sortOrder_idx" ON "LiteratureCollection"("parentId", "sortOrder");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_parentId_nameKey_key" ON "LiteratureCollection"("parentId", "nameKey");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureCollectionItem_itemId_idx" ON "LiteratureCollectionItem"("itemId");`,
@@ -1061,8 +1132,14 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`,
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sessionId_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sessionId", "state", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sourceKind", "state", "createdAt", "id");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_sourceId_key" ON "BackgroundResultDelivery"("sourceKind", "sourceId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureMetadataCommitReceipt_itemId_idx" ON "LiteratureMetadataCommitReceipt"("itemId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_recoverable_claim_idx" ON "BackgroundResultDelivery"("claimExpiresAt", "id") WHERE "state" IN ('claimed', 'dispatching')`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -1072,6 +1149,7 @@ const RUNTIME_SCHEMA_TARGET_SQL = [
 
 const RUNTIME_SCHEMA_TABLES = [
   'Project',
+  'bookmarks',
   'SessionNumberSequence',
   'Session',
   'SessionProjectionState',
@@ -1102,6 +1180,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'LiteratureItemCreator',
   'LiteratureIdentifier',
   'LiteratureInboxCandidate',
+  'LiteratureCandidateDiscovery',
   'LiteratureInboxPdf',
   'LiteratureSourceRecord',
   'LiteratureCollection',
@@ -1126,7 +1205,9 @@ const RUNTIME_SCHEMA_TABLES = [
   'TagAssignment',
   'MemorySettings',
   'MemoryCategory',
-  'MemoryEntry'
+  'MemoryEntry',
+  'BackgroundResultDelivery',
+  'LiteratureMetadataCommitReceipt'
 ] as const
 
 export {

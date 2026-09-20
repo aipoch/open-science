@@ -129,6 +129,52 @@ const createReadyDeps = (): {
 }
 
 describe('RemoteAccessService', () => {
+  it('disconnects all selected browsers before the batch save finishes and preserves other connections', async () => {
+    const repository = await createRepository()
+    const now = Date.now()
+    await repository.save({
+      version: 5,
+      mode: 'off',
+      trustedBrowsers: ['first', 'second', 'other'].map((id) => ({
+        id,
+        browser: 'Chrome',
+        platform: 'macOS',
+        tokenHash: '00',
+        createdAt: now,
+        lastSeenAt: now,
+        expiresAt: Number.MAX_SAFE_INTEGER
+      }))
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    const controller = webController()
+    service.attachWebController(controller)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const saveOriginal = repository.save.bind(repository)
+    const save = vi.spyOn(repository, 'save').mockImplementationOnce(async (value) => {
+      await gate
+      await saveOriginal(value)
+    })
+    const revocation = service.revokeBrowsers(['first', 'second', 'first'], false, true)
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(controller.closeExternalConnections).toHaveBeenCalledTimes(2)
+    expect(controller.closeExternalConnections).toHaveBeenNthCalledWith(1, 'first')
+    expect(controller.closeExternalConnections).toHaveBeenNthCalledWith(2, 'second')
+    release()
+    await expect(revocation).resolves.toMatchObject({
+      canManage: false,
+      canManagePairing: true,
+      trustedBrowsers: [{ id: 'other' }]
+    })
+    expect((await repository.load()).trustedBrowsers.map(({ id }) => id)).toEqual(['other'])
+  })
+
   it('keeps access locally off after a failed preference save and supports retry before restart', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
@@ -920,6 +966,77 @@ describe('RemoteAccessService', () => {
     })
     expect(service.snapshot(true).error).toMatch(/web service stopped/i)
   })
+
+  it.each([false, true])(
+    'handles shutdown cleanup failure with pending detection (web stopped: %s)',
+    async (webStopped) => {
+      const repository = await createRepository()
+      const deps = createReadyDeps()
+      const service = await RemoteAccessService.create({ repository, ...deps, broadcast: vi.fn() })
+      const controller = {
+        ...webController(),
+        onStopped: vi.fn<WebServiceController['onStopped']>(() => vi.fn())
+      }
+      service.attachWebController(controller)
+      await service.setMode('remoteit')
+      await service.webAccess.authorizeHttp(
+        remoteRequest('private-app.r3proxy.com'),
+        remoteResponse(),
+        new URL('https://private-app.r3proxy.com/')
+      )
+      const [pending] = service.snapshot(true).pendingRequests
+      await service.approve({ requestId: pending.id, decision: 'always' })
+      expect((await repository.load()).trustedBrowsers).toHaveLength(1)
+
+      let releaseDetection!: () => void
+      const detectionGate = new Promise<void>((resolve) => {
+        releaseDetection = resolve
+      })
+      deps.detectRemoteIt.mockImplementationOnce(async () => {
+        await detectionGate
+        return readyInstallation('app-service')
+      })
+      const detecting = service.detect()
+      await vi.waitFor(() => expect(deps.detectRemoteIt).toHaveBeenCalledTimes(2))
+      const failure = new Error('shutdown cleanup persistence failed')
+      const save = vi.spyOn(repository, 'save').mockRejectedValue(failure)
+      const unhandled: unknown[] = []
+      const observeRejection = (reason: unknown): void => {
+        unhandled.push(reason)
+      }
+      process.on('unhandledRejection', observeRejection)
+      if (webStopped) {
+        controller.onStopped.mock.calls[0][0]()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      const unhandledBeforeShutdown = [...unhandled]
+      let shutdownSettled = false
+      const shutdown = service.shutdown()
+      const outcome = shutdown
+        .catch((error: unknown) => error)
+        .finally(() => {
+          shutdownSettled = true
+        })
+      try {
+        expect(unhandledBeforeShutdown).toEqual([])
+        expect(service.shutdown()).toBe(shutdown)
+        // Cross an event-loop turn so Node can report a rejection that has no handler yet.
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(save).toHaveBeenCalledWith(expect.objectContaining({ trustedBrowsers: [] }))
+        expect(shutdownSettled).toBe(false)
+        expect(service.snapshot(true)).toMatchObject({ enabled: false, lifecycle: 'disabled' })
+        expect(controller.closeExternalConnections).toHaveBeenCalledOnce()
+        expect(unhandled).toEqual([])
+      } finally {
+        releaseDetection()
+        await detecting
+        await outcome
+        process.off('unhandledRejection', observeRejection)
+      }
+      expect(await outcome).toBe(failure)
+    }
+  )
 
   it('does not republish running state when shutdown interrupts provider setup', async () => {
     const repository = await createRepository()

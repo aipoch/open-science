@@ -12,7 +12,7 @@
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
-    MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
+    MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
     Abort
     notebookSandboxCleanupComplete:
   ${endif}
@@ -26,6 +26,11 @@ Var perMachineInstallDirCache
 Var perUserInstallDirCache
 Var perMachineDataBackup
 Var perUserDataBackup
+Var perUserDataBackupBranded
+Var perMachineDataBackupBranded
+Var retryLegacyDataBackup
+Var retryBrandedDataBackup
+Var retryRegisteredBrandedBackup
 Var dataProtectionFailed
 Var dataRestoreFailed
 
@@ -55,29 +60,29 @@ FunctionEnd
 # Move a data root outside the installation before the OLD uninstaller sees it. A deterministic
 # sibling path lets an elevated inner installer or a later retry recover data left by an
 # interrupted outer installer without relying on process-local registers.
-!macro preserveNestedDataRoot DIR BACKUP SLOT
+!macro preserveNamedDataRoot DIR BACKUP SLOT FOLDER
   StrCpy ${BACKUP} ""
   ${if} "${DIR}" != ""
     ClearErrors
     GetFullPathName $R2 "${DIR}\.."
     ${if} ${Errors}
-      DetailPrint `Could not safely preserve "${DIR}\OpenScience"; its parent path could not be resolved.`
-      MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
+      DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; its parent path could not be resolved.`
+      MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
       StrCpy $dataProtectionFailed "1"
     ${else}
       StrCpy ${BACKUP} "$R2\.open-science-update-data-${SLOT}"
-      ${if} ${FileExists} "${DIR}\OpenScience\*.*"
+      ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
         ${if} ${FileExists} "${BACKUP}\*.*"
-          DetailPrint `Could not safely preserve "${DIR}\OpenScience" because the backup path already exists: ${BACKUP}`
-          MessageBox MB_OK|MB_ICONSTOP "Open Science found both the current data folder and an earlier update backup.$\r$\nNo data was changed. Please inspect:$\r$\n${BACKUP}"
+          DetailPrint `Could not safely preserve "${DIR}\${FOLDER}" because the backup path already exists: ${BACKUP}`
+          MessageBox MB_OK|MB_ICONSTOP "Open-Science found both the current data folder and an earlier update backup.$\r$\nNo data was changed. Please inspect:$\r$\n${BACKUP}"
           StrCpy ${BACKUP} ""
           StrCpy $dataProtectionFailed "1"
         ${else}
           ClearErrors
-          Rename "${DIR}\OpenScience" "${BACKUP}"
+          Rename "${DIR}\${FOLDER}" "${BACKUP}"
           ${if} ${Errors}
-            DetailPrint `Could not safely preserve "${DIR}\OpenScience"; leaving the existing installation untouched.`
-            MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
+            DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
+            MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
             StrCpy ${BACKUP} ""
             StrCpy $dataProtectionFailed "1"
           ${else}
@@ -95,24 +100,24 @@ FunctionEnd
   ${endif}
 !macroend
 
-!macro restoreNestedDataRoot DIR BACKUP
+!macro restoreNamedDataRoot DIR BACKUP FOLDER
   ${if} "${DIR}" != ""
   ${andIf} "${BACKUP}" != ""
     ${if} ${FileExists} "${BACKUP}\*.*"
-      ${if} ${FileExists} "${DIR}\OpenScience\*.*"
+      ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
         DetailPrint `The preserved data remains at: ${BACKUP}`
-        MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder because the destination already exists.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
+        MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder because the destination already exists.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
         StrCpy $dataRestoreFailed "1"
       ${else}
         CreateDirectory "${DIR}"
         ClearErrors
-        Rename "${BACKUP}" "${DIR}\OpenScience"
+        Rename "${BACKUP}" "${DIR}\${FOLDER}"
         ${if} ${Errors}
           DetailPrint `The preserved data remains at: ${BACKUP}`
-          MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder after updating.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
+          MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
           StrCpy $dataRestoreFailed "1"
         ${else}
-          DetailPrint `Restored the data folder to: ${DIR}\OpenScience`
+          DetailPrint `Restored the data folder to: ${DIR}\${FOLDER}`
           StrCpy ${BACKUP} ""
         ${endif}
       ${endif}
@@ -121,6 +126,18 @@ FunctionEnd
       StrCpy ${BACKUP} ""
     ${endif}
   ${endif}
+!macroend
+
+!macro preserveNestedDataRoot DIR BACKUP SLOT
+  !insertmacro preserveNamedDataRoot ${DIR} ${BACKUP} ${SLOT} OpenScience
+  ${if} $dataProtectionFailed == "0"
+    !insertmacro preserveNamedDataRoot ${DIR} ${BACKUP}Branded ${SLOT}-branded Open-Science
+  ${endif}
+!macroend
+
+!macro restoreNestedDataRoot DIR BACKUP
+  !insertmacro restoreNamedDataRoot ${DIR} ${BACKUP} OpenScience
+  !insertmacro restoreNamedDataRoot ${DIR} ${BACKUP}Branded Open-Science
 !macroend
 
 !macro restoreAllNestedDataRoots
@@ -145,6 +162,7 @@ FunctionEnd
   ${andIf} $installMode == "all"
     ${if} $perMachineInstallDirCache == $perUserInstallDirCache
       StrCpy $perMachineDataBackup $perUserDataBackup
+      StrCpy $perMachineDataBackupBranded $perUserDataBackupBranded
     ${elseif} ${UAC_IsAdmin}
       !insertmacro preserveNestedDataRoot $perMachineInstallDirCache $perMachineDataBackup machine
     ${elseif} $perMachineInstallDirCache != ""
@@ -183,6 +201,18 @@ FunctionEnd
   StrCpy $perUserDataBackup ""
   StrCpy $dataProtectionFailed "0"
   StrCpy $dataRestoreFailed "0"
+  # The assisted install section elevates silent per-machine upgrades AFTER .onInit.
+  # Match that existing decision before any write probe or data move: the outer process
+  # must reach UAC, and only its elevated child may protect/replace the old installation.
+  ${if} ${Silent}
+  ${andIf} $hasPerMachineInstallation == "1"
+    ${ifNot} ${UAC_IsAdmin}
+      Goto openScienceCustomInit_done
+    ${endif}
+    # With both HKCU and HKLM registrations, initMultiUser initially chooses CurrentUser,
+    # but the silent install section later selects all-users. Preflight that final target.
+    !insertmacro setInstallModePerAllUsers
+  ${endif}
   ReadRegStr $perMachineInstallDirCache HKEY_LOCAL_MACHINE "${INSTALL_REGISTRY_KEY}" InstallLocation
   ReadRegStr $perUserInstallDirCache HKEY_CURRENT_USER "${INSTALL_REGISTRY_KEY}" InstallLocation
   Push $perMachineInstallDirCache
@@ -235,6 +265,7 @@ FunctionEnd
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
   ${endif}
+  openScienceCustomInit_done:
 !macroend
 
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.
@@ -245,7 +276,8 @@ FunctionEnd
   # Checking only after uninstalling can reject the update with the old executable already gone.
   # A stale locked uninstaller must not turn a silent install into a false success or offer the unsafe
   # Ignore choice. OPEN_EXISTING keeps this check non-destructive; Retry lets the user release a
-  # transient lock, while silent installs take the Cancel path and return a failure code.
+  # transient lock. Unattended installs stay silent; a user-requested restart must explain failure
+  # even though electron-updater starts NSIS with /S and exits before observing the result.
   Function ensureExistingUninstallerIsWritable
     IfFileExists "$INSTDIR\${UNINSTALL_FILENAME}" ensureExistingUninstallerIsWritable_retry ensureExistingUninstallerIsWritable_done
 
@@ -258,9 +290,25 @@ FunctionEnd
       Return
 
     ensureExistingUninstallerIsWritable_failed:
-      DetailPrint `Cannot replace the existing uninstaller: "$INSTDIR\${UNINSTALL_FILENAME}".`
-      IfSilent ensureExistingUninstallerIsWritable_cancel
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(uninstallFailed)$\r$\n$INSTDIR\${UNINSTALL_FILENAME}" IDRETRY ensureExistingUninstallerIsWritable_retry
+      DetailPrint `Cannot replace the existing uninstaller: "$INSTDIR\${UNINSTALL_FILENAME}". Windows error: $R1.`
+      ${if} ${Silent}
+        # --updated + --force-run is the existing Restart to update handoff, including old clients.
+        # Plain /S and non-relaunching update jobs must not wait for someone to dismiss a dialog.
+        ${ifNot} ${isUpdated}
+          Goto ensureExistingUninstallerIsWritable_cancel
+        ${endif}
+        ${ifNot} ${isForceRun}
+          Goto ensureExistingUninstallerIsWritable_cancel
+        ${endif}
+      ${endif}
+      ${if} $R1 == 5
+        MessageBox MB_OK|MB_ICONEXCLAMATION|MB_SETFOREGROUND "Open-Science could not finish updating.$\r$\n$\r$\nWindows denied access to:$\r$\n$INSTDIR\${UNINSTALL_FILENAME}$\r$\n$\r$\nClose this notice, then run the official Open-Science installer as administrator to update this installation.$\r$\n$\r$\nWindows error: $R1"
+      ${elseif} $R1 == 32
+      ${orIf} $R1 == 33
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_SETFOREGROUND "Open-Science could not finish updating.$\r$\n$\r$\nAnother process is using:$\r$\n$INSTDIR\${UNINSTALL_FILENAME}$\r$\n$\r$\nClose the process using this file, then choose Retry. Choose Cancel to stop this update.$\r$\n$\r$\nWindows error: $R1" IDRETRY ensureExistingUninstallerIsWritable_retry
+      ${else}
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_SETFOREGROUND "Open-Science could not finish updating.$\r$\n$\r$\nWindows could not replace:$\r$\n$INSTDIR\${UNINSTALL_FILENAME}$\r$\n$\r$\nChoose Retry to try again, or Cancel to stop this update. If the problem continues, report the file path and Windows error below.$\r$\n$\r$\nWindows error: $R1" IDRETRY ensureExistingUninstallerIsWritable_retry
+      ${endif}
 
     ensureExistingUninstallerIsWritable_cancel:
       # customInit may already have moved nested user data outside the old installation.
@@ -308,7 +356,58 @@ FunctionEnd
 # CHECK_APP_RUNNING declare their globals ($installationDir, $PowerShellPath, ...), and makensis
 # treats unknown variables as errors — so this stays self-contained: registers, built-in
 # constants, and the literal temp-uninstaller path uninstallOldVersion uses.
-!macro uninstallFailureRecoveryAt DIR REGISTERED_BACKUP
+!macro preserveRetryDataRoot DIR BACKUP FOLDER
+    StrCpy ${BACKUP} ""
+    ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
+      ClearErrors
+      GetFullPathName $R2 "${DIR}\.."
+      GetTempFileName ${BACKUP} "$R2"
+      ${ifNot} ${Errors}
+        Delete "${BACKUP}"
+        ClearErrors
+        Rename "${DIR}\${FOLDER}" "${BACKUP}"
+      ${endif}
+      ${if} ${Errors}
+        Delete "${BACKUP}"
+        DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
+        MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0$\r$\nAny data already preserved for this retry remains at:$\r$\n$retryLegacyDataBackup$\r$\n$retryBrandedDataBackup"
+        !insertmacro restoreAllNestedDataRoots
+        SetErrorLevel 2
+        Quit
+      ${endif}
+    ${endif}
+
+!macroend
+
+!macro restoreRetryDataRoot DIR BACKUP REGISTERED_BACKUP FOLDER
+    ${if} ${BACKUP} != ""
+      ${if} "${REGISTERED_BACKUP}" != ""
+      ${andIf} ${FileExists} "${REGISTERED_BACKUP}\*.*"
+        # customInit already holds the authoritative registered data outside the install tree.
+        # Do not overwrite either copy if the old process recreated data before it was killed;
+        # retain that additional directory at its unique sibling path for manual reconciliation.
+        DetailPrint `Additional data created during the update remains at: ${BACKUP}`
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Open-Science found additional data created while closing the previous version.$\r$\nYour original data will be restored; the additional data remains at:$\r$\n${BACKUP}"
+      ${else}
+        # No registered backup exists (recovery can also be used independently). The retry may
+        # have removed ${DIR}; recreate only the parent and put the retry-local data back before
+        # deciding whether the retry's exit code represents success or failure.
+        CreateDirectory "${DIR}"
+        ClearErrors
+        Rename "${BACKUP}" "${DIR}\${FOLDER}"
+        ${if} ${Errors}
+          DetailPrint `The preserved data remains at: ${BACKUP}`
+          MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n${BACKUP}"
+          !insertmacro restoreAllNestedDataRoots
+          SetErrorLevel 2
+          Quit
+        ${endif}
+        StrCpy ${BACKUP} ""
+      ${endif}
+    ${endif}
+!macroend
+
+!macro uninstallFailureRecoveryAt DIR REGISTERED_BACKUP REGISTERED_BRANDED_BACKUP
   ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
     DetailPrint `Old uninstaller exited with $R0 but the previous installation is already removed; continuing.`
   ${else}
@@ -344,25 +443,8 @@ FunctionEnd
     # would turn an update failure into silent data loss. Move the directory to a unique sibling
     # on the same volume before retrying, then restore it regardless of the retry's exit code.
     # A failed preserve leaves the original directory in place and aborts before the retry.
-    StrCpy $R7 ""
-    ${if} ${FileExists} "${DIR}\OpenScience\*.*"
-      ClearErrors
-      GetFullPathName $R2 "${DIR}\.."
-      GetTempFileName $R7 "$R2"
-      ${ifNot} ${Errors}
-        Delete "$R7"
-        ClearErrors
-        Rename "${DIR}\OpenScience" "$R7"
-      ${endif}
-      ${if} ${Errors}
-        Delete "$R7"
-        DetailPrint `Could not safely preserve "${DIR}\OpenScience"; leaving the existing installation untouched.`
-        MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
-        !insertmacro restoreAllNestedDataRoots
-        SetErrorLevel 2
-        Quit
-      ${endif}
-    ${endif}
+    !insertmacro preserveRetryDataRoot ${DIR} $retryLegacyDataBackup OpenScience
+    !insertmacro preserveRetryDataRoot ${DIR} $retryBrandedDataBackup Open-Science
 
     # During an update, electron-builder's old uninstaller moves every installed file into its
     # $PLUGINSDIR before deleting the old tree. Windows cannot atomically rename across volumes:
@@ -405,31 +487,8 @@ FunctionEnd
       RMDir /r "$R5"
       ClearErrors
     ${endif}
-    ${if} $R7 != ""
-      ${if} "${REGISTERED_BACKUP}" != ""
-      ${andIf} ${FileExists} "${REGISTERED_BACKUP}\*.*"
-        # customInit already holds the authoritative registered data outside the install tree.
-        # Do not overwrite either copy if the old process recreated data before it was killed;
-        # retain that additional directory at its unique sibling path for manual reconciliation.
-        DetailPrint `Additional data created during the update remains at: $R7`
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Open Science found additional data created while closing the previous version.$\r$\nYour original data will be restored; the additional data remains at:$\r$\n$R7"
-      ${else}
-        # No registered backup exists (recovery can also be used independently). The retry may
-        # have removed ${DIR}; recreate only the parent and put the retry-local data back before
-        # deciding whether the retry's exit code represents success or failure.
-        CreateDirectory "${DIR}"
-        ClearErrors
-        Rename "$R7" "${DIR}\OpenScience"
-        ${if} ${Errors}
-          DetailPrint `The preserved data remains at: $R7`
-          MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n$R7"
-          !insertmacro restoreAllNestedDataRoots
-          SetErrorLevel 2
-          Quit
-        ${endif}
-        StrCpy $R7 ""
-      ${endif}
-    ${endif}
+    !insertmacro restoreRetryDataRoot ${DIR} $retryLegacyDataBackup ${REGISTERED_BACKUP} OpenScience
+    !insertmacro restoreRetryDataRoot ${DIR} $retryBrandedDataBackup ${REGISTERED_BRANDED_BACKUP} Open-Science
     ${if} $R0 != 0
       ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
         DetailPrint `Retry exited with $R0 but the previous installation is already removed; continuing.`
@@ -451,11 +510,13 @@ FunctionEnd
   # abort on that destination conflict. $R8 selects the authoritative backup for this pass.
   ${if} $R0 != 0
     StrCpy $R8 $perUserDataBackup
+    StrCpy $retryRegisteredBrandedBackup $perUserDataBackupBranded
     ${if} $installMode == "all"
       StrCpy $R8 $perMachineDataBackup
+      StrCpy $retryRegisteredBrandedBackup $perMachineDataBackupBranded
     ${endif}
     # SHELL_CONTEXT pass: the old installation sits at $INSTDIR (an update installs over it).
-    !insertmacro uninstallFailureRecoveryAt $INSTDIR $R8
+    !insertmacro uninstallFailureRecoveryAt $INSTDIR $R8 $retryRegisteredBrandedBackup
   ${endif}
 
   # A current-user install has no second pass, so restore every cached root. An all-users install
@@ -489,7 +550,7 @@ FunctionEnd
       SetErrorLevel 2
       Quit
     ${endif}
-    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup
+    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup $perUserDataBackupBranded
   ${endif}
   # The old uninstall may have removed its registry key, so restore using the path cached before
   # either pass rather than reading InstallLocation here. Recovery must finish first because the

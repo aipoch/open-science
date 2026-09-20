@@ -1,3 +1,4 @@
+import { Script } from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
 import { CLINICAL_TRIALS_TOOLS } from './clinical-trials'
@@ -416,10 +417,132 @@ describe('search_by_eligibility', () => {
     expect(params['filter.overallStatus']).toBe('RECRUITING')
     expect(params['query.cond']).toBe('diabetes')
     expect(params['filter.advanced']).toBe(
-      'AREA[EligibilityCriteria]"HbA1c > 8" AND AREA[MinimumAge]RANGE[MIN, 65 Years] AND AREA[MaximumAge]RANGE[80 Years, MAX] AND (AREA[Sex]FEMALE OR AREA[Sex]ALL)'
+      'AREA[EligibilityCriteria]"HbA1c > 8" AND (AREA[MinimumAge]RANGE[MIN, 65 Years] OR NOT AREA[MinimumAge]RANGE[MIN, MAX]) AND (AREA[MaximumAge]RANGE[80 Years, MAX] OR NOT AREA[MaximumAge]RANGE[MIN, MAX]) AND (AREA[Sex]FEMALE OR AREA[Sex]"ALL")'
     )
     // count_total is not exposed for this tool: total stays null.
     expect(out.total).toBeNull()
+  })
+
+  it.each(['min_age', 'max_age'])(
+    'checks both trial bounds when only %s is supplied',
+    async (key) => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ studies: [] }))
+      await call('search_by_eligibility', { [key]: '65 Years' }, fetchImpl)
+      const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+      expect(params['filter.advanced']).toBe(
+        '(AREA[MinimumAge]RANGE[MIN, 65 Years] OR NOT AREA[MinimumAge]RANGE[MIN, MAX]) AND (AREA[MaximumAge]RANGE[65 Years, MAX] OR NOT AREA[MaximumAge]RANGE[MIN, MAX])'
+      )
+    }
+  )
+
+  it('preserves infant age units when filling in the other patient bound', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ studies: [] }))
+    await call('search_by_eligibility', { max_age: '6 Months' }, fetchImpl)
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    expect(params['filter.advanced']).toBe(
+      '(AREA[MinimumAge]RANGE[MIN, 6 Months] OR NOT AREA[MinimumAge]RANGE[MIN, MAX]) AND (AREA[MaximumAge]RANGE[6 Months, MAX] OR NOT AREA[MaximumAge]RANGE[MIN, MAX])'
+    )
+  })
+
+  it.each([
+    ['FEMALE', '(AREA[Sex]FEMALE OR AREA[Sex]"ALL")'],
+    ['MALE', '(AREA[Sex]MALE OR AREA[Sex]"ALL")']
+  ])('quotes the all-comer literal for sex %s', async (sex, expression) => {
+    // Live API controls: unquoted ALL also matches MALE-only NCT07634770;
+    // quoted "ALL" matches all-comer NCT05277532 and excludes sex-specific trials.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ studies: [] }))
+    await call('search_by_eligibility', { sex }, fetchImpl)
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    expect(params['filter.advanced']).toBe(expression)
+  })
+
+  it('preserves unrestricted searches for an explicit ALL sex', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ studies: [] }))
+    await call('search_by_eligibility', { sex: 'ALL' }, fetchImpl)
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    expect(params['filter.advanced']).toBeUndefined()
+    expect(params['filter.overallStatus']).toBe('RECRUITING')
+  })
+
+  it('runs the authored patient example with both bounds and returns eligibility evidence', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        studies: [
+          study({
+            identificationModule: { nctId: 'NCT04869098' },
+            eligibilityModule: { minimumAge: '35 Years', maximumAge: '65 Years', sex: 'FEMALE' }
+          }),
+          study({
+            identificationModule: { nctId: 'NCT07783087' },
+            eligibilityModule: { minimumAge: '18 Years', sex: 'ALL' }
+          }),
+          study()
+        ]
+      })
+    )
+    const mcp = vi.fn((_connector: string, method: string, args: Record<string, unknown>) =>
+      call(method, args, fetchImpl)
+    )
+    const out = (await new Script(
+      `(async () => { ${tool('search_by_eligibility').example}; return result })()`
+    ).runInNewContext({ host: { mcp } })) as { items: Record<string, unknown>[] }
+    expect(mcp).toHaveBeenCalledWith('clinical-trials', 'search_by_eligibility', {
+      condition: 'diabetes',
+      min_age: '65 Years',
+      sex: 'FEMALE'
+    })
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    expect(params['filter.advanced']).toBe(
+      '(AREA[MinimumAge]RANGE[MIN, 65 Years] OR NOT AREA[MinimumAge]RANGE[MIN, MAX]) AND (AREA[MaximumAge]RANGE[65 Years, MAX] OR NOT AREA[MaximumAge]RANGE[MIN, MAX]) AND (AREA[Sex]FEMALE OR AREA[Sex]"ALL")'
+    )
+    expect(params.fields.split('|')).toEqual(
+      expect.arrayContaining(['NCTId', 'MinimumAge', 'MaximumAge', 'Sex'])
+    )
+    expect(params.pageSize).toBe('10')
+    expect(out.items[0]).toMatchObject({
+      nct_id: 'NCT04869098',
+      minimum_age: '35 Years',
+      maximum_age: '65 Years',
+      sex: 'FEMALE'
+    })
+    expect(out.items[1]).toMatchObject({ minimum_age: '18 Years', maximum_age: null, sex: 'ALL' })
+    expect(out.items[2]).toMatchObject({ minimum_age: null, maximum_age: null, sex: null })
+  })
+
+  it('preserves server pagination without applying unspecified age or sex filters', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ studies: [], nextPageToken: 'next' }))
+    const out = await call(
+      'search_by_eligibility',
+      { condition: 'diabetes', page_size: 25, page_token: 'previous' },
+      fetchImpl
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    expect(params['filter.advanced']).toBeUndefined()
+    expect(params.pageSize).toBe('25')
+    expect(params.pageToken).toBe('previous')
+    expect(out).toEqual({ count: 0, total: null, next_page_token: 'next', items: [] })
+  })
+
+  it.each([
+    ['search_trials', { condition: 'diabetes' }],
+    ['search_by_sponsor', { sponsor_name: 'Pfizer' }]
+  ])('keeps eligibility fields scoped away from %s', async (method, args) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonRes({ studies: [study({ eligibilityModule: { minimumAge: '18 Years', sex: 'ALL' } })] })
+      )
+    const out = (await call(method as string, args as Record<string, unknown>, fetchImpl)) as {
+      items: Record<string, unknown>[]
+    }
+    const { params } = parseUrl(fetchImpl.mock.calls[0][0] as string)
+    for (const field of ['MinimumAge', 'MaximumAge', 'Sex']) {
+      expect(params.fields.split('|')).not.toContain(field)
+    }
+    for (const field of ['minimum_age', 'maximum_age', 'sex']) {
+      expect(out.items[0]).not.toHaveProperty(field)
+    }
   })
 
   it('honors an explicit status instead of the RECRUITING default', async () => {

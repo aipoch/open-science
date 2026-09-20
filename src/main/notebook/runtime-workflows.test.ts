@@ -1,4 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { flushLogs, initLogger } from '../logger'
+let diagnosticLogRoot: string | undefined
+afterAll(async () => {
+  await flushLogs()
+  if (diagnosticLogRoot) await rm(diagnosticLogRoot, { recursive: true, force: true })
+})
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
@@ -12,7 +21,10 @@ const discoveryState = vi.hoisted(() => ({
   calls: [] as NotebookLanguage[]
 }))
 
-vi.mock('./environment-discovery', () => ({
+vi.mock('./environment-discovery', async (importOriginal) => ({
+  rscriptFor: (await importOriginal<typeof import('./environment-discovery')>()).rscriptFor,
+  windowsCondaPrefixForR: (await importOriginal<typeof import('./environment-discovery')>())
+    .windowsCondaPrefixForR,
   defaultDiscoveryDeps: (
     runtimeRoot: string,
     getManualInterpreters: (language: NotebookLanguage) => string[]
@@ -31,6 +43,11 @@ vi.mock('./environment-discovery', () => ({
 }))
 
 import { createRuntimeWorkflows, type RuntimeWorkflowDeps } from './runtime-workflows'
+import {
+  beginMigrationPreparation,
+  endMigration,
+  waitForDataRootWriters
+} from '../storage/migration-state'
 
 type SettingsPort = RuntimeWorkflowDeps['settingsService']
 
@@ -97,6 +114,275 @@ beforeEach(() => {
 })
 
 describe('runtime workflows', () => {
+  it('discovers personal libraries only for runnable external R and tolerates probe failure', async () => {
+    const runtime = {
+      language: 'r',
+      provenance: 'user-own',
+      envId: 'r-one',
+      interpreterPath: '/r-one/R',
+      label: 'R',
+      runnable: true
+    } as const
+    discoveryState.r = [
+      runtime,
+      { ...runtime, envId: 'r-two', interpreterPath: '/r-two/R' },
+      { ...runtime, envId: 'r-managed', provenance: 'app-managed' },
+      { ...runtime, envId: 'r-broken', runnable: false }
+    ]
+    const discoverRLibraries = vi
+      .fn()
+      .mockResolvedValueOnce(['/personal/R'])
+      .mockRejectedValueOnce(new Error('probe failed'))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      discoverRLibraries
+    })
+    const result = await workflows.listEnvironments()
+    expect(result.r[0].personalRLibraries).toEqual(['/personal/R'])
+    expect(result.r.slice(1).every((env) => env.personalRLibraries === undefined)).toBe(true)
+    expect(discoverRLibraries).toHaveBeenCalledTimes(2)
+  })
+
+  it('rechecks a chosen R library before persisting consent but revokes without probing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'r-consent-'))
+    try {
+      const library = await realpath(directory)
+      discoveryState.r = [
+        {
+          language: 'r',
+          provenance: 'user-own',
+          envId: 'external-r',
+          interpreterPath: '/external/R',
+          label: 'R',
+          runnable: true
+        }
+      ]
+      const settingsService = fakeSettingsService()
+      const persist = vi.spyOn(settingsService, 'setInstallAuthorized')
+      const discoverRLibraries = vi.fn().mockResolvedValue([])
+      const workflows = createRuntimeWorkflows({
+        settingsService,
+        runtimeRoot: () => '/runtime',
+        discoverRLibraries
+      })
+      const request = { language: 'r' as const, envId: 'external-r', authorized: true, library }
+      await expect(workflows.setInstallAuthorized(request)).rejects.toThrow('visible')
+      expect(persist).not.toHaveBeenCalled()
+      discoverRLibraries.mockResolvedValue([library])
+      await workflows.setInstallAuthorized(request)
+      expect(persist).toHaveBeenCalledWith('r', 'external-r', true, library)
+      discoverRLibraries.mockClear()
+      await workflows.setInstallAuthorized({ ...request, authorized: false, library: undefined })
+      expect(discoverRLibraries).not.toHaveBeenCalled()
+      expect(persist).toHaveBeenLastCalledWith('r', 'external-r', false, undefined)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  it('blocks R authorization once data-root handoff preparation starts', async () => {
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'app-managed',
+        envId: 'managed-r',
+        interpreterPath: '/runtime/bin/R',
+        label: 'R',
+        runnable: true
+      }
+    ]
+    const grant = vi.fn(async () => ({ cancelled: false }))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: grant
+    })
+    const migration = beginMigrationPreparation()
+    try {
+      await expect(
+        workflows.setSandboxAccess({ language: 'r', envId: 'managed-r', authorized: true })
+      ).rejects.toThrow('moving your data')
+      expect(grant).not.toHaveBeenCalled()
+    } finally {
+      migration.finish()
+      endMigration()
+    }
+  })
+
+  it('keeps data-root writers draining until an admitted R authorization finishes', async () => {
+    const logRoot = await mkdtemp(join(tmpdir(), 'r-authorization-log-'))
+    diagnosticLogRoot = logRoot
+    initLogger({ logDir: logRoot, mirrorToConsole: false })
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'app-managed',
+        envId: 'managed-r',
+        interpreterPath: '/runtime/bin/R',
+        label: 'R',
+        runnable: true
+      }
+    ]
+    let finish!: () => void
+    const held = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const grant = vi.fn(async () => {
+      await held
+      return { cancelled: false }
+    })
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: grant
+    })
+    const authorization = workflows.setSandboxAccess({
+      language: 'r',
+      envId: 'managed-r',
+      authorized: true
+    })
+    try {
+      await vi.waitFor(() => expect(grant).toHaveBeenCalledOnce())
+      await flushLogs()
+      const pendingLog = await readFile(join(logRoot, 'main.log'), 'utf8')
+      expect(pendingLog).toContain('"phase":"authorize"')
+      expect(pendingLog).not.toContain('"outcome":"completed"')
+      let drained = false
+      const drain = waitForDataRootWriters().then(() => {
+        drained = true
+      })
+      await Promise.resolve()
+      expect(drained).toBe(false)
+      finish()
+      await authorization
+      await drain
+      expect(drained).toBe(true)
+      await flushLogs()
+      expect(await readFile(join(logRoot, 'main.log'), 'utf8')).toContain('"outcome":"completed"')
+    } finally {
+      finish()
+      await authorization
+      await flushLogs()
+    }
+  })
+
+  it('authorizes managed R and revokes its access after disabling and draining it', async () => {
+    const env: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'app-managed',
+      envId: 'managed-r',
+      interpreterPath: 'D:\\data\\runtime\\envs\\.r\\Lib\\R\\bin\\R.exe',
+      label: 'Managed R',
+      runnable: true
+    }
+    discoveryState.r = [env]
+    const settingsService = fakeSettingsService()
+    const events: string[] = []
+    const workflows = createRuntimeWorkflows({
+      settingsService,
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: async (_path, authorized) => {
+        events.push(authorized ? 'grant' : 'remove')
+        return { cancelled: false }
+      },
+      onRuntimeDisabled: async () => {
+        expect((await settingsService.getRuntimeEnablement('r')).enabled[env.envId]).toBe(false)
+        events.push('drain')
+      }
+    })
+    await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: true })
+    await workflows.setEnvironmentEnabled({ language: 'r', envId: env.envId, enabled: false })
+    expect(events).toEqual(['grant', 'drain', 'remove'])
+  })
+
+  it('rejects authorization for non-runnable R while allowing its access to be removed', async () => {
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'user-own',
+        envId: 'needs-jsonlite',
+        interpreterPath: 'D:\\R\\bin\\R.exe',
+        label: 'External R',
+        runnable: false
+      }
+    ]
+    const setWindowsRuntimeAccess = vi.fn(async () => ({ cancelled: false }))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess
+    })
+    await expect(
+      workflows.setSandboxAccess({
+        language: 'r',
+        envId: 'needs-jsonlite',
+        authorized: true
+      })
+    ).rejects.toThrow('jsonlite')
+    expect(setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    await workflows.setSandboxAccess({ language: 'r', envId: 'needs-jsonlite', authorized: false })
+    expect(setWindowsRuntimeAccess).toHaveBeenCalledWith('D:\\R\\bin\\Rscript.exe', false)
+  })
+
+  it('authorizes only the selected discovered R and drains it before removing access', async () => {
+    const env: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'user-own',
+      envId: 'selected-r',
+      interpreterPath: 'D:\\RStudio\\R-4.6.0\\bin\\x64\\R.exe',
+      label: 'External R',
+      version: '4.6.0',
+      runnable: true
+    }
+    discoveryState.r = [env]
+    const settingsService = fakeSettingsService()
+    const events: string[] = []
+    const setWindowsRuntimeAccess = vi.fn(async (_path: string, authorized: boolean) => {
+      events.push(authorized ? 'grant' : 'remove')
+      return { cancelled: false }
+    })
+    const workflows = createRuntimeWorkflows({
+      settingsService,
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess,
+      onRuntimeDisabled: async () => {
+        expect((await settingsService.getRuntimeEnablement('r')).enabled[env.envId]).toBe(false)
+        await expect(
+          workflows.setEnvironmentEnabled({
+            language: 'r',
+            envId: env.envId,
+            enabled: true
+          })
+        ).rejects.toThrow('already in progress')
+        events.push('drain')
+      }
+    })
+    await expect(
+      workflows.setSandboxAccess({ language: 'r', envId: 'unknown', authorized: true })
+    ).rejects.toThrow('Select a discovered managed or external R')
+    expect(setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: true })
+    expect(setWindowsRuntimeAccess).toHaveBeenLastCalledWith(
+      'D:\\RStudio\\R-4.6.0\\bin\\x64\\Rscript.exe',
+      true
+    )
+    await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: false })
+    expect(events).toEqual(['grant', 'drain', 'remove'])
+  })
+
+  it('preserves interpreter registration when removal authorization is cancelled', async () => {
+    const settingsService = fakeSettingsService()
+    settingsService.manual.set('r', ['D:\\R\\bin\\R.exe'])
+    const workflows = createRuntimeWorkflows({
+      settingsService,
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: async () => ({ cancelled: true })
+    })
+    await expect(
+      workflows.unregister({ language: 'r', path: 'D:\\R\\bin\\R.exe' })
+    ).rejects.toThrow('remains registered')
+    expect(settingsService.manual.get('r')).toEqual(['D:\\R\\bin\\R.exe'])
+  })
   it('returns the persisted runtime enablement unchanged', async () => {
     const settingsService = fakeSettingsService()
     const persisted: RuntimeEnablement = {
@@ -400,4 +686,17 @@ describe('package-listing workflows', () => {
 
     expect(counts).toEqual({ '/managed/a': 1, '/usr/bin/python3': null })
   })
+})
+
+it('notifies other clients after committing the environment creation policy', async () => {
+  const settingsService = fakeSettingsService()
+  const onPolicyChanged = vi.fn()
+  const workflows = createRuntimeWorkflows({
+    settingsService,
+    runtimeRoot: () => '/fixture',
+    ...{ onPolicyChanged }
+  })
+  await workflows.setAgentEnvironmentCreationEnabled({ enabled: false })
+  expect(await settingsService.getAgentEnvironmentCreationEnabled()).toBe(false)
+  expect(onPolicyChanged).toHaveBeenCalledOnce()
 })

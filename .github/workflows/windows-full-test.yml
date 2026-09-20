@@ -3,9 +3,10 @@ name: Windows Full Test
 # Preserve complete real-Windows coverage after merge without adding its runtime to ordinary PRs or
 # blocking a stable release. The native Notebook sandbox lifecycle runs once per batch, outside the
 # sharded suite, and remains available as a focused workflow dry-run.
+# Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '47 * * * *'
+    - cron: '47 16 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
@@ -16,7 +17,12 @@ on:
         options:
           - full
           - notebook-sandbox
+          - notebook-mutation
           - regressions
+      test_name_pattern:
+        description: Optional Vitest test-name regex for the regressions dry-run only
+        type: string
+        default: '.*'
 
 permissions:
   actions: read
@@ -24,7 +30,7 @@ permissions:
 
 # A newer batch or manual run on the same ref supersedes stale advisory coverage.
 concurrency:
-  group: windows-full-test-${{ github.ref }}
+  group: windows-full-test-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,42 +38,72 @@ jobs:
     name: Check for untested main changes
     runs-on: ubuntu-latest
     outputs:
-      should_test: ${{ steps.decide.outputs.should_test }}
+      should_test: ${{ steps.decide.outputs.should_run }}
     steps:
+      - name: Checkout skip check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/skip-unchanged-scheduled
+          sparse-checkout-cone-mode: false
+      # A successful manual `full` run of the same head also counts as coverage.
       - name: Check for untested main changes
         id: decide
+        uses: ./.github/actions/skip-unchanged-scheduled
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch always runs the selected ref."
-            exit 0
-          fi
+          GH_TOKEN: ${{ github.token }}
+        with:
+          workflow-file: windows-full-test.yml
 
-          last_successful_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
-          if [[ "$last_successful_sha" == "$GITHUB_SHA" ]]; then
-            echo "should_test=false" >> "$GITHUB_OUTPUT"
-            echo "Windows full coverage already passed for $GITHUB_SHA."
-          else
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            echo "Latest successful Windows full coverage is ${last_successful_sha:-unavailable}; testing $GITHUB_SHA."
-          fi
+  windows_dependencies:
+    name: Prepare Windows test dependencies
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'notebook-mutation') }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Pack dependencies
+        # Windows defaults to pwsh, which does not expand $RUNNER_TEMP. Pack into the same
+        # runner.temp directory that upload-artifact reads, matching PR Gate's Windows E2E setup.
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack-dependencies "$RUNNER_TEMP/windows-dependencies"
+      - name: Upload dependencies
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
 
   windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/3)
-    needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}
+    name: Windows full test (${{ matrix.shard }}/8)
+    needs: [plan, windows_dependencies]
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     env:
       VITEST_WINDOWS_FULL_TEST: '1'
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3]') }}
+        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -75,43 +111,101 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: ${{ needs.windows_dependencies.outputs.node_version }}
+          package-manager-cache: false
 
-          cache: npm
+      - name: Download dependencies
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          merge-multiple: true
 
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
+      - name: Restore dependencies
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
 
       - name: Test complete suite shard
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. The 35-minute job timeout covers checkout, npm ci, and a
-        # slow serial suite without treating a still-progressing shard as a hang.
-        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+        # tests still fail at that bound. The Windows sequencer keeps modules in eight fixed groups
+        # (see scripts/ci/windows-test-sequencer.ts) sized from measured run durations so each
+        # serial shard finishes inside the 60-minute job timeout after checkout and npm ci.
+        # GitHub annotations keep the failing test visible if the job is later cancelled.
+        run: npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
+        shell: bash
+        env:
+          TEST_NAME_PATTERN: ${{ inputs.test_name_pattern || '.*' }}
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
         # Reuse the full job's runner, install and effective project budgets without running the
         # unrelated shards or native sandbox. These are the suites from the recent failed batches.
         run: >-
           npm test --
+          cli/locate-app.test.ts
+          scripts/credential-helper-signing.test.ts
+          src/main/credential-identity/sqlite-snapshot.test.ts
+          src/main/local-models/owner.test.ts
+          src/main/notebook/input-registry.test.ts
+          src/main/session-package/literature.test.ts
+          src/main/session-plan/plan-context-file.test.ts
           vitest.config.test.ts
+          scripts/ci/windows-test-sequencer.test.ts
           scripts/ci/release-workflows.test.ts
           scripts/windows-release-workflows.test.ts
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
+          src/main/notebook/python-command.test.ts
+          src/main/notebook/kernel-executor.test.ts
+          src/main/notebook/windows-repl-termination.integration.test.ts
+          src/main/notebook/kernel-startup-retry.integration.test.ts
+          src/main/agents/completion-gate.execute-control.integration.test.ts
+          src/main/storage/ipc.test.ts
+          scripts/windows-data-reset.test.ts
+          packages/notebook-network-sandbox/src/windows-appcontainer.test.ts
+          src/main/side-chat/runtime-owner.test.ts
+          src/main/skills/registered-helper-catalog.test.ts
+          src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx
+          src/main/notebook/shell-process-ownership.test.ts
+          src/main/literature/batch-jobs.test.ts
+          src/main/notebook/source-file-access-analysis.test.ts
+          src/main/notebook/source-file-access-analysis.additional-omics.test.ts
+          src/main/notebook/source-file-access-analysis.clinical-formats.test.ts
+          src/main/notebook/source-file-access-analysis.workflow-orchestration.test.ts
+          src/main/session-package/archive.test.ts
+          src/main/session-package/service.test.ts
+          src/main/notebook/package-manager.test.ts
+          src/main/notebook/package-process-sandbox.test.ts
+          src/main/notebook/network-sandbox-owner.test.ts
+          src/main/notebook/dependency-analysis.test.ts
+          src/main/notebook/dependency-analysis.chord.test.ts
+          src/main/notebook/dependency-analysis.path-plot.test.ts
+          src/main/notebook/dependency-analysis.anndata.test.ts
+          src/main/artifacts/artifact-reproducibility-outputs.test.ts
+          src/main/acp/context-usage-static-context.test.ts
+          src/main/notebook/provisioner.test.ts
+          src/main/notebook/reproduction-runtime.test.ts
+          src/main/notebook/recovery-coordinator.test.ts
           src/main/artifacts/provenance-repository.test.ts
           src/main/artifacts/provenance-write-contract.test.ts
+          src/main/artifacts/artifact-reproducibility-export.test.ts
+          src/main/agent-framework/opencode.test.ts
+          src/main/logger.test.ts
           src/main/delegation/production-composition.test.ts
+          src/main/delegation/opencode-runtime-preparation.test.ts
+          packages/notebook-network-sandbox/src/gateway.test.ts
+          packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+          --testNamePattern="$TEST_NAME_PATTERN"
 
   notebook_sandbox:
     name: Windows Notebook sandbox lifecycle
     needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -143,6 +237,7 @@ jobs:
         run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
 
       - name: Build Windows sandbox native host
+        id: build_native
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
 
       - name: Test AppContainer ownership and removal lifecycle
@@ -151,3 +246,87 @@ jobs:
           packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1
           -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
           -Mode Full
+
+      - name: Test smoke fixture with a UDP-occupied gateway port
+        if: ${{ always() && steps.build_native.outcome == 'success' }}
+        shell: powershell
+        run: >-
+          packages/notebook-network-sandbox/vendor/windows-src/ci/smoke-port-regression.ps1
+          -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
+
+  notebook_mutation:
+    name: Windows Notebook controlled mutations
+    needs: [plan, windows_dependencies]
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'notebook-mutation') }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ needs.windows_dependencies.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download dependencies
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
+          path: ${{ runner.temp }}/windows-dependencies/
+          merge-multiple: true
+      - name: Restore dependencies
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Run controlled mutations
+        shell: powershell
+        run: e2e/fixtures/run-notebook-lifecycle-windows.ps1
+      - name: Upload mutation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-notebook-mutation-evidence
+          path: |
+            test-results/
+            .scratch/notebook-lifecycle-e2e/evidence/
+          retention-days: 5
+
+  # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
+  report:
+    name: Report scheduled outcome
+    needs: [plan, windows_dependencies, windows_full_test, notebook_sandbox, notebook_mutation]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout-cone-mode: false
+      - name: Open, refresh, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        with:
+          script: |
+            const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github,
+              repo: context.repo,
+              workflowFile: 'windows-full-test.yml',
+              workflowName: context.workflow,
+              runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              headSha: context.sha,
+              conclusion: process.env.CONCLUSION,
+              log: core.info
+            })

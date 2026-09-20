@@ -1,3 +1,4 @@
+import { configureCredentialStore } from './credential-store-mode'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -23,6 +24,47 @@ describe('shared credential recovery', () => {
     dir = await mkdtemp(join(tmpdir(), 'connector-recovery-'))
     return async () => {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves file-backed shared credentials for MCP env and authorization headers', async () => {
+    configureCredentialStore(['--credential-store=file'], 'linux', true)
+    try {
+      const settings = new SettingsService({
+        repository: new SettingsRepository(dir),
+        configRoot: dir
+      })
+      const { createdCredential } = await settings.createDeviceCredential({
+        displayName: 'File token',
+        kind: 'token',
+        secret: 'fixture-token'
+      })
+      await settings.addCustomServer({
+        id: 'stdio-file',
+        name: 'stdio-file',
+        displayName: 'File stdio',
+        transport: 'stdio',
+        command: 'unused',
+        envCredentialIds: { API_TOKEN: createdCredential.id }
+      })
+      await settings.addCustomServer({
+        id: 'http-file',
+        name: 'http-file',
+        displayName: 'File HTTP',
+        transport: 'streamable_http',
+        url: 'https://fixture.example/mcp',
+        headerCredentialIds: { Authorization: createdCredential.id }
+      })
+      const connectors = await settings.getConnectors()
+      expect(
+        connectors?.customMcpServers?.find((server) => server.id === 'stdio-file')?.env
+      ).toMatchObject({ API_TOKEN: 'fixture-token' })
+      expect(
+        connectors?.customMcpServers?.find((server) => server.id === 'http-file')?.headers
+      ).toMatchObject({ Authorization: 'Bearer fixture-token' })
+      expect(JSON.stringify(await settings.listDeviceCredentials())).not.toContain('fixture-token')
+    } finally {
+      configureCredentialStore([], 'linux', true)
     }
   })
 

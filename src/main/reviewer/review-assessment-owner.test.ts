@@ -42,7 +42,8 @@ const harness = vi.hoisted(() => ({
   disposeError: undefined as Error | undefined,
   stopError: undefined as Error | undefined,
   bridgeScoped: undefined as boolean | undefined,
-  coverage: undefined as object | undefined
+  coverage: undefined as object | undefined,
+  scopeBranch: undefined as string | undefined
 }))
 const logSpies = vi.hoisted(() => ({
   info: vi.fn(),
@@ -68,7 +69,14 @@ const insideMutation = (event: string): void => {
 const scope: TurnScope = { turnMessageId: 'turn-scope', blocks: [], artifactVersionIds: [] }
 
 vi.mock('./artifact-digest', () => ({
-  resolveTurnScopeWithArtifactDigests: async () => {
+  resolveTurnScopeWithArtifactDigests: async (
+    _session: unknown,
+    _turn: unknown,
+    _root: unknown,
+    _resolver: unknown,
+    branch: string | undefined
+  ) => {
+    harness.scopeBranch = branch
     outsideMutation('scope')
     return scope
   }
@@ -319,8 +327,22 @@ describe('review assessment owner', () => {
     harness.stopError = undefined
     harness.bridgeScoped = undefined
     harness.coverage = undefined
+    harness.scopeBranch = undefined
     vi.clearAllMocks()
   })
+
+  it.each(['initial', 'tracked'] as const)(
+    'resolves %s assessment evidence on the requested historical branch',
+    async (mode) => {
+      await runReviewAssessment({
+        ...commonOptions(makeRepository()),
+        mode,
+        trackedChecks: [],
+        scopeMessageBranchId: 'historical-branch'
+      })
+      expect(harness.scopeBranch).toBe('historical-branch')
+    }
+  )
 
   it('publishes initial running before onStarted and keeps remote work outside mutations', async () => {
     const reviewRepository = makeRepository()
@@ -491,38 +513,42 @@ describe('review assessment owner', () => {
     )
   })
 
-  it('aborts an active initial Reviewer session and persists its existing error lifecycle', async () => {
-    harness.submission = undefined
-    harness.nextUpdate = () => new Promise(() => {})
-    const reviewRepository = makeRepository()
-    const controller = new AbortController()
+  it.each(['initial', 'tracked'] as const)(
+    'aborts an active %s Reviewer session and cleans up its resources',
+    async (mode) => {
+      harness.submission = undefined
+      harness.nextUpdate = () => new Promise(() => {})
+      const reviewRepository = makeRepository()
+      const controller = new AbortController()
 
-    const assessment = runReviewAssessment({
-      ...commonOptions(reviewRepository),
-      mode: 'initial',
-      abortSignal: controller.signal
-    })
-    await vi.waitFor(() => expect(harness.events).toContain('acp:prompt'))
-    controller.abort()
+      const assessment = runReviewAssessment({
+        ...commonOptions(reviewRepository),
+        mode,
+        trackedChecks: [],
+        abortSignal: controller.signal
+      })
+      await vi.waitFor(() => expect(harness.events).toContain('acp:prompt'))
+      controller.abort()
 
-    const result = await assessment
-    expect(result.review).toMatchObject({
-      lifecycle: 'error',
-      errorMessage: 'reviewer session was aborted before stopping'
-    })
-    expect(harness.events).toContain('acp:dispose')
-    expect(harness.events).toContain('mcp:stop')
-    const errorPatch = vi
-      .mocked(reviewRepository.updateReview)
-      .mock.calls.map(([, patch]) => patch)
-      .find((patch) => patch.lifecycle === 'error')
-    expect(Buffer.byteLength(JSON.stringify(errorPatch?.reviewerLog), 'utf8')).toBeLessThanOrEqual(
-      1_024 * 1_024
-    )
-    expect(errorPatch?.reviewerLog).toContainEqual(
-      expect.objectContaining({ kind: 'tool', toolName: 'review_coverage' })
-    )
-  })
+      const result = await assessment
+      expect(result.review).toMatchObject({
+        lifecycle: 'error',
+        errorMessage: 'reviewer session was aborted before stopping'
+      })
+      expect(harness.events).toContain('acp:dispose')
+      expect(harness.events).toContain('mcp:stop')
+      const errorPatch = vi
+        .mocked(reviewRepository.updateReview)
+        .mock.calls.map(([, patch]) => patch)
+        .find((patch) => patch.lifecycle === 'error')
+      expect(
+        Buffer.byteLength(JSON.stringify(errorPatch?.reviewerLog), 'utf8')
+      ).toBeLessThanOrEqual(1_024 * 1_024)
+      expect(errorPatch?.reviewerLog).toContainEqual(
+        expect.objectContaining({ kind: 'tool', toolName: 'review_coverage' })
+      )
+    }
+  )
 
   it('records the selected session model instead of the context tokenization model', async () => {
     const reviewRepository = makeRepository()

@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { useState } from 'react'
 import { PackagePlus } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -21,7 +22,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useSkillImportStore } from '@/stores/skill-import-store'
-import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { SkillImportCandidatePreview, SkillReplacementSummary } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportApprovalRequestDialogProps = {
@@ -111,7 +112,7 @@ const SkillImportApprovalRequestDialog = ({
                 <Dialog.Description className={cn(dialogDescriptionClassName, 'text-xs')}>
                   {/* The source label is user data: interpolated, never translated. */}
                   <Trans
-                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open Science may install."
+                    i18nKey="The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open-Science may install."
                     values={{ source: request.source.label }}
                     components={{
                       name: <span className="break-all font-medium text-foreground" />
@@ -160,6 +161,15 @@ const SkillImportApprovalRequestDialog = ({
                       <div className="truncate text-sm font-medium text-foreground">
                         {candidate.name}
                       </div>
+                      {candidate.replacement ? (
+                        <SkillReplacementSummary replacement={candidate.replacement} />
+                      ) : candidate.replaceableId ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t(
+                            'The installed folder will be replaced, including local edits and files absent from this package. Cancel to keep the current copy.'
+                          )}
+                        </p>
+                      ) : null}
                       <div className="truncate text-xs text-muted-foreground">
                         {candidate.description || candidate.subPath}
                       </div>
@@ -169,7 +179,7 @@ const SkillImportApprovalRequestDialog = ({
                         {request.source.kind === 'github' ? t('Imported') : t('Already imported')}
                       </span>
                     ) : candidate.replaceableId ? (
-                      <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
+                      <span className="shrink-0 rounded-full bg-status-warning-surface/10 dark:bg-status-warning-dark-surface/10 px-2 py-0.5 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                         {t('Updates existing')}
                       </span>
                     ) : null}
@@ -191,6 +201,7 @@ const SkillImportApprovalRequestDialog = ({
                             sourceLabel: `${request.source.label} · ${candidate.subPath}`,
                             metadata: candidate.metadata,
                             body: candidate.body,
+                            replacement: candidate.replacement,
                             files: candidate.files
                           }
                         })
@@ -203,7 +214,7 @@ const SkillImportApprovalRequestDialog = ({
               </ul>
 
               {request.skipped.length > 0 ? (
-                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                <InlineNotice className="mt-3">
                   <div className="font-medium text-foreground">{t('Not importable')}</div>
                   {/* item.source and item.reason are backend-supplied and pass through verbatim. */}
                   <ul className="mt-1 list-disc space-y-1 pl-4">
@@ -213,7 +224,7 @@ const SkillImportApprovalRequestDialog = ({
                       </li>
                     ))}
                   </ul>
-                </div>
+                </InlineNotice>
               ) : null}
             </div>
 

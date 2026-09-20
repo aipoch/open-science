@@ -387,7 +387,8 @@ describe('NotebookPreview per-kernel tabs', () => {
     environments: NotebookEnvironmentStatus[] = [],
     runStaleness: NotebookSessionState['runStaleness'] = {},
     kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
-    stateOverrides: Partial<NotebookSessionState> = {}
+    stateOverrides: Partial<NotebookSessionState> = {},
+    previewItem: NotebookPreviewItem = item
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -486,7 +487,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     } as never
 
     await act(async () => {
-      root.render(<NotebookPreview item={item} />)
+      root.render(<NotebookPreview item={previewItem} />)
     })
     // Flush the mount-deferred setTimeout(0) that kicks off loadNotebookState(), plus its state()
     // promise resolution and the resulting re-render — React's passive effects also queue via a
@@ -522,6 +523,28 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(divider?.className).toContain('before:opacity-60')
     expect(container.querySelector('[data-slot="message-scroller-button"]')).toBeNull()
     expect(container.querySelector('[aria-label="Scroll to end"]')).toBeNull()
+  })
+
+  it('focuses the exact Run requested by Session activity', async () => {
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const targetItem: NotebookPreviewItem = {
+      ...item,
+      notebookRunId: 'run-target',
+      notebookRunFocusRequest: 1
+    }
+    await mountWithRuns(
+      [makeRun({ runId: 'run-first' }), makeRun({ runId: 'run-target' })],
+      [],
+      {},
+      'idle',
+      {},
+      targetItem
+    )
+
+    const target = container.querySelector('[data-run-id="run-target"]')
+    expect(target).not.toBeNull()
+    expect(scrollIntoView.mock.instances).toContain(target)
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
   })
 
   it('opens a bounded live namespace snapshot and reloads when private names are shown', async () => {
@@ -865,7 +888,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe(
       'Run [2] later changed x. This output is the snapshot recorded before that change; this run completed normally.'
     )
-    expect(container.textContent).not.toContain('run-3')
+    expect(screen.getByRole('tooltip').textContent).not.toContain('run-3')
     expect(container.textContent).not.toContain('out of date')
   })
 
@@ -915,6 +938,40 @@ describe('NotebookPreview per-kernel tabs', () => {
       'This run completed normally. Some variable relationships in this code could not be determined automatically, so later variable changes may not be linked back to this run.'
     )
     expect(container.textContent).not.toContain('result is current')
+  })
+
+  it('explains which package setup must be captured for replay', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'run-2', cellId: 'make-result', script: 'read_excel("input.xlsx")' })],
+      [],
+      { 'run-2': { state: 'unknown', reasons: ['missing-package-load:readxl'] } }
+    )
+    expect(
+      container.querySelector('[data-testid="notebook-cell-dependency-unknown"]')?.textContent
+    ).toBe('Package setup is missing')
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-cell-dependency-unknown"]'
+    )!
+    fireEvent.focus(badge)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Package loading steps were not captured for readxl. Run the package setup cells again, then rerun this cell to capture its dependencies.'
+    )
+  })
+
+  it('explains missing plotting state instead of describing a variable parser failure', async () => {
+    await mountWithRuns(
+      [makeRun({ runId: 'run-2', cellId: 'plot', script: 'chordDiagram(mat)' })],
+      [],
+      { 'run-2': { state: 'unknown', reasons: ['graphics-state-unavailable'] } }
+    )
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="notebook-cell-dependency-unknown"]'
+    )!
+    expect(badge.textContent).toBe('Plot setup is incomplete')
+    fireEvent.focus(badge)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.'
+    )
   })
 
   it('keeps incomplete-tracking metadata on every run when a cell is reused', async () => {

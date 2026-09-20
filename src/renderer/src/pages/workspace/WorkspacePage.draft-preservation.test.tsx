@@ -319,6 +319,22 @@ describe('WorkspacePage draft preservation', () => {
     })
   }
 
+  it('starts desktop drafts with application settings despite automation Project defaults', async () => {
+    useProjectStore.setState({
+      projects: useProjectStore.getState().projects.map((project) => ({
+        ...project,
+        sessionDefaults: { autoReviewEnabled: true, permissionProfile: 'full' as const }
+      }))
+    })
+    useSessionStore.setState({ selectedSessionId: undefined })
+    await renderPage()
+    expect(conversationProps.agentControls.autoReviewEnabled).toBe(false)
+    expect(conversationProps.permissions.permissionProfile).toBe('ask')
+    await act(async () => sidebarProps.onNewConversation())
+    expect(conversationProps.agentControls.autoReviewEnabled).toBe(false)
+    expect(conversationProps.permissions.permissionProfile).toBe('ask')
+  })
+
   it('opens and closes the Artifact download dialog for the selected sidebar Session', async () => {
     await renderPage()
     const sessionB = useSessionStore.getState().sessions.find((session) => session.id === 'sess-b')!

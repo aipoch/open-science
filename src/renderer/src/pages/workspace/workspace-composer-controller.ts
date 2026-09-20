@@ -1,4 +1,21 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  composerDraftStorageFailed,
+  readComposerDraft,
+  writeComposerDraft,
+  registerComposerDraftWriter,
+  removeComposerDrafts
+} from './composer-draft-storage'
+import type { PdfReadingPositionSource } from '../../../../shared/session-pdf-context'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
@@ -16,13 +33,14 @@ import {
   type SessionPdfContextSource
 } from '../../../../shared/session-persistence'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
-import type { CustomizePrefillIntent } from '@/stores/navigation-store'
+import type { CustomizePrefillIntent, WslSupportPrefillIntent } from '@/stores/navigation-store'
 import {
   pendingPdfContextBindingId,
   pendingPdfContextSelections,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 
+import { useWorkspaceComposerDrafts } from './workspace-composer-drafts'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   docIsEmpty,
@@ -76,6 +94,7 @@ const samePdfContextSources = (
   left.every((source, index) => pdfContextSourceKey(source) === pdfContextSourceKey(right[index]))
 
 export type ComposerSendSnapshot = {
+  setupSessionToken?: string
   queuedEdit?: ComposerDraft['queuedEdit']
   draftKey: string
   version: number
@@ -85,6 +104,7 @@ export type ComposerSendSnapshot = {
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
   pdfReadingPosition?: PdfReadingPosition
+  pdfReadingPositionSource?: PdfReadingPositionSource
   pendingPdfContextAttachmentIds?: string[]
   pendingPdfContextVersions?: Array<{
     sourceKind: SessionPdfContextSource['sourceKind']
@@ -98,7 +118,9 @@ type WorkspaceComposerControllerInput = {
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
+  pendingWslSupportPrefill?: WslSupportPrefillIntent | undefined
   onCustomizePrefillApplied: () => void
+  onWslSupportPrefillApplied?: () => void
   historyEntries: ComposerHistoryEntry[]
   activeSession: ComposerSessionContext | undefined
   historyPolicy: {
@@ -129,6 +151,7 @@ type WorkspaceComposerController = {
     historyStatus: string
     isHistoryBrowsing: boolean
     isUploading: boolean
+    isWslSetupDraft: boolean
     caretRequest: { key: number; position: ComposerCaretPosition } | undefined
     readingContext: {
       bindings: ComposerReadingContextBinding[]
@@ -139,6 +162,7 @@ type WorkspaceComposerController = {
   }
   actions: {
     cancelQueuedEdit?: () => void
+    discardWslSetupDraft: () => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -151,6 +175,7 @@ type WorkspaceComposerController = {
       caret?: ComposerCaretPosition
     ) => void
     cancelTransfer: (transfer: ComposerUploadTransfer) => void
+    retryTransfer: (transfer: ComposerUploadTransfer) => void
     removeAttachment: (attachment: UploadedAttachment) => void
     restorePastedText: (pastedTextId: string) => void
     undo: (caret?: ComposerCaretPosition) => boolean
@@ -173,6 +198,28 @@ type WorkspaceComposerController = {
   }
 }
 
+class SetupSessionTokenStore {
+  private value: string | undefined
+  private readonly listeners = new Set<() => void>()
+
+  constructor(initialValue: string | undefined) {
+    this.value = initialValue
+  }
+
+  readonly getSnapshot = (): string | undefined => this.value
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  set(token: string | undefined): void {
+    if (this.value === token) return
+    this.value = token
+    this.listeners.forEach((listener) => listener())
+  }
+}
+
 const blank = (): ComposerDraft => ({
   doc: emptyDoc,
   annotations: [],
@@ -186,7 +233,9 @@ const useWorkspaceComposerController = ({
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
+  pendingWslSupportPrefill,
   onCustomizePrefillApplied,
+  onWslSupportPrefillApplied = () => undefined,
   historyEntries,
   activeSession,
   historyPolicy,
@@ -195,30 +244,65 @@ const useWorkspaceComposerController = ({
   uploads,
   onSessionSizeLimit
 }: WorkspaceComposerControllerInput): WorkspaceComposerController => {
-  const [queuedEdit, setQueuedEdit] = useState<ComposerDraft['queuedEdit']>()
-  const queuedEditRef = useRef<ComposerDraft['queuedEdit']>(undefined)
+  const { t } = useTranslation()
+  const retryMessage = t('Upload interrupted or unavailable. Remove it and select the file again.')
+  const projectIdRef = useRef(activeProjectId ?? 'default-project')
+  const { draftsRef, versionsRef, deletedDraftKeysRef } = useWorkspaceComposerDrafts()
+  // Read the parked memory snapshot once at mount; subsequent edits use live controller state.
+  const [initialDraft] = useState(
+    // eslint-disable-next-line react-hooks/refs
+    () =>
+      draftsRef.current[currentDraftKey] ??
+      readComposerDraft(activeProjectId ?? 'default-project', currentDraftKey, retryMessage) ??
+      blank()
+  )
+  const [queuedEdit, setQueuedEdit] = useState(initialDraft.queuedEdit)
+  const queuedEditRef = useRef<ComposerDraft['queuedEdit']>(initialDraft.queuedEdit)
+  const setupSessionTokenRef = useRef(initialDraft.setupSessionToken)
+  const setupSessionTokenStore = useMemo(
+    () => new SetupSessionTokenStore(initialDraft.setupSessionToken),
+    [initialDraft.setupSessionToken]
+  )
+  const setupSessionToken = useSyncExternalStore(
+    setupSessionTokenStore.subscribe,
+    setupSessionTokenStore.getSnapshot,
+    setupSessionTokenStore.getSnapshot
+  )
+  const setActiveSetupSessionToken = useCallback(
+    (token: string | undefined): void => {
+      setupSessionTokenRef.current = token
+      setupSessionTokenStore.set(token)
+    },
+    [setupSessionTokenStore]
+  )
   const setActiveQueuedEdit = useCallback((intent: ComposerDraft['queuedEdit']): void => {
     queuedEditRef.current = intent
     setQueuedEdit(intent)
   }, [])
-  const [doc, setDoc] = useState<ComposerDoc>(emptyDoc)
-  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [doc, setDoc] = useState<ComposerDoc>(initialDraft.doc)
+  const [annotations, setAnnotations] = useState<Annotation[]>(initialDraft.annotations)
   const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string>()
   const [historyStatus, setHistoryStatus] = useState('')
   const [skillCatalogReady, setSkillCatalogReady] = useState(historyPolicy.skillCatalogReady)
-  const [appliedCustomizePrefill, setAppliedCustomizePrefill] = useState<CustomizePrefillIntent>()
+  const appliedConversationPrefillRef = useRef<{
+    kind: 'customize' | 'wsl-support'
+    projectId: string
+    requestId: number
+  }>(undefined)
   const [caretRequest, setCaretRequest] = useState<{
     key: number
     position: ComposerCaretPosition
   }>()
+  const draftProjectsRef = useRef<Record<string, string>>({
+    [currentDraftKey]: activeProjectId ?? 'default-project'
+  })
   const activeDraftKeyRef = useRef(currentDraftKey)
   const docRef = useRef(doc)
   const annotationsRef = useRef(annotations)
-  const [automaticReadingEnabled, setAutomaticReadingEnabled] = useState(true)
-  const automaticReadingEnabledRef = useRef(true)
-  const draftsRef = useRef<Record<string, ComposerDraft>>({})
-  const versionsRef = useRef<Record<string, number>>({})
-  const deletedDraftKeysRef = useRef(new Set<string>())
+  const [automaticReadingEnabled, setAutomaticReadingEnabled] = useState(
+    initialDraft.automaticReadingEnabled
+  )
+  const automaticReadingEnabledRef = useRef(initialDraft.automaticReadingEnabled)
   const historyRef = useRef<Record<string, ComposerHistoryNavigation>>({})
   const caretRequestKeyRef = useRef(0)
   const durableReadingContext = activeSession?.runtimeContext?.pdfContext
@@ -263,9 +347,14 @@ const useWorkspaceComposerController = ({
     setCaretRequest({ key: caretRequestKeyRef.current, position })
   }, [])
 
-  const markChanged = useCallback((draftKey = activeDraftKeyRef.current): void => {
-    versionsRef.current[draftKey] = (versionsRef.current[draftKey] ?? 0) + 1
-  }, [])
+  const persistDraftsRef = useRef((): void => undefined)
+  const markChanged = useCallback(
+    (draftKey = activeDraftKeyRef.current): void => {
+      versionsRef.current[draftKey] = (versionsRef.current[draftKey] ?? 0) + 1
+      queueMicrotask(() => persistDraftsRef.current())
+    },
+    [versionsRef]
+  )
 
   const clearHistory = useCallback((draftKey: string): void => {
     delete historyRef.current[draftKey]
@@ -274,6 +363,7 @@ const useWorkspaceComposerController = ({
   }, [])
 
   const uploadController = useWorkspaceComposerUploadController({
+    initialDraft,
     activeDraftKeyRef,
     docRef,
     annotationsRef,
@@ -297,6 +387,7 @@ const useWorkspaceComposerController = ({
     stageFiles,
     stagePastedText,
     cancelTransfer,
+    retryTransfer,
     removeAttachment,
     restorePastedText,
     undo,
@@ -308,14 +399,79 @@ const useWorkspaceComposerController = ({
     beginUndoTransaction
   } = uploadController.actions
   const {
+    captureDraftAttachments,
     activateDraftAttachments,
     clearActiveAttachments,
     setActiveAttachments,
-    deleteAttachmentFiles,
+    releaseHistoryResources,
     hasUnfinishedTransfers,
     beginSessionDeletion,
     settleSessionDeletion
   } = uploadController.lifecycle
+  useLayoutEffect(() => {
+    const drafts = draftsRef.current
+    const deletedDraftKeys = deletedDraftKeysRef.current
+    const history = historyRef.current
+    // Remove the parked copy: active attachments must have only their live owner.
+    delete draftsRef.current[activeDraftKeyRef.current]
+    return () => {
+      const draftKey = activeDraftKeyRef.current
+      if (!deletedDraftKeys.has(draftKey)) {
+        drafts[draftKey] = {
+          doc: history[draftKey]?.scratch ?? docRef.current,
+          annotations: annotationsRef.current,
+          ...captureDraftAttachments(),
+          queuedEdit: queuedEditRef.current,
+          automaticReadingEnabled: automaticReadingEnabledRef.current
+        }
+        writeComposerDraft(projectIdRef.current, draftKey, drafts[draftKey])
+      }
+    }
+  }, [draftsRef, deletedDraftKeysRef, captureDraftAttachments])
+
+  const persistDrafts = useCallback((): void => {
+    const projectId = projectIdRef.current
+    const key = activeDraftKeyRef.current
+    if (!deletedDraftKeysRef.current.has(key))
+      writeComposerDraft(projectId, key, {
+        doc: historyRef.current[key]?.scratch ?? docRef.current,
+        annotations: annotationsRef.current,
+        ...captureDraftAttachments(),
+        automaticReadingEnabled: automaticReadingEnabledRef.current
+      })
+    // Parked drafts are saved at the route boundary; asynchronous upload completions need a flush too.
+    for (const [draftKey, draft] of Object.entries(draftsRef.current)) {
+      const draftProject = draftProjectsRef.current[draftKey]
+      if (draftProject && !deletedDraftKeysRef.current.has(draftKey))
+        writeComposerDraft(draftProject, draftKey, draft)
+    }
+    if (composerDraftStorageFailed())
+      setError(t('Draft storage is unavailable. Copy your draft before leaving this page.'))
+  }, [captureDraftAttachments, deletedDraftKeysRef, draftsRef, setError, t])
+  useLayoutEffect(() => {
+    persistDraftsRef.current = persistDrafts
+    persistDrafts()
+  })
+  useEffect(() => {
+    persistDraftsRef.current = persistDrafts
+    const unregister = registerComposerDraftWriter(persistDrafts)
+    window.addEventListener('pagehide', persistDrafts)
+    const beforeUnload = (event: BeforeUnloadEvent): void => {
+      persistDrafts()
+      if (composerDraftStorageFailed()) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => {
+      persistDraftsRef.current = (): void => undefined
+      unregister()
+      window.removeEventListener('pagehide', persistDrafts)
+      window.removeEventListener('beforeunload', beforeUnload)
+    }
+  }, [persistDrafts])
+
   const pendingPdfContextSelection = usePreviewWorkbenchStore((state) =>
     !activeSession && activeProjectId
       ? state.pendingPdfContextByProject[activeProjectId]
@@ -437,12 +593,14 @@ const useWorkspaceComposerController = ({
     | undefined
   >(undefined)
   const readingMutationPromiseRef = useRef<Promise<void> | undefined>(undefined)
-  const readingMutationPromiseSessionIdRef = useRef<string | undefined>(undefined)
+  const readingMutationPromiseRuntimeRef =
+    useRef<typeof readingMutationRuntimeRef.current>(undefined)
   useLayoutEffect(() => {
     const current = readingMutationRuntimeRef.current
     if (
       activeSession &&
       (current?.sessionId !== activeSession.id ||
+        current?.projectId !== activeSession.projectId ||
         (!readingMutationPromiseRef.current &&
           (activeSession.runtimeContext?.revision ?? 0) >= current.runtimeContext.revision))
     ) {
@@ -461,16 +619,23 @@ const useWorkspaceComposerController = ({
   const reconcileReadingContextSources = useCallback(
     (requestedSources: SessionPdfContextSource[]): Promise<void> => {
       if (!activeSession) return Promise.resolve()
+      const operationRuntime = readingMutationRuntimeRef.current
+      if (!operationRuntime) return Promise.resolve()
       const uniqueSources = [
         ...new Map(requestedSources.map((source) => [pdfContextSourceKey(source), source])).values()
       ].slice(0, MAX_SESSION_PDF_CONTEXTS)
       readingContextSourcesRef.current = uniqueSources
       if (readingMutationPromiseRef.current) {
         const pending = readingMutationPromiseRef.current
-        if (readingMutationPromiseSessionIdRef.current === activeSession.id) return pending
+        if (readingMutationPromiseRuntimeRef.current === operationRuntime) return pending
         return pending
           .catch(() => undefined)
-          .then(() => restoreReadingContextSourcesRef.current(uniqueSources))
+          .then(() => {
+            // Leaving the originating Project/Session invalidates this queued intent, even
+            // if the user returns before the preceding IPC finishes.
+            if (readingMutationRuntimeRef.current !== operationRuntime) return
+            return restoreReadingContextSourcesRef.current(readingContextSourcesRef.current)
+          })
       }
       const currentSources = (
         readingMutationRuntimeRef.current?.runtimeContext.pdfContext?.bindings ?? []
@@ -487,7 +652,7 @@ const useWorkspaceComposerController = ({
       setIsPdfContextPending(true)
       const run = (async (): Promise<void> => {
         try {
-          while (readingMutationRuntimeRef.current?.sessionId === operationSessionId) {
+          while (readingMutationRuntimeRef.current === operationRuntime) {
             const runtime = readingMutationRuntimeRef.current.runtimeContext
             const target = readingContextSourcesRef.current
             const targetKeys = new Set(target.map(pdfContextSourceKey))
@@ -503,7 +668,7 @@ const useWorkspaceComposerController = ({
                 expectedRevision: runtime.revision,
                 bindingId: removed.bindingId
               })
-              if (readingMutationRuntimeRef.current?.sessionId !== operationSessionId) return
+              if (readingMutationRuntimeRef.current !== operationRuntime) return
               readingMutationRuntimeRef.current.runtimeContext = nextRuntime
               usePreviewWorkbenchStore.getState().clearPdfReadingPosition(removed.bindingId)
               continue
@@ -518,13 +683,14 @@ const useWorkspaceComposerController = ({
                 expectedRevision: runtime.revision,
                 sources: added
               })
-              if (readingMutationRuntimeRef.current?.sessionId !== operationSessionId) return
+              if (readingMutationRuntimeRef.current !== operationRuntime) return
               readingMutationRuntimeRef.current.runtimeContext = nextRuntime
               continue
             }
             break
           }
         } catch (error) {
+          if (readingMutationRuntimeRef.current !== operationRuntime) throw error
           const currentBindings =
             readingMutationRuntimeRef.current?.runtimeContext.pdfContext?.bindings ?? []
           readingContextSourcesRef.current = currentBindings.map(
@@ -542,12 +708,12 @@ const useWorkspaceComposerController = ({
       const tracked = run.finally(() => {
         if (readingMutationPromiseRef.current !== tracked) return
         readingMutationPromiseRef.current = undefined
-        readingMutationPromiseSessionIdRef.current = undefined
+        readingMutationPromiseRuntimeRef.current = undefined
         setPdfContextPendingBindingId(undefined)
         setIsPdfContextPending(false)
       })
       readingMutationPromiseRef.current = tracked
-      readingMutationPromiseSessionIdRef.current = operationSessionId
+      readingMutationPromiseRuntimeRef.current = operationRuntime
       return tracked
     },
     [activeSession, onSessionSizeLimit, setError]
@@ -574,7 +740,7 @@ const useWorkspaceComposerController = ({
         return
       const transaction =
         !readingMutationPromiseRef.current ||
-        readingMutationPromiseSessionIdRef.current !== activeSession.id
+        readingMutationPromiseRuntimeRef.current !== readingMutationRuntimeRef.current
           ? beginReadingContextUndo()
           : undefined
       try {
@@ -641,7 +807,7 @@ const useWorkspaceComposerController = ({
       if (!durableBinding || !activeSession) return
       const transaction =
         !readingMutationPromiseRef.current ||
-        readingMutationPromiseSessionIdRef.current !== activeSession.id
+        readingMutationPromiseRuntimeRef.current !== readingMutationRuntimeRef.current
           ? beginReadingContextUndo()
           : undefined
       void reconcileReadingContextSources(
@@ -691,33 +857,6 @@ const useWorkspaceComposerController = ({
     [activeProjectId, pendingReadingSelections, removeAttachment]
   )
 
-  if (
-    pendingCustomizePrefill !== undefined &&
-    pendingCustomizePrefill.projectId === activeProjectId &&
-    currentDraftKey === newConversationDraftKey &&
-    appliedCustomizePrefill?.requestId !== pendingCustomizePrefill.requestId
-  ) {
-    setAppliedCustomizePrefill(pendingCustomizePrefill)
-    setHistoryBrowsingKey(undefined)
-    setHistoryStatus('')
-    setDoc(buildCustomizePrefillDoc(pendingCustomizePrefill.goal))
-    onCustomizePrefillApplied()
-  }
-
-  useLayoutEffect(() => {
-    if (appliedCustomizePrefill?.projectId === activeProjectId) {
-      delete historyRef.current[newConversationDraftKey]
-      clearPastedTextUndo(newConversationDraftKey)
-      clearUndo(newConversationDraftKey)
-    }
-  }, [
-    activeProjectId,
-    appliedCustomizePrefill,
-    clearPastedTextUndo,
-    clearUndo,
-    newConversationDraftKey
-  ])
-
   useLayoutEffect(() => {
     docRef.current = doc
   }, [doc])
@@ -741,7 +880,7 @@ const useWorkspaceComposerController = ({
     }
   }, [loadSkills, refreshSkillCatalog])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previousDraftKey = activeDraftKeyRef.current
     if (currentDraftKey === previousDraftKey) return
 
@@ -750,6 +889,7 @@ const useWorkspaceComposerController = ({
       delete draftsRef.current[previousDraftKey]
     } else {
       draftsRef.current[previousDraftKey] = {
+        setupSessionToken: setupSessionTokenRef.current,
         doc: outgoingHistory?.scratch ?? doc,
         annotations,
         attachments,
@@ -758,36 +898,93 @@ const useWorkspaceComposerController = ({
         automaticReadingEnabled: automaticReadingEnabledRef.current
       }
     }
+    const outgoingDraft = draftsRef.current[previousDraftKey]
+    if (outgoingDraft) writeComposerDraft(projectIdRef.current, previousDraftKey, outgoingDraft)
+    projectIdRef.current = activeProjectId ?? 'default-project'
+    draftProjectsRef.current[currentDraftKey] = projectIdRef.current
     delete historyRef.current[previousDraftKey]
     setHistoryBrowsingKey(undefined)
     setHistoryStatus('')
     setCaretRequest(undefined)
 
-    const customizePrefillPending =
-      currentDraftKey === newConversationDraftKey &&
-      pendingCustomizePrefill !== undefined &&
-      pendingCustomizePrefill.projectId === activeProjectId
-    const nextDraft = draftsRef.current[currentDraftKey] ?? blank()
-    if (!customizePrefillPending) setActiveDoc(nextDraft.doc)
+    const nextDraft =
+      draftsRef.current[currentDraftKey] ??
+      readComposerDraft(activeProjectId ?? 'default-project', currentDraftKey, retryMessage) ??
+      blank()
+    setActiveDoc(nextDraft.doc)
     setActiveAnnotations(nextDraft.annotations)
     activateDraftAttachments(nextDraft)
     setActiveAutomaticReadingEnabled(nextDraft.automaticReadingEnabled)
     setActiveQueuedEdit(nextDraft.queuedEdit)
+    setActiveSetupSessionToken(nextDraft.setupSessionToken)
     activeDraftKeyRef.current = currentDraftKey
+    delete draftsRef.current[currentDraftKey]
   }, [
     activeProjectId,
     annotations,
     attachments,
     currentDraftKey,
     doc,
-    newConversationDraftKey,
-    pendingCustomizePrefill,
+    deletedDraftKeysRef,
+    draftsRef,
     setActiveAutomaticReadingEnabled,
     setActiveQueuedEdit,
+    setActiveSetupSessionToken,
     activateDraftAttachments,
     setActiveAnnotations,
     setActiveDoc,
-    transfers
+    transfers,
+    retryMessage
+  ])
+
+  // Save the outgoing draft and activate the target before applying its prefill.
+  useLayoutEffect(() => {
+    const pendingConversationPrefill = pendingWslSupportPrefill
+      ? { ...pendingWslSupportPrefill, kind: 'wsl-support' as const }
+      : pendingCustomizePrefill
+        ? {
+            ...pendingCustomizePrefill,
+            kind: 'customize' as const,
+            doc: buildCustomizePrefillDoc(pendingCustomizePrefill.goal)
+          }
+        : undefined
+    const applied = appliedConversationPrefillRef.current
+    if (
+      !pendingConversationPrefill ||
+      pendingConversationPrefill.projectId !== activeProjectId ||
+      currentDraftKey !== newConversationDraftKey ||
+      (applied?.kind === pendingConversationPrefill.kind &&
+        applied.projectId === pendingConversationPrefill.projectId &&
+        applied.requestId === pendingConversationPrefill.requestId)
+    )
+      return
+    appliedConversationPrefillRef.current = pendingConversationPrefill
+    clearHistory(currentDraftKey)
+    clearPastedTextUndo(currentDraftKey)
+    clearUndo(currentDraftKey)
+    markChanged(currentDraftKey)
+    setActiveDoc(pendingConversationPrefill.doc)
+    if (pendingConversationPrefill.kind === 'wsl-support') {
+      setActiveSetupSessionToken(pendingConversationPrefill.setupSessionToken)
+      onWslSupportPrefillApplied()
+    } else {
+      setActiveSetupSessionToken(undefined)
+      onCustomizePrefillApplied()
+    }
+  }, [
+    activeProjectId,
+    clearHistory,
+    clearPastedTextUndo,
+    clearUndo,
+    currentDraftKey,
+    markChanged,
+    newConversationDraftKey,
+    onCustomizePrefillApplied,
+    onWslSupportPrefillApplied,
+    pendingCustomizePrefill,
+    pendingWslSupportPrefill,
+    setActiveDoc,
+    setActiveSetupSessionToken
   ])
 
   const navigateHistory = useCallback(
@@ -795,6 +992,7 @@ const useWorkspaceComposerController = ({
       if (queuedEditRef.current || attachments.length > 0 || transfers.length > 0) return false
 
       let navigation = historyRef.current[currentDraftKey]
+      const previousCursorId = navigation?.cursorId
       if (!navigation) {
         if (direction === 'next' || historyEntries.length === 0) return false
         navigation = {
@@ -829,7 +1027,8 @@ const useWorkspaceComposerController = ({
         (!ready ||
           (historyPolicy.specialistId !== undefined && !historyPolicy.specialistCatalogReady))
       ) {
-        delete historyRef.current[currentDraftKey]
+        if (previousCursorId) navigation.cursorId = previousCursorId
+        else delete historyRef.current[currentDraftKey]
         if (!ready) {
           void historyPolicy
             .loadSkills()
@@ -1001,6 +1200,7 @@ const useWorkspaceComposerController = ({
         })
         .slice(0, Math.max(0, MAX_SESSION_PDF_CONTEXTS - includedDurableBindings.length))
       return {
+        setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
@@ -1021,12 +1221,23 @@ const useWorkspaceComposerController = ({
               }
             }
           : {}),
-        // Finalized uploads precede immutable versions at first-send linking. Do not
-        // apply a version's viewport to an upload in a mixed draft.
-        ...(includeReadingContext &&
-        pdfReadingPosition &&
-        !(activePendingReading?.kind === 'version' && pendingPdfContextAttachmentIds.length > 0)
-          ? { pdfReadingPosition }
+        ...(includeReadingContext && pdfReadingPosition
+          ? {
+              pdfReadingPosition,
+              pdfReadingPositionSource: activeReadingBinding
+                ? {
+                    sourceKind: activeReadingBinding.sourceKind,
+                    sourceVersionId: activeReadingBinding.sourceVersionId
+                  }
+                : activePendingReading?.kind === 'staged-upload'
+                  ? { attachmentId: activePendingReading.attachmentId }
+                  : activePendingReading
+                    ? {
+                        sourceKind: activePendingReading.sourceKind,
+                        sourceVersionId: activePendingReading.sourceVersionId
+                      }
+                    : undefined
+            }
           : {}),
         ...(pendingPdfContextAttachmentIds.length > 0 ? { pendingPdfContextAttachmentIds } : {}),
         ...(pendingPdfContextVersions.length > 0 ? { pendingPdfContextVersions } : {})
@@ -1043,7 +1254,8 @@ const useWorkspaceComposerController = ({
       durableReadingBindings,
       pendingReadingSelections,
       pdfReadingPosition,
-      stagedReadingContexts
+      stagedReadingContexts,
+      versionsRef
     ]
   )
   const clearDraft = useCallback(
@@ -1054,7 +1266,13 @@ const useWorkspaceComposerController = ({
       clearPastedTextUndo(draftKey)
       clearUndo(draftKey)
       delete draftsRef.current[draftKey]
+      writeComposerDraft(
+        draftProjectsRef.current[draftKey] ?? projectIdRef.current,
+        draftKey,
+        blank()
+      )
       if (activeDraftKeyRef.current !== draftKey) return true
+      setActiveSetupSessionToken(undefined)
       setActiveDoc(emptyDoc)
       setActiveQueuedEdit(undefined)
       setActiveAnnotations([])
@@ -1064,6 +1282,8 @@ const useWorkspaceComposerController = ({
       return true
     },
     [
+      draftsRef,
+      versionsRef,
       clearActiveAttachments,
       clearHistory,
       clearPastedTextUndo,
@@ -1072,13 +1292,15 @@ const useWorkspaceComposerController = ({
       setActiveDoc,
       setActiveAutomaticReadingEnabled,
       setActiveQueuedEdit,
+      setActiveSetupSessionToken,
       setError
     ]
   )
   const restoreFailedSend = useCallback(
     (snapshot: ComposerSendSnapshot, preserveOnConflict = false): boolean => {
       if (deletedDraftKeysRef.current.has(snapshot.draftKey)) {
-        if (!preserveOnConflict) deleteAttachmentFiles(snapshot.attachments)
+        if (!preserveOnConflict)
+          releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
         return false
       }
       if (
@@ -1095,7 +1317,17 @@ const useWorkspaceComposerController = ({
         !preserveOnConflict &&
         (versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version
       ) {
-        deleteAttachmentFiles(snapshot.attachments)
+        setError(
+          t(
+            'Sending failed. Your newer draft was kept. Copy the earlier draft from the details below.'
+          ),
+          [
+            docToText(snapshot.doc),
+            ...snapshot.annotations.map((annotation) => JSON.stringify(annotation)),
+            ...snapshot.attachments.map((attachment) => attachment.originalName || attachment.name)
+          ].join('\n')
+        )
+        releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }])
         return false
       }
       if (preserveOnConflict) markChanged(snapshot.draftKey)
@@ -1103,6 +1335,7 @@ const useWorkspaceComposerController = ({
       clearPastedTextUndo(snapshot.draftKey)
       clearHistory(snapshot.draftKey)
       if (activeDraftKeyRef.current === snapshot.draftKey) {
+        setActiveSetupSessionToken(snapshot.setupSessionToken)
         setActiveQueuedEdit(snapshot.queuedEdit)
         setActiveDoc(snapshot.doc)
         setActiveAnnotations([...snapshot.annotations])
@@ -1111,6 +1344,7 @@ const useWorkspaceComposerController = ({
         return true
       }
       draftsRef.current[snapshot.draftKey] = {
+        setupSessionToken: snapshot.setupSessionToken,
         queuedEdit: snapshot.queuedEdit,
         doc: snapshot.doc,
         annotations: [...snapshot.annotations],
@@ -1122,17 +1356,23 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments.length,
+      draftsRef,
+      versionsRef,
+      deletedDraftKeysRef,
       clearUndo,
       clearPastedTextUndo,
       clearHistory,
       markChanged,
       setActiveQueuedEdit,
-      deleteAttachmentFiles,
+      setActiveSetupSessionToken,
+      releaseHistoryResources,
       setActiveAttachments,
       setActiveAnnotations,
       setActiveDoc,
       setActiveAutomaticReadingEnabled,
-      transfers.length
+      transfers.length,
+      setError,
+      t
     ]
   )
 
@@ -1145,7 +1385,7 @@ const useWorkspaceComposerController = ({
       attachments: [],
       automaticReadingEnabled: true
     }),
-    [currentDraftKey]
+    [currentDraftKey, versionsRef]
   )
   // Stable identity across renders: the transcript memo compares the annotation callbacks it
   // receives, so an inline closure here would defeat that memo on every composer re-render.
@@ -1176,6 +1416,7 @@ const useWorkspaceComposerController = ({
       historyStatus,
       isHistoryBrowsing: historyBrowsingKey === currentDraftKey,
       isUploading,
+      isWslSetupDraft: setupSessionToken !== undefined,
       caretRequest,
       // The live reading position stays out of the view: the chip no longer displays it, and
       // captureSend snapshots it straight from the store.
@@ -1194,6 +1435,10 @@ const useWorkspaceComposerController = ({
         clearHistory(activeDraftKeyRef.current)
         markChanged()
         setActiveQueuedEdit(undefined)
+      },
+      discardWslSetupDraft: (): boolean => {
+        if (setupSessionTokenRef.current === undefined) return false
+        return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
       addAnnotation,
@@ -1227,6 +1472,7 @@ const useWorkspaceComposerController = ({
       stageFiles,
       stagePastedText,
       cancelTransfer,
+      retryTransfer,
       removeAttachment: removeComposerAttachment,
       restorePastedText,
       undo,
@@ -1242,16 +1488,19 @@ const useWorkspaceComposerController = ({
       captureRevision,
       clearDraft,
       restoreFailedSend,
-      discardSnapshot: (snapshot) => deleteAttachmentFiles(snapshot.attachments),
+      discardSnapshot: (snapshot) =>
+        releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }]),
       hasUnfinishedTransfers,
       beginSessionDeletion,
       settleSessionDeletion: (draftKey, deleted): void => {
         settleSessionDeletion(draftKey, deleted)
         if (!deleted) return
+        removeComposerDrafts(draftProjectsRef.current[draftKey] ?? projectIdRef.current, draftKey)
         delete draftsRef.current[draftKey]
         delete versionsRef.current[draftKey]
         deletedDraftKeysRef.current.add(draftKey)
         if (activeDraftKeyRef.current !== draftKey) return
+        setActiveSetupSessionToken(undefined)
         clearHistory(draftKey)
         setActiveDoc(emptyDoc)
         setActiveQueuedEdit(undefined)

@@ -7,7 +7,7 @@ import {
   type RendererSessionPersistenceFlushOutcome
 } from './session-persistence/renderer-flush'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
-import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
+import { flushDiagnosticsWithTimeout, type DiagnosticFlush } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
 import { startDiagnosticOperation } from './diagnostics/operation'
 import {
@@ -71,7 +71,7 @@ export type AppLifecycleDeps = {
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
   log?: Logger
   // Drains the logger's serialized write queue after the shutdown terminal record.
-  flushLogs?: () => Promise<void>
+  flushLogs?: DiagnosticFlush
   logFlushTimeoutMs?: number
   // Shared timeout budget for the preflight and post-drain renderer persistence attempts.
   rendererFlushTimeoutMs?: number
@@ -81,7 +81,8 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
-  // Number of live BrowserWindows, used to decide whether to recreate on macOS activate.
+  beforeExit?: () => void | Promise<void>
+  // Number of live BrowserWindows (retained for existing lifecycle compositions).
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
   createInitialWindow?: boolean
@@ -169,7 +170,7 @@ export const installAppLifecycle = (
     outcome === 'conflict' || outcome === 'renderer-failed' ? outcome : undefined
   const rendererPersistenceNeedsConsent = (
     outcome: RendererSessionPersistenceFlushOutcome
-  ): boolean => outcome === 'timeout' || outcome === 'send-failed'
+  ): boolean => outcome === 'timeout' || outcome === 'send-failed' || outcome === 'renderer-failed'
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()
@@ -369,18 +370,17 @@ export const installAppLifecycle = (
       if (confirmInFlight) return
       confirmInFlight = true
       const settingsInstallAtDelegatedConfirmation = activeSettingsInstallId()
-      void confirmResearchClose('quit', delegatedAtShutdownBoundary)
-        .then((choice) => {
-          if (choice === 'quit') {
-            requestConfirmedQuit(
-              delegatedAtShutdownBoundary,
-              settingsInstallAtDelegatedConfirmation
-            )
-          }
-        })
-        .finally(() => {
+      void (async () => {
+        let choice: CloseConfirmChoice
+        try {
+          choice = await confirmResearchClose('quit', delegatedAtShutdownBoundary)
+        } finally {
           confirmInFlight = false
-        })
+        }
+        if (choice === 'quit') {
+          requestConfirmedQuit(delegatedAtShutdownBoundary, settingsInstallAtDelegatedConfirmation)
+        }
+      })()
       return
     }
 
@@ -390,38 +390,42 @@ export const installAppLifecycle = (
       event.preventDefault()
       if (confirmInFlight) return
       confirmInFlight = true
-      const settingsInstallAtConfirmation = activeSettingsInstallId()
-      void confirmResearchClose('quit', deps.detectActiveSessions())
-        .then(async (choice) => {
+      void (async () => {
+        let settingsInstallAtConfirmation = activeSettingsInstallId()
+        let delegated: ActiveSessionInfo[] = []
+        let choice: CloseConfirmChoice
+        try {
+          choice = await confirmResearchClose('quit', deps.detectActiveSessions())
           if (choice === 'quit') {
-            const delegated = detectDelegatedWork()
+            delegated = detectDelegatedWork()
             if (delegated.length > 0) {
               quitConfirmed = false
               confirmedSettingsInstallId = undefined
-              const settingsInstallAtDelegatedConfirmation = activeSettingsInstallId()
-              const delegatedChoice = await confirmResearchClose('quit', delegated)
-              if (delegatedChoice === 'quit') {
-                requestConfirmedQuit(delegated, settingsInstallAtDelegatedConfirmation)
-              }
-              return
+              settingsInstallAtConfirmation = activeSettingsInstallId()
+              choice = await confirmResearchClose('quit', delegated)
+              if (choice !== 'quit') return
             }
-            requestConfirmedQuit([], settingsInstallAtConfirmation)
-            return
           }
-          // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
-          // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
-          // window so the app the user chose to keep stays reachable. Gate on a window that existed
-          // and is now destroyed, NOT on platform+tray alone — headless web mode legitimately runs
-          // with no window (mainWindow never created) and must not have one fabricated here. macOS is
-          // exempt: window-closed-but-resident is its dock convention. The non-darwin/no-tray pair
-          // mirrors the window-all-closed quit path that produced this quit.
-          if (platform !== 'darwin' && !trayBox.current && mainWindow && mainWindow.isDestroyed()) {
-            showMainWindow()
-          }
-        })
-        .finally(() => {
+        } finally {
+          // app.quit() synchronously reenters before-quit. Release this confirmation first so a
+          // changed-work warning can open, without an old finally clearing its new admission latch.
           confirmInFlight = false
-        })
+        }
+        if (choice === 'quit') {
+          requestConfirmedQuit(delegated, settingsInstallAtConfirmation)
+          return
+        }
+        // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
+        // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
+        // window so the app the user chose to keep stays reachable. Gate on a window that existed
+        // and is now destroyed, NOT on platform+tray alone — headless web mode legitimately runs
+        // with no window (mainWindow never created) and must not have one fabricated here. macOS is
+        // exempt: window-closed-but-resident is its dock convention. The non-darwin/no-tray pair
+        // mirrors the window-all-closed quit path that produced this quit.
+        if (platform !== 'darwin' && !trayBox.current && mainWindow && mainWindow.isDestroyed()) {
+          showMainWindow()
+        }
+      })()
       return
     }
 
@@ -584,7 +588,12 @@ export const installAppLifecycle = (
             if (persistenceFailureNeedsConsent && !confirmInFlight) {
               confirmInFlight = true
               try {
-                const choice = await confirmClose('persistence-failed', [])
+                let choice: CloseConfirmChoice
+                try {
+                  choice = await confirmClose('persistence-failed', [])
+                } finally {
+                  confirmInFlight = false
+                }
                 if (choice === 'retry') requestConfirmedQuit()
                 else if (choice === 'force-quit') {
                   forceQuitAfterPersistenceFailure = true
@@ -599,23 +608,29 @@ export const installAppLifecycle = (
                 } catch {
                   // A failed confirmation keeps the app open; diagnostics remain best-effort.
                 }
-              } finally {
-                confirmInFlight = false
               }
             }
           }
         } else {
           trayBox.current?.destroy()
           shutdownFinished = true
-          deps.app.exit(0)
+          try {
+            await deps.beforeExit?.()
+          } catch (error) {
+            deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
+          } finally {
+            deps.app.exit(0)
+          }
         }
       }
     })()
   })
 
-  // macOS: recreate a window when the dock icon is clicked with no windows open.
+  // Dock activation targets the main window, including one hidden to the tray.
   deps.app.on('activate', () => {
-    if (deps.countWindows() === 0) mainWindow = openWindow()
+    if (shutdownStarted || shutdownFinished || quitConfirmed || systemShutdownRequested) return
+    if (deps.createInitialWindow === false && !mainWindow) return
+    showMainWindow()
   })
 
   // With a tray the app stays resident (windows only hide), so window-all-closed shouldn't quit. Without

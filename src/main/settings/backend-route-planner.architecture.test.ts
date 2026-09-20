@@ -19,6 +19,8 @@ import {
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
+
 import {
   listProductionSources,
   readProductionSource
@@ -41,6 +43,8 @@ const portablePath = (path: string): string => relative(projectRoot, path).repla
 const productionSources = (): readonly string[] => listProductionSources(projectRoot)
 
 const importsPlanner = (path: string): boolean => {
+  // The AST predicate below requires this literal module name; skip unrelated files before parsing.
+  if (!readSource(path).includes('backend-route-planner')) return false
   let imports = false
   const sourceFile = sourceFileFor(path)
   const visit = (node: Node): void => {
@@ -109,9 +113,7 @@ describe('Backend route planning ownership', () => {
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/provider-transport-owner.ts'
     ])
-    const manifest = JSON.parse(readSource(manifestPath)) as {
-      modules: Record<string, { ownerPaths: string[]; testFiles: { owner: string[] } }>
-    }
+    const manifest = loadModuleImpactManifest(manifestPath)
     const module = manifest.modules.settings_backend_resolution
     expect(module.ownerPaths).toContain('src/main/settings/backend-route-planner.ts')
     expect(module.testFiles.owner).toEqual(

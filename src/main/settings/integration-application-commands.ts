@@ -26,6 +26,8 @@ type SkillIntegrationWorkflows = Pick<
   | 'deleteSkill'
   | 'importSkill'
   | 'importSkillZip'
+  | 'installSkillMarketplace'
+  | 'startSkillMarketplaceBatch'
   | 'importSkillZipBatch'
 >
 
@@ -53,6 +55,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'disconnectCustomServer'
   | 'retryConnectorProjection'
   | 'retryCustomServer'
+  | 'testCustomServer'
 >
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -74,6 +77,11 @@ const requireLocalCaller = (context: CallerContext, channel: string): void => {
 }
 
 const settingsIntegrationApplicationCommands = Object.freeze({
+  testCustomServer: defineApplicationCommand<
+    'settings:test-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'testCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'testCustomServer'>
+  >('settings:test-custom-server'),
   listDeviceCredentials: defineApplicationCommand<
     'settings:list-device-credentials',
     OwnerArgs<ConnectorIntegrationWorkflows, 'listDeviceCredentials'>,
@@ -149,6 +157,16 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<SkillIntegrationWorkflows, 'importSkillZip'>,
     OwnerResult<SkillIntegrationWorkflows, 'importSkillZip'>
   >('settings:import-skill-zip'),
+  installSkillMarketplace: defineApplicationCommand<
+    'settings:install-skill-marketplace',
+    OwnerArgs<SkillIntegrationWorkflows, 'installSkillMarketplace'>,
+    OwnerResult<SkillIntegrationWorkflows, 'installSkillMarketplace'>
+  >('settings:install-skill-marketplace'),
+  startSkillMarketplaceBatch: defineApplicationCommand<
+    'settings:start-skill-marketplace-batch',
+    OwnerArgs<SkillIntegrationWorkflows, 'startSkillMarketplaceBatch'>,
+    OwnerResult<SkillIntegrationWorkflows, 'startSkillMarketplaceBatch'>
+  >('settings:start-skill-marketplace-batch'),
   importSkillZipBatch: defineApplicationCommand<
     'settings:import-skill-zip-batch',
     OwnerArgs<SkillIntegrationWorkflows, 'importSkillZipBatch'>,
@@ -265,12 +283,15 @@ const settingsSkillApplicationCommandGroup = defineApplicationCommandGroup('sett
   settingsIntegrationApplicationCommands.deleteSkill,
   settingsIntegrationApplicationCommands.importSkill,
   settingsIntegrationApplicationCommands.importSkillZip,
+  settingsIntegrationApplicationCommands.installSkillMarketplace,
+  settingsIntegrationApplicationCommands.startSkillMarketplaceBatch,
   settingsIntegrationApplicationCommands.importSkillZipBatch
 ] as const)
 
 const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
   'settings-connectors',
   [
+    settingsIntegrationApplicationCommands.testCustomServer,
     settingsIntegrationApplicationCommands.listDeviceCredentials,
     settingsIntegrationApplicationCommands.createDeviceCredential,
     settingsIntegrationApplicationCommands.updateDeviceCredential,
@@ -336,10 +357,18 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:delete-skill': ({ args }) => dependencies.skills.deleteSkill(args[0]),
       'settings:import-skill': ({ args }) => dependencies.skills.importSkill(args[0]),
       'settings:import-skill-zip': ({ args }) => dependencies.skills.importSkillZip(args[0]),
+      'settings:install-skill-marketplace': ({ args }) =>
+        dependencies.skills.installSkillMarketplace(args[0]),
+      'settings:start-skill-marketplace-batch': ({ args }) =>
+        dependencies.skills.startSkillMarketplaceBatch(args[0]),
       'settings:import-skill-zip-batch': ({ args }) =>
         dependencies.skills.importSkillZipBatch(args[0])
     })
     scope.registerGroup(settingsConnectorApplicationCommandGroup, {
+      'settings:test-custom-server': ({ args, callerContext, callerLease }) => {
+        requireLocalCaller(callerContext, 'settings:test-custom-server')
+        return dependencies.connectors.testCustomServer(args[0], callerLease.signal)
+      },
       'settings:list-device-credentials': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:list-device-credentials')
         return dependencies.connectors.listDeviceCredentials()

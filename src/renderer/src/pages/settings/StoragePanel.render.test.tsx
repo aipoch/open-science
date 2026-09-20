@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -85,7 +86,7 @@ const openEditor = async (): Promise<void> => {
 }
 
 beforeEach(() => {
-  vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Open Science Electron')
+  vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Open-Science Electron')
   useSettingsStore.setState(createInitialSettingsState())
   useStorageInfoStore.setState({
     status: null,
@@ -151,6 +152,224 @@ afterEach(() => {
 })
 
 describe('StoragePanel', () => {
+  const renderEditor = async (): Promise<void> => {
+    vi.mocked(window.api.storage.getInfo).mockResolvedValue({ ...richInfo, isDefault: false })
+    await act(async () => root.render(<StoragePanel />))
+    await openEditor()
+  }
+  const browse = async (): Promise<void> => {
+    await act(async () => clickButton((button) => button.textContent?.trim() === 'Browse…'))
+  }
+  const confirmAdopt = async (): Promise<void> => {
+    await act(async () => clickButton((button) => button.textContent?.trim() === 'Use this folder'))
+    await act(async () => {
+      const dialog = document.body.querySelector('[role="alertdialog"]')!
+      Array.from(dialog.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Use this folder')!
+        .click()
+    })
+  }
+
+  it('reports inspection rejection, preserves the input and allows a fresh inspection', async () => {
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/candidate')
+    vi.mocked(window.api.storage.inspectDataRoot).mockRejectedValueOnce(
+      new Error('IPC unavailable')
+    )
+    await renderEditor()
+    await browse()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not check this folder. Try again.'
+    )
+    expect(container.querySelector('input')?.value).toBe('/candidate')
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Change location'
+      )?.disabled
+    ).toBe(true)
+    await browse()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Change location'
+      )?.disabled
+    ).toBe(false)
+  })
+
+  it('reports picker rejection and permits another browse', async () => {
+    vi.mocked(window.api.storage.pickDirectory)
+      .mockRejectedValueOnce(new Error('IPC unavailable'))
+      .mockResolvedValueOnce('/candidate')
+    await renderEditor()
+    await browse()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not open the folder picker. Try again.'
+    )
+    await browse()
+    expect(container.querySelector('input')?.value).toBe('/candidate')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it.each(['reject', 'business'] as const)(
+    'releases adoption busy state on %s failure and retries',
+    async (failure) => {
+      vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/candidate')
+      vi.mocked(window.api.storage.inspectDataRoot).mockResolvedValue({
+        kind: 'adopt',
+        dataRoot: '/candidate/OpenScience'
+      })
+      if (failure === 'reject')
+        vi.mocked(window.api.storage.setDataRootAndRelaunch).mockRejectedValueOnce(
+          new Error('IPC unavailable')
+        )
+      else
+        vi.mocked(window.api.storage.setDataRootAndRelaunch).mockResolvedValueOnce({
+          ok: false,
+          error: 'Could not switch to this folder.'
+        })
+      await renderEditor()
+      await browse()
+      await confirmAdopt()
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        'Could not switch to this folder.'
+      )
+      expect(container.querySelector('input')?.value).toBe('/candidate')
+      expect(container.textContent).not.toContain('Switching…')
+      await confirmAdopt()
+      expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledTimes(2)
+      expect(container.textContent).toContain('Switching…')
+      expect(container.querySelector('input')?.matches(':disabled')).toBe(true)
+    }
+  )
+
+  it('reports default inspection rejection and allows retry', async () => {
+    vi.mocked(window.api.storage.inspectDataRoot).mockRejectedValueOnce(
+      new Error('IPC unavailable')
+    )
+    await renderEditor()
+    const useDefault = async (): Promise<void> => {
+      await act(async () =>
+        clickButton((b) => b.textContent?.includes('move it back to the default location') ?? false)
+      )
+    }
+    await useDefault()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The default location is not usable.'
+    )
+    await useDefault()
+    expect(window.api.storage.detectActive).toHaveBeenCalledOnce()
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a stale inspection %s after a newer path',
+    async (outcome) => {
+      let resolve!: (value: { kind: 'adopt'; dataRoot: string }) => void
+      let reject!: (error: Error) => void
+      vi.mocked(window.api.storage.pickDirectory)
+        .mockResolvedValueOnce('/a')
+        .mockResolvedValueOnce('/b')
+      vi.mocked(window.api.storage.inspectDataRoot).mockImplementationOnce(
+        () =>
+          new Promise((yes, no) => {
+            resolve = yes
+            reject = no
+          })
+      )
+      await renderEditor()
+      await browse()
+      await browse()
+      await act(async () => {
+        if (outcome === 'resolve') resolve({ kind: 'adopt', dataRoot: '/a/OpenScience' })
+        else reject(new Error('late failure'))
+      })
+      expect(container.querySelector('input')?.value).toBe('/b')
+      expect(container.textContent).not.toContain('Use this folder')
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    }
+  )
+
+  it.each(['picker', 'default', 'inspection'] as const)(
+    'invalidates pending %s work on cancel',
+    async (operation) => {
+      let finish!: () => void
+      await renderEditor()
+      if (operation === 'picker') {
+        vi.mocked(window.api.storage.pickDirectory).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = () => resolve('/late')
+            })
+        )
+        await browse()
+      } else {
+        vi.mocked(window.api.storage.inspectDataRoot).mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = () => resolve({ kind: 'adopt', dataRoot: '/late/OpenScience' })
+            })
+        )
+        if (operation === 'default')
+          await act(async () =>
+            clickButton(
+              (b) => b.textContent?.includes('move it back to the default location') ?? false
+            )
+          )
+        else {
+          vi.mocked(window.api.storage.pickDirectory).mockResolvedValueOnce('/late')
+          await browse()
+        }
+      }
+      await act(async () => clickButton((b) => b.textContent?.trim() === 'Cancel'))
+      await act(async () => finish())
+      expect(container.querySelector('input')).toBeNull()
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+      await openEditor()
+      expect(container.querySelector('input')?.value).toBe('')
+      expect(container.textContent).not.toContain('Use this folder')
+    }
+  )
+
+  it('invalidates an old classification as soon as typing starts', async () => {
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/candidate')
+    await renderEditor()
+    await browse()
+    vi.mocked(window.api.storage.inspectDataRoot).mockImplementation(() => new Promise(() => {}))
+    await act(async () =>
+      fireEvent.change(container.querySelector('input')!, { target: { value: '/other' } })
+    )
+    expect(
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Change location'
+      )?.disabled
+    ).toBe(true)
+  })
+
+  it('explains retained workspaces, pending cleanup and the limits of usage sizes', async () => {
+    useStorageInfoStore.setState({
+      status: richInfo,
+      info: {
+        ...richInfo,
+        cleanupPending: true,
+        usage: {
+          totalBytes: 17,
+          categories: [
+            {
+              key: 'workspaces',
+              bytes: 17,
+              children: [{ name: 'retained', bytes: 17, retainedAfterDelete: true }]
+            }
+          ]
+        }
+      },
+      scannedAt: Date.now()
+    })
+    await act(async () => root.render(<StoragePanel />))
+    clickButton((b) => b.textContent?.includes('Session workspaces') ?? false)
+    expect(container.textContent).toContain('Retained after deletion')
+    expect(container.textContent).toContain('Cleanup from an earlier move is still pending.')
+    expect(container.textContent).toContain('They are not estimates of space freed by deletion.')
+    expect(container.querySelector('button[aria-label="Open folder"]')).not.toBeNull()
+  })
+
   it('opens an individual retained Session workspace from its usage row', async () => {
     useStorageInfoStore.setState({
       status: richInfo,
@@ -397,7 +616,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail
         }
       ])
@@ -421,7 +640,7 @@ describe('StoragePanel', () => {
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.',
+        summary: 'Open-Science can write to its private data folder.',
         detail: '/home/u/.open-science'
       }
     ])
@@ -435,7 +654,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail: '/home/u/.open-science — EACCES: permission denied'
         }
       ]),
@@ -447,8 +666,8 @@ describe('StoragePanel', () => {
     const repairNotice = container.querySelector<HTMLElement>(
       '[aria-label="Application storage"] .space-y-3'
     )
-    expect(repairNotice?.className).toContain('border-amber-500/30')
-    expect(repairNotice?.className).toContain('bg-amber-500/5')
+    expect(repairNotice?.className).toContain('border-status-warning-foreground/30')
+    expect(repairNotice?.className).toContain('bg-status-warning-surface/5')
     expect(repairNotice?.querySelector('.lucide-triangle-alert')).not.toBeNull()
 
     const recheck = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -459,8 +678,8 @@ describe('StoragePanel', () => {
     const repairedNotice = container.querySelector<HTMLElement>(
       '[aria-label="Application storage"] .space-y-3'
     )
-    expect(repairedNotice?.className).not.toContain('border-amber-500/30')
-    expect(repairedNotice?.className).not.toContain('bg-amber-500/5')
+    expect(repairedNotice?.className).not.toContain('border-status-warning-foreground/30')
+    expect(repairedNotice?.className).not.toContain('bg-status-warning-surface/5')
     expect(repairedNotice?.querySelector('.lucide-triangle-alert')).toBeNull()
     expect(repairedNotice?.querySelector('.text-emerald-600')).not.toBeNull()
   })
@@ -471,7 +690,7 @@ describe('StoragePanel', () => {
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.',
+        summary: 'Open-Science can write to its private data folder.',
         detail: '/home/u/.open-science'
       },
       {
@@ -492,7 +711,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail: '/home/u/.open-science — EACCES: permission denied'
         }
       ]),
@@ -526,7 +745,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.',
+          summary: 'Open-Science cannot write to its private data folder.',
           detail: '/home/u/.open-science — EACCES: permission denied'
         }
       ]),
@@ -550,7 +769,7 @@ describe('StoragePanel', () => {
         id: 'storage',
         label: 'App storage permission',
         status: 'passed',
-        summary: 'Open Science can write to its private data folder.'
+        summary: 'Open-Science can write to its private data folder.'
       },
       {
         id: 'agent',
@@ -569,7 +788,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ]),
       checkEnvironment
@@ -589,7 +808,7 @@ describe('StoragePanel', () => {
             id: 'storage',
             label: 'App storage permission',
             status: 'passed',
-            summary: 'Open Science can write to its private data folder.'
+            summary: 'Open-Science can write to its private data folder.'
           }
         ])
       })
@@ -605,7 +824,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ])
     })
@@ -638,7 +857,7 @@ describe('StoragePanel', () => {
           id: 'storage',
           label: 'App storage permission',
           status: 'failed',
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ]),
       checkEnvironment
@@ -675,14 +894,14 @@ describe('StoragePanel', () => {
     })
 
     // The warning is gated behind the confirm step — not shown on the collapsed panel.
-    expect(container.textContent).not.toContain('Open Science manages this folder')
+    expect(container.textContent).not.toContain('Open-Science manages this folder')
 
     await act(async () => {
       clickButton((button) => button.textContent?.trim() === 'Change location')
       await Promise.resolve()
     })
 
-    expect(document.body.textContent).toContain('Open Science manages this folder')
+    expect(document.body.textContent).toContain('Open-Science manages this folder')
     expect(document.body.textContent).toContain(
       "Don't move, rename, or delete files inside it — doing so can break your projects and history."
     )
@@ -939,7 +1158,7 @@ describe('StoragePanel', () => {
       await Promise.resolve()
     })
 
-    expect(container.textContent).toContain('already contains Open Science data')
+    expect(container.textContent).toContain('already contains Open-Science data')
     expect(container.textContent).toContain('Data will be stored in')
     expect(container.textContent).toContain('/mnt/existing/OpenScience')
     expect(
@@ -969,7 +1188,7 @@ describe('StoragePanel', () => {
           api: { storage: { setDataRootAndRelaunch: ReturnType<typeof vi.fn> } }
         }
       ).api.storage.setDataRootAndRelaunch
-    ).toHaveBeenCalledWith('/mnt/existing', false)
+    ).toHaveBeenCalledWith('/mnt/existing/OpenScience', false, undefined)
     // Adopt never touches the migration engine.
     expect(
       (window as unknown as { api: { storage: { migrate: ReturnType<typeof vi.fn> } } }).api.storage
@@ -1119,13 +1338,13 @@ describe('StoragePanel', () => {
     expect(container.textContent).not.toContain('move it back to the default location')
   })
 
-  it('return-to-default inspects the default parent and opens the move-back flow', async () => {
+  it('return-to-default inspects the exact default destination and opens the move-back flow', async () => {
     ;(
       window as unknown as { api: { storage: { getInfo: ReturnType<typeof vi.fn> } } }
     ).api.storage.getInfo.mockResolvedValue({
       dataRoot: '/mnt/data/OpenScience',
       isDefault: false,
-      defaultDataRoot: '/home/u/OpenScience',
+      defaultDataRoot: '/home/u/Open-Science',
       defaultParent: '/home/u',
       usage: { categories: [], totalBytes: 12_000_000 },
       availableBytes: 500_000_000_000
@@ -1135,7 +1354,7 @@ describe('StoragePanel', () => {
       window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }
     ).api.storage.inspectDataRoot.mockResolvedValue({
       kind: 'move',
-      dataRoot: '/home/u/OpenScience'
+      dataRoot: '/home/u/Open-Science'
     })
 
     await act(async () => {
@@ -1153,15 +1372,73 @@ describe('StoragePanel', () => {
       await Promise.resolve()
     })
 
-    // It classified the default parent, not some browsed path.
+    // The displayed destination is the exact input to inspection and execution.
     expect(
       (window as unknown as { api: { storage: { inspectDataRoot: ReturnType<typeof vi.fn> } } }).api
         .storage.inspectDataRoot
-    ).toHaveBeenCalledWith('/home/u')
+    ).toHaveBeenCalledWith('/home/u/Open-Science')
+    expect(window.api.storage.migrate).toHaveBeenCalledWith('/home/u/Open-Science', undefined)
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Restart now')!
+        .click()
+    })
+    expect(window.api.storage.commitAndRelaunch).toHaveBeenCalledWith('/home/u/Open-Science')
+
     // A 'move' opens the migration modal, which detects running sessions before moving anything.
     expect(
       (window as unknown as { api: { storage: { detectActive: ReturnType<typeof vi.fn> } } }).api
         .storage.detectActive
     ).toHaveBeenCalled()
   })
+  it.each(['adopt', 'recover'] as const)(
+    'uses the displayed default for the %s confirmation',
+    async (kind) => {
+      const target = '/home/u/Open-Science-DEV'
+      vi.mocked(window.api.storage.getInfo).mockResolvedValue({
+        ...richInfo,
+        dataRoot: '/home/u/OpenScience-DEV',
+        isDefault: false,
+        defaultDataRoot: target
+      })
+      vi.mocked(window.api.storage.inspectDataRoot).mockResolvedValue(
+        kind === 'adopt'
+          ? { kind, dataRoot: target }
+          : { kind, dataRoot: target, recoveryStatus: 'verified' }
+      )
+      await act(async () => root.render(<StoragePanel />))
+      await openEditor()
+      await act(async () =>
+        clickButton(
+          (button) => button.textContent?.includes('move it back to the default location') ?? false
+        )
+      )
+      expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith(target)
+      if (kind === 'adopt') {
+        expect(document.body.textContent).toContain(target)
+        await act(async () => {
+          Array.from(
+            document.body
+              .querySelector('[role="alertdialog"]')!
+              .querySelectorAll<HTMLButtonElement>('button')
+          )
+            .find((button) => button.textContent?.trim() === 'Use this folder')!
+            .click()
+        })
+        expect(window.api.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(
+          target,
+          false,
+          undefined
+        )
+        expect(window.api.storage.migrate).not.toHaveBeenCalled()
+      } else {
+        await act(async () => {
+          Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+            .find((button) => button.textContent?.trim() === 'Finish move')!
+            .click()
+        })
+        expect(window.api.storage.commitAndRelaunch).toHaveBeenCalledWith(target)
+      }
+    }
+  )
 })

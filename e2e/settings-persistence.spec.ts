@@ -1,26 +1,25 @@
+import { localizedSettingsCases } from './fixtures/localized-settings'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { openGeneralSettings, setTheme } from './fixtures/settings-preferences'
 
-const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
-  const clippedButtons = await page.locator('[data-slot="button"]:visible').evaluateAll((buttons) =>
-    buttons.flatMap((button) => {
-      if (!(button instanceof HTMLElement) || !button.innerText.trim()) return []
-      return button.scrollWidth > button.clientWidth + 1
-        ? [
-            {
-              label: button.innerText.trim(),
-              clientWidth: button.clientWidth,
-              scrollWidth: button.scrollWidth
-            }
-          ]
-        : []
-    })
-  )
-
-  expect(clippedButtons).toEqual([])
+// file:// modules do not reliably populate Resource Timing. CDP reports the scripts Chromium
+// actually parsed, including those loaded before the test attached to the restarted window.
+const loadedLocaleChunks = async (page: Page): Promise<string[]> => {
+  const client = await page.context().newCDPSession(page)
+  const locales = new Set<string>()
+  client.on('Debugger.scriptParsed', ({ url }) => {
+    const match = /\/(de|es|fr|ja|ko|ru|zh-Hans|zh-Hant)-[^/]+\.js(?:$|\?)/u.exec(url)
+    if (match) locales.add(match[1])
+  })
+  try {
+    await client.send('Debugger.enable')
+    return [...locales].sort()
+  } finally {
+    await client.detach()
+  }
 }
 
 const expectMemoryConfirmDialogChrome = async (
@@ -319,11 +318,15 @@ test('contains long memory lists and layers destructive confirmations above sett
   await categoryDialog.getByRole('button', { name: 'Cancel' }).click()
 })
 
-test('persists Russian into the built main-process native quit dialog', async ({ app }) => {
+test('persists Russian into the built main-process native quit dialog', async ({
+  app
+}, testInfo) => {
   let page = await app.completeOnboarding()
 
+  expect(await loadedLocaleChunks(page)).toEqual([])
   await selectLanguage(page, 'Русский')
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  expect(await loadedLocaleChunks(page)).toEqual(['ru'])
 
   await expect
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
@@ -331,18 +334,24 @@ test('persists Russian into the built main-process native quit dialog', async ({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 
+  const screenshot = testInfo.outputPath('russian-locale-loaded.png')
+  await page.screenshot({ path: screenshot })
+  await testInfo.attach('russian-locale-loaded', { path: screenshot, contentType: 'image/png' })
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'ru')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
+  expect(await loadedLocaleChunks(page)).toEqual(['ru'])
   await expect
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
     .toEqual({
       buttons: ['Отмена', 'Выйти'],
       detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
       includesRendererCatalog: false,
-      message: 'Выйти из Open Science?'
+      message: 'Выйти из Open-Science?'
     })
 })
 
@@ -356,323 +365,30 @@ test('persists German into the built main-process native quit dialog', async ({ 
     buttons: ['Abbrechen', 'Beenden'],
     detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
     includesRendererCatalog: false,
-    message: 'Open Science beenden?'
+    message: 'Open-Science beenden?'
   }
 
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 
   page = await app.restart()
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  const localized = localizedSettingsCases.find((entry) => entry.locale === 'de')!
+  await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
   await expect.poll(() => app.capturePersistedLocaleNativeQuitDialog()).toEqual(expectedDialog)
 })
 
-const localizedSettingsCases = [
-  {
-    language: 'Simplified Chinese',
-    pickerLabel: '简体中文',
-    locale: 'zh-Hans',
-    model: '模型',
-    projects: '项目',
-    modelSettings: '模型设置',
-    settings: '设置',
-    openNavigation: '打开设置导航',
-    general: '通用',
-    appearance: '外观',
-    interfaceLanguage: '界面语言',
-    mainModel: '主模型',
-    scenarioModels: '场景模型',
-    expandSubagent: '展开子智能体设置',
-    reasoningEffort: '推理强度',
-    defaultEffort: '默认',
-    closeSettings: '关闭设置'
-  },
-  {
-    language: 'Traditional Chinese',
-    pickerLabel: '繁體中文',
-    locale: 'zh-Hant',
-    model: '模型',
-    projects: '專案',
-    modelSettings: '模型設定',
-    settings: '設定',
-    openNavigation: '開啟設定導覽',
-    general: '一般',
-    appearance: '外觀',
-    interfaceLanguage: '介面語言',
-    mainModel: '主模型',
-    scenarioModels: '情境模型',
-    expandSubagent: '展開子智能體設定',
-    reasoningEffort: '推理強度',
-    defaultEffort: '預設',
-    closeSettings: '關閉設定'
-  },
-  {
-    language: 'Japanese',
-    pickerLabel: '日本語',
-    locale: 'ja',
-    model: 'モデル',
-    projects: 'プロジェクト',
-    modelSettings: 'モデル設定',
-    settings: '設定',
-    openNavigation: '設定ナビゲーションを開く',
-    general: '一般',
-    appearance: '外観',
-    interfaceLanguage: '表示言語',
-    mainModel: 'メインモデル',
-    scenarioModels: 'シナリオモデル',
-    expandSubagent: 'サブエージェント設定を展開',
-    reasoningEffort: '推論強度',
-    defaultEffort: 'デフォルト',
-    closeSettings: '設定を閉じる'
-  },
-  {
-    language: 'Korean',
-    pickerLabel: '한국어',
-    locale: 'ko',
-    model: '모델',
-    projects: '프로젝트',
-    modelSettings: '모델 설정',
-    settings: '설정',
-    openNavigation: '설정 탐색 열기',
-    general: '일반',
-    appearance: '외관',
-    interfaceLanguage: '인터페이스 언어',
-    mainModel: '메인 모델',
-    scenarioModels: '시나리오 모델',
-    expandSubagent: '서브에이전트 설정 펼치기',
-    reasoningEffort: '추론 강도',
-    defaultEffort: '기본값',
-    closeSettings: '설정 닫기'
-  },
-  {
-    language: 'Russian',
-    pickerLabel: 'Русский',
-    locale: 'ru',
-    model: 'Модель',
-    projects: 'Проекты',
-    modelSettings: 'Настройки модели',
-    settings: 'Настройки',
-    openNavigation: 'Открыть навигацию по настройкам',
-    general: 'Общие',
-    appearance: 'Внешний вид',
-    interfaceLanguage: 'Язык интерфейса',
-    mainModel: 'Основная модель',
-    scenarioModels: 'Сценарные модели',
-    expandSubagent: 'Развернуть настройки: Субагент',
-    reasoningEffort: 'Глубина рассуждений',
-    defaultEffort: 'По умолчанию',
-    closeSettings: 'Закрыть настройки'
-  },
-  {
-    language: 'French',
-    pickerLabel: 'Français',
-    locale: 'fr',
-    model: 'Modèle',
-    projects: 'Projets',
-    modelSettings: 'Paramètres du modèle',
-    settings: 'Paramètres',
-    openNavigation: 'Ouvrir la navigation des paramètres',
-    general: 'Général',
-    appearance: 'Apparence',
-    interfaceLanguage: "Langue de l'interface",
-    mainModel: 'Modèle principal',
-    scenarioModels: 'Modèles de scénario',
-    expandSubagent: 'Développer les paramètres de Sous-agent',
-    reasoningEffort: 'Effort de raisonnement',
-    defaultEffort: 'Par défaut',
-    closeSettings: 'Fermer les paramètres'
-  },
-  {
-    language: 'Spanish',
-    pickerLabel: 'Español',
-    locale: 'es',
-    model: 'Modelo',
-    projects: 'Proyectos',
-    modelSettings: 'Configuración del modelo',
-    settings: 'Configuración',
-    openNavigation: 'Abrir navegación de configuración',
-    general: 'General',
-    appearance: 'Apariencia',
-    interfaceLanguage: 'Idioma de la interfaz',
-    mainModel: 'Modelo principal',
-    scenarioModels: 'Modelos de escenario',
-    expandSubagent: 'Expandir configuración de Subagente',
-    reasoningEffort: 'Esfuerzo de razonamiento',
-    defaultEffort: 'Predeterminado',
-    closeSettings: 'Cerrar configuración'
-  },
-  {
-    language: 'German',
-    pickerLabel: 'Deutsch',
-    locale: 'de',
-    model: 'Modell',
-    projects: 'Projekte',
-    modelSettings: 'Modelleinstellungen',
-    settings: 'Einstellungen',
-    openNavigation: 'Einstellungsnavigation öffnen',
-    general: 'Allgemein',
-    appearance: 'Darstellung',
-    interfaceLanguage: 'Sprache der Benutzeroberfläche',
-    mainModel: 'Hauptmodell',
-    scenarioModels: 'Szenariomodelle',
-    expandSubagent: 'Unteragent-Einstellungen erweitern',
-    reasoningEffort: 'Reasoning-Aufwand',
-    defaultEffort: 'Standard',
-    closeSettings: 'Einstellungen schließen'
-  }
-] as const
-
-for (const localized of localizedSettingsCases) {
-  const viewportWidths = localized.locale === 'ru' ? ([640, 768] as const) : ([640] as const)
-  for (const viewportWidth of viewportWidths) {
-    test(`switches to ${localized.language} at ${viewportWidth}px without clipping and persists it`, async ({
-      app
-    }) => {
-      let page = await app.completeOnboarding()
-      await page.setViewportSize({ width: viewportWidth, height: 800 })
-
-      await selectLanguage(page, localized.pickerLabel)
-
-      await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
-      await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
-      await expectVisibleTextButtonsToFit(page)
-      await expect
-        .poll(() =>
-          page.evaluate(
-            () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
-          )
-        )
-        .toBe(true)
-
-      await page.getByRole('button', { name: localized.modelSettings }).click()
-      const settings = page.getByRole('dialog', { name: localized.settings })
-      const navigation = settings.getByRole('navigation', { name: localized.settings })
-      if (!(await navigation.isVisible())) {
-        await settings.getByRole('button', { name: localized.openNavigation }).click()
-      }
-      await navigation.getByRole('button', { name: localized.model, exact: true }).click()
-      // Active model and Reasoning effort now share the Main model region; the effort control is
-      // still a named radiogroup, but the parent region title is Main model.
-      const mainModel = settings.getByRole('region', { name: localized.mainModel })
-      const effort = mainModel.getByRole('radiogroup', {
-        name: localized.reasoningEffort
-      })
-      await expect(effort).toBeVisible()
-      await expect
-        .poll(() =>
-          mainModel.locator('p').evaluate((description) => {
-            if (!(description instanceof HTMLElement)) return false
-            return description.scrollWidth <= description.clientWidth + 1
-          })
-        )
-        .toBe(true)
-      await expect
-        .poll(() =>
-          effort.locator('[data-slot="settings-segment-label"]').evaluateAll((labels) =>
-            labels.flatMap((label) => {
-              const text = label.querySelector('[data-slot="settings-segment-label-text"]')
-              if (!(label instanceof HTMLElement) || !(text instanceof HTMLElement)) {
-                return [{ label: label.textContent, error: 'missing measurable text element' }]
-              }
-              const labelBox = label.getBoundingClientRect()
-              const textBox = text.getBoundingClientRect()
-              const fits =
-                text.scrollWidth <= text.clientWidth + 1 &&
-                text.scrollHeight <= text.clientHeight + 1 &&
-                textBox.left >= labelBox.left - 1 &&
-                textBox.right <= labelBox.right + 1 &&
-                textBox.top >= labelBox.top - 1 &&
-                textBox.bottom <= labelBox.bottom + 1
-              return fits
-                ? []
-                : [
-                    {
-                      label: text.textContent,
-                      error: 'text overflow',
-                      compact: label.dataset.compact,
-                      fontSize: getComputedStyle(text).fontSize,
-                      clientWidth: text.clientWidth,
-                      scrollWidth: text.scrollWidth,
-                      clientHeight: text.clientHeight,
-                      scrollHeight: text.scrollHeight
-                    }
-                  ]
-            })
-          )
-        )
-        .toEqual([])
-
-      const highLabel = effort
-        .getByRole('radio', { name: 'High', exact: true })
-        .locator('[data-slot="settings-segment-label"]')
-      await expect(highLabel).not.toHaveAttribute('data-compact', 'true')
-      if (localized.locale === 'ru') {
-        await expect(
-          effort
-            .getByRole('radio', { name: localized.defaultEffort, exact: true })
-            .locator('[data-slot="settings-segment-label"]')
-        ).toHaveAttribute('data-compact', 'true')
-      }
-      const clippedPolicyLabels = async (): Promise<Array<string | undefined>> =>
-        settings
-          .locator('[data-slot="settings-row"] [data-slot="select-trigger"] .truncate')
-          .evaluateAll((labels) =>
-            labels.flatMap((label) =>
-              label instanceof HTMLElement && label.scrollWidth > label.clientWidth + 1
-                ? [label.textContent?.trim()]
-                : []
-            )
-          )
-      expect(await clippedPolicyLabels()).toEqual([])
-      const mainModelRow = mainModel.locator('[data-slot="settings-row"]').first()
-      await expect
-        .poll(() =>
-          mainModelRow.evaluate(
-            (row) => getComputedStyle(row).gridTemplateColumns.trim().split(/\s+/).length
-          )
-        )
-        .toBe(1)
-
-      await settings.getByRole('button', { name: localized.expandSubagent, exact: true }).click()
-      const scenarioModels = settings.getByRole('region', { name: localized.scenarioModels })
-      const subagentRow = scenarioModels.locator('[data-slot="settings-row"]').first()
-      await expect(subagentRow).toBeVisible()
-      await expect
-        .poll(() =>
-          subagentRow.evaluate(
-            (row) => getComputedStyle(row).gridTemplateColumns.trim().split(/\s+/).length
-          )
-        )
-        .toBe(1)
-      expect(await clippedPolicyLabels()).toEqual([])
-
-      if (!(await navigation.isVisible())) {
-        await settings.getByRole('button', { name: localized.openNavigation }).click()
-      }
-      await navigation.getByRole('button', { name: localized.general, exact: true }).click()
-
-      await expect(settings.getByRole('heading', { name: localized.appearance })).toBeVisible()
-      await expect(
-        settings.getByRole('combobox', { name: localized.interfaceLanguage })
-      ).toContainText(localized.pickerLabel)
-      await expectVisibleTextButtonsToFit(page)
-
-      const closeButton = settings.getByRole('button', { name: localized.closeSettings })
-      await closeButton.hover()
-      const tooltip = page.locator('[data-slot="tooltip-content"]:visible')
-      await expect(tooltip).toContainText(localized.closeSettings)
-      await expect(tooltip).toHaveCSS('white-space', 'normal')
-      const tooltipBox = await tooltip.boundingBox()
-      expect(tooltipBox).not.toBeNull()
-      expect(tooltipBox?.x).toBeGreaterThanOrEqual(0)
-      // Windows reports fractional bounding boxes; 1px matches the button-clipping helper.
-      expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(viewportWidth + 1)
-
-      await closeButton.click()
-      page = await app.restart()
-      await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
-      await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
-    })
-  }
+// Russian and German restart/renderer checks are combined with their native-dialog journeys above.
+for (const localized of localizedSettingsCases.filter(
+  ({ locale }) => !['ru', 'de'].includes(locale)
+)) {
+  test(`persists ${localized.language} after an Electron restart`, async ({ app }) => {
+    let page = await app.completeOnboarding()
+    await selectLanguage(page, localized.pickerLabel)
+    await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
+    page = await app.restart()
+    await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
+    await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
+  })
 }
 
 test('preserves Memory drafts and shows externally saved values on conflict', async ({

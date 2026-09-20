@@ -1,4 +1,26 @@
-import { LITERATURE_COLLECTION_NAME_CONFLICT } from '../../../../shared/literature'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import {
+  LiteraturePdfBatchImportDialog,
+  type PdfImportDestination
+} from './LiteraturePdfBatchImportDialog'
+import {
+  parseLiteratureDeletionError,
+  type LiteratureDeletionDiagnostic
+} from '../../../../shared/literature-deletion'
+import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { readLiteratureSelectionPage } from './literature-read-pages'
+import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
+import { useLiteratureChanges } from './useLiteratureChanges'
+import type { TFunction } from 'i18next'
+import { LiteratureSources } from './LiteratureSources'
+import { LiteratureAttachments } from './LiteratureAttachments'
+import { LiteratureAttachmentOperations } from './LiteratureAttachmentOperations'
+import { useAttachmentOperations } from './literature-attachment-operations'
+import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
+import {
+  LITERATURE_COLLECTION_NAME_CONFLICT,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT
+} from '../../../../shared/literature'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { AlertDialog } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
@@ -54,8 +76,11 @@ import { useTranslation } from 'react-i18next'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
+import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
+import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -91,13 +116,14 @@ import { cn } from '@/lib/utils'
 import { useNavigationStore, type PdfReadingDocument } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
-import { formatBytes } from '../../../../shared/update'
 import { LiteratureMergeReview } from './LiteratureMergeReview'
 import { LiteratureBatchLookupDialog, type BatchLookupMode } from './LiteratureBatchLookupDialog'
 import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
 import { LiteratureTable, LiteratureTextTooltip } from './LiteratureTable'
 import { buildLiteratureMergeItem, mergeScalarFields } from './literature-merge'
 import type {
+  LiteratureCatalogCommand,
+  LiteratureCatalogReceipt,
   LiteratureCatalogSearchRequest,
   LiteratureCatalogSearchPage,
   LiteratureCollectionView,
@@ -117,7 +143,7 @@ import {
   LITERATURE_RECORD_IMPORT_MAX_BYTES,
   normalizeLiteratureIdentifierValue
 } from '../../../../shared/literature'
-import { formatUploadSizeLimit } from '../../../../shared/uploads'
+import { formatUploadSizeLimit, type UploadTransferProgress } from '../../../../shared/uploads'
 import { stageComposerFile } from '../workspace/composer-upload-transfer'
 import { FilePreviewDialog } from '../workspace/FilePreviewDialog'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../workspace/preview-file-item'
@@ -147,6 +173,7 @@ import { LiteratureDetailLinkList } from './LiteratureDetailLinkList'
 import { LiteratureMetadataLookup } from './LiteratureMetadataLookup'
 import { useLiteratureEntries } from './useLiteratureEntries'
 import { useLiteratureMetadata } from './useLiteratureMetadata'
+import { LiteratureLibraryCount } from './LiteratureLibraryCount'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
 import { LiteratureSearchInput } from './LiteratureSearchInput'
@@ -182,11 +209,25 @@ type PendingLiteratureReading = readonly PdfReadingDocument[]
 type DismissedCandidateUndo = Readonly<{
   candidateIds: readonly string[]
   detail: string
+  needsRecheck?: boolean
 }>
 
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 const CHILD_LAYER_DISMISS_GUARD_MS = 1_000
+
+const pdfImportErrorMessage = (error: unknown, t: TFunction): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.includes('[pdf-password]'))
+    return t('This PDF requires a password. Add an unlocked copy.')
+  if (message.includes('[pdf-invalid]'))
+    return t('This PDF is damaged or invalid. Select another file.')
+  if (message.includes('[pdf-unreadable]'))
+    return t(
+      'This PDF could not be parsed. It may use unsupported features. Select another file or try again.'
+    )
+  return t('PDF could not be added.')
+}
 
 const hasLiteratureDetailChildLayer = (): boolean =>
   Boolean(
@@ -231,6 +272,7 @@ const LITERATURE_DEFAULT_PAGE_SIZE = 25
 const LITERATURE_PAGE_SIZES = [25, 50, 100] as const
 const LITERATURE_SIDEBAR_GROUP_LIMIT = 5
 const LITERATURE_BATCH_COMMAND_SIZE = 200
+const LITERATURE_INBOX_COMMAND_SIZE = 100
 
 type LiteratureSelectionSnapshot = Readonly<{
   selectedIds: ReadonlySet<string>
@@ -391,18 +433,21 @@ const LiteratureSelectPageCheckbox = ({
   label: string
   store: LiteratureSelectionStore
 }>): React.JSX.Element => {
-  const allSelected = useSyncExternalStore(
+  const selectedCount = useSyncExternalStore(
     store.subscribe,
     () => {
       const snapshot = store.getSnapshot()
-      return (
-        itemIds.length > 0 && itemIds.every((itemId) => isLiteratureItemSelected(snapshot, itemId))
-      )
+      return itemIds.filter((itemId) => isLiteratureItemSelected(snapshot, itemId)).length
     },
-    () => false
+    () => 0
   )
+  const allSelected = itemIds.length > 0 && selectedCount === itemIds.length
+  const mixed = selectedCount > 0 && !allSelected
   return (
     <input
+      ref={(input) => {
+        if (input) input.indeterminate = mixed
+      }}
       type="checkbox"
       checked={allSelected}
       disabled={disabled}
@@ -628,12 +673,12 @@ function LiteratureAddMenu({
             <span className="text-xs text-muted-foreground">{t('Create metadata manually')}</span>
           </span>
         </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2.5" aria-label={t('Import PDF')} onSelect={onImportPdf}>
+        <DropdownMenuItem className="gap-2.5" aria-label={t('Import PDFs')} onSelect={onImportPdf}>
           <FilePlus2 className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex flex-col">
-            <span>{t('Import PDF')}</span>
+            <span>{t('Import PDFs')}</span>
             <span className="text-xs text-muted-foreground">
-              {t('Create a reference from a PDF')}
+              {t('Create references from PDF files')}
             </span>
           </span>
         </DropdownMenuItem>
@@ -805,8 +850,10 @@ function LiteratureLibraryActionsMenu({
 
 function LiteratureRatingControl({
   value,
+  disabled = false,
   onCommit
 }: Readonly<{
+  disabled?: boolean
   value: number
   onCommit: (rating: number) => Promise<void>
 }>): React.JSX.Element {
@@ -836,7 +883,7 @@ function LiteratureRatingControl({
           <button
             key={option}
             type="button"
-            disabled={isSaving}
+            disabled={isSaving || disabled}
             aria-label={t('Set rating to {{rating}}', { rating: option })}
             aria-pressed={active}
             className="rounded-sm p-0.5 text-muted-foreground outline-none transition-colors hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
@@ -860,8 +907,10 @@ function LiteratureTypeControl({
   value,
   title,
   labels,
+  disabled = false,
   onCommit
 }: Readonly<{
+  disabled?: boolean
   value: LiteratureItemType
   title: string
   labels: Record<LiteratureItemType, string>
@@ -888,7 +937,7 @@ function LiteratureTypeControl({
   return (
     <Select
       value={itemType}
-      disabled={isSaving}
+      disabled={isSaving || disabled}
       onValueChange={(nextValue) => void commitItemType(nextValue as LiteratureItemType)}
     >
       <SelectTrigger
@@ -910,56 +959,126 @@ function LiteratureTypeControl({
 }
 
 function LiteratureNoteControl({
-  value,
-  title,
+  entry,
+  disabled = false,
   onCommit
 }: Readonly<{
-  value: string
-  title: string
-  onCommit: (note: string) => Promise<void>
+  disabled?: boolean
+  entry: LiteratureItemView
+  onCommit: (
+    base: LiteratureItemView,
+    note: string,
+    onPersisted: (reload: () => Promise<LiteratureItemView>) => void
+  ) => Promise<void>
 }>): React.JSX.Element {
   const { t } = useTranslation()
-  const [draft, setDraft] = useState(value)
+  const [edit, setEdit] = useState<{ base: LiteratureItemView; draft: string }>()
   const [isSaving, setIsSaving] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const savingRef = useRef(false)
+  const recoveryRef = useRef<
+    { note: string; reload: () => Promise<LiteratureItemView> } | undefined
+  >(undefined)
   const cancelNextBlurRef = useRef(false)
+  const dirty = edit !== undefined && edit.draft !== (edit.base.item.personalNote ?? '')
+  // A dirty draft keeps its original full item and revision, including across rating refreshes.
+  const base = dirty ? edit.base : entry
+  const draft = dirty ? edit.draft : (entry.item.personalNote ?? '')
 
   const commitNote = async (): Promise<void> => {
     if (cancelNextBlurRef.current) {
       cancelNextBlurRef.current = false
       return
     }
+    if (disabled || savingRef.current) return
     const note = draft.trim()
-    setDraft(note)
-    if (isSaving || note === value) return
+    if (!recoveryRef.current && note === (base.item.personalNote ?? '')) {
+      setEdit(undefined)
+      setFailed(false)
+      return
+    }
+    savingRef.current = true
     setIsSaving(true)
     try {
-      await onCommit(note)
+      const recovery = recoveryRef.current
+      if (recovery) {
+        const updated = await recovery.reload()
+        // New typing during recovery remains a draft. Only rebase it when the saved note
+        // still matches our acknowledged write; otherwise retain conflict protection.
+        setEdit(
+          note === recovery.note
+            ? undefined
+            : {
+                base: (updated.item.personalNote ?? '') === recovery.note ? updated : base,
+                draft
+              }
+        )
+      } else {
+        await onCommit(base, note, (reload) => {
+          recoveryRef.current = { note, reload }
+        })
+        setEdit(undefined)
+      }
+      recoveryRef.current = undefined
+      setFailed(false)
     } catch {
-      setDraft(value)
+      setFailed(true)
     } finally {
+      savingRef.current = false
       setIsSaving(false)
     }
   }
 
   return (
-    <Input
-      value={draft}
-      readOnly={isSaving}
-      aria-label={t('Note for {{title}}', { title })}
-      aria-busy={isSaving}
-      placeholder={t('Add a note…')}
-      className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') event.currentTarget.blur()
-        if (event.key === 'Escape') {
-          cancelNextBlurRef.current = true
-          setDraft(value)
-          event.currentTarget.blur()
-        }
-      }}
-      onBlur={() => void commitNote()}
-    />
+    <div>
+      <Input
+        value={draft}
+        readOnly={isSaving || disabled}
+        aria-label={t('Note for {{title}}', { title: entry.item.title })}
+        aria-busy={isSaving}
+        aria-invalid={failed || undefined}
+        placeholder={t('Add a note…')}
+        className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
+        onFocus={() => {
+          if (disabled) return
+          if (!dirty) setEdit({ base: entry, draft: entry.item.personalNote ?? '' })
+        }}
+        onChange={(event) => setEdit({ base, draft: event.currentTarget.value })}
+        onKeyDown={(event) => {
+          if (isSaving || event.nativeEvent.isComposing) return
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            cancelNextBlurRef.current = true
+            setEdit(undefined)
+            setFailed(false)
+            event.currentTarget.blur()
+          }
+        }}
+        onBlur={() => {
+          if (!disabled) void commitNote()
+        }}
+      />
+      {failed ? (
+        <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
+          <p
+            role="alert"
+            className="whitespace-normal [overflow-wrap:anywhere]"
+            title={t('Draft preserved. Escape to discard.')}
+          >
+            {t('Draft preserved. Escape to discard.')}
+          </p>
+          <button
+            type="button"
+            className="shrink-0 underline"
+            disabled={isSaving || disabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void commitNote()}
+          >
+            {t('Retry')}
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -981,7 +1100,7 @@ const typeFieldText = (item: LiteratureItemInput, field: string): string => {
 }
 
 const publicationSummary = (item: LiteratureItemInput): string => {
-  const publication = item.shortTitle || item.containerTitle
+  const publication = typeFieldText(item, 'journalAbbreviation') || item.containerTitle
   const date = item.issuedText || item.issuedYear?.toString() || ''
   const volume = typeFieldText(item, 'volume')
   const issue = typeFieldText(item, 'issue')
@@ -1139,13 +1258,13 @@ const titleFromPdfFilename = (filename: string): string =>
     .replace(/\.pdf$/iu, '')
     .replace(/[_-]+/gu, ' ')
     .replace(/\s+/gu, ' ')
-    .trim()
+    .trim() || filename
 
 const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-attention-seen'
 
 const LiteratureLibraryPage = (): React.JSX.Element => {
   const { i18n, t } = useTranslation()
-  const goHome = useNavigationStore((state) => state.goHome)
+  const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
   const startPdfReadingConversation = useNavigationStore(
     (state) => state.startPdfReadingConversation
   )
@@ -1172,7 +1291,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const loadTags = useTagStore((state) => state.load)
   const listenTags = useTagStore((state) => state.listen)
+  const tagRevision = useTagStore((state) => state.revision)
   const [section, setSection] = useState<LibrarySection>('inbox')
+  const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
   const [shouldCueLiteratureReview, setShouldCueLiteratureReview] = useState(
     () => window.sessionStorage.getItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY) !== 'true'
@@ -1195,6 +1316,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const clearSelection = useCallback((): void => selectionStore.clear(), [selectionStore])
   const yearFilter = useLiteratureYearFilter(clearSelection)
   const { from: filterYearFrom, to: filterYearTo } = yearFilter
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [restorePreview, setRestorePreview] = useState<{ itemIds: string[]; skipped: number }>()
+  const dialogRestorePreview = useRetainedDialogValue(restorePreview)
   const [isBatching, setIsBatching] = useState(false)
   const [batchLookup, setBatchLookup] = useState<{
     mode: BatchLookupMode
@@ -1202,6 +1326,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     jobId?: string
   }>()
   const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[]>([])
+  const [permanentDeleteFailed, setPermanentDeleteFailed] = useState(false)
+  const [permanentDeletionDiagnostic, setPermanentDeletionDiagnostic] =
+    useState<LiteratureDeletionDiagnostic>()
+  const [permanentDeleteResult, setPermanentDeleteResult] = useState<{
+    scope: string
+    cleanupPending: boolean
+    refreshFailed: boolean
+  }>()
+  const permanentDeleteScope = JSON.stringify([section, projectId, collectionId])
+  if (permanentDeleteResult && permanentDeleteResult.scope !== permanentDeleteScope) {
+    setPermanentDeleteResult(undefined)
+  }
   const [mergeOpen, setMergeOpen] = useState(false)
   const [mergeError, setMergeError] = useState<string>()
   const [duplicateMergeItems, setDuplicateMergeItems] = useState<LiteratureItemView[]>()
@@ -1210,6 +1346,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     duplicateCountRef.current?.setCount(count)
   }, [])
   const [duplicatesRevision, setDuplicatesRevision] = useState(0)
+  const [libraryCountRevision, setLibraryCountRevision] = useState(0)
   const [mergeSurvivorId, setMergeSurvivorId] = useState('')
   const [mergeFieldSources, setMergeFieldSources] = useState<Record<string, string>>({})
   const [items, setItems] = useState<LiteratureItemView[]>([])
@@ -1218,23 +1355,58 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [collections, setCollections] = useState<LiteratureCollectionView[]>([])
   const [projectItemCounts, setProjectItemCounts] = useState<Record<string, number>>({})
   const [selectedCandidate, setSelectedCandidate] = useState<LiteratureInboxCandidateView>()
+  const attachmentOperations = useAttachmentOperations((state) => state.operations)
   const [detailController] = useState(createLiteratureDetailController)
   const selectedItem = detailController.getSnapshot().item
   const selectedItemId = selectedItem?.id
-  const updateMetadataItem = useCallback((updated: LiteratureItemView): void => {
-    setItems((entries) => entries.map((entry) => (entry.id === updated.id ? updated : entry)))
-    setDuplicatesRevision((value) => value + 1)
-  }, [])
-  const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
-  const { changeMode: changeDetailMode } = metadata
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
   const [createItemError, setCreateItemError] = useState<string>()
+  const [createdItemId, setCreatedItemId] = useState<string>()
+  const creatingItemRef = useRef(false)
+  const pendingCreationRef = useRef<{
+    id: string
+    destination?: Extract<
+      LiteratureCatalogCommand,
+      { kind: 'set-project-item' | 'set-collection-item' }
+    >
+    projectId?: string
+    collectionId?: string
+    file?: File
+    pdfItem?: LiteratureItemView
+  }>(undefined)
+  const [pdfBatch, setPdfBatch] = useState<{ files: File[]; destination: PdfImportDestination }>()
   const [pendingImportPdf, setPendingImportPdf] = useState<File>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
-  const [recordImport, setRecordImport] = useState<RecordImportDraft>()
+  const [recordImport, setRecordImport] = useState<
+    RecordImportDraft & { destination: { name: string; projectId?: string; collectionId?: string } }
+  >()
   const [duplicatePolicy, setDuplicatePolicy] = useState<LiteratureDuplicatePolicy>('reuse')
+  const dialogItemEditor = useRetainedDialogValue(
+    useMemo(
+      () =>
+        isCreatingItem
+          ? {
+              file: pendingImportPdf,
+              draft: pendingImportDraft,
+              reading: isReadingImportMetadata,
+              error: createItemError,
+              duplicatePolicy,
+              createdItemId
+            }
+          : undefined,
+      [
+        isCreatingItem,
+        pendingImportPdf,
+        pendingImportDraft,
+        isReadingImportMetadata,
+        createItemError,
+        duplicatePolicy,
+        createdItemId
+      ]
+    )
+  )
   const recordImportRequest = useRef(0)
 
   const [isImportingRecords, setIsImportingRecords] = useState(false)
@@ -1245,13 +1417,120 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [entriesTotalCount, setEntriesTotalCount] = useState(0)
   const [nextEntriesOffset, setNextEntriesOffset] = useState<number>()
   const [error, setError] = useState<string>()
+  const [lifecycleFailure, setLifecycleFailure] = useState<{
+    itemIds: string[]
+    state: 'active' | 'deleted'
+    completed: number
+  }>()
+  const [linkFailure, setLinkFailure] = useState<{
+    command:
+      | Omit<Extract<LiteratureCatalogCommand, { kind: 'move-collection-items' }>, 'itemIds'>
+      | Omit<Extract<LiteratureCatalogCommand, { kind: 'set-project-items' }>, 'itemIds'>
+    itemIds: readonly string[]
+    completed: number
+    scopeKey: string
+    skipped: number
+  }>()
   const [linkedItemError, setLinkedItemError] = useState<string>()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
   const [dismissedCandidateUndo, setDismissedCandidateUndo] = useState<DismissedCandidateUndo>()
+  const [candidateUpdateUncertain, setCandidateUpdateUncertain] = useState(false)
+  const [candidateCountsFailed, setCandidateCountsFailed] = useState(false)
+  const [undoNotice, setUndoNotice] = useState<string>()
   const [collectionPendingDelete, setCollectionPendingDelete] = useState<LiteratureCollectionView>()
   const [isDeletingCollection, setIsDeletingCollection] = useState(false)
   const [collectionDeleteError, setCollectionDeleteError] = useState<string>()
   const [isAddingPdf, setIsAddingPdf] = useState(false)
+  const addingPdfRef = useRef(false)
+  const [pdfUpload, setPdfUpload] = useState<{
+    progress: UploadTransferProgress
+    phase: 'uploading' | 'cancelling' | 'saving'
+  }>()
+  const pdfUploadRef = useRef<{ controller: AbortController; transferId: string } | undefined>(
+    undefined
+  )
+  const uploadPageMountedRef = useRef(true)
+  const stagePdf = async (
+    file: File,
+    transferId: string
+  ): Promise<Awaited<ReturnType<typeof stageComposerFile>>> => {
+    const controller = new AbortController()
+    pdfUploadRef.current = { controller, transferId }
+    if (!uploadPageMountedRef.current) controller.abort()
+    return stageComposerFile(file, window.api.uploads, {
+      transferId,
+      name: file.name,
+      signal: controller.signal,
+      onProgress: (progress) =>
+        setPdfUpload({
+          progress,
+          phase: controller.signal.aborted ? 'cancelling' : 'uploading'
+        })
+    })
+  }
+  const finishPdfStaging = (): void => {
+    if (pdfUploadRef.current?.controller.signal.aborted)
+      throw new DOMException('Upload cancelled.', 'AbortError')
+    pdfUploadRef.current = undefined
+    setPdfUpload((current) => (current ? { ...current, phase: 'saving' } : current))
+  }
+  const cancelPdfUpload = (): void => {
+    const controller = pdfUploadRef.current?.controller
+    if (!controller || controller.signal.aborted || !pdfUpload || pdfUpload.phase !== 'uploading')
+      return
+    controller.abort()
+    setPdfUpload({ ...pdfUpload, phase: 'cancelling' })
+    void window.api.uploads
+      .abortTransfer({ transferId: pdfUpload.progress.transferId })
+      .catch(() => undefined)
+  }
+  useEffect(() => {
+    uploadPageMountedRef.current = true
+    return () => {
+      uploadPageMountedRef.current = false
+      const upload = pdfUploadRef.current
+      if (!upload) return
+      upload.controller.abort()
+      void window.api.uploads
+        .abortTransfer({ transferId: upload.transferId })
+        .catch(() => undefined)
+    }
+  }, [])
+  const pdfUploadNotice = pdfUpload ? (
+    <div className="shrink-0 space-y-2 border-b border-border px-5 py-3">
+      <p className="truncate text-sm font-medium">{pdfUpload.progress.name}</p>
+      <progress
+        className="h-2 w-full accent-primary"
+        aria-label={t('Upload progress')}
+        max={Math.max(1, pdfUpload.progress.totalBytes)}
+        value={pdfUpload.progress.receivedBytes}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <p role="status" className="text-xs text-muted-foreground">
+          {pdfUpload.phase === 'cancelling'
+            ? t('Cancelling…')
+            : pdfUpload.phase === 'saving'
+              ? t('Saving…')
+              : t('{{received}} / {{total}} bytes uploaded', {
+                  received: pdfUpload.progress.receivedBytes.toLocaleString(),
+                  total: pdfUpload.progress.totalBytes.toLocaleString()
+                })}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pdfUpload.phase !== 'uploading'}
+          onClick={cancelPdfUpload}
+        >
+          {t('Cancel upload')}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {t('Keep this window open until the upload finishes or is cancelled.')}
+      </p>
+    </div>
+  ) : null
   const [pdfError, setPdfError] = useState<string>()
   const [projectLinkError, setProjectLinkError] = useState<string>()
   const [collectionLinkError, setCollectionLinkError] = useState<string>()
@@ -1271,6 +1550,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     []
   )
   const [startingReadingProjectId, setStartingReadingProjectId] = useState<string>()
+  const [readingProjectQuery, setReadingProjectQuery] = useState('')
   const [readingProjectError, setReadingProjectError] = useState<string>()
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
   const [citationStylesOpen, setCitationStylesOpen] = useState(false)
@@ -1282,6 +1562,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const detailTagMenuOpenRef = useRef(false)
   const detailSelectOpenRef = useRef(false)
   const childLayerDismissGuardUntilRef = useRef(0)
+  const detailInitiatorRef = useRef<HTMLElement | null>(null)
+  const libraryEntryRef = useRef<HTMLButtonElement>(null)
+  const accessibilityId = useId()
   const selectedItemDialogRef = useRef<HTMLDivElement>(null)
   const collectionEditorRef = useRef<CollectionEditorDialogHandle>(null)
   const importMetadataGenerationRef = useRef(0)
@@ -1299,21 +1582,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       0
     )
 
-  const closeSelectedItemDetail = useCallback((): void => {
-    detailTagMenuOpenRef.current = false
-    detailSelectOpenRef.current = false
-    childLayerDismissGuardUntilRef.current = 0
-    detailController.close()
-    startTransition(() => {
-      setPdfError(undefined)
-      changeDetailMode('view')
-      setProjectLinkError(undefined)
-      setCollectionLinkError(undefined)
-    })
-  }, [changeDetailMode, detailController])
-
+  const [removedDetailItemId, setRemovedDetailItemId] = useState<string>()
+  const detailInteractionRef = useRef(0)
   const openSelectedItemDetail = useCallback(
-    (item: LiteratureItemView): void => {
+    (item: LiteratureItemView, initiator?: HTMLElement): void => {
+      if (item.deletedAt !== undefined) return
+      if (!detailController.getSnapshot().open) {
+        detailInitiatorRef.current =
+          initiator ??
+          (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+      }
+      detailInteractionRef.current += 1
+      setRemovedDetailItemId(undefined)
+      setError(undefined)
       detailController.open(item)
     },
     [detailController]
@@ -1333,12 +1614,59 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }, [])
 
+  const previousTablePreferences = useRef(initialTablePreferences)
   useEffect(() => {
-    window.localStorage.setItem(
-      LITERATURE_TABLE_PREFERENCES_KEY,
-      JSON.stringify({ order: tableColumnOrder, visible: [...visibleTableColumns] })
+    const previous = previousTablePreferences.current
+    const local = { order: tableColumnOrder, visible: [...visibleTableColumns] }
+    // External updates have already been adopted; do not echo them to other windows.
+    if (
+      local.order === previous.order &&
+      local.visible.length === previous.visible.length &&
+      local.visible.every((column) => previous.visible.includes(column))
     )
+      return
+    const latest = loadLiteratureTablePreferences()
+    const visible = new Set(latest.visible)
+    for (const column of literatureTableColumns) {
+      if (visibleTableColumns.has(column) !== previous.visible.includes(column)) {
+        if (visibleTableColumns.has(column)) visible.add(column)
+        else visible.delete(column)
+      }
+    }
+    const merged = {
+      order: tableColumnOrder === previous.order ? latest.order : tableColumnOrder,
+      visible: [...visible]
+    }
+    try {
+      window.localStorage.setItem(LITERATURE_TABLE_PREFERENCES_KEY, JSON.stringify(merged))
+    } catch {
+      // Non-critical preferences remain usable in memory; retry only on another edit.
+      return
+    }
+    previousTablePreferences.current = merged
+    if (merged.order !== tableColumnOrder) setTableColumnOrder(merged.order)
+    if (
+      merged.visible.length !== local.visible.length ||
+      merged.visible.some((column) => !visibleTableColumns.has(column))
+    )
+      setVisibleTableColumns(visible)
   }, [tableColumnOrder, visibleTableColumns])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (
+        event.storageArea !== window.localStorage ||
+        (event.key !== null && event.key !== LITERATURE_TABLE_PREFERENCES_KEY)
+      )
+        return
+      const preferences = loadLiteratureTablePreferences()
+      previousTablePreferences.current = preferences
+      setTableColumnOrder(preferences.order)
+      setVisibleTableColumns(new Set(preferences.visible))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   useEffect(() => {
     if (!projectsLoaded) void loadProjects()
@@ -1352,6 +1680,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   useEffect(() => {
     if (!pendingLiteratureItemId) return
     const itemId = pendingLiteratureItemId
+    const interaction = ++detailInteractionRef.current
     let active = true
     queueMicrotask(() => {
       if (!active) return
@@ -1362,15 +1691,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       clearSelection()
       setError(undefined)
       setLinkedItemError(undefined)
-      void window.api.literature.get(itemId).then(
+      void detailController.read(itemId).then(
         (item) => {
           if (!active) return
+          if (detailInteractionRef.current !== interaction) {
+            consumeLiteratureItem(itemId)
+            return
+          }
           if (item) openSelectedItemDetail(item)
           else setLinkedItemError(t('This reference is no longer in your Library.'))
           consumeLiteratureItem(itemId)
         },
         () => {
           if (!active) return
+          if (detailInteractionRef.current !== interaction) {
+            consumeLiteratureItem(itemId)
+            return
+          }
           setLinkedItemError(undefined)
           setError(t('Literature could not be loaded.'))
           consumeLiteratureItem(itemId)
@@ -1380,7 +1717,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return () => {
       active = false
     }
-  }, [clearSelection, consumeLiteratureItem, openSelectedItemDetail, pendingLiteratureItemId, t])
+  }, [
+    clearSelection,
+    consumeLiteratureItem,
+    detailController,
+    openSelectedItemDetail,
+    pendingLiteratureItemId,
+    t
+  ])
 
   useEffect(() => {
     if (!pendingLiteratureProjectId) return
@@ -1408,30 +1752,45 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }, [clearSelection, consumeLiteratureCollection, pendingLiteratureCollectionId])
 
-  const loadCollections = useCallback(async (): Promise<void> => {
-    const page = await window.api.literature.search({ scope: 'collections', limit: 100 })
-    setCollections(page.entries.filter(isCollection))
+  const collectionsGenerationRef = useRef(0)
+  const loadCollections = useCallback(async (): Promise<LiteratureCollectionView[] | undefined> => {
+    const generation = ++collectionsGenerationRef.current
+    const collections: LiteratureCollectionView[] = []
+    let offset: number | undefined = 0
+    do {
+      const page = await window.api.literature.search({ scope: 'collections', limit: 100, offset })
+      if (generation !== collectionsGenerationRef.current) return
+      collections.push(...page.entries.filter(isCollection))
+      offset = page.nextOffset
+    } while (offset !== undefined)
+    setCollections(collections)
+    return collections
   }, [])
 
+  const inboxCountGeneration = useRef(0)
   const loadInboxPendingCount = useCallback(async (): Promise<void> => {
+    const generation = ++inboxCountGeneration.current
     const page = await window.api.literature.search({
       scope: 'inbox',
       inboxState: 'pending',
       limit: 1
     })
-    setInboxPendingCount(page.totalCount ?? page.entries.length)
+    if (generation === inboxCountGeneration.current)
+      setInboxPendingCount(page.totalCount ?? page.entries.length)
   }, [])
 
+  const projectCountsGenerationRef = useRef(0)
   const loadProjectCounts = useCallback(async (): Promise<void> => {
+    const generation = ++projectCountsGenerationRef.current
     const page = await window.api.literature.search({ scope: 'project-counts' })
-    setProjectItemCounts((current) => ({
-      ...current,
-      ...Object.fromEntries(
+    if (generation !== projectCountsGenerationRef.current) return
+    setProjectItemCounts(
+      Object.fromEntries(
         page.entries
           .filter(isProjectCount)
           .map(({ projectId, itemCount }) => [projectId, itemCount])
       )
-    }))
+    )
   }, [])
 
   const selectedCollection = useMemo(
@@ -1442,6 +1801,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () =>
       JSON.stringify({
         section,
+        inboxState,
         collectionId,
         projectId,
         query,
@@ -1460,6 +1820,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       filterItemType,
       filterYearFrom,
       filterYearTo,
+      inboxState,
       query,
       projectId,
       section,
@@ -1467,6 +1828,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       tagId
     ]
   )
+  const linkScopeRef = useRef(entriesKey)
+  useLayoutEffect(() => {
+    linkScopeRef.current = entriesKey
+    return () => {
+      linkScopeRef.current = ''
+    }
+  }, [entriesKey])
   const entriesPage = Math.floor(entriesOffset / entriesPageSize) + 1
   const entriesPageCount = Math.max(1, Math.ceil(entriesTotalCount / entriesPageSize))
   const displayedEntryCount = section === 'inbox' ? candidates.length : items.length
@@ -1507,7 +1875,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       section === 'inbox'
         ? {
             scope: 'inbox',
-            inboxState: 'pending',
+            inboxState,
             query,
             offset,
             limit: entriesPageSize
@@ -1537,6 +1905,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       filterItemType,
       filterYearFrom,
       filterYearTo,
+      inboxState,
       query,
       projectId,
       section,
@@ -1559,7 +1928,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         page.totalCount ??
         (request.offset ?? 0) + page.entries.length + (page.nextOffset === undefined ? 0 : 1)
       setEntriesTotalCount(totalCount)
-      if (request.scope === 'inbox' && !request.query) setInboxPendingCount(totalCount)
+      if (request.scope === 'inbox' && request.inboxState === 'pending' && !request.query)
+        setInboxPendingCount(totalCount)
       if (
         request.scope === 'library' &&
         request.projectId &&
@@ -1579,9 +1949,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (failed: boolean): void => setError(failed ? t('Literature could not be loaded.') : undefined),
     [t]
   )
+  const receiveItems = useCallback(
+    (updated: LiteratureItemView[]): void => {
+      updated.forEach((item) => detailController.replace(item))
+    },
+    [detailController]
+  )
   const entriesRequest = useMemo(() => buildEntriesRequest(), [buildEntriesRequest])
   const {
+    oversizedItemId,
     loading: entriesLoading,
+    failed: entriesFailed,
     pageTransitionLoading: entriesPageTransitionLoading,
     reload: reloadEntries,
     refreshItems
@@ -1590,23 +1968,115 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     request: entriesRequest,
     scopeKey: entriesKey,
     onPage: receiveEntries,
+    onItems: receiveItems,
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
+  const updateMetadataItem = (updated: LiteratureItemView): void => {
+    const current = detailController.getSnapshot().item
+    const latest =
+      current?.id === updated.id && current.metadataRevision > updated.metadataRevision
+        ? current
+        : updated
+    void refreshItems([updated.id], [latest])
+    setDuplicatesRevision((value) => value + 1)
+  }
+  const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
+  const { changeMode: changeDetailMode } = metadata
+  const detailModeRef = useRef(metadata.mode)
+  useLayoutEffect(() => {
+    detailModeRef.current = metadata.mode
+  }, [metadata.mode])
+
+  const closeSelectedItemDetail = useCallback((): void => {
+    if (addingPdfRef.current) return
+    detailInteractionRef.current += 1
+    detailTagMenuOpenRef.current = false
+    detailSelectOpenRef.current = false
+    childLayerDismissGuardUntilRef.current = 0
+    detailController.close()
+    setRemovedDetailItemId(undefined)
+    startTransition(() => {
+      setPdfError(undefined)
+      changeDetailMode('view')
+      setProjectLinkError(undefined)
+      setCollectionLinkError(undefined)
+    })
+  }, [changeDetailMode, detailController])
+
+  const appliedTagRevision = useRef(tagRevision)
+  useEffect(() => {
+    if (appliedTagRevision.current === tagRevision) return
+    appliedTagRevision.current = tagRevision
+    if (tagId !== 'all') {
+      clearSelection()
+      // Keep surviving keyed editors mounted during an authoritative background refresh.
+      void reloadEntries(true, true)
+    } else {
+      // Previously visited filtered scopes must not resurrect old assignment membership.
+      void refreshItems([])
+    }
+  }, [clearSelection, refreshItems, reloadEntries, tagId, tagRevision])
+
   const loadEntries = useCallback(
-    (force = false): Promise<void> => {
-      if (force) setDuplicatesRevision((value) => value + 1)
-      return reloadEntries(force)
+    (force = false, preservePage = false): Promise<void> => {
+      if (force) {
+        detailController.invalidate()
+        setDuplicatesRevision((value) => value + 1)
+        setLibraryCountRevision((value) => value + 1)
+      }
+      return reloadEntries(force, preservePage)
     },
-    [reloadEntries]
+    [detailController, reloadEntries]
   )
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
-      void refreshItems(itemIds)
+      void refreshItems(itemIds, undefined, true)
     },
     [refreshItems]
   )
+
+  const currentCollectionId = useRef(collectionId)
+  useLayoutEffect(() => {
+    currentCollectionId.current = collectionId
+  }, [collectionId])
+
+  useLiteratureChanges(() => {
+    // Starting the new reads invalidates outstanding list/navigation requests immediately.
+    void Promise.all([
+      loadEntries(true, true),
+      loadCollections().then((collections) => {
+        const selectedId = currentCollectionId.current
+        if (
+          collections &&
+          selectedId &&
+          !collections.some((collection) => collection.id === selectedId)
+        ) {
+          selectLibrary()
+        }
+      }),
+      loadInboxPendingCount(),
+      loadProjectCounts(),
+      (async () => {
+        const snapshot = detailController.getSnapshot()
+        if (!snapshot.open || !snapshot.item) return
+        const latest = await detailController.read(snapshot.item.id)
+        if (detailController.getSnapshot().generation !== snapshot.generation) return
+        if (!latest || latest.id !== snapshot.item.id || latest.deletedAt !== undefined) {
+          // Read the current mode after awaiting: an edit may have started during the refresh.
+          if (detailModeRef.current === 'view') {
+            setPreviewItem(undefined)
+            closeSelectedItemDetail()
+          } else setRemovedDetailItemId(snapshot.item.id)
+          setError(t('This reference is no longer in your Library.'))
+        } else {
+          setRemovedDetailItemId((id) => (id === latest.id ? undefined : id))
+          detailController.replace(latest)
+        }
+      })()
+    ]).catch(() => setError(t('Literature could not be loaded.')))
+  })
 
   useEffect(() => {
     const loadNavigation = async (): Promise<void> => {
@@ -1623,6 +2093,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const timeout = window.setTimeout(() => {
       setEntriesOffset(0)
       clearSelection()
+      setLifecycleFailure(undefined)
+      setRestorePreview(undefined)
+      setLinkFailure(undefined)
     }, 0)
     return () => window.clearTimeout(timeout)
   }, [clearSelection, entriesKey])
@@ -1657,6 +2130,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => projects.filter((project) => project.archivedAt === undefined),
     [projects]
   )
+  const returnLabel = activeProjects.some((project) => project.id === activeProjectId)
+    ? t('Back to Project')
+    : t('Back to Home')
   const selectedProject = useMemo(
     () => activeProjects.find((project) => project.id === projectId),
     [activeProjects, projectId]
@@ -1674,9 +2150,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     window.sessionStorage.setItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY, 'true')
   }, [shouldCueLiteratureReview, showLiteratureReviewAction])
 
+  const displayCollections = useMemo(() => {
+    const byId = new Map(collections.map((collection) => [collection.id, collection]))
+    return collections.map((collection) => {
+      const names = [collection.name]
+      const seen = new Set([collection.id])
+      let parentId = collection.parentId
+      while (parentId && !seen.has(parentId)) {
+        seen.add(parentId)
+        const parent = byId.get(parentId)
+        if (!parent) break
+        names.unshift(parent.name)
+        parentId = parent.parentId
+      }
+      return { ...collection, name: names.join(' / ') }
+    })
+  }, [collections])
   const batchCollections = useMemo(
-    () => collections.filter((collection) => collection.id !== collectionId),
-    [collectionId, collections]
+    () => displayCollections.filter((collection) => collection.id !== collectionId),
+    [collectionId, displayCollections]
   )
   const itemTypeLabels = useMemo<Record<LiteratureItemType, string>>(
     () => ({
@@ -1716,8 +2208,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const activeFilterCount =
     (tagId !== 'all' ? 1 : 0) +
     (filterItemType !== 'all' ? 1 : 0) +
-    (yearFilter.draftFrom ? 1 : 0) +
-    (yearFilter.draftTo ? 1 : 0) +
+    (yearFilter.from ? 1 : 0) +
+    (yearFilter.to ? 1 : 0) +
     (filterHasPdf !== 'all' ? 1 : 0)
 
   const clearFilters = (): void => {
@@ -1755,41 +2247,118 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }
 
+  const dismissedUndo = (candidateIds: readonly string[]): DismissedCandidateUndo | undefined =>
+    candidateIds.length
+      ? {
+          candidateIds,
+          detail: t('{{count}} references', {
+            count: candidateIds.length,
+            defaultValue_one: '{{count}} reference'
+          })
+        }
+      : undefined
+
+  const refreshCandidateProjectCounts = async (): Promise<void> => {
+    try {
+      await loadProjectCounts()
+      setCandidateCountsFailed(false)
+    } catch {
+      setCandidateCountsFailed(true)
+    }
+  }
+
+  const refreshCandidateInboxCount = async (): Promise<void> => {
+    try {
+      await loadInboxPendingCount()
+    } catch {
+      setInboxPendingCount(undefined)
+      setError(t('Literature could not be loaded.'))
+    }
+  }
+
+  const retryCandidateReads = async (): Promise<void> => {
+    if (isBatching || pendingCandidateId) return
+    setIsBatching(true)
+    setCandidateUpdateUncertain(false)
+    try {
+      await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+      await refreshCandidateInboxCount()
+    } finally {
+      setIsBatching(false)
+    }
+  }
+
+  const submitCandidateChange = async (
+    candidateIds: string[],
+    state: 'accepted' | 'dismissed',
+    command: Extract<
+      LiteratureCatalogCommand,
+      { kind: 'accept-candidate' | 'dismiss-candidate' | 'settle-candidates' }
+    >
+  ): Promise<boolean> => {
+    setError(undefined)
+    setCandidateUpdateUncertain(false)
+    setUndoNotice(undefined)
+    try {
+      await window.api.literature.transact(command)
+    } catch {
+      // A rejected transport response does not prove that the transaction rolled back.
+      // Reload handles its own read errors; never put a saved candidate snapshot back here.
+      if (state === 'dismissed') {
+        const undoIds = [
+          ...new Set([...(dismissedCandidateUndo?.candidateIds ?? []), ...candidateIds])
+        ]
+        // Keep recovery reachable even if the following reads are also unavailable.
+        setDismissedCandidateUndo({ ...dismissedUndo(undoIds)!, needsRecheck: true })
+        await Promise.all([recheckDismissedCandidates(undoIds), refreshCandidateProjectCounts()])
+      } else {
+        await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+        await refreshCandidateInboxCount()
+      }
+      setCandidateUpdateUncertain(true)
+      return false
+    }
+    if (state === 'dismissed') {
+      setDismissedCandidateUndo((current) => {
+        const candidateIdsToUndo = [...new Set([...(current?.candidateIds ?? []), ...candidateIds])]
+        const undo = dismissedUndo(candidateIdsToUndo)!
+        return {
+          ...undo,
+          needsRecheck: current?.needsRecheck,
+          detail:
+            candidateIdsToUndo.length === 1
+              ? (candidates.find(({ id }) => id === candidateIdsToUndo[0])?.candidate.item.title ??
+                undo.detail)
+              : undo.detail
+        }
+      })
+    }
+    const settledIds = new Set(candidateIds)
+    setCandidates((current) => current.filter(({ id }) => !settledIds.has(id)))
+    candidateIds.forEach((id) => selectionStore.remove(id))
+    setInboxPendingCount((current) =>
+      current === undefined ? current : Math.max(0, current - candidateIds.length)
+    )
+    // Committed writes stay committed even when an independent refresh fails.
+    await Promise.all([
+      loadEntries(true),
+      ...(state === 'accepted' ? [refreshCandidateProjectCounts()] : [])
+    ])
+    return true
+  }
+
   const changeCandidateState = async (
     candidateId: string,
     kind: 'accept-candidate' | 'dismiss-candidate'
   ): Promise<boolean> => {
+    if (isBatching || pendingCandidateId || entriesFailed) return false
     setPendingCandidateId(candidateId)
-    setError(undefined)
     try {
-      await window.api.literature.transact({ kind, candidateId })
-      if (kind === 'dismiss-candidate') {
-        setDismissedCandidateUndo((current) => {
-          const candidateIds = [...new Set([...(current?.candidateIds ?? []), candidateId])]
-          return {
-            candidateIds,
-            detail:
-              candidateIds.length === 1
-                ? (candidates.find(({ id }) => id === candidateId)?.candidate.item.title ?? '')
-                : t('{{count}} references', {
-                    count: candidateIds.length,
-                    defaultValue_one: '{{count}} reference'
-                  })
-          }
-        })
-      }
-      selectionStore.remove(candidateId)
-      setInboxPendingCount((current) =>
-        current === undefined ? current : Math.max(0, current - 1)
+      return await submitCandidateChange(
+        [candidateId],
+        kind === 'accept-candidate' ? 'accepted' : 'dismissed',
+        { kind, candidateId }
       )
-      await Promise.all([
-        loadEntries(true),
-        ...(kind === 'accept-candidate' ? [loadProjectCounts()] : [])
-      ])
-      return true
-    } catch {
-      setError(t('Literature could not be updated.'))
-      return false
     } finally {
       setPendingCandidateId(undefined)
     }
@@ -1797,64 +2366,113 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const settleSelectedCandidates = async (state: 'accepted' | 'dismissed'): Promise<void> => {
     const { selectedIds } = selectionStore.getSnapshot()
-    const candidateIds = candidates
-      .map(({ id }) => id)
-      .filter((candidateId) => selectedIds.has(candidateId))
-    if (candidateIds.length === 0 || isBatching) return
-    const previousCandidates = candidates
+    const candidateIds = candidates.map(({ id }) => id).filter((id) => selectedIds.has(id))
+    if (!candidateIds.length || isBatching || pendingCandidateId || entriesFailed) return
     setIsBatching(true)
-    setError(undefined)
-    setCandidates((current) => current.filter(({ id }) => !selectedIds.has(id)))
-    setInboxPendingCount((current) =>
-      current === undefined ? current : Math.max(0, current - candidateIds.length)
-    )
     clearSelection()
     try {
-      await window.api.literature.transact({
+      await submitCandidateChange(candidateIds, state, {
         kind: 'settle-candidates',
         candidateIds,
         state
       })
-      if (state === 'dismissed') {
-        setDismissedCandidateUndo((current) => {
-          const restoredIds = [...new Set([...(current?.candidateIds ?? []), ...candidateIds])]
-          return {
-            candidateIds: restoredIds,
-            detail: t('{{count}} references', {
-              count: restoredIds.length,
-              defaultValue_one: '{{count}} reference'
-            })
-          }
-        })
-      }
-      await Promise.all([loadEntries(true), ...(state === 'accepted' ? [loadProjectCounts()] : [])])
-    } catch {
-      setCandidates(previousCandidates)
-      setInboxPendingCount((current) =>
-        current === undefined ? current : current + candidateIds.length
-      )
-      setError(t('Literature could not be updated.'))
     } finally {
       setIsBatching(false)
     }
   }
 
-  const restoreDismissedCandidates = async (): Promise<void> => {
-    if (!dismissedCandidateUndo || isBatching) return
+  const recheckDismissedCandidates = async (candidateIds: readonly string[]): Promise<void> => {
+    setDismissedCandidateUndo({ ...dismissedUndo(candidateIds)!, needsRecheck: true })
+    try {
+      const wanted = new Set(candidateIds)
+      const readMatchingIds = async (inboxState: 'pending' | 'dismissed'): Promise<Set<string>> => {
+        const matching = new Set<string>()
+        let offset: number | undefined = 0
+        do {
+          const page = await window.api.literature.search({
+            scope: 'inbox',
+            inboxState,
+            limit: 100,
+            offset
+          })
+          for (const entry of page.entries) {
+            if (isCandidate(entry) && wanted.has(entry.id)) matching.add(entry.id)
+          }
+          offset = page.nextOffset
+        } while (offset !== undefined && matching.size < wanted.size)
+        return matching
+      }
+      const dismissed = await readMatchingIds('dismissed')
+      const pending =
+        dismissed.size === wanted.size ? new Set<string>() : await readMatchingIds('pending')
+      const remaining = candidateIds.filter((id) => dismissed.has(id))
+      const alreadyRestored = candidateIds.filter(
+        (id) => !dismissed.has(id) && pending.has(id)
+      ).length
+      setDismissedCandidateUndo(dismissedUndo(remaining))
+      setUndoNotice(
+        t(
+          'Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.',
+          {
+            restored: alreadyRestored,
+            skipped: candidateIds.length - remaining.length - alreadyRestored,
+            remaining: remaining.length
+          }
+        )
+      )
+    } catch {
+      setUndoNotice(t('The remaining references could not be checked. Recheck before undoing.'))
+    }
+    await loadEntries(true)
+    await refreshCandidateInboxCount()
+  }
+
+  const restoreDismissedCandidates = async (
+    candidateIds: readonly string[] = dismissedCandidateUndo?.candidateIds ?? []
+  ): Promise<boolean> => {
+    if (candidateIds.length === 0 || isBatching || pendingCandidateId) return false
     setIsBatching(true)
     setError(undefined)
+    setUndoNotice(undefined)
+    let remaining = [...candidateIds]
+    let undoRemaining = [...(dismissedCandidateUndo?.candidateIds ?? [])]
     try {
-      await window.api.literature.transact({
-        kind: 'restore-candidates',
-        candidateIds: [...dismissedCandidateUndo.candidateIds]
-      })
-      setDismissedCandidateUndo(undefined)
+      if (dismissedCandidateUndo?.needsRecheck) {
+        await recheckDismissedCandidates([...new Set([...undoRemaining, ...remaining])])
+        return false
+      }
+      while (remaining.length) {
+        const batch = remaining.slice(0, LITERATURE_INBOX_COMMAND_SIZE)
+        try {
+          await window.api.literature.transact({ kind: 'restore-candidates', candidateIds: batch })
+        } catch {
+          await recheckDismissedCandidates([...new Set([...undoRemaining, ...remaining])])
+          return false
+        }
+        remaining = remaining.slice(batch.length)
+        undoRemaining = undoRemaining.filter((id) => !batch.includes(id))
+        setDismissedCandidateUndo(dismissedUndo(undoRemaining))
+        for (const id of batch) selectionStore.remove(id)
+        setCandidates((current) => current.filter(({ id }) => !batch.includes(id)))
+        setInboxPendingCount((current) =>
+          current === undefined ? current : current + batch.length
+        )
+      }
       await loadEntries(true)
-    } catch {
-      setError(t('Literature could not be updated.'))
+      await refreshCandidateInboxCount()
+      return true
     } finally {
       setIsBatching(false)
     }
+  }
+
+  const candidateProjectNames = (entry: LiteratureInboxCandidateView): string[] => {
+    const ids = new Set(
+      (entry.discoveries?.map(({ origin }) => origin) ?? [entry.candidate.origin])
+        .map(({ projectId }) => projectId)
+        .filter(Boolean)
+    )
+    return projects.filter(({ id }) => ids.has(id)).map(({ name }) => name)
   }
 
   const openCreateCollection = (): void => {
@@ -1865,8 +2483,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     collectionEditorRef.current?.openEdit(collection)
   }
 
+  const collectionDeletion = useMemo(() => {
+    if (!collectionPendingDelete) return undefined
+    const promoted = collections.filter(({ parentId }) => parentId === collectionPendingDelete.id)
+    const rootNames = new Set(
+      collections.filter(({ parentId }) => !parentId).map(({ name }) => name.toLowerCase())
+    )
+    return {
+      collection: collectionPendingDelete,
+      promoted,
+      conflicting: promoted.filter(({ name }) => rootNames.has(name.toLowerCase()))
+    }
+  }, [collectionPendingDelete, collections])
+  const dialogCollectionDeletion = useRetainedDialogValue(collectionDeletion)
+  const promotedCollections = dialogCollectionDeletion?.promoted ?? []
+  const conflictingCollections = dialogCollectionDeletion?.conflicting ?? []
+
   const deleteCollection = async (): Promise<void> => {
-    if (!collectionPendingDelete || isDeletingCollection) return
+    if (!collectionPendingDelete || isDeletingCollection || collectionDeletion?.conflicting.length)
+      return
     const deletingCollection = collectionPendingDelete
     setIsDeletingCollection(true)
     setCollectionDeleteError(undefined)
@@ -1888,6 +2523,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             )
           : t('Collection could not be deleted.')
       )
+      await loadCollections().catch(() => undefined)
     } finally {
       setIsDeletingCollection(false)
     }
@@ -1921,29 +2557,39 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const addPdf = async (file: File): Promise<void> => {
-    const current = detailController.getSnapshot().item
-    if (!current || isAddingPdf) return
+    const { item: current, generation } = detailController.getSnapshot()
+    if (!current || addingPdfRef.current) return
+    addingPdfRef.current = true
     setIsAddingPdf(true)
     setPdfError(undefined)
     const transferId = crypto.randomUUID()
     let staged: Awaited<ReturnType<typeof stageComposerFile>> | undefined
     try {
-      staged = await stageComposerFile(file, window.api.uploads, {
-        transferId,
-        name: file.name
-      })
+      staged = await stagePdf(file, transferId)
       await window.api.uploads.claimLocalFile?.({ transferId })
+      finishPdfStaging()
       const receipt = await window.api.literature.importPdf({
         itemId: current.id,
         attachment: staged
       })
-      detailController.replace(receipt.item)
+      // An attachment receipt may predate metadata edits in a reopened detail. Re-read rather
+      // than using metadataRevision as an attachment version or rolling metadata backwards.
+      const updated = await detailController.read(current.id).catch(() => undefined)
+      detailController.replace(updated ?? receipt.item)
       await loadEntries(true)
-    } catch {
-      setPdfError(t('PDF could not be added.'))
+    } catch (error) {
+      if (detailController.getSnapshot().generation === generation)
+        setPdfError(
+          pdfUploadRef.current?.controller.signal.aborted
+            ? t('PDF upload cancelled. The reference was kept.')
+            : pdfImportErrorMessage(error, t)
+        )
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
+      pdfUploadRef.current = undefined
+      setPdfUpload(undefined)
+      addingPdfRef.current = false
       setIsAddingPdf(false)
     }
   }
@@ -1951,11 +2597,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const { isDragging: isDraggingPdf, dropZoneProps: pdfDropZoneProps } = useFileDropZone({
     enabled: !isAddingPdf,
     onFiles: (files) => {
-      const pdf = files.find(
-        (file) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+      const unsupported = files.filter(
+        (file) => file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')
       )
-      if (pdf) void addPdf(pdf)
-      else setPdfError(t('PDF could not be added.'))
+      if (files.length !== 1 || unsupported.length) {
+        setPdfError(
+          [
+            t('Choose one PDF at a time. No files were added.'),
+            ...(unsupported.length
+              ? [
+                  t('Unsupported files: {{names}}', {
+                    names: unsupported.map((file) => file.name).join(', ')
+                  })
+                ]
+              : [])
+          ].join(' ')
+        )
+        return
+      }
+      void addPdf(files[0])
     }
   })
 
@@ -2039,6 +2699,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         included
       })
       updateCollectionLinkState(included)
+      if (!included && targetCollectionId === collectionId) {
+        selectionStore.remove(itemId)
+        setItems((current) => current.filter((item) => item.id !== itemId))
+        setEntriesTotalCount((current) => Math.max(0, current - 1))
+        await loadEntries(true)
+      }
       return true
     } catch {
       setCollectionLinkError(t('Collection link could not be updated.'))
@@ -2048,7 +2714,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const persistInlineItem = async (
     entry: LiteratureItemView,
-    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>
+    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>,
+    onPersisted?: (reload: () => Promise<LiteratureItemView>) => void
   ): Promise<void> => {
     const item = { ...entry.item, ...patch }
     if (
@@ -2057,6 +2724,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       (item.rating ?? 0) === (entry.item.rating ?? 0)
     )
       return
+    let persisted = false
     try {
       await window.api.literature.transact({
         kind: 'update-item',
@@ -2064,13 +2732,28 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         expectedMetadataRevision: entry.metadataRevision,
         item
       })
-      const updated = await window.api.literature.get(entry.id)
-      if (!updated) throw new Error('Literature Item is unavailable after updating.')
-      setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
-      detailController.replace(updated)
-      setError(undefined)
+      persisted = true
+      const reload = async (): Promise<LiteratureItemView> => {
+        try {
+          const updated = await detailController.read(entry.id)
+          if (!updated) throw new Error('Literature Item is unavailable after updating.')
+          await refreshItems([updated.id], [updated])
+          detailController.replace(updated)
+          setError(undefined)
+          return updated
+        } catch (error) {
+          setError(t('The reference was saved, but could not be reloaded.'))
+          throw error
+        }
+      }
+      onPersisted?.(reload)
+      await reload()
     } catch (error) {
-      setError(t('Literature could not be updated.'))
+      setError(
+        persisted
+          ? t('The reference was saved, but could not be reloaded.')
+          : t('Literature could not be updated.')
+      )
       throw error
     }
   }
@@ -2081,6 +2764,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         return t('Title')
       case 'authors':
         return t('Authors')
+      case 'identifiers':
+        return t('Identifiers (★ primary)')
       case 'publicationDate':
         return t('Publication date')
       case 'year':
@@ -2139,80 +2824,99 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
-  const createManualItem = async (item: LiteratureItemInput): Promise<void> => {
-    if (isSavingNewItem) return
+  const createManualItem = async (item?: LiteratureItemInput): Promise<void> => {
+    if (creatingItemRef.current || (!pendingCreationRef.current && !item)) return
+    creatingItemRef.current = true
     setIsSavingNewItem(true)
     setCreateItemError(undefined)
-    const file = pendingImportPdf
     const transferId = crypto.randomUUID()
     let staged: Awaited<ReturnType<typeof stageComposerFile>> | undefined
-    let createdItemId: string | undefined
     try {
-      const receipt = await window.api.literature.transact({
-        kind: 'create-item',
-        item,
-        ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
-      })
-      createdItemId = receipt.id
-      if (projectId) {
-        await window.api.literature.transact({
-          kind: 'set-project-item',
+      if (!pendingCreationRef.current) {
+        const receipt = await window.api.literature.transact({
+          kind: 'create-item',
+          item: item!,
+          ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
+        })
+        // This receipt belongs to this dialog's creation intent, including its original destination.
+        pendingCreationRef.current = {
+          id: receipt.id,
           projectId,
-          itemId: receipt.id,
-          included: true,
-          source: 'library'
-        })
-      } else if (collectionId) {
-        await window.api.literature.transact({
-          kind: 'set-collection-item',
           collectionId,
-          itemId: receipt.id,
-          included: true
-        })
+          file: pendingImportPdf,
+          destination: projectId
+            ? {
+                kind: 'set-project-item',
+                projectId,
+                itemId: receipt.id,
+                included: true,
+                source: 'library'
+              }
+            : collectionId
+              ? { kind: 'set-collection-item', collectionId, itemId: receipt.id, included: true }
+              : undefined
+        }
+        setCreatedItemId(receipt.id)
       }
-      const created = file
-        ? await (async (): Promise<LiteratureItemView> => {
-            staged = await stageComposerFile(file, window.api.uploads, {
-              transferId,
-              name: file.name
-            })
-            await window.api.uploads.claimLocalFile?.({ transferId })
-            return (
-              await window.api.literature.importPdf({ itemId: receipt.id, attachment: staged })
-            ).item
-          })()
-        : await window.api.literature.get(receipt.id)
+      const pending = pendingCreationRef.current
+      if (pending.destination) {
+        await window.api.literature.transact(pending.destination)
+        pending.destination = undefined
+      }
+      if (pending.file && !pending.pdfItem) {
+        staged = await stagePdf(pending.file, transferId)
+        await window.api.uploads.claimLocalFile?.({ transferId })
+        finishPdfStaging()
+        pending.pdfItem = (
+          await window.api.literature.importPdf({ itemId: pending.id, attachment: staged })
+        ).item
+      }
+      const created = pending.pdfItem ?? (await detailController.read(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
       setItems((entries) =>
         entries.some((entry) => entry.id === created.id)
           ? entries.map((entry) => (entry.id === created.id ? created : entry))
           : [created, ...entries]
       )
-      if (collectionId) await loadCollections()
-      if (projectId) await loadProjectCounts()
-      setIsCreatingItem(false)
-      setPendingImportPdf(undefined)
-      setPendingImportDraft(undefined)
+      if (pending.collectionId) await loadCollections()
+      if (pending.projectId) await loadProjectCounts()
+      closeItemEditor()
       openSelectedItemDetail(created)
-    } catch {
-      if (file && createdItemId) {
-        const created = await window.api.literature.get(createdItemId).catch(() => undefined)
-        if (created) {
-          setIsCreatingItem(false)
-          setPendingImportPdf(undefined)
-          setPendingImportDraft(undefined)
-          openSelectedItemDetail(created)
-          setPdfError(t('PDF could not be added.'))
-        } else {
-          setCreateItemError(t('Literature could not be created.'))
-        }
+    } catch (error) {
+      const pending = pendingCreationRef.current
+      // Retain the existing PDF-error detail recovery only once destination linking has completed.
+      const created =
+        pending?.file && !pending.destination && !pending.pdfItem
+          ? await detailController.read(pending.id).catch(() => undefined)
+          : undefined
+      if (created) {
+        closeItemEditor()
+        openSelectedItemDetail(created)
+        setPdfError(
+          pdfUploadRef.current?.controller.signal.aborted
+            ? t('PDF upload cancelled. The reference was kept.')
+            : pdfImportErrorMessage(error, t)
+        )
       } else {
-        setCreateItemError(t('Literature could not be created.'))
+        setCreateItemError(
+          pending
+            ? pending.destination
+              ? t(
+                  'The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.'
+                )
+              : t(
+                  'The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.'
+                )
+            : t('Literature could not be created.')
+        )
       }
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
-      if (createdItemId) void loadEntries(true)
+      void loadEntries(true)
+      pdfUploadRef.current = undefined
+      setPdfUpload(undefined)
+      creatingItemRef.current = false
       setIsSavingNewItem(false)
     }
   }
@@ -2227,7 +2931,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setIsReadingImportMetadata(true)
     setIsCreatingItem(true)
     void import('./literature-pdf-metadata')
-      .then(({ extractLiteraturePdfDraft }) => extractLiteraturePdfDraft(file, fallback))
+      .then(async ({ extractLiteraturePdfDraft, completeLiteraturePdfDraft }) => {
+        const local = await extractLiteraturePdfDraft(file, fallback)
+        if (importMetadataGenerationRef.current !== generation) return local
+        return completeLiteraturePdfDraft(local)
+      })
       .then((draft) => {
         if (importMetadataGenerationRef.current === generation) setPendingImportDraft(draft)
       })
@@ -2238,6 +2946,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const closeItemEditor = (): void => {
+    pendingCreationRef.current = undefined
+    setCreatedItemId(undefined)
     setDuplicatePolicy('reuse')
     importMetadataGenerationRef.current += 1
     setIsCreatingItem(false)
@@ -2250,8 +2960,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const previewRecordImport = async (file: File): Promise<void> => {
     setDuplicatePolicy('reuse')
     const request = ++recordImportRequest.current
+    const destination = {
+      name: selectedProject?.name ?? selectedCollection?.name ?? t('All references'),
+      projectId,
+      collectionId
+    }
+    setRecordImport({ fileName: file.name, content: '', reading: true, destination })
     if (file.size > LITERATURE_RECORD_IMPORT_MAX_BYTES) {
       setRecordImport({
+        destination,
         fileName: file.name,
         content: '',
         error: t('{{fileName}}: file is too large (limit {{limit}}).', {
@@ -2264,13 +2981,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     try {
       const content = await file.text()
       if (request !== recordImportRequest.current) return
-      setRecordImport({ fileName: file.name, content })
+      setRecordImport({ fileName: file.name, content, destination })
       const preview = await window.api.literature.importRecords({ mode: 'preview', content })
       if (request !== recordImportRequest.current) return
-      setRecordImport({ fileName: file.name, content, preview })
+      setRecordImport({ fileName: file.name, content, preview, destination })
     } catch {
       if (request !== recordImportRequest.current) return
       setRecordImport({
+        destination,
         fileName: file.name,
         content: '',
         error: t('Reference file could not be read.')
@@ -2280,6 +2998,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const commitRecordImport = async (): Promise<void> => {
     if (!recordImport?.preview || recordImport.preview.items.length === 0) return
+    const { projectId, collectionId } = recordImport.destination
     setIsImportingRecords(true)
     setRecordImport((current) =>
       current ? { ...current, error: undefined, failedCount: undefined } : current
@@ -2315,7 +3034,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         loadCollections(),
         ...(projectId ? [loadProjectCounts()] : [])
       ])
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(LITERATURE_IMPORT_IDENTITY_CONFLICT)) {
+        const preview = await window.api.literature
+          .importRecords({ mode: 'preview', content: recordImport.content })
+          .catch(() => undefined)
+        setRecordImport((current) =>
+          current
+            ? {
+                ...current,
+                ...(preview ? { preview } : {}),
+                error: t(
+                  'Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.'
+                )
+              }
+            : current
+        )
+        return
+      }
       setRecordImport((current) =>
         current
           ? {
@@ -2337,22 +3073,46 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const resolveSelectedItemIds = async (): Promise<string[]> => {
     const { allMatchingSelected, excludedMatchingIds, selectedIds } = selectionStore.getSnapshot()
     if (!allMatchingSelected) return [...selectedIds]
-    const itemIds: string[] = []
-    const seenOffsets = new Set<number>()
-    let offset = 0
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset)
-      const page = await window.api.literature.search(buildEntriesRequest(offset))
-      itemIds.push(
-        ...page.entries
-          .filter(isItem)
-          .map(({ id }) => id)
-          .filter((id) => !excludedMatchingIds.has(id))
-      )
-      if (page.nextOffset === undefined) break
-      offset = page.nextOffset
+    const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
+    if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+    return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
+  }
+
+  const previewRestoreSelection = async (): Promise<void> => {
+    if (isBatching) return
+    const scopeKey = entriesKey
+    setIsBatching(true)
+    setError(undefined)
+    try {
+      const selectedIds = new Set(await resolveSelectedItemIds())
+      const restorable = new Set<string>()
+      const skipped = new Set<string>()
+      const seenOffsets = new Set<number>()
+      let offset = 0
+      for (;;) {
+        if (seenOffsets.has(offset)) throw new Error('Repeated Literature page.')
+        seenOffsets.add(offset)
+        const page = await readLiteratureSelectionPage({
+          ...buildEntriesRequest(offset),
+          limit: 100
+        })
+        if (linkScopeRef.current !== scopeKey) return
+        for (const entry of page.entries.filter(isItem)) {
+          if (!selectedIds.has(entry.id)) continue
+          if (entry.mergedIntoItemId) skipped.add(entry.id)
+          else restorable.add(entry.id)
+        }
+        if (page.nextOffset === undefined) break
+        offset = page.nextOffset
+      }
+      if (restorable.size + skipped.size !== selectedIds.size)
+        throw new Error('Selected Literature membership changed.')
+      setRestorePreview({ itemIds: [...restorable], skipped: skipped.size })
+    } catch {
+      if (linkScopeRef.current === scopeKey) setError(t('Selected references could not be loaded.'))
+    } finally {
+      setIsBatching(false)
     }
-    return [...new Set(itemIds)]
   }
 
   const requestBatchLookup = async (mode: BatchLookupMode): Promise<void> => {
@@ -2361,6 +3121,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setError(undefined)
     try {
       const itemIds = await resolveSelectedItemIds()
+      if (itemIds.length > LITERATURE_JOB_MAX_ITEMS) {
+        setError(
+          t('Select no more than {{limit}} references for this task.', {
+            limit: LITERATURE_JOB_MAX_ITEMS
+          })
+        )
+        return
+      }
       if (itemIds.length) setBatchLookup({ mode, itemIds })
     } catch {
       setError(t('Selected references could not be loaded.'))
@@ -2377,20 +3145,37 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     if ((!allMatchingSelected && (itemIds?.length ?? 0) === 0) || isBatching) return
     setIsBatching(true)
     setError(undefined)
+    setLifecycleFailure(undefined)
+    let resolvedIds: readonly string[] = []
+    let completed = 0
     try {
-      const resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      resolvedIds = itemIds ?? (await resolveSelectedItemIds())
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        await window.api.literature.transact({
-          kind: 'set-item-lifecycle',
-          itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          state
-        })
+        const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+        await window.api.literature.transact({ kind: 'set-item-lifecycle', itemIds: batch, state })
+        completed += batch.length
       }
       clearSelection()
-      await loadEntries(true)
     } catch {
-      setError(t('Literature could not be updated.'))
+      if (resolvedIds.length) {
+        const remaining = resolvedIds.slice(completed)
+        selectionStore.replace(remaining)
+        setLifecycleFailure({ itemIds: remaining, state, completed })
+      } else {
+        setError(t('Literature could not be updated.'))
+      }
     } finally {
+      if (resolvedIds.length) {
+        // Refresh even after a failed command: earlier batches may already be committed.
+        const refreshed = await Promise.allSettled([
+          loadEntries(true),
+          loadCollections(),
+          loadProjectCounts()
+        ])
+        if (refreshed.some((result) => result.status === 'rejected')) {
+          setError(t('Literature could not be loaded.'))
+        }
+      }
       setIsBatching(false)
     }
   }
@@ -2400,35 +3185,83 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return setItemsLifecycle(allMatchingSelected ? undefined : [...selectedIds], state)
   }
 
-  const deleteItemsPermanently = async (): Promise<void> => {
-    if (permanentDeleteIds.length === 0 || isBatching) return
+  const requestPermanentDeletion = (itemIds: string[]): void => {
+    setPermanentDeleteFailed(false)
+    setPermanentDeletionDiagnostic(undefined)
+    setPermanentDeleteIds(itemIds)
+  }
+
+  const refreshAfterPermanentDeletion = async (): Promise<void> => {
     setIsBatching(true)
-    setError(undefined)
     try {
-      await window.api.literature.transact({
-        kind: 'delete-items-permanently',
-        itemIds: permanentDeleteIds
-      })
-      clearSelection()
-      setPermanentDeleteIds([])
-      await Promise.all([loadEntries(true), loadCollections(), loadProjectCounts()])
-      await loadTags()
-    } catch {
-      setError(t('Literature could not be deleted permanently.'))
+      const refreshed = await Promise.allSettled([
+        loadEntries(true),
+        loadCollections(),
+        loadProjectCounts(),
+        loadTags()
+      ])
+      setPermanentDeleteResult(
+        (current) =>
+          current && {
+            ...current,
+            refreshFailed:
+              refreshed.some((result) => result.status === 'rejected') ||
+              useTagStore.getState().status === 'error'
+          }
+      )
     } finally {
       setIsBatching(false)
     }
   }
 
+  const deleteItemsPermanently = async (): Promise<void> => {
+    if (permanentDeleteIds.length === 0 || isBatching || permanentDeleteFailed) return
+    setIsBatching(true)
+    setError(undefined)
+    setPermanentDeleteResult(undefined)
+    let receipt: LiteratureCatalogReceipt
+    try {
+      receipt = await window.api.literature.transact({
+        kind: 'delete-items-permanently',
+        itemIds: permanentDeleteIds
+      })
+    } catch (error) {
+      setPermanentDeletionDiagnostic(parseLiteratureDeletionError(error))
+      setPermanentDeleteFailed(true)
+      setIsBatching(false)
+      return
+    }
+    clearSelection()
+    setPermanentDeleteIds([])
+    setPermanentDeleteResult({
+      scope: permanentDeleteScope,
+      cleanupPending: receipt.cleanupPending === true,
+      refreshFailed: false
+    })
+    await refreshAfterPermanentDeletion()
+  }
+
   const previewFirstAttachment = (entry: LiteratureItemView): void => {
-    const version = entry.attachments.find((attachment) => attachment.versions[0])?.versions[0]
-    if (!version) return
+    const attachment = entry.attachments.find((candidate) => candidate.versions[0])
+    const version = attachment?.versions[0]
+    if (
+      section === 'trash' ||
+      entry.deletedAt !== undefined ||
+      !attachment ||
+      !version ||
+      version.availability === 'unavailable' ||
+      useAttachmentOperations
+        .getState()
+        .operations.some((operation) => operation.itemId === entry.id && operation.pending)
+    )
+      return
     setPreviewItem({
       id: `literature:${version.id}`,
       sessionId: LITERATURE_PREVIEW_SESSION_ID,
       title: version.filename,
       type: 'file',
       source: 'literature',
+      managedFileId: attachment.id,
       path: createLiteratureAttachmentVersionReference(version.id),
       format: 'pdf',
       name: version.filename,
@@ -2449,6 +3282,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       void startReadingInProject(selectedProject.id, reading)
       return
     }
+    setReadingProjectQuery('')
     setPendingLiteratureReading(reading)
   }
 
@@ -2511,8 +3345,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       if (!selection.allMatchingSelected) {
         entries = await Promise.all(
           [...selection.selectedIds].map(async (id) => {
-            const entry =
-              items.find((item) => item.id === id) ?? (await window.api.literature.get(id))
+            const entry = items.find((item) => item.id === id) ?? (await detailController.read(id))
             if (!entry || !isItem(entry)) throw new Error('Selected reference unavailable')
             return entry
           })
@@ -2523,7 +3356,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         let offset = 0
         while (!seen.has(offset)) {
           seen.add(offset)
-          const page = await window.api.literature.search(buildEntriesRequest(offset))
+          const page = await readLiteratureSelectionPage(buildEntriesRequest(offset))
           if (request !== batchReadingRequest.current) return
           entries.push(
             ...page.entries
@@ -2544,37 +3377,95 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
-  const linkSelectedItemsToCollection = async (targetCollectionId: string): Promise<void> => {
-    const resolvedIds = await resolveSelectedItemIds()
-    for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-      await window.api.literature.transact({
-        kind: 'move-collection-items',
-        itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-        targetCollectionId,
-        ...(collectionId ? { sourceCollectionId: collectionId } : {})
-      })
+  const runLinkBatch = async (
+    command: NonNullable<typeof linkFailure>['command'],
+    itemIds?: readonly string[],
+    previousCompleted = 0,
+    previousSkipped = 0,
+    reconcile = false
+  ): Promise<void> => {
+    const scopeKey = entriesKey
+    setIsBatching(true)
+    setError(undefined)
+    setLinkFailure(undefined)
+    let resolvedIds: readonly string[] = itemIds ?? []
+    let completed = 0
+    let skipped = previousSkipped
+    try {
+      resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      if (reconcile) {
+        const activeIds: string[] = []
+        for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+          const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+          const entries = await Promise.all(batch.map((id) => detailController.read(id)))
+          entries.forEach((entry, index) => {
+            // get resolves merged aliases; never redirect the original association intent.
+            if (
+              entry?.id === batch[index] &&
+              entry.deletedAt === undefined &&
+              entry.mergedIntoItemId === undefined
+            )
+              activeIds.push(batch[index])
+          })
+        }
+        skipped += resolvedIds.length - activeIds.length
+        resolvedIds = activeIds
+      }
+      for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+        const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+        await window.api.literature.transact({ ...command, itemIds: [...batch] })
+        completed += batch.length
+      }
+      if (linkScopeRef.current === scopeKey) {
+        clearSelection()
+        if (skipped)
+          setLinkFailure({
+            command,
+            itemIds: [],
+            completed: previousCompleted + completed,
+            scopeKey,
+            skipped
+          })
+      }
+    } catch {
+      if (linkScopeRef.current === scopeKey) {
+        if (resolvedIds.length) {
+          const remaining = resolvedIds.slice(completed)
+          selectionStore.replace(remaining)
+          setLinkFailure({
+            command,
+            itemIds: remaining,
+            completed: previousCompleted + completed,
+            skipped,
+            scopeKey
+          })
+        } else {
+          setError(t('Selected references could not be loaded.'))
+        }
+      }
+    } finally {
+      const refreshed = await Promise.allSettled([
+        ...(linkScopeRef.current === scopeKey ? [loadEntries(true)] : []),
+        loadCollections(),
+        loadProjectCounts()
+      ])
+      if (
+        linkScopeRef.current === scopeKey &&
+        refreshed.some((result) => result.status === 'rejected')
+      ) {
+        setError(t('Literature could not be loaded.'))
+      }
+      setIsBatching(false)
     }
   }
 
   const moveSelectedItems = async (targetCollectionId: string): Promise<void> => {
-    const selection = selectionStore.getSnapshot()
-    if (
-      !targetCollectionId ||
-      (!selection.allMatchingSelected && selection.selectedIds.size === 0) ||
-      isBatching
-    )
-      return
-    setIsBatching(true)
-    setError(undefined)
-    try {
-      await linkSelectedItemsToCollection(targetCollectionId)
-      clearSelection()
-      await Promise.all([loadEntries(true), loadCollections()])
-    } catch {
-      setError(t('Collection link could not be updated.'))
-    } finally {
-      setIsBatching(false)
-    }
+    if (!targetCollectionId || isBatching) return
+    await runLinkBatch({
+      kind: 'move-collection-items',
+      targetCollectionId,
+      ...(collectionId ? { sourceCollectionId: collectionId } : {})
+    })
   }
 
   const createCollectionForSelection = async (name: string): Promise<boolean> => {
@@ -2583,22 +3474,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       return false
     setIsBatching(true)
     setError(undefined)
-    let collectionCreated = false
+    const scopeKey = entriesKey
     try {
+      // Resolve before creating so every continuation has a fixed reference set.
+      const itemIds = await resolveSelectedItemIds()
+      if (linkScopeRef.current !== scopeKey) return false
       const receipt = await window.api.literature.transact({ kind: 'create-collection', name })
-      collectionCreated = true
-      await linkSelectedItemsToCollection(receipt.id)
-      clearSelection()
-      await Promise.all([loadEntries(true), loadCollections()])
+      void loadCollections().catch(() => undefined)
+      await runLinkBatch(
+        {
+          kind: 'move-collection-items',
+          targetCollectionId: receipt.id,
+          ...(collectionId ? { sourceCollectionId: collectionId } : {})
+        },
+        itemIds
+      )
+      // Creation succeeded even if association needs Retry; retire the creation form.
       return true
     } catch (error) {
-      setError(
-        collectionCreated
-          ? t('Collection link could not be updated.')
-          : error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
+      if (linkScopeRef.current === scopeKey)
+        setError(
+          error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
             ? t('A collection with this name already exists at this level. Choose another name.')
             : t('Collection could not be created.')
-      )
+        )
       return false
     } finally {
       setIsBatching(false)
@@ -2606,33 +3505,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const addSelectedItemsToProject = async (projectId: string): Promise<void> => {
-    const selection = selectionStore.getSnapshot()
-    if (
-      !projectId ||
-      (!selection.allMatchingSelected && selection.selectedIds.size === 0) ||
-      isBatching
-    )
-      return
-    setIsBatching(true)
-    setError(undefined)
-    try {
-      const resolvedIds = await resolveSelectedItemIds()
-      for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        await window.api.literature.transact({
-          kind: 'set-project-items',
-          projectId,
-          itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          included: true,
-          source: 'library'
-        })
-      }
-      clearSelection()
-      await Promise.all([loadEntries(true), loadProjectCounts()])
-    } catch {
-      setError(t('Project link could not be updated.'))
-    } finally {
-      setIsBatching(false)
-    }
+    if (!projectId || isBatching) return
+    await runLinkBatch({ kind: 'set-project-items', projectId, included: true, source: 'library' })
   }
 
   const batchProjectFormDialog = useProjectFormDialog({
@@ -2651,12 +3525,22 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setError(undefined)
     try {
       const chunks: string[] = []
+      const citationKeys = new Set<string>()
       for (let offset = 0; offset < itemIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
         const result = await window.api.literature.formatReferences({
           itemIds: itemIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
           styleId: citationStyleRef.current,
           locale: citationLocale
         })
+        if (format === 'bibtex') {
+          // These headers come from our BibTeX exporter, whose keys are validated before emission.
+          for (const match of result.exports.bibtex.matchAll(/^@[a-z]+\{([^,\r\n]+),/gimu)) {
+            const key = match[1]!
+            if (citationKeys.has(key))
+              throw new Error('Selected Literature Items have duplicate citation keys.')
+            citationKeys.add(key)
+          }
+        }
         chunks.push(result.exports[format].trim())
       }
       const content = `${chunks.filter(Boolean).join('\n\n')}\n`
@@ -2690,11 +3574,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const exportCurrentScope = async (format: 'bibtex' | 'ris'): Promise<boolean> => {
     if (!selectedProject && !selectedCollection) return false
-    const itemIds: string[] = []
-    let offset = 0
-    const seenOffsets = new Set<number>()
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset)
+    try {
       const page = await window.api.literature.search({
         scope: 'library',
         ...(selectedProject ? { projectId: selectedProject.id } : {}),
@@ -2702,18 +3582,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         lifecycle: 'active',
         sortBy: 'title',
         sortDirection: 'asc',
-        offset,
-        limit: 100
+        allItemIds: true
       })
-      itemIds.push(...page.entries.filter(isItem).map(({ id }) => id))
-      if (page.nextOffset === undefined) break
-      offset = page.nextOffset
+      if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+      return await exportReferenceIds(
+        page.itemIds,
+        format,
+        `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
+      )
+    } catch (error) {
+      setError(t('References could not be exported.'))
+      throw error
     }
-    return exportReferenceIds(
-      [...new Set(itemIds)],
-      format,
-      `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
-    )
   }
 
   const mergeSelectedItems = async (): Promise<void> => {
@@ -2916,12 +3796,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <button
                   type="button"
                   className={navButtonClassName}
-                  aria-label={t('Back to Home')}
-                  title={sidebarCollapsed ? t('Back to Home') : undefined}
-                  onClick={() => goHome('user')}
+                  aria-label={returnLabel}
+                  title={sidebarCollapsed ? returnLabel : undefined}
+                  onClick={() => returnFromLibrary('user')}
                 >
                   <ArrowLeft className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Back to Home')}</span> : null}
+                  {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
                 </button>
               </div>
               <nav
@@ -2935,6 +3815,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     navButtonClassName,
                     !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
                   )}
+                  aria-current={
+                    !citationStylesOpen && !duplicatesOpen && section === 'inbox'
+                      ? 'page'
+                      : undefined
+                  }
                   aria-label={t('Inbox')}
                   title={sidebarCollapsed ? t('Inbox') : undefined}
                   onClick={() => selectSection('inbox')}
@@ -2963,16 +3848,31 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       !projectId &&
                       'bg-bg-300 font-medium'
                   )}
+                  ref={libraryEntryRef}
+                  aria-current={
+                    !citationStylesOpen &&
+                    !duplicatesOpen &&
+                    section === 'library' &&
+                    !collectionId &&
+                    !projectId
+                      ? 'page'
+                      : undefined
+                  }
                   aria-label={t('All references')}
                   title={sidebarCollapsed ? t('All references') : undefined}
                   onClick={() => selectLibrary()}
                 >
                   <BookOpenText className="size-4" aria-hidden="true" />
                   {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
+                  <LiteratureLibraryCount
+                    revision={libraryCountRevision}
+                    hidden={sidebarCollapsed}
+                  />
                 </button>
                 <button
                   type="button"
                   className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
+                  aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
                   aria-label={t('Duplicates')}
                   title={sidebarCollapsed ? t('Duplicates') : undefined}
                   onClick={() => {
@@ -2991,6 +3891,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     navButtonClassName,
                     !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
                   )}
+                  aria-current={
+                    !citationStylesOpen && !duplicatesOpen && section === 'trash'
+                      ? 'page'
+                      : undefined
+                  }
                   aria-label={t('Trash')}
                   title={sidebarCollapsed ? t('Trash') : undefined}
                   onClick={() => selectSection('trash')}
@@ -3031,6 +3936,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         navButtonClassName,
                         !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
                       )}
+                      aria-current={
+                        !citationStylesOpen &&
+                        !duplicatesOpen &&
+                        section === 'library' &&
+                        projectId === project.id
+                          ? 'page'
+                          : undefined
+                      }
                       aria-label={project.name}
                       title={sidebarCollapsed ? project.name : undefined}
                       onClick={() => selectProject(project.id)}
@@ -3057,7 +3970,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 />
                 <LiteratureSidebarGroup
                   collapsed={sidebarCollapsed}
-                  entries={collections}
+                  entries={displayCollections}
                   groupId="literature-sidebar-collections"
                   label={t('Collections')}
                   action={
@@ -3092,6 +4005,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         navButtonClassName,
                         !duplicatesOpen && collectionId === collection.id && 'bg-bg-300 font-medium'
                       )}
+                      aria-current={
+                        !citationStylesOpen &&
+                        !duplicatesOpen &&
+                        section === 'library' &&
+                        collectionId === collection.id
+                          ? 'page'
+                          : undefined
+                      }
                       aria-label={collection.name}
                       title={sidebarCollapsed ? collection.name : undefined}
                       onClick={() => selectLibrary(collection.id)}
@@ -3230,6 +4151,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           onSelect={() => {
                             setCollectionDeleteError(undefined)
                             setCollectionPendingDelete(selectedCollection)
+                            void loadCollections().catch(() =>
+                              setCollectionDeleteError(t('Literature could not be loaded.'))
+                            )
                           }}
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">
@@ -3246,7 +4170,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 {section === 'inbox'
                   ? t('Review references found by Agents before they enter your library.')
                   : section === 'trash'
-                    ? t('Restore references or delete them permanently.')
+                    ? t(
+                        'Restore references to edit, preview, or export them, or delete them permanently.'
+                      )
                     : selectedProject
                       ? t('References linked to this project.')
                       : selectedCollection
@@ -3291,15 +4217,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <div>
                   <input
                     ref={importPdfInputRef}
+                    multiple
                     type="file"
                     accept="application/pdf,.pdf"
                     className="sr-only"
-                    aria-label={t('Import PDF')}
+                    aria-label={t('Import PDFs')}
                     onChange={(event) => {
-                      const file = event.currentTarget.files?.[0]
+                      const files = Array.from(event.currentTarget.files ?? [])
                       event.currentTarget.value = ''
-                      if (!file) return
-                      beginPdfImport(file)
+                      if (files.length > 1)
+                        setPdfBatch({
+                          files,
+                          destination: {
+                            name:
+                              selectedProject?.name ??
+                              selectedCollection?.name ??
+                              t('All references'),
+                            projectId,
+                            collectionId
+                          }
+                        })
+                      else if (files[0]) beginPdfImport(files[0])
                     }}
                   />
                   <input
@@ -3393,9 +4331,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               <SelectItem value="rating">{t('Highest rated')}</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Popover>
+                          <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
                             <PopoverTrigger asChild>
-                              <Button type="button" variant="outline" className="relative">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="relative"
+                                aria-describedby={
+                                  yearFilter.invalid && !filtersOpen
+                                    ? 'literature-year-filter-error'
+                                    : undefined
+                                }
+                              >
                                 <SlidersHorizontal className="size-4" aria-hidden="true" />
                                 {t('Filters')}
                                 {activeFilterCount > 0 ? (
@@ -3407,9 +4354,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             </PopoverTrigger>
                             <PopoverContent
                               align="end"
+                              aria-labelledby={`${accessibilityId}-filters`}
                               className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
                             >
-                              <p className="text-sm font-medium">{t('Filters')}</p>
+                              <p id={`${accessibilityId}-filters`} className="text-sm font-medium">
+                                {t('Filters')}
+                              </p>
                               <div className="space-y-1.5">
                                 <span className="text-xs font-medium text-muted-foreground">
                                   {t('Tags')}
@@ -3477,7 +4427,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   type="button"
                                   variant="outline"
                                   className="w-full"
-                                  disabled={activeFilterCount === 0}
+                                  disabled={
+                                    activeFilterCount === 0 &&
+                                    !yearFilter.draftFrom &&
+                                    !yearFilter.draftTo
+                                  }
                                   onClick={clearFilters}
                                 >
                                   {t('Clear filters')}
@@ -3485,6 +4439,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               </div>
                             </PopoverContent>
                           </Popover>
+                          {yearFilter.invalid && !filtersOpen ? (
+                            <p
+                              id="literature-year-filter-error"
+                              role="status"
+                              className="text-xs text-destructive"
+                            >
+                              {t('Enter a valid year range (0–9999).')}
+                            </p>
+                          ) : null}
                           <LiteratureColumnCustomizer
                             columns={tableColumnOrder}
                             labels={tableColumnLabels}
@@ -3572,15 +4535,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               type="button"
                               variant="outline"
                               size="sm"
-                              disabled={isBatching}
-                              onClick={() => void runLifecycleAction('active')}
+                              disabled={
+                                isBatching ||
+                                (!selection.allMatchingSelected &&
+                                  [...selection.selectedIds].every((id) =>
+                                    items.some(
+                                      (item) => item.id === id && Boolean(item.mergedIntoItemId)
+                                    )
+                                  ))
+                              }
+                              onClick={() => void previewRestoreSelection()}
                             >
                               <RotateCcw className="size-3.5" aria-hidden="true" />
                               {t('Restore')}
                             </Button>
                           )}
                           <LiteratureExportMenu
-                            disabled={isBatching}
+                            disabled={isBatching || section === 'trash'}
                             onExport={exportSelectedItems}
                           />
                           {section === 'library' ||
@@ -3650,7 +4621,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     <DropdownMenuItem
                                       className="text-danger-000 focus:text-danger-000"
                                       onSelect={() =>
-                                        setPermanentDeleteIds([...selection.selectedIds])
+                                        requestPermanentDeletion([...selection.selectedIds])
                                       }
                                     >
                                       <Trash2 className="mr-2 size-4" aria-hidden="true" />
@@ -3668,6 +4639,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               }}
             </LiteratureSelectionBoundary>
           </div>
+          <LiteratureAttachmentOperations
+            detailController={detailController}
+            onChanged={(operation) => {
+              if (!operation.item) return
+              const current = detailController.getSnapshot().item
+              const updated =
+                current?.id === operation.itemId
+                  ? { ...current, attachments: operation.item.attachments }
+                  : operation.item
+              detailController.replace(updated)
+              updateMetadataItem(updated)
+              void loadEntries(true)
+            }}
+          />
           {batchLookup ? (
             <LiteratureBatchLookupDialog
               key={batchLookup.jobId ?? `${batchLookup.mode}:${batchLookup.itemIds.join(',')}`}
@@ -3678,14 +4663,195 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onChanged={receiveBackgroundItems}
             />
           ) : null}
-          {(linkedItemError || error) && !entriesLoading ? (
+          {dismissedCandidateUndo ? (
+            <fieldset
+              className="contents"
+              disabled={isBatching || Boolean(pendingCandidateId)}
+              aria-busy={isBatching || Boolean(pendingCandidateId)}
+            >
+              <ActionToast
+                title={t('Dismissed from Inbox')}
+                detail={dismissedCandidateUndo.detail}
+                actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+                dismissLabel={t('Close')}
+                onAction={() => void restoreDismissedCandidates()}
+                onDismiss={() => {
+                  setDismissedCandidateUndo(undefined)
+                  setUndoNotice(undefined)
+                }}
+                testId="literature-dismiss-undo"
+                className="static w-full max-w-none shadow-none"
+              />
+            </fieldset>
+          ) : null}
+          {linkFailure && linkFailure.scopeKey === entriesKey ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={
+                  linkFailure.skipped
+                    ? t(
+                        'Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.',
+                        {
+                          completed: linkFailure.completed,
+                          remaining: linkFailure.itemIds.length,
+                          skipped: linkFailure.skipped
+                        }
+                      )
+                    : t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                        completed: linkFailure.completed,
+                        remaining: linkFailure.itemIds.length
+                      })
+                }
+                primaryButton={
+                  linkFailure.itemIds.length
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () =>
+                          void runLinkBatch(
+                            linkFailure.command,
+                            linkFailure.itemIds,
+                            linkFailure.completed,
+                            linkFailure.skipped,
+                            true
+                          )
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          ) : null}
+          {lifecycleFailure ? (
             <div className="mt-5">
-              <LiteratureErrorNotice title={linkedItemError || error || undefined} />
+              <LiteratureErrorNotice
+                title={t('Literature could not be updated.')}
+                description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                  completed: lifecycleFailure.completed,
+                  remaining: lifecycleFailure.itemIds.length
+                })}
+                secondaryButton={{
+                  label: t('Retry'),
+                  disabled: isBatching,
+                  onClick: () =>
+                    void setItemsLifecycle(lifecycleFailure.itemIds, lifecycleFailure.state)
+                }}
+              />
+            </div>
+          ) : null}
+          {candidateUpdateUncertain || candidateCountsFailed ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={
+                  candidateUpdateUncertain
+                    ? t('The update could not be confirmed. Check the Inbox before trying again.')
+                    : [
+                        t('Project counts could not be refreshed.'),
+                        error === t('Literature could not be loaded.') ? error : undefined
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                }
+                primaryButton={{
+                  label: t('Retry'),
+                  disabled: isBatching || Boolean(pendingCandidateId),
+                  onClick: () => void retryCandidateReads()
+                }}
+              />
+            </div>
+          ) : null}
+          {undoNotice ? (
+            <p role="status" className="mt-2 text-xs leading-5 text-muted-foreground">
+              {undoNotice}
+            </p>
+          ) : null}
+          {permanentDeleteResult?.cleanupPending ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                title={t('References were permanently deleted. Some files are awaiting cleanup.')}
+                description={t(
+                  'Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.'
+                )}
+              />
+            </div>
+          ) : null}
+          {permanentDeleteResult && (permanentDeleteResult.refreshFailed || entriesFailed) ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                description={t(
+                  'References were permanently deleted, but the view could not be refreshed.'
+                )}
+                primaryButton={{
+                  label: t('Retry'),
+                  loading: isBatching,
+                  onClick: () => void refreshAfterPermanentDeletion()
+                }}
+              />
+            </div>
+          ) : null}
+          {oversizedItemId ? <LiteratureOversizedNotice itemId={oversizedItemId} /> : null}
+          {!oversizedItemId &&
+          (linkedItemError || error) &&
+          !(
+            permanentDeleteResult &&
+            !linkedItemError &&
+            error === t('Literature could not be loaded.')
+          ) &&
+          !entriesLoading &&
+          // A failed Inbox read is already covered by the recovery notice and its Retry.
+          !(
+            !linkedItemError &&
+            (candidateUpdateUncertain || candidateCountsFailed) &&
+            error === t('Literature could not be loaded.')
+          ) ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={linkedItemError || error || undefined}
+                primaryButton={
+                  !linkedItemError && error === t('Literature could not be loaded.')
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () => {
+                          void Promise.all([
+                            loadEntries(true, true),
+                            loadCollections(),
+                            loadInboxPendingCount(),
+                            loadProjectCounts()
+                          ]).catch(() => setError(t('Literature could not be loaded.')))
+                        }
+                      }
+                    : undefined
+                }
+              />
             </div>
           ) : null}
 
+          {section === 'inbox' ? (
+            <div className="mt-5 flex gap-2">
+              {(['pending', 'dismissed'] as const).map((state) => (
+                <Button
+                  key={state}
+                  type="button"
+                  size="sm"
+                  variant={inboxState === state ? 'secondary' : 'ghost'}
+                  aria-pressed={inboxState === state}
+                  disabled={isBatching || pendingCandidateId !== undefined}
+                  onClick={() => {
+                    setInboxState(state)
+                    clearSelection()
+                    setEntriesOffset(0)
+                  }}
+                >
+                  {state === 'pending' ? t('Pending') : t('Dismissed')}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           <div className="mt-6 flex min-h-0 flex-1 flex-col gap-2">
-            {entriesLoading && !entriesPageTransitionLoading ? (
+            {entriesFailed ? null : entriesLoading && !entriesPageTransitionLoading ? (
               <div
                 role="status"
                 className="flex min-h-0 flex-1 justify-center py-20 text-muted-foreground"
@@ -3709,7 +4875,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               itemIds={candidates.map(({ id }) => id)}
                               label={t('Select all references')}
                               store={selectionStore}
-                              disabled={isBatching}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               className="size-4"
                             />
                             {t('Select all')}
@@ -3723,31 +4889,47 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                disabled={isBatching}
+                                disabled={isBatching || Boolean(pendingCandidateId)}
                                 onClick={clearSelection}
                               >
                                 {t('Clear selection')}
                               </Button>
                               <div className="ml-auto flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isBatching}
-                                  onClick={() => void settleSelectedCandidates('dismissed')}
-                                >
-                                  <X className="size-3.5" aria-hidden="true" />
-                                  {t('Dismiss')}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={isBatching}
-                                  onClick={() => void settleSelectedCandidates('accepted')}
-                                >
-                                  <Check className="size-3.5" aria-hidden="true" />
-                                  {t('Accept')}
-                                </Button>
+                                {inboxState === 'dismissed' ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={isBatching || Boolean(pendingCandidateId)}
+                                    onClick={() =>
+                                      void restoreDismissedCandidates([...selection.selectedIds])
+                                    }
+                                  >
+                                    <RotateCcw className="size-3.5" aria-hidden="true" />
+                                    {t('Restore')}
+                                  </Button>
+                                ) : (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={isBatching || Boolean(pendingCandidateId)}
+                                      onClick={() => void settleSelectedCandidates('dismissed')}
+                                    >
+                                      <X className="size-3.5" aria-hidden="true" />
+                                      {t('Dismiss')}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={isBatching || Boolean(pendingCandidateId)}
+                                      onClick={() => void settleSelectedCandidates('accepted')}
+                                    >
+                                      <Check className="size-3.5" aria-hidden="true" />
+                                      {t('Accept')}
+                                    </Button>
+                                  </>
+                                )}
                               </div>
                             </>
                           ) : null}
@@ -3776,14 +4958,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             type="button"
                             className="absolute inset-0 cursor-pointer rounded-xl outline-none active:bg-muted/10 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
                             aria-label={`${t('View details')}: ${item.title}`}
-                            disabled={pending}
+                            disabled={isBatching || Boolean(pendingCandidateId)}
                             onClick={() => setSelectedCandidate(candidate)}
                           />
                           <LiteratureSelectionCheckbox
                             itemId={candidate.id}
                             label={t('Select {{title}}', { title: item.title })}
                             store={selectionStore}
-                            disabled={pending || isBatching}
+                            disabled={isBatching || Boolean(pendingCandidateId)}
                             className="relative z-10 mt-1 size-4"
                           />
                           <div className="pointer-events-none relative min-w-0">
@@ -3806,6 +4988,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 })}
                               </span>
                             </div>
+                            {candidateProjectNames(candidate).length > 0 ? (
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {t('Accepting will link to: {{projects}}', {
+                                  projects: candidateProjectNames(candidate).join(', ')
+                                })}
+                              </p>
+                            ) : null}
                             {item.abstract ? (
                               <p className="mt-3 line-clamp-2 text-[0.8125rem] leading-5 text-muted-foreground">
                                 {item.abstract}
@@ -3813,29 +5002,43 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             ) : null}
                           </div>
                           <div className="relative z-10 col-start-2 grid grid-cols-2 gap-2 self-center sm:col-start-auto sm:grid-cols-1">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="w-full"
-                              disabled={pending}
-                              onClick={() =>
-                                void changeCandidateState(candidate.id, 'dismiss-candidate')
-                              }
-                            >
-                              <X className="size-3.5" aria-hidden="true" />
-                              {t('Dismiss')}
-                            </Button>
-                            <Button
-                              type="button"
-                              className="w-full"
-                              disabled={pending}
-                              onClick={() =>
-                                void changeCandidateState(candidate.id, 'accept-candidate')
-                              }
-                            >
-                              <Check className="size-3.5" aria-hidden="true" />
-                              {t('Accept')}
-                            </Button>
+                            {candidate.state === 'dismissed' ? (
+                              <Button
+                                type="button"
+                                className="w-full"
+                                disabled={isBatching || Boolean(pendingCandidateId)}
+                                onClick={() => void restoreDismissedCandidates([candidate.id])}
+                              >
+                                <RotateCcw className="size-3.5" aria-hidden="true" />
+                                {t('Restore')}
+                              </Button>
+                            ) : (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="w-full"
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
+                                  onClick={() =>
+                                    void changeCandidateState(candidate.id, 'dismiss-candidate')
+                                  }
+                                >
+                                  <X className="size-3.5" aria-hidden="true" />
+                                  {t('Dismiss')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  className="w-full"
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
+                                  onClick={() =>
+                                    void changeCandidateState(candidate.id, 'accept-candidate')
+                                  }
+                                >
+                                  <Check className="size-3.5" aria-hidden="true" />
+                                  {t('Accept')}
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </article>
                       )
@@ -3846,9 +5049,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               ) : (
                 <div className="rounded-2xl border border-dashed border-border py-20 text-center">
                   <Inbox className="mx-auto size-7 text-muted-foreground" aria-hidden="true" />
-                  <h3 className="mt-3 font-medium">{t('Inbox is clear')}</h3>
+                  <h3 className="mt-3 font-medium">
+                    {inboxState === 'dismissed'
+                      ? t('No dismissed references')
+                      : t('Inbox is clear')}
+                  </h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {t('New Agent discoveries will appear here for review.')}
+                    {inboxState === 'dismissed'
+                      ? t('Dismissed references can be restored here.')
+                      : t('New Agent discoveries will appear here for review.')}
                   </p>
                 </div>
               )
@@ -3922,6 +5131,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           const attachmentVersion = entry.attachments.find(
                             (attachment) => attachment.versions[0]
                           )?.versions[0]
+                          const hasUnavailableAttachment = entry.attachments.some((attachment) =>
+                            attachment.versions.some(
+                              (version) => version.availability === 'unavailable'
+                            )
+                          )
                           const rowNumber = entriesOffset + itemIndex + 1
                           return (
                             <tr
@@ -3947,7 +5161,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   <button
                                     type="button"
                                     className="flex h-full min-h-16 w-full min-w-0 items-center gap-2 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                                    onClick={() => openSelectedItemDetail(entry)}
+                                    disabled={section === 'trash'}
+                                    onClick={(event) =>
+                                      openSelectedItemDetail(entry, event.currentTarget)
+                                    }
                                   >
                                     <span className="min-w-0 line-clamp-2 break-words font-medium text-foreground">
                                       {entry.item.title}
@@ -4019,6 +5236,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     return (
                                       <td key={column} className="px-2 py-2 align-middle">
                                         <LiteratureTypeControl
+                                          disabled={section === 'trash'}
                                           key={`${entry.id}:${entry.metadataRevision}:type`}
                                           value={entry.item.itemType}
                                           title={entry.item.title}
@@ -4041,6 +5259,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                             <button
                                               type="button"
                                               aria-label={t('Manage Tags')}
+                                              disabled={section === 'trash'}
                                               className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md px-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                                             >
                                               <span className="min-w-0 flex-1">
@@ -4066,6 +5285,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     return (
                                       <td key={column} className="px-2 py-2 align-middle">
                                         <LiteratureRatingControl
+                                          disabled={section === 'trash'}
                                           key={`${entry.id}:${entry.metadataRevision}:rating`}
                                           value={entry.item.rating ?? 0}
                                           onCommit={(rating) =>
@@ -4078,11 +5298,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     return (
                                       <td key={column} className="px-2 py-2 align-middle">
                                         <LiteratureNoteControl
-                                          key={`${entry.id}:${entry.metadataRevision}:note`}
-                                          value={entry.item.personalNote ?? ''}
-                                          title={entry.item.title}
-                                          onCommit={(personalNote) =>
-                                            persistInlineItem(entry, { personalNote })
+                                          disabled={section === 'trash'}
+                                          key={entry.id}
+                                          entry={entry}
+                                          onCommit={(base, personalNote, onPersisted) =>
+                                            persistInlineItem(base, { personalNote }, onPersisted)
                                           }
                                         />
                                       </td>
@@ -4120,6 +5340,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       aria-label={t('Preview {{title}}', {
                                         title: attachmentVersion.filename
                                       })}
+                                      disabled={
+                                        section === 'trash' ||
+                                        attachmentVersion.availability === 'unavailable' ||
+                                        attachmentOperations.some(
+                                          (operation) =>
+                                            operation.itemId === entry.id && operation.pending
+                                        )
+                                      }
                                       onClick={() => previewFirstAttachment(entry)}
                                     >
                                       <Paperclip
@@ -4131,6 +5359,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 ) : (
                                   <span className="text-muted-foreground">—</span>
                                 )}
+                                {hasUnavailableAttachment ? (
+                                  <button
+                                    type="button"
+                                    className="block w-full text-xs text-danger-000"
+                                    disabled={section === 'trash'}
+                                    onClick={(event) =>
+                                      openSelectedItemDetail(entry, event.currentTarget)
+                                    }
+                                  >
+                                    {t('Attachment unavailable')}
+                                  </button>
+                                ) : null}
                               </td>
                               <td className="sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
                                 <div className="flex items-center justify-end">
@@ -4148,6 +5388,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
                                       <DropdownMenuItem
+                                        disabled={section === 'trash'}
                                         onSelect={() => openSelectedItemDetail(entry)}
                                       >
                                         <Pencil className="mr-2 size-4" aria-hidden="true" />
@@ -4157,7 +5398,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                         <>
                                           <DropdownMenuSeparator />
                                           <DropdownMenuItem
-                                            disabled={isBatching}
+                                            disabled={isBatching || Boolean(entry.mergedIntoItemId)}
                                             onSelect={() =>
                                               void setItemsLifecycle([entry.id], 'active')
                                             }
@@ -4165,6 +5406,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                             <RotateCcw className="mr-2 size-4" aria-hidden="true" />
                                             {t('Restore')}
                                           </DropdownMenuItem>
+                                          {entry.mergedIntoItemId ? (
+                                            <DropdownMenuItem
+                                              onSelect={() =>
+                                                useNavigationStore
+                                                  .getState()
+                                                  .openLiteratureItem(
+                                                    entry.mergedIntoItemId!,
+                                                    'user'
+                                                  )
+                                              }
+                                            >
+                                              <BookOpenText
+                                                className="mr-2 size-4"
+                                                aria-hidden="true"
+                                              />
+                                              {t('Open retained reference')}
+                                            </DropdownMenuItem>
+                                          ) : null}
                                         </>
                                       ) : null}
                                       {section !== 'trash' ? (
@@ -4186,7 +5445,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                           <DropdownMenuItem
                                             className="text-danger-000 focus:text-danger-000"
                                             disabled={isBatching}
-                                            onSelect={() => setPermanentDeleteIds([entry.id])}
+                                            onSelect={() => requestPermanentDeletion([entry.id])}
                                           >
                                             <Trash2 className="mr-2 size-4" aria-hidden="true" />
                                             {t('Delete permanently')}
@@ -4241,7 +5500,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(960px,calc(100vw-2rem))] p-0')}>
+          <Dialog.Content
+            className={dialogPanelClassName('flex w-[min(960px,calc(100vw-2rem))] flex-col p-0')}
+          >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
@@ -4257,7 +5518,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className="max-h-[60vh] space-y-5 overflow-y-auto p-5">
+            <div className="relative min-h-0 max-h-[60vh] space-y-5 overflow-y-auto p-5">
               {mergeError ? <LiteratureErrorNotice tone="amber" title={mergeError} /> : null}
               <LiteratureMergeReview
                 entries={selectedItems}
@@ -4273,7 +5534,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 disabled={isBatching}
               />
             </div>
-            <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+            <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
               <Dialog.Close asChild>
                 <Button type="button" variant="outline">
                   {t('Cancel')}
@@ -4292,13 +5553,28 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         </Dialog.Portal>
       </Dialog.Root>
 
+      {pdfBatch ? (
+        <LiteraturePdfBatchImportDialog
+          {...pdfBatch}
+          createDraft={(file) => ({
+            ...emptyLiteratureItem(),
+            title: titleFromPdfFilename(file.name)
+          })}
+          onClose={() => {
+            setPdfBatch(undefined)
+            void loadEntries(true)
+            void loadCollections()
+            void loadProjectCounts()
+          }}
+        />
+      ) : null}
       {recordImport ? (
         <LiteratureRecordImportDialog
           recordImport={recordImport}
           duplicatePolicy={duplicatePolicy}
           onDuplicatePolicyChange={setDuplicatePolicy}
           isImportingRecords={isImportingRecords}
-          destination={selectedProject?.name ?? selectedCollection?.name ?? t('All references')}
+          destination={recordImport.destination.name}
           itemDescription={itemDescription}
           itemTypeLabels={itemTypeLabels}
           onClose={() => {
@@ -4319,16 +5595,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(640px,calc(100vw-2rem))] p-0')}>
+          <Dialog.Content
+            className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
+          >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
-                  {pendingImportPdf ? t('Import PDF') : t('Add reference')}
+                  {dialogItemEditor?.file ? t('Import PDF') : t('Add reference')}
                 </Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
-                  {pendingImportPdf
+                  {dialogItemEditor?.file
                     ? t('Review reference details before importing {{name}}.', {
-                        name: pendingImportPdf.name
+                        name: dialogItemEditor?.file.name
                       })
                     : t('Create a reference in your library.')}
                 </Dialog.Description>
@@ -4346,7 +5624,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            {pendingImportPdf && isReadingImportMetadata ? (
+            {isSavingNewItem ? pdfUploadNotice : null}
+            {dialogItemEditor?.file && dialogItemEditor?.reading ? (
               <div
                 className="grid min-h-80 place-items-center text-sm text-muted-foreground"
                 role="status"
@@ -4361,24 +5640,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               </div>
             ) : (
               <LiteratureMetadataEditor
+                className="min-h-0"
                 beforeFields={
                   <LiteratureDuplicatePolicyField
-                    value={duplicatePolicy}
+                    value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}
                     onChange={setDuplicatePolicy}
-                    disabled={isSavingNewItem}
+                    disabled={isSavingNewItem || Boolean(dialogItemEditor?.createdItemId)}
                   />
                 }
-                key={pendingImportPdf?.name ?? 'manual-reference'}
+                key={dialogItemEditor?.file?.name ?? 'manual-reference'}
                 item={
-                  pendingImportDraft ?? {
+                  dialogItemEditor?.draft ?? {
                     ...emptyLiteratureItem(),
-                    title: pendingImportPdf ? titleFromPdfFilename(pendingImportPdf.name) : ''
+                    title: dialogItemEditor?.file
+                      ? titleFromPdfFilename(dialogItemEditor?.file.name)
+                      : ''
                   }
                 }
                 saving={isSavingNewItem}
-                error={createItemError}
+                error={dialogItemEditor?.error}
+                onRetry={createdItemId ? () => void createManualItem() : undefined}
                 onCancel={closeItemEditor}
-                onSave={(item) => void createManualItem(item)}
+                onSave={(item) => {
+                  if (isCreatingItem) void createManualItem(item)
+                }}
               />
             )}
           </Dialog.Content>
@@ -4394,10 +5679,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         {selectedCandidate ? (
           <Dialog.Portal>
             <Dialog.Overlay className={dialogOverlayClassName} />
-            <Dialog.Content className={dialogPanelClassName('w-[min(620px,calc(100vw-2rem))] p-0')}>
+            <Dialog.Content
+              className={dialogPanelClassName('flex w-[min(620px,calc(100vw-2rem))] flex-col p-0')}
+            >
               <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
                 <div className="min-w-0">
-                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate text-base')}>
+                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                     {selectedCandidate.candidate.item.title}
                   </Dialog.Title>
                   <Dialog.Description
@@ -4419,7 +5706,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   </Button>
                 </Dialog.Close>
               </div>
-              <div className="max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+              <div className="relative min-h-0 max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                {candidateProjectNames(selectedCandidate).length > 0 ? (
+                  <p className="py-4 text-sm leading-6 text-muted-foreground">
+                    {t('Accepting will link to: {{projects}}', {
+                      projects: candidateProjectNames(selectedCandidate).join(', ')
+                    })}
+                  </p>
+                ) : null}
                 {selectedCandidate.candidate.item.abstract ? (
                   <section className="py-4">
                     <h3 className="font-medium">{t('Abstract')}</h3>
@@ -4500,36 +5794,53 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   </section>
                 ) : null}
               </div>
-              <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={pendingCandidateId === selectedCandidate.id}
-                  onClick={() => {
-                    void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
-                      (updated) => {
-                        if (updated) setSelectedCandidate(undefined)
-                      }
-                    )
-                  }}
-                >
-                  <X className="size-3.5" aria-hidden="true" />
-                  {t('Dismiss')}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={pendingCandidateId === selectedCandidate.id}
-                  onClick={() => {
-                    void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
-                      (updated) => {
-                        if (updated) setSelectedCandidate(undefined)
-                      }
-                    )
-                  }}
-                >
-                  <Check className="size-3.5" aria-hidden="true" />
-                  {t('Accept')}
-                </Button>
+              <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+                {selectedCandidate.state === 'dismissed' ? (
+                  <Button
+                    type="button"
+                    disabled={isBatching || Boolean(pendingCandidateId)}
+                    onClick={() =>
+                      void restoreDismissedCandidates([selectedCandidate.id]).then((restored) => {
+                        if (restored) setSelectedCandidate(undefined)
+                      })
+                    }
+                  >
+                    <RotateCcw className="size-3.5" aria-hidden="true" />
+                    {t('Restore')}
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
+                      onClick={() => {
+                        void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
+                          (updated) => {
+                            if (updated) setSelectedCandidate(undefined)
+                          }
+                        )
+                      }}
+                    >
+                      <X className="size-3.5" aria-hidden="true" />
+                      {t('Dismiss')}
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
+                      onClick={() => {
+                        void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
+                          (updated) => {
+                            if (updated) setSelectedCandidate(undefined)
+                          }
+                        )
+                      }}
+                    >
+                      <Check className="size-3.5" aria-hidden="true" />
+                      {t('Accept')}
+                    </Button>
+                  </>
+                )}
               </div>
             </Dialog.Content>
           </Dialog.Portal>
@@ -4537,14 +5848,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       </Dialog.Root>
 
       <LiteratureDetailBoundary controller={detailController}>
-        {({ item: selectedItem, open }) => (
-          // The portaled file preview owns focus while open. A lower modal's scroll lock would
-          // reject its wheel/touch events because the preview is outside the detail content.
-          <Dialog.Root open={open} modal={!previewItem}>
+        {({ item: selectedItem, open, generation }) => (
+          <Dialog.Root open={open}>
             {selectedItem ? (
               <Dialog.Portal>
-                <Dialog.Overlay
-                  className={dialogOverlayClassName}
+                {/* Keep the panel and scrim mounted while the portaled preview owns focus.
+                    Only release Radix's scroll lock: changing Root.modal remounts Content. */}
+                {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
+                <div
+                  aria-hidden="true"
+                  data-state={open ? 'open' : 'closed'}
+                  className={cn(dialogOverlayClassName, 'pointer-events-auto')}
                   onPointerDownCapture={(event) => {
                     const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
                     const pointInsideDialog = Boolean(
@@ -4585,6 +5899,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 />
                 <Dialog.Content
                   ref={selectedItemDialogRef}
+                  onCloseAutoFocus={(event) => {
+                    event.preventDefault()
+                    if (detailController.getSnapshot().open || previewItem) return
+                    const initiator = detailInitiatorRef.current
+                    if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
+                      initiator.focus()
+                      if (document.activeElement === initiator && initiator !== document.body)
+                        return
+                    }
+                    libraryEntryRef.current?.focus()
+                  }}
                   className={dialogPanelClassName(
                     cn(
                       'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
@@ -4627,9 +5952,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       <div className="min-w-0 flex-1">
                         {metadata.mode !== 'view' ? (
                           <>
-                            <Dialog.Title
-                              className={cn(dialogTitleClassName, 'truncate text-base')}
-                            >
+                            <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
                               {metadata.mode === 'edit'
                                 ? t('Edit metadata')
                                 : metadata.mode === 'complete'
@@ -4659,7 +5982,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <Dialog.Title
                               className={cn(
                                 dialogTitleClassName,
-                                'line-clamp-3 break-words text-base leading-snug'
+                                'line-clamp-3 break-words leading-snug'
                               )}
                             >
                               {selectedItem.item.title}
@@ -4725,12 +6048,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         size="icon-sm"
                         className={dialogCloseButtonClassName}
                         aria-label={t('Close')}
+                        disabled={isAddingPdf}
                         onClick={closeSelectedItemDetail}
                       >
                         <X className="size-4" aria-hidden="true" />
                       </Button>
                     </div>
                   </div>
+                  {isAddingPdf ? pdfUploadNotice : null}
                   {metadata.mode === 'full-text' ? (
                     <LiteratureFullTextLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
@@ -4741,25 +6066,65 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         requestAnimationFrame(() => pdfInputRef.current?.click())
                       }}
                       onAdded={(updated) => {
-                        detailController.replace(updated)
                         updateMetadataItem(updated)
-                        if (detailController.getSnapshot().item?.id === updated.id)
+                        if (detailController.getSnapshot().generation === generation) {
+                          detailController.replace(updated)
                           changeDetailMode('view')
+                        }
                         void loadEntries(true)
                       }}
                     />
                   ) : metadata.mode === 'edit' ? (
-                    <LiteratureMetadataEditor
-                      key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                      item={selectedItem.item}
-                      saving={metadata.saving}
-                      error={metadata.error}
-                      className="min-h-0 flex-1 max-h-none"
-                      onCancel={() => {
-                        changeDetailMode('view')
-                      }}
-                      onSave={(item) => void metadata.save(item)}
-                    />
+                    <>
+                      {metadata.awaitingReload || metadata.externallyUpdated() ? (
+                        <ErrorNotice
+                          className="mx-5 mt-4 w-auto shrink-0"
+                          role="alert"
+                          tone="amber"
+                          description={
+                            metadata.awaitingReload
+                              ? t('The reference was saved, but could not be reloaded.')
+                              : t(
+                                  'This reference changed while you were editing. Your draft has been kept.'
+                                )
+                          }
+                          primaryButton={
+                            metadata.awaitingReload
+                              ? {
+                                  label: t('Retry'),
+                                  loading: metadata.saving,
+                                  onClick: () => void metadata.reloadSaved()
+                                }
+                              : {
+                                  label: t('Load latest version'),
+                                  disabled: metadata.saving,
+                                  description: t(
+                                    'Discard this draft and load the latest saved metadata.'
+                                  ),
+                                  onClick: metadata.loadLatest
+                                }
+                          }
+                        />
+                      ) : null}
+                      <LiteratureMetadataEditor
+                        key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
+                        item={metadata.editBase?.item ?? selectedItem.item}
+                        saving={metadata.saving || metadata.awaitingReload}
+                        saveDisabled={
+                          metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
+                        }
+                        error={
+                          removedDetailItemId === selectedItem.id
+                            ? t('This reference is no longer in your Library.')
+                            : metadata.awaitingReload || metadata.externallyUpdated()
+                              ? undefined
+                              : metadata.error
+                        }
+                        className="min-h-0 flex-1 max-h-none"
+                        onCancel={() => changeDetailMode('view')}
+                        onSave={(item) => void metadata.save(item)}
+                      />
+                    </>
                   ) : metadata.mode === 'complete' ? (
                     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 text-sm">
                       <LiteratureMetadataLookup
@@ -4828,7 +6193,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                           key={field}
                                           className="rounded-lg border border-border-300/70 bg-bg-000 px-3 py-2 text-xs"
                                         >
-                                          <p className="font-medium">{metadataFieldLabel(field)}</p>
+                                          <p
+                                            id={`${accessibilityId}-${field}-label`}
+                                            className="font-medium"
+                                          >
+                                            {metadataFieldLabel(field)}
+                                          </p>
                                           <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
                                             <span className="py-1 text-muted-foreground">
                                               {t('Kept')}
@@ -4840,7 +6210,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                             <span className="py-1 text-muted-foreground">
                                               {providerLabel}
                                             </span>
-                                            <p className="min-w-0 break-words py-1 leading-5 text-foreground">
+                                            <p
+                                              id={`${accessibilityId}-${field}-candidate`}
+                                              className="min-w-0 break-words py-1 leading-5 text-foreground"
+                                            >
                                               {value}
                                             </p>
                                             {valuesMatch ? (
@@ -4853,6 +6226,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                                 variant="outline"
                                                 size="sm"
                                                 className="h-8 self-start px-3 text-xs"
+                                                aria-pressed={metadata.overwriteFields.has(field)}
+                                                aria-describedby={`${accessibilityId}-${field}-label ${accessibilityId}-${field}-candidate`}
                                                 onClick={() => metadata.toggleOverwrite(field)}
                                               >
                                                 {metadata.overwriteFields.has(field) ? (
@@ -4923,7 +6298,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       }}
                     />
                   ) : (
-                    <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                    <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
                       {fullCreatorLabel(selectedItem.item) ? (
                         <section className="py-4">
                           <h3 className="font-medium">{t('Authors')}</h3>
@@ -4993,6 +6368,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </dl>
                         ) : null}
                       </section>
+                      <LiteratureSources
+                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                        itemId={selectedItem.id}
+                      />
                       <div className="py-4">
                         <ResourceTagSummary
                           reference={{
@@ -5027,7 +6406,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           <LiteratureDetailLinkList
                             key={`${selectedItem.id}:collections`}
                             checkedIds={selectedItem.collectionIds}
-                            entries={collections}
+                            entries={displayCollections}
                             error={collectionLinkError}
                             kind="collections"
                             onCheckedChange={setCollectionLink}
@@ -5083,47 +6462,34 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             {pdfError}
                           </p>
                         ) : null}
-                        {selectedItem.attachments.length > 0 ? (
-                          <div className="mt-2 space-y-2">
-                            {selectedItem.attachments.map((attachment) => {
-                              const version = attachment.versions[0]
-                              return version ? (
-                                <button
-                                  key={attachment.id}
-                                  type="button"
-                                  className="flex w-full items-center gap-3 rounded-lg border border-border-300/80 bg-bg-100 px-3 py-2 text-left transition-colors hover:bg-bg-200"
-                                  aria-label={t('Preview {{title}}', { title: version.filename })}
-                                  onClick={() =>
-                                    setPreviewItem({
-                                      id: `literature:${version.id}`,
-                                      sessionId: LITERATURE_PREVIEW_SESSION_ID,
-                                      title: version.filename,
-                                      type: 'file',
-                                      source: 'literature',
-                                      path: createLiteratureAttachmentVersionReference(version.id),
-                                      format: 'pdf',
-                                      name: version.filename,
-                                      mimeType: version.contentType,
-                                      size: version.sizeBytes,
-                                      versionNumber: version.versionNumber
-                                    })
-                                  }
-                                >
-                                  <FileText
-                                    className="size-4 shrink-0 text-primary"
-                                    aria-hidden="true"
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate font-medium">{version.filename}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {formatBytes(version.sizeBytes)}
-                                    </p>
-                                  </div>
-                                </button>
-                              ) : null
-                            })}
-                          </div>
-                        ) : (
+                        <LiteratureAttachments
+                          readItem={detailController.read}
+                          key={selectedItem.id}
+                          item={selectedItem}
+                          onPreview={(version) => {
+                            const attachment = selectedItem.attachments.find((candidate) =>
+                              candidate.versions.some(
+                                (candidateVersion) => candidateVersion.id === version.id
+                              )
+                            )
+                            if (!attachment) return
+                            setPreviewItem({
+                              id: `literature:${version.id}`,
+                              sessionId: LITERATURE_PREVIEW_SESSION_ID,
+                              title: version.filename,
+                              type: 'file',
+                              source: 'literature',
+                              managedFileId: attachment.id,
+                              path: createLiteratureAttachmentVersionReference(version.id),
+                              format: 'pdf',
+                              name: version.filename,
+                              mimeType: version.contentType,
+                              size: version.sizeBytes,
+                              versionNumber: version.versionNumber
+                            })
+                          }}
+                        />
+                        {selectedItem.attachments.length === 0 ? (
                           <button
                             type="button"
                             data-slot="literature-pdf-drop-zone"
@@ -5152,7 +6518,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               {t('Drag and drop or click to upload')}
                             </span>
                           </button>
-                        )}
+                        ) : null}
                       </section>
                     </div>
                   )}
@@ -5164,12 +6530,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       </LiteratureDetailBoundary>
       <CollectionEditorDialog
         ref={collectionEditorRef}
-        onSaved={({ id, name, description }) => {
-          if (id) {
+        onSaved={({ id, revision, name, description }) => {
+          if (id && revision !== undefined) {
             setCollections((current) =>
               current.map((collection) =>
-                collection.id === id
-                  ? { ...collection, name, description, updatedAt: Date.now() }
+                collection.id === id && collection.revision <= revision
+                  ? { ...collection, revision, name, description, updatedAt: Date.now() }
                   : collection
               )
             )
@@ -5190,7 +6556,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           >
             <div className={dialogHeaderClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete “{{name}}”?', { name: collectionPendingDelete?.name ?? '' })}
+                {t('Delete “{{name}}”?', { name: dialogCollectionDeletion?.collection.name ?? '' })}
               </AlertDialog.Title>
               <Button
                 type="button"
@@ -5210,6 +6576,42 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   'References in this collection will remain in All references. This action cannot be undone.'
                 )}
               </AlertDialog.Description>
+              {promotedCollections.length ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <p>{t('Child collections will move to the top level.')}</p>
+                  <ul className="space-y-2">
+                    {promotedCollections.map((child) => (
+                      <li
+                        key={child.id}
+                        className="flex flex-wrap items-center justify-between gap-2"
+                      >
+                        <span className="min-w-0 break-words">{child.name}</span>
+                        {conflictingCollections.some(({ id }) => id === child.id) ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isDeletingCollection}
+                            onClick={() => {
+                              setCollectionPendingDelete(undefined)
+                              openEditCollection(child)
+                            }}
+                          >
+                            {t('Rename conflicting collection')}
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {conflictingCollections.length ? (
+                    <p role="alert">
+                      {t(
+                        'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+                      )}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {collectionDeleteError ? (
                 <p className="mt-3 text-sm text-danger-000" role="alert">
                   {collectionDeleteError}
@@ -5232,7 +6634,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               <Button
                 type="button"
                 variant="destructive"
-                disabled={isDeletingCollection}
+                disabled={isDeletingCollection || conflictingCollections.length > 0}
                 onClick={() => void deleteCollection()}
               >
                 {isDeletingCollection ? (
@@ -5242,6 +6644,49 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   />
                 ) : null}
                 {t('Delete collection')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <AlertDialog.Root
+        open={Boolean(restorePreview)}
+        onOpenChange={(open) => {
+          if (!open && !isBatching) setRestorePreview(undefined)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>{t('Restore')}</AlertDialog.Title>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t('Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.', {
+                  recoverable: dialogRestorePreview?.itemIds.length ?? 0,
+                  skipped: dialogRestorePreview?.skipped ?? 0
+                })}
+              </AlertDialog.Description>
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" disabled={isBatching}>
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                disabled={isBatching || !restorePreview?.itemIds.length}
+                onClick={() => {
+                  const ids = restorePreview?.itemIds
+                  setRestorePreview(undefined)
+                  if (ids?.length) void setItemsLifecycle(ids, 'active')
+                }}
+              >
+                {t('Restore')}
               </Button>
             </div>
           </AlertDialog.Content>
@@ -5277,9 +6722,39 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 {t(
-                  'This will permanently delete the selected references, their metadata, and attached files. This action cannot be undone.'
+                  'This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.'
                 )}
               </AlertDialog.Description>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {t(
+                  'Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.'
+                )}
+              </p>
+              {permanentDeletionDiagnostic ? (
+                <div className="mt-3">
+                  <LiteratureDeletionNotice
+                    diagnostic={permanentDeletionDiagnostic}
+                    onNavigate={() => setPermanentDeleteIds([])}
+                  />
+                </div>
+              ) : permanentDeleteFailed ? (
+                <div className="mt-3">
+                  <LiteratureErrorNotice
+                    title={t('Literature could not be deleted permanently.')}
+                    description={t(
+                      'Refresh references to check their current state before trying again.'
+                    )}
+                    primaryButton={{
+                      label: t('Refresh'),
+                      onClick: () => {
+                        setPermanentDeleteIds([])
+                        clearSelection()
+                        void loadEntries(true)
+                      }
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
             <div
               className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
@@ -5297,7 +6772,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               <Button
                 type="button"
                 className="border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white"
-                disabled={isBatching}
+                disabled={isBatching || permanentDeleteFailed}
                 onClick={() => void deleteItemsPermanently()}
               >
                 {isBatching ? t('Deleting…') : t('Delete permanently')}
@@ -5310,14 +6785,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
         onOpenChange={(open) => {
           if (open || startingReadingProjectId) return
+          setReadingProjectQuery('')
           setPendingLiteratureReading(undefined)
           setReadingProjectError(undefined)
         }}
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}>
-            <div className={dialogHeaderClassName}>
+          <Dialog.Content
+            className={dialogPanelClassName(
+              'flex max-h-[calc(100svh-2rem)] w-[min(440px,calc(100vw-2rem))] flex-col p-0'
+            )}
+          >
+            <div className={cn(dialogHeaderClassName, 'shrink-0')}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>{t('Read with agent')}</Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
@@ -5336,87 +6816,75 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className={dialogBodyClassName}>
-              {readingProjectError ? (
-                <div className="mb-3">
-                  <p role="alert" className="text-sm text-danger-000">
-                    {readingProjectError}
-                  </p>
-                  {readingSelectionEntries ? (
-                    <Button
-                      className="mt-2"
-                      variant="outline"
-                      size="sm"
-                      disabled={Boolean(startingReadingProjectId)}
-                      onClick={() => {
-                        setPendingLiteratureReading(undefined)
-                        setReadingProjectError(undefined)
-                        setBatchReading({ entries: readingSelectionEntries })
-                      }}
-                    >
-                      {t('Back')}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-              {projectsLoaded ? (
-                activeProjects.length > 0 ? (
-                  <div className="grid gap-2">
-                    {activeProjects.map((project) => (
+            <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+              <div className={dialogBodyClassName}>
+                {readingProjectError ? (
+                  <div className="mb-3">
+                    <p role="alert" className="text-sm text-danger-000">
+                      {readingProjectError}
+                    </p>
+                    {readingSelectionEntries ? (
                       <Button
-                        key={project.id}
-                        type="button"
+                        className="mt-2"
                         variant="outline"
-                        className="justify-start"
+                        size="sm"
                         disabled={Boolean(startingReadingProjectId)}
-                        onClick={() => void startReadingInProject(project.id)}
+                        onClick={() => {
+                          setPendingLiteratureReading(undefined)
+                          setReadingProjectError(undefined)
+                          setBatchReading({ entries: readingSelectionEntries })
+                        }}
                       >
-                        {startingReadingProjectId === project.id ? (
-                          <LoaderCircle
-                            className="size-4 animate-spin motion-reduce:animate-none"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <FolderOpen className="size-4" aria-hidden="true" />
-                        )}
-                        <span className="truncate">{project.name}</span>
+                        {t('Back')}
                       </Button>
-                    ))}
+                    ) : null}
                   </div>
-                ) : (
-                  <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
-                    <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
-                    <div>
-                      <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
-                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                        {pendingLiteratureReading && pendingLiteratureReading.length > 1
-                          ? t(
-                              'Create a project to keep these papers and their Reading session together.'
-                            )
-                          : t(
-                              'Create a project to keep this paper and its Reading session together.'
-                            )}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
+                ) : null}
+                {projectsLoaded ? (
+                  activeProjects.length > 0 ? (
+                    <ProjectPicker
+                      projects={activeProjects}
+                      query={readingProjectQuery}
+                      onQueryChange={setReadingProjectQuery}
                       disabled={Boolean(startingReadingProjectId)}
-                      onClick={readingProjectFormDialog.openCreateDialog}
-                    >
-                      <FolderPlus className="size-4" aria-hidden="true" />
-                      {t('Create project')}
-                    </Button>
-                  </div>
-                )
-              ) : (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {t('Loading…')}
-                </p>
-              )}
-            </div>
+                      pendingId={startingReadingProjectId}
+                      onSelect={(id) => void startReadingInProject(id)}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
+                      <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
+                      <div>
+                        <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                          {pendingLiteratureReading && pendingLiteratureReading.length > 1
+                            ? t(
+                                'Create a project to keep these papers and their Reading session together.'
+                              )
+                            : t(
+                                'Create a project to keep this paper and its Reading session together.'
+                              )}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        disabled={Boolean(startingReadingProjectId)}
+                        onClick={readingProjectFormDialog.openCreateDialog}
+                      >
+                        <FolderPlus className="size-4" aria-hidden="true" />
+                        {t('Create project')}
+                      </Button>
+                    </div>
+                  )
+                ) : (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {t('Loading…')}
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
             {projectsLoaded && activeProjects.length > 0 ? (
               <div
-                className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+                className={`${dialogFooterClassName} shrink-0 flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
               >
                 <Button
                   type="button"
@@ -5442,6 +6910,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           }}
           onContinue={(documents) => {
             setBatchReading(undefined)
+            setReadingProjectQuery('')
             setReadingProjectError(undefined)
             if (selectedProject) void startReadingInProject(selectedProject.id, documents)
             else setPendingLiteratureReading(documents)
@@ -5450,22 +6919,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       ) : null}
       <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
       <FilePreviewDialog
+        onFocusFallback={() => libraryEntryRef.current?.focus()}
         item={previewItem}
         allowReadingContext={false}
         onReadWithAgent={requestReadWithAgent}
-        onClose={() => setPreviewItem(undefined)}
+        onClose={() => {
+          setPreviewItem(undefined)
+          const current = detailController.getSnapshot().item
+          if (current)
+            void window.api.literature
+              .get(current.id)
+              .then((updated) => {
+                if (!updated) return
+                if (detailController.getSnapshot().item?.id === updated.id)
+                  detailController.replace(updated)
+                updateMetadataItem(updated)
+              })
+              .catch(() => undefined)
+        }}
       />
-      {dismissedCandidateUndo ? (
-        <ActionToast
-          title={t('Dismissed from Inbox')}
-          detail={dismissedCandidateUndo.detail}
-          actionLabel={t('Undo')}
-          dismissLabel={t('Close')}
-          onAction={() => void restoreDismissedCandidates()}
-          onDismiss={() => setDismissedCandidateUndo(undefined)}
-          testId="literature-dismiss-undo"
-        />
-      ) : null}
     </main>
   )
 }

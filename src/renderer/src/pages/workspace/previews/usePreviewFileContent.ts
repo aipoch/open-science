@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
+import { PreviewInitialPosition } from './PreviewInitialPosition'
 import { usePreviewResourceGeneration } from './usePreviewResourceGeneration'
 
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
@@ -15,6 +16,13 @@ const PUBLICATION_RETRY_LIMIT = 4
 
 type PreviewPagination = {
   pageNumber: number
+  pageKey?: string
+  startingLineNumber?: number
+  startsMidLine?: boolean
+  endsMidLine?: boolean
+  byteStart?: number
+  byteEnd?: number
+  showLastLines?: boolean
   hasPrevious: boolean
   hasNext: boolean
   previousPage: () => void
@@ -38,7 +46,9 @@ type UsePreviewFileContentRequest = {
   selectedVersionId?: string
   path: string
   source?: PreviewFileSource
+  // Per-page read budget; never an admission limit for the complete file.
   maxBytes?: number
+  maxFileBytes?: number
   encoding?: 'utf8' | 'base64'
 }
 
@@ -71,7 +81,7 @@ const readManagedPreviewPage = async (
   },
   owner?: PreviewResourceOwner
 ): Promise<ArtifactPreviewResult> => {
-  const previewRequest = createManagedPreviewRequest(request)
+  const previewRequest = createManagedPreviewRequest({ ...request, maxBytes: request.maxFileBytes })
   let resource = owner?.resource
   for (let attempt = 0; !resource; attempt += 1) {
     if (request.signal.aborted) throw request.signal.reason
@@ -113,11 +123,6 @@ const readManagedPreviewPage = async (
         signal: request.signal
       })
       if (!response.ok) {
-        if (response.status === 404) {
-          throw Object.assign(new Error('ENOENT: managed preview file is no longer available.'), {
-            code: 'ENOENT'
-          })
-        }
         throw new Error(`Managed preview request failed with status ${response.status}.`)
       }
       size = readResponseSize(response, resource.size)
@@ -129,6 +134,14 @@ const readManagedPreviewPage = async (
       while (contentBytesRead < bytes.length && (bytes[contentBytesRead] & 0xc0) === 0x80) {
         contentBytesRead += 1
       }
+    }
+    // Keep CRLF together, using the same bounded lookahead as UTF-8 completion.
+    if (
+      request.encoding === 'utf8' &&
+      bytes[contentBytesRead - 1] === 13 &&
+      bytes[contentBytesRead] === 10
+    ) {
+      contentBytesRead += 1
     }
     const contentBytes = bytes.subarray(0, contentBytesRead)
     const nextOffset = request.offset + contentBytesRead
@@ -166,9 +179,11 @@ export const usePreviewFileContent = ({
   path,
   source = 'artifact',
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
+  maxFileBytes,
   encoding = 'utf8'
 }: UsePreviewFileContentRequest): PreviewFileContentLoadState => {
   const generation = usePreviewResourceGeneration()
+  const initialPosition = useContext(PreviewInitialPosition)
   const fileKey = JSON.stringify([
     generation,
     projectId ?? null,
@@ -178,20 +193,29 @@ export const usePreviewFileContent = ({
     selectedVersionId ?? null,
     encoding,
     maxBytes,
+    initialPosition?.offset,
+    maxFileBytes,
     path
   ])
-  // Keep byte offsets, not prior page contents, so only the active page remains in memory.
-  const [pageState, setPageState] = useState<{ fileKey: string; offsets: number[]; index: number }>(
-    {
-      fileKey,
-      offsets: [0],
-      index: 0
-    }
-  )
+  // Retain locations, not previous page contents, for the pinned resource sequence.
+  const firstPage = {
+    offset: initialPosition?.offset ?? 0,
+    startingLineNumber: initialPosition?.startingLineNumber ?? 1,
+    startsMidLine: Boolean(initialPosition?.offset)
+  }
+  const [pageState, setPageState] = useState<{
+    fileKey: string
+    pages: (typeof firstPage)[]
+    index: number
+    showLastLines: boolean
+  }>({ fileKey, pages: [firstPage], index: 0, showLastLines: false })
   const activePageState =
-    pageState.fileKey === fileKey ? pageState : { fileKey, offsets: [0], index: 0 }
+    pageState.fileKey === fileKey
+      ? pageState
+      : { fileKey, pages: [firstPage], index: 0, showLastLines: false }
   if (pageState.fileKey !== fileKey) setPageState(activePageState)
-  const offset = activePageState.offsets[activePageState.index] ?? 0
+  const page = activePageState.pages[activePageState.index] ?? firstPage
+  const offset = page.offset
   const requestKey = `${fileKey}:${offset}`
   const [state, setState] = useState<PreviewFileContentInternalState>({
     status: 'loading',
@@ -226,6 +250,7 @@ export const usePreviewFileContent = ({
         ...(managedFileId ? { managedFileId } : {}),
         ...(selectedVersionId ? { selectedVersionId } : {}),
         maxBytes,
+        maxFileBytes,
         encoding,
         offset,
         signal: abortController.signal
@@ -251,6 +276,7 @@ export const usePreviewFileContent = ({
     encoding,
     managedFileId,
     maxBytes,
+    maxFileBytes,
     offset,
     path,
     projectId,
@@ -271,7 +297,15 @@ export const usePreviewFileContent = ({
   const previousPage = (): void => {
     setPageState((current) => {
       const active = current.fileKey === fileKey ? current : activePageState
-      return { ...active, index: Math.max(0, active.index - 1) }
+      if (active.index === 0 && page.offset > 0) {
+        return {
+          fileKey,
+          pages: [{ offset: 0, startingLineNumber: 1, startsMidLine: false }],
+          index: 0,
+          showLastLines: false
+        }
+      }
+      return { ...active, index: Math.max(0, active.index - 1), showLastLines: true }
     })
   }
   const nextPage = (): void => {
@@ -280,17 +314,31 @@ export const usePreviewFileContent = ({
     setPageState((current) => {
       const active = current.fileKey === fileKey ? current : activePageState
       // Discard forward history when navigation continues from an earlier page.
-      const nextOffsets = active.offsets.slice(0, active.index + 1)
-      nextOffsets.push(state.preview.nextOffset as number)
-      return { fileKey, offsets: nextOffsets, index: active.index + 1 }
+      const pages = active.pages.slice(0, active.index + 1)
+      pages.push({
+        offset: state.preview.nextOffset as number,
+        startingLineNumber:
+          page.startingLineNumber +
+          (encoding === 'utf8' ? (state.preview.content.match(/\n/g)?.length ?? 0) : 0),
+        startsMidLine: encoding === 'utf8' && !state.preview.content.endsWith('\n')
+      })
+      return { fileKey, pages, index: active.index + 1, showLastLines: false }
     })
   }
 
   return {
     ...state,
     pagination: {
-      pageNumber: activePageState.index + 1,
-      hasPrevious: activePageState.index > 0,
+      pageNumber: activePageState.index + (activePageState.pages[0]?.offset ? 2 : 1),
+      pageKey: requestKey,
+      startingLineNumber: page.startingLineNumber,
+      startsMidLine: page.startsMidLine,
+      endsMidLine:
+        encoding === 'utf8' && state.preview.truncated && !state.preview.content.endsWith('\n'),
+      byteStart: offset,
+      byteEnd: state.preview.nextOffset ?? state.preview.size,
+      showLastLines: activePageState.showLastLines,
+      hasPrevious: activePageState.index > 0 || offset > 0,
       hasNext: state.preview.nextOffset !== undefined,
       previousPage,
       nextPage

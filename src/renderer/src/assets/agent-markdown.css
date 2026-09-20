@@ -311,71 +311,6 @@
     }
   }
 
-  [data-streamdown='link-safety-modal'] {
-    background: rgb(0 0 0 / 50%) !important;
-  }
-
-  [data-streamdown='link-safety-panel'] {
-    @apply h-auto max-h-[min(90vh,640px)] w-[min(420px,calc(100vw-3rem))] rounded-xl border-border bg-card text-foreground shadow-dialog;
-
-    & > div:first-child {
-      @apply relative z-40 flex shrink-0 items-center overflow-visible border-b border-border bg-card px-4 py-[0.7rem];
-      border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-
-      &::before {
-        @apply mr-auto text-[13px] font-semibold text-foreground;
-        content: 'Open external link?';
-      }
-
-      & > button,
-      & > .relative > button {
-        @apply inline-flex size-7 shrink-0 cursor-pointer items-center justify-center p-0 text-muted-foreground hover:bg-muted hover:text-foreground;
-        transform: none;
-      }
-
-      & button svg {
-        @apply inline-block! size-4! shrink-0 overflow-visible border-0! bg-transparent! p-0! m-0! align-middle text-inherit;
-      }
-    }
-
-    & > div:last-child {
-      @apply relative z-[1] min-h-0 flex-1 overflow-auto bg-card p-4;
-    }
-
-    & .sd-link-safety-description {
-      @apply m-0 mb-3 text-[13px] leading-[1.45] text-muted-foreground;
-    }
-
-    & .sd-link-safety-url {
-      @apply break-words rounded-lg border border-border bg-muted p-3 font-mono text-xs leading-[1.45] text-foreground;
-      overflow-wrap: anywhere;
-
-      &.max-scroll {
-        @apply max-h-32 overflow-y-auto;
-      }
-    }
-
-    & .sd-link-safety-actions {
-      @apply mt-4 flex gap-2;
-
-      & > button {
-        @apply inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-[13px] leading-tight text-foreground transition-colors duration-150;
-
-        &:hover {
-          @apply bg-muted;
-        }
-
-        &.sd-link-safety-primary {
-          @apply border-primary bg-primary text-primary-foreground;
-
-          &:hover {
-            @apply bg-primary/90;
-          }
-        }
-      }
-    }
-  }
-
   [data-streamdown='table-fullscreen'] {
     @apply z-[80]!;
     pointer-events: auto !important;
@@ -747,7 +682,9 @@
   }
 
   [data-streamdown='mermaid'] {
-    @apply m-2.5 max-w-full min-w-0 rounded-lg;
+    /* width must stay auto: streamdown sets size-full, and width:100% + m-2.5 would overflow the
+       block by 10px on each side, pushing the pan-zoom clip edge past the block's right border. */
+    @apply m-2.5 w-auto! max-w-full min-w-0 rounded-lg;
   }
 
   :where(:not([class~='not-prose'], [class~='not-prose'] *)) {
@@ -839,6 +776,18 @@
     & code {
       @apply block min-w-full;
     }
+  }
+
+  /* Mermaid source view (view toggle): the container carries data-streamdown="code-block-body",
+     so it inherits the code-block body rules above; the extras tint the mermaid body with the
+     code-block surface token and clip the block so the square source panel cannot poke through
+     the frame's rounded corners (the block itself is overflow-visible for the action chip). */
+  [data-streamdown='mermaid-block']:has(> div:last-child > [data-mermaid-source-view]) {
+    @apply overflow-hidden;
+  }
+
+  [data-streamdown='mermaid-block'] > div:last-child:has(> [data-mermaid-source-view]) {
+    @apply bg-sd-code-bg!;
   }
 
   :is(pre, .katex-display) {

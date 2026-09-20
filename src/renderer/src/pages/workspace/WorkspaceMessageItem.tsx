@@ -38,6 +38,7 @@ import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { LiteratureReference, MessagePart } from '../../../../shared/session-persistence'
 import {
+  isAgentResultDeliveryAttribution,
   isComputeJobCompletionAttribution,
   isComputeJobCompletionPresentation,
   isHumanUserMessage,
@@ -48,6 +49,7 @@ import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ComposerEditor } from './composer/ComposerEditor'
+import { copyMessageToClipboard } from './composer/message-clipboard'
 import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { providerKindKey } from '../settings/provider-form-value'
@@ -80,6 +82,7 @@ import type { AnnotationPort } from './annotations/annotation-port'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
 import { requestPdfReadingReveal } from './pdf-reading-reveal'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import { useBookmarks } from './bookmarks/bookmark-context'
 import {
   validateAnnotations,
   type Annotation,
@@ -117,6 +120,7 @@ type ReviewerCorrectionState = 'waiting' | 'responding' | 'completed' | 'failed'
 type WorkspaceMessageItemProps = {
   message: ChatMessage
   projectId?: string
+  isPackageSession?: boolean
   onPreviewArtifact: (artifact: MessageArtifact) => void
   onPreviewArtifactModal?: (artifact: MessageArtifact) => void
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
@@ -152,6 +156,7 @@ type WorkspaceMessageItemProps = {
   revisionNavigation?: {
     index: number
     total: number
+    disabledReason?: string
     onPrevious?: () => void
     onNext?: () => void
   }
@@ -164,6 +169,8 @@ type WorkspaceMessageItemProps = {
   // A trailing buffered reply can reserve the loading-row geometry it replaces. When another
   // live row remains below it, the message keeps only its natural text-line height.
   reserveLoadingRowHeight?: boolean
+  // Whole-window find owns scroll positioning while it is open.
+  disableScrollAnchor?: boolean
   // Durable lifecycle of an application-authored correction request. Keeping the response state
   // explicit prevents a missing historical response from looking like a successfully started one.
   reviewerCorrectionState?: ReviewerCorrectionState
@@ -522,11 +529,13 @@ const WorkspaceAssistantTurnCompletion = ({
                 aria-label={copied ? t('Copied') : t('Copy message')}
                 onClick={handleCopyMessage}
               >
-                {copied ? (
-                  <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                ) : (
-                  <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                )}
+                <span key={String(copied)} className="button-feedback">
+                  {copied ? (
+                    <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                  )}
+                </span>
               </button>
             </UserMessageActionTooltip>
             <UserMessageActionTooltip label={t('Branch in new session')}>
@@ -904,6 +913,7 @@ const ArtifactCard = ({
   const requestKey = JSON.stringify([
     artifact.id,
     artifact.artifactId ?? null,
+    artifact.versionId ?? null,
     artifact.resolvedProjectId ?? null,
     artifact.resolvedSessionId ?? null,
     artifact.path,
@@ -1325,6 +1335,7 @@ const MessagePartsContent = ({
 const WorkspaceMessageItemImpl = ({
   message,
   projectId,
+  isPackageSession = false,
   onPreviewArtifact,
   onPreviewArtifactModal = onPreviewArtifact,
   onPreviewUploadAttachment,
@@ -1350,14 +1361,17 @@ const WorkspaceMessageItemImpl = ({
   presentationSourceOpen,
   presentationAnimateOnMount,
   reserveLoadingRowHeight = true,
+  disableScrollAnchor = false,
   reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const bookmarks = useBookmarks()
   const isUserMessage = message.role === 'user'
   const isHumanUser = isHumanUserMessage(message)
   const reviewerCorrectionActive =
     reviewerCorrectionState === 'waiting' || reviewerCorrectionState === 'responding'
   const isReviewerCorrection = isReviewerCorrectionAttribution(message.attribution)
+  const isAgentResultDelivery = isAgentResultDeliveryAttribution(message.attribution)
   const isComputeJobCompletion =
     isComputeJobCompletionAttribution(message.attribution) ||
     isComputeJobCompletionPresentation(message)
@@ -1461,7 +1475,11 @@ const WorkspaceMessageItemImpl = ({
 
   // Copies the message text and briefly swaps the icon to confirm the clipboard write succeeded.
   const handleCopyMessage = (): void => {
-    void navigator.clipboard.writeText(liveMessageContent).then(() => {
+    void copyMessageToClipboard(
+      liveMessageContent,
+      message.role === 'user' ? message.parts : undefined,
+      projectId
+    ).then(() => {
       setCopied(true)
       if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
       copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
@@ -1574,12 +1592,24 @@ const WorkspaceMessageItemImpl = ({
         key={message.id}
         messageId={message.id}
         disableContainment={skipContentVisibilityNow || skipContentVisibility}
-        scrollAnchor={message.role === 'user'}
+        scrollAnchor={message.role === 'user' && !disableScrollAnchor}
         className="min-w-0"
       >
         <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
           {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-          {isComputeJobCompletion ? (
+          {isAgentResultDelivery ? (
+            <div
+              data-testid="agent-result-delivery-event"
+              className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+              role="status"
+            >
+              <Bot className="mt-0.5 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+              <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <span className="font-medium text-text-200">{t('Background activity')}</span>
+                <span className="text-text-300">{t('New task results are available')}</span>
+              </div>
+            </div>
+          ) : isComputeJobCompletion ? (
             <div
               data-testid="compute-job-completion-event"
               className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
@@ -1696,13 +1726,14 @@ const WorkspaceMessageItemImpl = ({
                     }}
                     onSubmit={handleConfirmEdit}
                     onPaste={ignoreEditPaste}
+                    onPreviewMentionArtifact={onPreviewMentionArtifact}
                     placeholder={t('Edit your message')}
                     ariaLabel={t('Edit message')}
                     focusRequest={editFocusRequest}
                   />
                   {editError ? (
                     <div role="alert">
-                      <ErrorNotice tone="red" title={editError} />
+                      <ErrorNotice inline tone="red" title={editError} />
                     </div>
                   ) : null}
                   <div className="flex items-center justify-end gap-1">
@@ -1749,11 +1780,13 @@ const WorkspaceMessageItemImpl = ({
                             aria-label={copied ? t('Copied') : t('Copy message')}
                             onClick={handleCopyMessage}
                           >
-                            {copied ? (
-                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            ) : (
-                              <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            )}
+                            <span key={String(copied)} className="button-feedback">
+                              {copied ? (
+                                <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              ) : (
+                                <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              )}
+                            </span>
                           </button>
                         </UserMessageActionTooltip>
                         <UserMessageActionTooltip label={t('Edit message')}>
@@ -1812,7 +1845,7 @@ const WorkspaceMessageItemImpl = ({
                     {message.interrupted ? (
                       <span
                         data-slot="user-message-interrupted"
-                        className="italic text-amber-600 dark:text-amber-400"
+                        className="italic text-status-warning-foreground dark:text-status-warning-dark-foreground"
                       >
                         {t('This turn was interrupted.')}
                       </span>
@@ -1824,16 +1857,29 @@ const WorkspaceMessageItemImpl = ({
                           data-slot="user-message-revision-navigation"
                           className="flex items-center gap-0.5 text-[13px] text-text-100"
                         >
-                          <UserMessageActionTooltip label={t('Previous message revision')}>
-                            <button
-                              type="button"
-                              className={userMessageActionButtonClassName}
-                              aria-label={t('Previous message revision')}
-                              disabled={!revisionNavigation.onPrevious || !canEditMessage}
-                              onClick={revisionNavigation.onPrevious}
+                          <UserMessageActionTooltip
+                            label={
+                              revisionNavigation.disabledReason ?? t('Previous message revision')
+                            }
+                          >
+                            <span
+                              tabIndex={revisionNavigation.disabledReason ? 0 : undefined}
+                              aria-label={revisionNavigation.disabledReason}
                             >
-                              <ChevronLeft className="size-3.5" aria-hidden="true" />
-                            </button>
+                              <button
+                                type="button"
+                                className={userMessageActionButtonClassName}
+                                aria-label={t('Previous message revision')}
+                                disabled={
+                                  !revisionNavigation.onPrevious ||
+                                  !canEditMessage ||
+                                  Boolean(revisionNavigation.disabledReason)
+                                }
+                                onClick={revisionNavigation.onPrevious}
+                              >
+                                <ChevronLeft className="size-3.5" aria-hidden="true" />
+                              </button>
+                            </span>
                           </UserMessageActionTooltip>
                           <GitBranch
                             data-slot="user-message-revision-icon"
@@ -1843,16 +1889,27 @@ const WorkspaceMessageItemImpl = ({
                           <span aria-label={t('Message revision')} className="min-w-7 text-center">
                             {revisionNavigation.index + 1}/{revisionNavigation.total}
                           </span>
-                          <UserMessageActionTooltip label={t('Next message revision')}>
-                            <button
-                              type="button"
-                              className={userMessageActionButtonClassName}
-                              aria-label={t('Next message revision')}
-                              disabled={!revisionNavigation.onNext || !canEditMessage}
-                              onClick={revisionNavigation.onNext}
+                          <UserMessageActionTooltip
+                            label={revisionNavigation.disabledReason ?? t('Next message revision')}
+                          >
+                            <span
+                              tabIndex={revisionNavigation.disabledReason ? 0 : undefined}
+                              aria-label={revisionNavigation.disabledReason}
                             >
-                              <ChevronRight className="size-3.5" aria-hidden="true" />
-                            </button>
+                              <button
+                                type="button"
+                                className={userMessageActionButtonClassName}
+                                aria-label={t('Next message revision')}
+                                disabled={
+                                  !revisionNavigation.onNext ||
+                                  !canEditMessage ||
+                                  Boolean(revisionNavigation.disabledReason)
+                                }
+                                onClick={revisionNavigation.onNext}
+                              >
+                                <ChevronRight className="size-3.5" aria-hidden="true" />
+                              </button>
+                            </span>
                           </UserMessageActionTooltip>
                         </div>
                       </>
@@ -1872,17 +1929,18 @@ const WorkspaceMessageItemImpl = ({
               )}
             >
               {liveMessageContent ? (
-                annotationPort ? (
+                annotationPort || bookmarks.scoped ? (
                   <TextAnnotationSurface
                     source={{
                       kind: 'agent-message',
-                      sessionId: annotationPort.sessionId,
+                      sessionId: annotationPort?.sessionId ?? bookmarks.sessionId ?? '',
                       messageId: message.id
                     }}
-                    activeAnnotations={annotationPort.activeAnnotations}
-                    onAdd={annotationPort.onAdd}
-                    onUpdateNote={annotationPort.onUpdateNote}
-                    onError={annotationPort.onError}
+                    activeAnnotations={annotationPort?.activeAnnotations}
+                    onAdd={annotationPort?.onAdd}
+                    onUpdateNote={annotationPort?.onUpdateNote}
+                    onRemove={annotationPort?.onRemove}
+                    onError={annotationPort?.onError}
                     isAnimating={isAssistantPresenting}
                   >
                     <SessionMessageMarkdown
@@ -1925,6 +1983,7 @@ const WorkspaceMessageItemImpl = ({
         />
         {selectedLiteratureReference ? (
           <ArtifactLiteratureDetailDialog
+            snapshotOnly={isPackageSession}
             reference={selectedLiteratureReference}
             onOpenChange={(open) => {
               if (!open) setSelectedLiteratureReference(undefined)
@@ -2001,6 +2060,7 @@ const areRevisionNavigationsEqual = (
     next !== undefined &&
     previous.index === next.index &&
     previous.total === next.total &&
+    previous.disabledReason === next.disabledReason &&
     (previous.onPrevious === undefined) === (next.onPrevious === undefined) &&
     (previous.onNext === undefined) === (next.onNext === undefined))
 
@@ -2012,6 +2072,7 @@ const areWorkspaceMessageItemPropsEqual = (
 ): boolean =>
   previous.message === next.message &&
   previous.projectId === next.projectId &&
+  (previous.isPackageSession ?? false) === (next.isPackageSession ?? false) &&
   previous.onPreviewArtifact === next.onPreviewArtifact &&
   previous.onPreviewArtifactModal === next.onPreviewArtifactModal &&
   previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
@@ -2036,7 +2097,8 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onPresentationChange === next.onPresentationChange &&
   (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
   previous.presentationAnimateOnMount === next.presentationAnimateOnMount &&
-  (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true)
+  (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true) &&
+  (previous.disableScrollAnchor ?? false) === (next.disableScrollAnchor ?? false)
 
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
 WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'

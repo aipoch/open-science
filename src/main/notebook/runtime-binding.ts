@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import type { EnvironmentLease } from './environment-lease-manager'
 import type { NotebookLanguage } from '../../shared/notebook'
 import {
   isEnvEnabled,
@@ -8,7 +9,8 @@ import {
   type NotebookRuntimeBindings,
   type NotebookRuntimeListing,
   type RuntimeBindingUnavailableReason,
-  type RuntimeTargetReceipt
+  type RuntimeTargetReceipt,
+  type RuntimeEnablement
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { createLogger, diagnosticErrorFields } from '../logger'
@@ -55,6 +57,7 @@ type NotebookRuntimeBindingOwnerOptions = {
   repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'bindingRequirement'>
   discoverRuntimes?: (language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>
   waitForEnvironmentStartup?: () => Promise<void>
+  acquireEnvironmentBindingLease?: (environment: string) => Promise<EnvironmentLease>
   platform?: NodeJS.Platform
 }
 
@@ -258,23 +261,37 @@ export class NotebookRuntimeBindingOwner {
     replace: boolean,
     beforeChange?: (binding: NotebookSessionRuntimeBinding) => Promise<void>
   ): Promise<RuntimeBindingOperationResult> {
-    let binding: NotebookSessionRuntimeBinding
+    let lease: EnvironmentLease | undefined
     try {
-      binding = await this.resolveEnabledRuntime(language, runtimeId)
-      const existing = session.runtimeBinding(language)
-      if (!replace && existing && existing.runtimeId !== binding.runtimeId) {
-        throw new Error(
-          `A ${language} runtime is already bound for this session. Use ` +
-            'notebook_switch_runtime to change it (it tears down the current kernel first).'
-        )
+      let binding: NotebookSessionRuntimeBinding
+      try {
+        binding = await this.resolveEnabledRuntime(language, runtimeId)
+        if (
+          binding.source === 'managed' &&
+          binding.envName &&
+          this.options.acquireEnvironmentBindingLease
+        ) {
+          lease = await this.options.acquireEnvironmentBindingLease(binding.envName)
+          // Discovery may have completed before a synchronous removal. Validate again under the
+          // shared lease and retain it through durable commit and live publication.
+          binding = await this.resolveEnabledRuntime(language, runtimeId)
+        }
+        const existing = session.runtimeBinding(language)
+        if (!replace && existing && existing.runtimeId !== binding.runtimeId) {
+          throw new Error(
+            `A ${language} runtime is already bound for this session. Use ` +
+              'notebook_switch_runtime to change it (it tears down the current kernel first).'
+          )
+        }
+        if (replace || !existing) await beforeChange?.(binding)
+      } catch (error) {
+        return this.failureResult(session, language, error)
       }
-      if (replace || !existing) await beforeChange?.(binding)
-    } catch (error) {
-      return this.failureResult(session, language, error)
+      // Unconfirmed persistence must still throw, rather than fabricate bindingChanged:false.
+      return await this.commitBinding(session, binding)
+    } finally {
+      lease?.release()
     }
-    // Keep reconciliation failures outside the validation catch: an unreadable commit must not
-    // be turned into a fabricated bindingChanged:false receipt.
-    return this.commitBinding(session, binding)
   }
 
   private async commitBinding(
@@ -569,7 +586,8 @@ export class NotebookRuntimeBindingOwner {
 
   private async discover(
     language: NotebookLanguage,
-    manualInterpreters: string[]
+    manualInterpreters: string[],
+    enablement?: RuntimeEnablement
   ): Promise<DiscoveredInterpreter[]> {
     try {
       const injected = this.options.discoverRuntimes
@@ -579,7 +597,8 @@ export class NotebookRuntimeBindingOwner {
             language,
             defaultDiscoveryDeps(getRuntimeRoot(this.options.dataRoot), () => manualInterpreters, {
               platform: this.options.platform
-            })
+            }),
+            enablement
           )
     } catch {
       return []
@@ -590,7 +609,11 @@ export class NotebookRuntimeBindingOwner {
     language: NotebookLanguage
   ): Promise<DiscoveredInterpreter[]> {
     const settings = await this.runtimeSettingsSnapshot(language)
-    const discovered = await this.discover(language, settings?.manualInterpreters ?? [])
+    const discovered = await this.discover(
+      language,
+      settings?.manualInterpreters ?? [],
+      settings?.runtimeEnablement
+    )
     return discovered.filter((env) => isEnvEnabled(env, settings?.runtimeEnablement))
   }
 

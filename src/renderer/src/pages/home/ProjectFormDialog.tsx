@@ -1,3 +1,4 @@
+import type { Project } from '../../../../shared/projects'
 import { LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +37,9 @@ type ProjectFormDialogProps = {
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
+  conflictProject?: Project
+  onLoadLatest?: () => void
+  onKeepDraft?: () => void
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
@@ -56,6 +60,9 @@ const ProjectFormDialog = ({
   isSubmitting,
   error,
   errorDetail,
+  conflictProject,
+  onLoadLatest,
+  onKeepDraft,
   onNameChange,
   onDescriptionChange,
   onAgentContextChange,
@@ -80,7 +87,9 @@ const ProjectFormDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
-          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
+          className={dialogPanelClassName(
+            'max-h-[calc(100dvh-2rem)] w-[min(460px,calc(100vw-2rem))] overflow-y-auto p-0'
+          )}
         >
           <form onSubmit={onConfirm} aria-busy={isSubmitting}>
             <div className={dialogHeaderClassName}>
@@ -107,6 +116,7 @@ const ProjectFormDialog = ({
                 </label>
                 <Input
                   id="project-form-name"
+                  disabled={isSubmitting}
                   aria-required={true}
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
@@ -127,6 +137,7 @@ const ProjectFormDialog = ({
                 </p>
                 <textarea
                   id="project-form-description"
+                  disabled={isSubmitting}
                   aria-describedby="project-form-description-help"
                   value={descriptionDraft}
                   onChange={(event) => onDescriptionChange(event.target.value)}
@@ -147,6 +158,7 @@ const ProjectFormDialog = ({
                 </p>
                 <textarea
                   id="project-form-agent-context"
+                  disabled={isSubmitting}
                   aria-describedby="project-form-agent-context-help"
                   value={agentContextDraft}
                   onChange={(event) => onAgentContextChange(event.target.value)}
@@ -164,6 +176,42 @@ const ProjectFormDialog = ({
                 {error}
               </p>
             ) : null}
+            {conflictProject ? (
+              <section className="space-y-3 px-5 pb-4" aria-label={t('Latest saved values')}>
+                <h3 className="text-sm font-medium">{t('Latest saved values')}</h3>
+                <dl className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-sm">
+                  <dt>{t('Name')}</dt>
+                  <dd>{conflictProject.name}</dd>
+                  <dt>{t('Description')}</dt>
+                  <dd>{conflictProject.description}</dd>
+                  <dt>{t('Agent Context')}</dt>
+                  <dd>{conflictProject.agentContext}</dd>
+                </dl>
+                <p className="text-sm text-muted-foreground">
+                  {t(
+                    'Keep your draft to review and save it over these values, or load the latest values into the form.'
+                  )}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={onKeepDraft}
+                    disabled={isSubmitting}
+                  >
+                    {t('Keep my draft')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={onLoadLatest}
+                    disabled={isSubmitting}
+                  >
+                    {t('Load latest values')}
+                  </Button>
+                </div>
+              </section>
+            ) : null}
             {errorDetail ? (
               <div className="px-5 pb-4">
                 <DiagnosticDetails detail={errorDetail} />
@@ -179,14 +227,20 @@ const ProjectFormDialog = ({
               >
                 {t('Cancel')}
               </Button>
-              <Button type="submit" disabled={nameDraft.trim().length === 0 || isSubmitting}>
-                {isSubmitting ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                {dialogSubmitLabel}
+              <Button
+                type="submit"
+                disabled={nameDraft.trim().length === 0 || isSubmitting || Boolean(conflictProject)}
+                aria-busy={Boolean(isSubmitting)}
+              >
+                <span key={String(isSubmitting)} className="button-feedback">
+                  {isSubmitting ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {dialogSubmitLabel}
+                </span>
               </Button>
             </div>
           </form>

@@ -20,7 +20,8 @@ import { gzipSync } from 'node:zlib'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(() => ({
+const { nonRegularMarkerPaths, markerReplacementsOnRead, copyFailures } = vi.hoisted(() => ({
+  copyFailures: new Set<string>(),
   nonRegularMarkerPaths: new Set<string>(),
   markerReplacementsOnRead: new Map<string, string>()
 }))
@@ -29,6 +30,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    cp: async (...args: Parameters<typeof actual.cp>) => {
+      if (copyFailures.has(String(args[1]))) {
+        await actual.mkdir(join(String(args[1]), 'bin'), { recursive: true })
+        await actual.writeFile(join(String(args[1]), 'bin', 'opencode.exe'), 'partial')
+        throw Object.assign(new Error('ENOSPC: no space left on device, copyfile'), {
+          code: 'ENOSPC'
+        })
+      }
+      return actual.cp(...args)
+    },
     lstat: async (path: string) =>
       nonRegularMarkerPaths.has(String(path))
         ? ({ isFile: () => false } as Awaited<ReturnType<typeof actual.lstat>>)
@@ -49,6 +60,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 afterEach(() => {
+  copyFailures.clear()
   nonRegularMarkerPaths.clear()
   markerReplacementsOnRead.clear()
 })
@@ -147,6 +159,96 @@ describe('installManagedOpencode', () => {
     expect(await readFile(outcome.resolvedPath!, 'utf8')).toContain('echo opencode')
     expect(verifyBinary).toHaveBeenCalledWith(expect.any(String), controller.signal)
   })
+
+  it.each([
+    { existing: false, copyFails: false, restoreFails: false },
+    { existing: true, copyFails: false, restoreFails: false },
+    { existing: false, copyFails: true, restoreFails: false },
+    { existing: true, copyFails: true, restoreFails: false },
+    { existing: true, copyFails: true, restoreFails: true }
+  ])(
+    'handles publication EPERM (existing=$existing, copyFails=$copyFails, restoreFails=$restoreFails)',
+    async ({ existing, copyFails, restoreFails }) => {
+      root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))
+      const binary = 'VERIFIED-OPENCODE'
+      const tgz = buildTgz([{ name: 'package/bin/opencode.exe', content: Buffer.from(binary) }])
+      const managedRoot = dirname(managedOpencodeDir(root))
+      const finalPath = join(managedOpencodeDir(root), 'opencode.exe')
+      if (existing) {
+        await mkdir(managedOpencodeDir(root), { recursive: true })
+        await writeFile(finalPath, 'WORKING-OPENCODE')
+      }
+      if (copyFails) copyFailures.add(managedRoot)
+      let publicationError: Error | undefined
+      let backupPath: string | undefined
+      const fetchTarball = vi.fn(async () => ({
+        stream: Readable.from(tgz),
+        totalBytes: tgz.length
+      }))
+      const renamePath = async (...args: Parameters<typeof rename>): Promise<void> => {
+        const [source, destination] = args
+        if (String(source).includes('.staging-') && String(destination) === managedRoot) {
+          publicationError = Object.assign(
+            new Error(`EPERM: operation not permitted, rename '${source}' -> '${destination}'`),
+            { code: 'EPERM' }
+          )
+          throw publicationError
+        }
+        if (String(destination).includes('.backup-')) backupPath = String(destination)
+        if (restoreFails && String(source) === backupPath) throw new Error('restore blocked')
+        await rename(source, destination)
+      }
+      const outcome = await installManagedOpencode({
+        installId: 'publish-eperm',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg', 'https://fallback'],
+        platform: { key: 'windows-x64', binName: 'opencode.exe' },
+        detectAvx2: () => true,
+        fetchJson: async (url) =>
+          url.endsWith('/opencode-ai')
+            ? { 'dist-tags': { latest: '1.18.3' } }
+            : { dist: { tarball: 'https://reg/opencode.tgz', integrity: sha512(tgz) } },
+        fetchTarball,
+        verifyBinary: async (path) => {
+          expect(await readFile(path, 'utf8')).toBe(binary)
+          return { ok: true }
+        },
+        renamePath
+      })
+
+      expect(publicationError?.message).toContain('EPERM: operation not permitted, rename')
+      expect(fetchTarball).toHaveBeenCalledTimes(1)
+      if (!copyFails) {
+        expect(outcome.result, outcome.result.error).toMatchObject({ ok: true })
+        expect(outcome.resolvedPath).toBe(finalPath)
+        expect(await readFile(finalPath, 'utf8')).toBe(binary)
+        expect(await readFile(join(managedRoot, '.open-science-managed-runtime'), 'utf8')).toBe(
+          'open-science:opencode:v1\n'
+        )
+      } else {
+        expect(outcome.result).toMatchObject({
+          ok: false,
+          error: expect.stringContaining('ENOSPC')
+        })
+        expect(outcome.resolvedPath).toBeUndefined()
+        if (existing && !restoreFails) {
+          expect(await readFile(finalPath, 'utf8')).toBe('WORKING-OPENCODE')
+        } else {
+          await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+        }
+        if (restoreFails) {
+          expect(outcome.result.error).toContain(backupPath)
+          expect(await readFile(join(backupPath!, 'bin', 'opencode.exe'), 'utf8')).toBe(
+            'WORKING-OPENCODE'
+          )
+        }
+      }
+      expect((await readdir(root)).filter((name) => name.includes('.staging-'))).toEqual([])
+      if (!restoreFails)
+        expect((await readdir(root)).filter((name) => name.includes('.backup-'))).toEqual([])
+    }
+  )
 
   it('reports a structured failure (never throws) when the integrity check fails', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-opencode-'))

@@ -1,3 +1,4 @@
+import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ExternalLink, ShieldAlert, TriangleAlert, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -6,12 +7,16 @@ import { useTranslation } from 'react-i18next'
 import type { JobSummary } from '../../../shared/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
-import { cn } from '@/lib/utils'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { cn, formatByteSize } from '@/lib/utils'
 import { JobStatusBadge } from './JobStatusBadge'
 import { JobTerminalOutput } from './JobTerminalOutput'
 import { ErrorNotice } from './error-notice'
-import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
+import { formatDuration, isJobElapsedLive, jobElapsedMs } from './remote-job-badge-utils'
 import { FileBrowserModal } from '../pages/settings/FileBrowserModal'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -43,10 +48,12 @@ function SessionJobsList({
     .sort((a, b) => b.created_at - a.created_at)
 
   const [now, setNow] = useState(() => Date.now())
+  const hasLiveElapsed = jobs.some(isJobElapsedLive)
   useEffect(() => {
+    if (!hasLiveElapsed) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [hasLiveElapsed])
 
   return (
     <>
@@ -58,7 +65,7 @@ function SessionJobsList({
           </div>
         ) : (
           jobs.map((job) => {
-            const isRunning = job.status === 'running' || job.status === 'submitted'
+            const isRunning = isJobElapsedLive(job)
             const elapsedMs = jobElapsedMs(job, now)
             const elapsedStr = formatDuration(elapsedMs)
             const intentDisplay =
@@ -143,7 +150,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
   // Track elapsed time for running jobs
   const [now, setNow] = useState(() => Date.now())
-  const isRunning = latestJob.status === 'running' || latestJob.status === 'submitted'
+  const isRunning = isJobElapsedLive(latestJob)
   const isActive =
     latestJob.status === 'queued' ||
     latestJob.status === 'submitted' ||
@@ -167,6 +174,33 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
       setIsCancellingRequest(false)
     }
   }, [hydrateJobs, latestJob, t])
+
+  const [isRetryingHarvest, setIsRetryingHarvest] = useState(false)
+  const [harvestRetryFailed, setHarvestRetryFailed] = useState(false)
+  const canRetryHarvest =
+    ['success', 'failed', 'timeout'].includes(latestJob.status) &&
+    latestJob.harvested_at === undefined &&
+    !!latestJob.remote_workdir &&
+    !!latestJob.project_id &&
+    !latestJob.needs_attention
+  const retryHarvest = async (): Promise<void> => {
+    if (!canRetryHarvest || isRetryingHarvest) return
+    setIsRetryingHarvest(true)
+    setHarvestRetryFailed(false)
+    try {
+      await window.api.compute.jobsRetryHarvest({
+        jobId: latestJob.job_id,
+        providerId: latestJob.provider_id,
+        sessionId: latestJob.session_id,
+        projectId: latestJob.project_id!
+      })
+      await refreshJob()
+    } catch {
+      setHarvestRetryFailed(true)
+    } finally {
+      setIsRetryingHarvest(false)
+    }
+  }
 
   // Tick for elapsed time
   useEffect(() => {
@@ -244,14 +278,56 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
       >
         <MetaRow label={t('Provider')} value={latestJob.display_name} />
         <MetaRow
-          label={t('Status')}
+          label={t('Execution result')}
           value={
             latestJob.cancellation_status === 'cancelled'
               ? t('Cancelled')
               : latestJob.cancellation_status === 'cancelling'
                 ? t('Cancelling')
-                : latestJob.status
+                : ((latestJob.status === 'queued'
+                    ? computeQueueBlockedLabel(latestJob.queue_blocked_reason, t)
+                    : latestJob.status === 'success'
+                      ? t('Success')
+                      : latestJob.status === 'failed'
+                        ? t('Failed')
+                        : latestJob.status === 'timeout'
+                          ? t('Timed out')
+                          : latestJob.status === 'submitted'
+                            ? t('Submitted')
+                            : latestJob.status === 'running'
+                              ? t('Running')
+                              : t('Error')) ?? latestJob.status)
           }
+        />
+        <MetaRow
+          label={t('Result collection')}
+          value={
+            latestJob.harvested_at === undefined
+              ? t('Results pending')
+              : latestJob.harvest_error
+                ? t('Collection finished with errors')
+                : t('Results collected')
+          }
+        />
+        <MetaRow
+          label={t('Analysis')}
+          value={
+            latestJob.analysis_state === 'succeeded'
+              ? t('Completed')
+              : latestJob.analysis_state === 'failed'
+                ? t('Failed')
+                : latestJob.analysis_state === 'cancelled'
+                  ? t('Cancelled')
+                  : latestJob.analysis_state === 'dispatched'
+                    ? t('Analyzing')
+                    : latestJob.result_delivery_path
+                      ? t('Managed by result delivery')
+                      : t('Waiting')
+          }
+        />
+        <MetaRow
+          label={t('Exit code')}
+          value={latestJob.exit_code === undefined ? t('Unknown') : String(latestJob.exit_code)}
         />
         <MetaRow label={t('Runtime', { context: 'duration' })} value={runtimeDisplay()} />
         <MetaRow
@@ -341,27 +417,74 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       ) : null}
 
-      {latestJob.harvest_error && !runtimeErrorCode ? (
+      {latestJob.last_poll_error ? (
+        <div className="border-b border-border p-3 text-sm" role="status">
+          {latestJob.last_poll_error.startsWith('slurm_pending')
+            ? t('Waiting in the Slurm queue.')
+            : latestJob.last_poll_error.includes('ambiguous')
+              ? t(
+                  'Remote execution evidence is ambiguous. Keep the remote files and inspect the job before another execution.'
+                )
+              : latestJob.last_poll_error.includes('recovery_pending')
+                ? t(
+                    'Checking whether the original job started. Open-Science will check again without resubmitting it.'
+                  )
+                : t(
+                    'The latest remote observation failed. The last confirmed execution state is shown; Open-Science will check again.'
+                  )}
+        </div>
+      ) : null}
+
+      {latestJob.harvest_error || canRetryHarvest ? (
         <div role="alert" className="flex justify-center border-b border-border p-5">
           <ErrorNotice
             icon={TriangleAlert}
             tone="amber"
             title={
-              latestJob.harvest_error.startsWith('harvest pending:')
-                ? t('Harvest pending. Open Science will retry automatically.')
+              latestJob.harvested_at === undefined
+                ? t('Harvest pending. Open-Science will retry automatically.')
                 : t('Harvest failed. Remote files were left untouched.')
             }
-            primaryButton={{
-              label: t('Refresh'),
-              onClick: () => void refreshJob(),
-              loading: isRefreshing
-            }}
+            description={
+              canRetryHarvest
+                ? t(
+                    'Retry collection to retrieve the original results. The command will not run again.'
+                  )
+                : undefined
+            }
+            primaryButton={
+              canRetryHarvest
+                ? {
+                    label: t('Retry collection'),
+                    onClick: () => void retryHarvest(),
+                    loading: isRetryingHarvest
+                  }
+                : undefined
+            }
           />
         </div>
       ) : null}
-
-      {/* 3b placeholder: featured outputs / left-on-remote — hidden until harvest data exists */}
-      {/* <FeaturedOutputs job={latestJob} /> */}
+      {harvestRetryFailed ? (
+        <p role="alert" className="p-3 text-sm text-destructive">
+          {t('Unable to retry collection. Refresh the job and check the connection.')}
+        </p>
+      ) : null}
+      {latestJob.left_on_remote?.length ? (
+        <details className="border-b border-border p-3 text-sm">
+          <summary>{t('Files left on remote')}</summary>
+          <ul className="max-h-32 overflow-auto">
+            {latestJob.left_on_remote.map((file) => (
+              <li key={file.uri} className="mt-2 break-all">
+                <span className="font-mono">{file.uri}</span>
+                <span>
+                  {' '}
+                  · {formatByteSize(file.size_mb * 1024 * 1024)} · {file.reason}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       {/* stdout / stderr tabs */}
       <div className="flex shrink-0 border-b border-border bg-background px-4">
@@ -378,7 +501,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
       </div>
 
       {/* Terminal output body */}
-      <div className="flex min-h-0 flex-1 overflow-auto p-3.5">
+      <div className="flex min-h-24 flex-1 overflow-auto p-3.5">
         <div className="w-full">
           <JobTerminalOutput content={tabContent} />
         </div>
@@ -511,14 +634,14 @@ export function JobDetailModal({
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[70]')} />
           <Dialog.Content
             className={dialogPanelClassName(
-              'z-[70] flex w-[640px] max-w-[calc(100vw-2rem)] max-h-[82vh] flex-col overflow-hidden p-0'
+              'z-[70] flex w-[640px] max-w-[calc(100vw-2rem)] max-h-[82vh] flex-col overflow-auto p-0'
             )}
             aria-label={t('Remote job details')}
             data-testid="job-detail-modal"
           >
             {/* Header */}
             <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-              <span className="text-[14px] font-semibold">{t('Running jobs in this session')}</span>
+              <span className={dialogTitleClassName}>{t('Remote job details')}</span>
               <Dialog.Close asChild>
                 <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Close')}>
                   <X className="size-4" />

@@ -59,3 +59,45 @@ describe('application command contract', () => {
     ).toThrow(expect.objectContaining({ code: 'invalid-command-result' }))
   })
 })
+
+// Error parameters must survive transport without becoming arbitrary diagnostic payloads.
+it('round-trips a CSL macro name through the public error envelope', () => {
+  const error = new ApplicationCommandError('csl-undefined-macro', 'Undefined macro', {
+    macro: 'author-原名'
+  })
+  const envelope = toApplicationCommandErrorEnvelope(error)
+  expect(envelope).toEqual({
+    code: 'csl-undefined-macro',
+    message: 'Undefined macro',
+    parameters: { macro: 'author-原名' }
+  })
+  expect(() =>
+    unwrapApplicationCommandOutcome(JSON.parse(JSON.stringify({ ok: false, error: envelope })))
+  ).toThrow(expect.objectContaining({ code: error.code, parameters: error.parameters }))
+})
+
+it.each([undefined, null, {}, { macro: 42 }, { macro: 'name', privatePath: '/private' }])(
+  'rejects malformed CSL parameters: %j',
+  (parameters) => {
+    expect(() =>
+      unwrapApplicationCommandOutcome({
+        ok: false,
+        error: { code: 'csl-undefined-macro', message: 'Undefined macro', parameters }
+      })
+    ).toThrow(expect.objectContaining({ code: 'invalid-command-result' }))
+  }
+)
+
+it('does not forward parameters on unrelated command failures', () => {
+  expect(
+    toApplicationCommandErrorEnvelope(
+      new ApplicationCommandError('command-failed', 'Failed', { macro: 'private' })
+    )
+  ).toEqual({ code: 'command-failed', message: 'Failed' })
+  expect(() =>
+    unwrapApplicationCommandOutcome({
+      ok: false,
+      error: { code: 'command-failed', message: 'Failed', parameters: { macro: 'private' } }
+    })
+  ).toThrow(expect.objectContaining({ code: 'invalid-command-result' }))
+})

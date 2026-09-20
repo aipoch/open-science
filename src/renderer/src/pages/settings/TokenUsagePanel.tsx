@@ -1,3 +1,5 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { ErrorNotice } from '@/components/error-notice'
 import { ChartNoAxesCombined, Info, Loader2, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -313,17 +315,12 @@ function TokenUsagePanel({
   if (canLoadUsageProjection && usageProjectionLoadFailed && usageProjection === undefined) {
     return (
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
-        <div role="alert" data-slot="token-usage-load-error" className="px-4 py-6 sm:px-5">
-          <p className="text-sm text-destructive">{t('Could not load token usage.')}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={refreshUsageProjection}
-          >
-            {t('Try again')}
-          </Button>
+        <div data-slot="token-usage-load-error" className="px-4 py-6 sm:px-5">
+          <ErrorNotice
+            role="alert"
+            description={t('Could not load token usage.')}
+            primaryButton={{ label: t('Try again'), onClick: refreshUsageProjection }}
+          />
         </div>
       </div>
     )
@@ -479,9 +476,9 @@ function TokenUsagePanel({
           ) : null}
 
           {usageProjectionLoadFailed ? (
-            <p role="alert" className="-mt-2 text-xs text-destructive">
+            <InlineNotice level="error" role="alert" className="-mt-2">
               {t('Could not load token usage.')}
-            </p>
+            </InlineNotice>
           ) : null}
 
           <div data-slot="token-usage-summary" className="py-5">

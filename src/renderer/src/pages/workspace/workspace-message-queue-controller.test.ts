@@ -3,6 +3,8 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { AcpNativeFollowUpWorkflow } from '../../../../main/acp/native-follow-up-workflow'
+
 import type { ChatSession } from '@/stores/session-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
@@ -197,6 +199,253 @@ afterEach(() => {
 })
 
 describe('workspace message queue controller', () => {
+  it('hides an appended queue preview while preserving the in-flight dispatch lock', async () => {
+    let finish!: (result: { sessionId: string; messageId: string }) => void
+    const sendMessage = vi.fn<WorkspaceMessageQueueControllerOptions['runtime']['sendMessage']>(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    let currentSession = session('idle')
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: { sendMessage, cancelRun: vi.fn() }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession })
+    )
+    expect(hook.result.current.items[0]).toMatchObject({ text: 'first', phase: 'sending' })
+    act(() =>
+      sendMessage.mock.calls[0][0].onMessageAppended?.({
+        sessionId: 'session-a',
+        messageId: 'first-message'
+      })
+    )
+    expect(hook.result.current.items).toEqual([])
+    expect(hook.result.current.hasPendingWork).toBe(true)
+    expect(hook.result.current.lifecycle.blocksImmediateSend('session-a')).toBe(true)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession })
+    )
+    expect(hook.result.current.items).toMatchObject([{ text: 'second', phase: 'queued' }])
+    expect(sendMessage).toHaveBeenCalledOnce()
+    currentSession = session('running')
+    await act(async () => finish({ sessionId: 'session-a', messageId: 'first-message' }))
+    expect(hook.result.current.items).toMatchObject([{ text: 'second', phase: 'queued' }])
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it.each(['rejection', 'not-admitted'] as const)(
+    'restores the queued error and draft when %s follows the preview handoff',
+    async (failure) => {
+      let finish!: (result: undefined) => void
+      let fail!: (reason: Error) => void
+      const sendMessage = vi.fn<WorkspaceMessageQueueControllerOptions['runtime']['sendMessage']>(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const currentSession = session('idle')
+      const input = options(currentSession, { runtime: { sendMessage, cancelRun: vi.fn() } })
+      const hook = renderController(input)
+      mounted.push(hook)
+      const draft = { ...admission('keep this draft'), session: currentSession }
+      act(() => hook.result.current.lifecycle.enqueue(draft))
+      act(() =>
+        sendMessage.mock.calls[0][0].onMessageAppended?.({
+          sessionId: 'session-a',
+          messageId: 'first-message'
+        })
+      )
+      expect(hook.result.current.items).toEqual([])
+      await act(async () => {
+        if (failure === 'rejection') fail(new Error('Save acknowledgement failed'))
+        else finish(undefined)
+      })
+      expect(hook.result.current.items).toMatchObject([{ text: 'keep this draft', phase: 'error' }])
+      act(() => hook.result.current.actions.edit(hook.result.current.items[0].id))
+      expect(input.composer.restoreQueuedDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ doc: draft.snapshot.doc })
+      )
+      expect(sendMessage).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['permission change', 'persistence block'] as const)(
+    'MQ01: does not abort automatic repair when send now encounters %s',
+    async (blocker) => {
+      let currentSession = { ...session(), fixLoopActive: true }
+      let persistenceBlocked = false
+      const input = options(currentSession, {
+        getSession: () => currentSession,
+        isPersistenceBlocked: () => persistenceBlocked
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => hook.result.current.lifecycle.enqueue(admission('queued during repair')))
+      const itemId = hook.result.current.items[0].id
+
+      if (blocker === 'permission change') {
+        currentSession = { ...currentSession, permissionProfile: 'auto' }
+      } else {
+        persistenceBlocked = true
+      }
+      await act(async () => hook.result.current.actions.sendNow(itemId))
+
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(hook.result.current.items[0]).toMatchObject(
+        blocker === 'permission change'
+          ? { phase: 'error', error: { kind: 'send' } }
+          : { phase: 'queued', deferredUntilIdle: true }
+      )
+      expect(input.abortFixLoop).not.toHaveBeenCalled()
+    }
+  )
+
+  it('MQ01: rechecks updated options after awaiting repair termination', async () => {
+    const currentSession = { ...session(), fixLoopActive: true }
+    let finishAbort!: () => void
+    const abortFixLoop = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAbort = resolve
+        })
+    )
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'steered-message'
+    }))
+    const input = options(currentSession, { abortFixLoop })
+    input.runtime.steerFollowUp = steerFollowUp
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('wait for repair termination')))
+    let sending!: Promise<void>
+    act(() => {
+      sending = hook.result.current.actions.sendNow(hook.result.current.items[0].id)
+    })
+    expect(abortFixLoop).toHaveBeenCalledOnce()
+    hook.rerender({ ...input, isPersistenceBlocked: () => true })
+    await act(async () => {
+      finishAbort()
+      await sending
+    })
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({ phase: 'queued', deferredUntilIdle: true })
+  })
+
+  it.each([1, 3])(
+    'MQ03: advances past %i stale automatic heads after one background session update',
+    async (headCount) => {
+      let currentSession = { ...session(), agentBackendId: 'backend-a' }
+      let notifySessionChanged: (() => void) | undefined
+      const input = options(currentSession, {
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        subscribeSessionChanges: (listener) => {
+          notifySessionChanged = listener
+          return () => {
+            notifySessionChanged = undefined
+          }
+        }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      let automatic!: Promise<{ sessionId: string; messageId: string } | undefined>
+      act(() => {
+        const completions = Array.from({ length: headCount }, (_, index) => {
+          return hook.result.current.lifecycle.enqueueApplication({
+            session: currentSession,
+            text: 'Analyze job-1.',
+            attribution: {
+              kind: 'application',
+              feature: 'compute',
+              purpose: 'job-completion-analysis',
+              deliveryKey: `compute_done:session-a:job-${index}`,
+              jobIds: ['job-1']
+            }
+          })
+        })
+        automatic = Promise.all(completions).then((results) => {
+          expect(results).toEqual(Array(headCount).fill(undefined))
+          return undefined
+        })
+        hook.result.current.lifecycle.enqueue(admission('user after automatic'))
+      })
+      hook.leaveWorkspace()
+      currentSession = { ...session('idle'), agentBackendId: 'backend-b' }
+      expect(notifySessionChanged).toBeTypeOf('function')
+      await act(async () => {
+        notifySessionChanged!()
+      })
+
+      await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+      expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'user after automatic' })
+      )
+      await expect(automatic).resolves.toBeUndefined()
+    }
+  )
+
+  it.each(['up', 'down'] as const)(
+    'MQ02: moves one visible neighbor %s across a hidden automatic item',
+    async (direction) => {
+      let currentSession = session()
+      const sendMessage = vi.fn(async (request: { text: string }) => {
+        currentSession = session('running')
+        return { sessionId: 'session-a', messageId: request.text }
+      })
+      const input = options(currentSession, {
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        runtime: { sendMessage, cancelRun: vi.fn(async () => undefined) }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => {
+        hook.result.current.lifecycle.enqueue(admission('A'))
+        void hook.result.current.lifecycle.enqueueApplication({
+          session: currentSession,
+          text: 'Analyze job-1.',
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute_done:session-a:job-1',
+            jobIds: ['job-1']
+          }
+        })
+        hook.result.current.lifecycle.enqueue(admission('B'))
+      })
+      expect(hook.result.current.items.map((item) => item.text)).toEqual(['A', 'B'])
+      const itemId = hook.result.current.items[direction === 'up' ? 1 : 0].id
+      act(() => hook.result.current.actions.move(itemId, direction))
+
+      expect(hook.result.current.items.map((item) => item.text)).toEqual(['B', 'A'])
+
+      const announcement = hook.result.current.announcement
+      // A visible boundary must not move across a hidden item or announce a move.
+      act(() => hook.result.current.actions.move(itemId, direction))
+      expect(hook.result.current.announcement).toBe(announcement)
+      for (let count = 1; count <= 3; count++) {
+        currentSession = session('idle')
+        await act(async () => hook.rerender({ ...input }))
+        expect(sendMessage).toHaveBeenCalledTimes(count)
+        await act(async () => hook.rerender({ ...input }))
+      }
+      expect(sendMessage.mock.calls.map((call) => call[0].text)).toEqual(
+        direction === 'up' ? ['B', 'A', 'Analyze job-1.'] : ['Analyze job-1.', 'B', 'A']
+      )
+    }
+  )
+
   it('retains queued messages when the Workspace unmounts for Project navigation', () => {
     const input = options(session())
     const workspace = renderController(input)
@@ -400,6 +649,8 @@ describe('workspace message queue controller', () => {
     const hook = renderController(input)
     mounted.push(hook)
     const queued = admission('queued with new Reading PDFs')
+    queued.snapshot.pdfReadingPosition = { pageNumber: 2, pageCount: 14 }
+    queued.snapshot.pdfReadingPositionSource = { attachmentId: 'upload-1' }
     queued.snapshot.pendingPdfContextAttachmentIds = ['upload-1']
     queued.snapshot.pendingPdfContextVersions = [
       {
@@ -416,6 +667,8 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        pdfReadingPosition: { pageNumber: 2, pageCount: 14 },
+        pdfReadingPositionSource: { attachmentId: 'upload-1' },
         pendingPdfContextAttachmentIds: ['upload-1'],
         pendingPdfContextVersions: [
           {
@@ -512,6 +765,7 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(resendEditedMessage).toHaveBeenCalledOnce())
     expect(resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-user-a', {
       agentConfiguration: admission('').agentConfiguration,
+      onMessageAppended: expect.any(Function),
       text: 'revised prompt',
       annotations: [],
       referencedArtifacts: [],
@@ -519,6 +773,46 @@ describe('workspace message queue controller', () => {
       forcedSkillIds: []
     })
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('hides a queued revision preview after its edited message is appended', async () => {
+    let finish!: (result: boolean) => void
+    let onMessageAppended: ((message: { sessionId: string; messageId: string }) => void) | undefined
+    const resendEditedMessage = vi.fn(
+      async (
+        _sessionId: string,
+        _messageId: string,
+        input: { onMessageAppended?: (message: { sessionId: string; messageId: string }) => void }
+      ) => {
+        onMessageAppended = input.onMessageAppended
+        return new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+      }
+    )
+    let currentSession = session()
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      runtime: { sendMessage: vi.fn(), resendEditedMessage, cancelRun: vi.fn() },
+      getSession: () => currentSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('revised prompt'),
+        session: currentSession,
+        revisionMessageId: 'message-user-a'
+      })
+    )
+    currentSession = session('idle')
+    await act(async () => hook.rerender({ ...input, activeSession: currentSession }))
+    await vi.waitFor(() => expect(resendEditedMessage).toHaveBeenCalledOnce())
+    expect(hook.result.current.items).toMatchObject([{ text: 'revised prompt', phase: 'sending' }])
+    act(() => onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-sent' }))
+    expect(hook.result.current.items).toEqual([])
+    expect(hook.result.current.hasPendingWork).toBe(true)
+    await act(async () => finish(true))
   })
 
   it('resumes background draining when a Specialist barrier settles', async () => {
@@ -2170,5 +2464,63 @@ describe('workspace message queue controller', () => {
       { sessionId: 'session-a', messageId: 'compute-message' }
     ])
     expect(sendMessage).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Send now with the native follow-up lifecycle', () => {
+  it('releases a stopped turn without waiting for preparation or sending the old payload twice', async () => {
+    let currentSession = session('running')
+    const turn = new AbortController()
+    let finishPreparation!: (value: { prompt: []; close: () => void }) => void
+    const close = vi.fn()
+    const request = vi.fn(async () => ({ outcome: 'injected' }))
+    const workflow = new AcpNativeFollowUpWorkflow({
+      connection: () => ({ agent: { request } }) as never,
+      capabilities: () => ({ close: true, delete: true, resume: true, steering: true }),
+      frameworkId: () => 'claude-code',
+      openCodeUsageApi: () => undefined,
+      activeProviderSessionId: () => 'provider-1',
+      hasLivePrompt: () => currentSession.status === 'running',
+      hasPendingPermission: () => false,
+      livePrompt: () => ({ turnToken: 'turn-1', signal: turn.signal }),
+      sessionCwd: () => '/workspace',
+      publishUserMessage: vi.fn(),
+      prepareFollowUp: () =>
+        new Promise((resolve) => {
+          finishPreparation = resolve
+        })
+    })
+    const sendMessage = vi.fn(async () => ({ sessionId: 'session-a', messageId: 'sent' }))
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: {
+        sendMessage,
+        cancelRun: vi.fn(),
+        steerFollowUp: (input) => workflow.steerFollowUp(input)
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('continue')))
+    let sending!: Promise<void>
+    act(() => {
+      sending = hook.result.current.actions.sendNow(hook.result.current.items[0].id)
+    })
+    currentSession = session('idle')
+    hook.rerender({ ...input, activeSession: currentSession, promptInFlightSessionIds: [] })
+    await act(async () => {
+      turn.abort()
+      await sending
+    })
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: 'continue' }))
+    expect(request).not.toHaveBeenCalled()
+    await act(async () => {
+      finishPreparation({ prompt: [], close })
+    })
+    expect(close).toHaveBeenCalledOnce()
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
   })
 })

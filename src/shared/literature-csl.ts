@@ -1,6 +1,7 @@
 import {
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
+  preferredLiteratureIdentifier,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
   type LiteratureItemInput,
@@ -68,10 +69,14 @@ type CslItem = Readonly<{
   issued?: CslDate
   accessed?: CslDate
   'container-title'?: string
+  'container-title-short'?: string
   'title-short'?: string
   abstract?: string
   language?: string
   URL?: string
+  PMID?: string
+  PMCID?: string
+  arXiv?: string
   DOI?: string
   ISBN?: string
   ISSN?: string
@@ -101,6 +106,52 @@ const creatorsFor = (
   return names.length > 0 ? names : undefined
 }
 
+const issuedDate = (item: LiteratureItemInput): CslDate | undefined => {
+  // PubMed DP uses English month abbreviations. Normalize only unambiguous dates;
+  // seasons and ranges retain the existing year fallback, and the original text is untouched.
+  const months = [
+    'jan',
+    'feb',
+    'mar',
+    'apr',
+    'may',
+    'jun',
+    'jul',
+    'aug',
+    'sep',
+    'oct',
+    'nov',
+    'dec'
+  ]
+  const dateText = item.issuedText
+    .trim()
+    .replace(
+      /^(\d{4})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+(\d{1,2}))?$/iu,
+      (_match, year: string, month: string, day: string | undefined) =>
+        `${year}-${months.indexOf(month.toLowerCase()) + 1}${day === undefined ? '' : `-${day}`}`
+    )
+  const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/u.exec(dateText)
+  if (match) {
+    const year = Number(match[1])
+    const month = match[2] ? Number(match[2]) : undefined
+    const day = match[3] ? Number(match[3]) : undefined
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if (
+      year > 0 &&
+      (month === undefined || (month >= 1 && month <= 12)) &&
+      (day === undefined || (day >= 1 && day <= days[month! - 1]!))
+    ) {
+      return {
+        'date-parts': [
+          [year, ...(month === undefined ? [] : [month]), ...(day === undefined ? [] : [day])]
+        ]
+      }
+    }
+  }
+  return item.issuedYear === undefined ? undefined : { 'date-parts': [[item.issuedYear]] }
+}
+
 const accessedDate = (accessedAt: number | undefined): CslDate | undefined => {
   if (accessedAt === undefined) return undefined
   const date = new Date(accessedAt)
@@ -111,10 +162,9 @@ const accessedDate = (accessedAt: number | undefined): CslDate | undefined => {
 
 const identifierFor = (
   item: LiteratureItemInput,
-  scheme: 'doi' | 'isbn' | 'issn'
+  scheme: 'doi' | 'isbn' | 'issn' | 'pmid' | 'pmcid' | 'arxiv'
 ): string | undefined => {
-  const identifiers = item.identifiers.filter((identifier) => identifier.scheme === scheme)
-  const identifier = identifiers.find(({ isPrimary }) => isPrimary) ?? identifiers[0]
+  const identifier = preferredLiteratureIdentifier(item.identifiers, scheme)
   return identifier
     ? normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value)
     : undefined
@@ -130,6 +180,10 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
   const editor = creatorsFor(item.creators, 'editor')
   const translator = creatorsFor(item.creators, 'translator')
   const accessed = accessedDate(item.accessedAt)
+  const issued = issuedDate(item)
+  const PMID = identifierFor(item, 'pmid')
+  const PMCID = identifierFor(item, 'pmcid')
+  const arXiv = identifierFor(item, 'arxiv')
   const DOI = identifierFor(item, 'doi')
   const ISBN = identifierFor(item, 'isbn')
   const ISSN = identifierFor(item, 'issn')
@@ -139,6 +193,7 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
   const publisher = typeField(item, 'publisher')
   const publisherPlace = typeField(item, 'publisherPlace')
   const edition = typeField(item, 'edition')
+  const journalAbbreviation = typeField(item, 'journalAbbreviation')
 
   return {
     id,
@@ -147,13 +202,17 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
     ...(author ? { author } : {}),
     ...(editor ? { editor } : {}),
     ...(translator ? { translator } : {}),
-    ...(item.issuedYear !== undefined ? { issued: { 'date-parts': [[item.issuedYear]] } } : {}),
+    ...(issued ? { issued } : {}),
     ...(accessed ? { accessed } : {}),
     ...(item.containerTitle ? { 'container-title': item.containerTitle } : {}),
+    ...(journalAbbreviation ? { 'container-title-short': journalAbbreviation } : {}),
     ...(item.shortTitle ? { 'title-short': item.shortTitle } : {}),
     ...(item.abstract ? { abstract: item.abstract } : {}),
     ...(item.language ? { language: item.language } : {}),
     ...(item.url ? { URL: item.url } : {}),
+    ...(PMID ? { PMID } : {}),
+    ...(PMCID ? { PMCID } : {}),
+    ...(arXiv ? { arXiv } : {}),
     ...(DOI ? { DOI } : {}),
     ...(ISBN ? { ISBN } : {}),
     ...(ISSN ? { ISSN } : {}),
@@ -178,10 +237,20 @@ const dateParts = (value: unknown): readonly number[] | undefined => {
   if (!value || typeof value !== 'object') return undefined
   const parts = (value as { 'date-parts'?: unknown })['date-parts']
   if (!Array.isArray(parts) || !Array.isArray(parts[0])) return undefined
-  const normalized = parts[0].filter(
-    (part): part is number => typeof part === 'number' && Number.isInteger(part) && part >= 0
+  const date = parts[0]
+  const [year, month, day] = date
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  if (
+    date.length < 1 ||
+    date.length > 3 ||
+    !date.every((part) => typeof part === 'number' && Number.isInteger(part)) ||
+    year < 0 ||
+    (month !== undefined && (month < 1 || month > 12)) ||
+    (day !== undefined && (day < 1 || day > days[month - 1]!))
   )
-  return normalized.length > 0 ? normalized : undefined
+    throw new Error('Invalid bibliographic date.')
+  return date
 }
 
 const creatorsFromCsl = (
@@ -197,7 +266,18 @@ const creatorsFromCsl = (
           return [{ nameMode: 'organization' as const, literalName, creatorType }]
         }
         const givenName = stringField(name, 'given')
-        const familyName = stringField(name, 'family')
+        // Library names have no separate particle fields. Keep both CSL particle
+        // categories in the surname so display and subsequent exports retain them.
+        const familyName = [
+          stringField(name, 'dropping-particle'),
+          stringField(name, 'non-dropping-particle'),
+          stringField(name, 'family')
+        ]
+          .filter(Boolean)
+          .reduce(
+            (surname, part) => `${surname}${surname && !/[-'’]$/u.test(surname) ? ' ' : ''}${part}`,
+            ''
+          )
         return givenName || familyName
           ? [{ nameMode: 'person' as const, givenName, familyName, creatorType }]
           : []
@@ -232,7 +312,8 @@ const fromCslItem = (value: Record<string, unknown>): LiteratureItemInput => {
       ['pages', stringField(value, 'page')],
       ['publisher', stringField(value, 'publisher')],
       ['publisherPlace', stringField(value, 'publisher-place')],
-      ['edition', stringField(value, 'edition')]
+      ['edition', stringField(value, 'edition')],
+      ['journalAbbreviation', stringField(value, 'container-title-short')]
     ].filter((entry): entry is [string, string] => Boolean(entry[1]))
   )
 

@@ -6,6 +6,7 @@ import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
+  sanitizePersistedSideChat,
   sessionDeletionResultSchema,
   collectSessionReferences,
   createSessionFile,
@@ -50,6 +51,28 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 })
 
 describe('Session file envelope versions', () => {
+  it('round-trips a local fork head without inferring it for historical Sessions', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      forkOrigin: {
+        importId: 'copy',
+        sourceProjectId: 'project-a',
+        sourceSessionId: 'source',
+        importedAt: 2,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      forkHeadMessageId: 'copied-head'
+    })!
+    const reopened = normalizeSessionFile(JSON.parse(JSON.stringify(createSessionFile(session))))!
+    expect(reopened.forkHeadMessageId).toBe('copied-head')
+    expect(
+      normalizeSessionFile({ ...session, forkHeadMessageId: undefined })?.forkHeadMessageId
+    ).toBeUndefined()
+    expect(
+      normalizeSessionFile({ ...session, forkOrigin: undefined })?.forkHeadMessageId
+    ).toBeUndefined()
+  })
+
   const legacySession = (): Record<string, unknown> => createSessionWithActivity(undefined)
 
   it.each([
@@ -315,6 +338,65 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('preserves durable graph identities even when they retain a provisional prefix', () => {
+    const pendingSessionId = 'pending-session-123-1'
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Persist me',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const graph = createLinearConversationGraph({
+      sessionId: pendingSessionId,
+      messages,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'message-1',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 2,
+      completedAt: 3
+    })
+    graph.branches.push(
+      {
+        id: 'inactive-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: graph.branches[0].id,
+        forkMessageId: 'message-1',
+        headMessageId: 'message-1',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      { id: 'child-branch', agentFrameId: 'child-frame', createdAt: 2, updatedAt: 3 }
+    )
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      id: 'runtime-session-1',
+      messages,
+      conversationGraph: graph
+    })
+    expect(restored?.conversationGraph?.frames).toEqual(graph.frames)
+    expect(restored?.conversationGraph?.branches).toEqual(graph.branches)
+    expect(restored?.conversationGraph?.runtimeSegments).toEqual(graph.runtimeSegments)
+
+    expect(restored?.conversationGraph).toMatchObject({
+      rootFrameId: graph.rootFrameId,
+      activeFrameId: graph.activeFrameId,
+      messages: graph.messages
+    })
+  })
+
   it('preserves a conversation written by a not-yet-known Agent framework', () => {
     const messages: PersistedChatMessage[] = [
       {
@@ -837,6 +919,21 @@ describe('message attribution persistence', () => {
         jobIds: ['job-1'],
         rendererClaim: true
       })
+    ).toBeUndefined()
+  })
+
+  it('keeps strict durable Agent result delivery attribution', () => {
+    const attribution = {
+      kind: 'application' as const,
+      feature: 'background-results' as const,
+      purpose: 'agent-result-delivery' as const,
+      deliveryKey: 'agent-result-delivery:continuation-1',
+      deliveryIds: ['local-run:run-1']
+    }
+
+    expect(sanitizeMessageAttribution(attribution)).toEqual(attribution)
+    expect(
+      sanitizeMessageAttribution({ ...attribution, deliveryIds: [], rendererClaim: true })
     ).toBeUndefined()
   })
 
@@ -3409,6 +3506,47 @@ describe('normalizeSessionFile with activities', () => {
     }
   )
 
+  it.each([
+    'valid-main',
+    'legacy',
+    'conflicting-prompt',
+    'hidden-branch',
+    'non-mcp',
+    'duplicate-flat'
+  ] as const)(
+    'validates graph-owned permission correlation without redundant flat identity: %s',
+    (scenario) => {
+      const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+      persisted.session.runtimeTranscriptOwner = scenario === 'legacy' ? undefined : 'main'
+      persisted.session.activities = persisted.session.activities!.map((activity) => ({
+        ...activity,
+        promptMessageId: scenario === 'conflicting-prompt' ? 'another-prompt' : undefined
+      }))
+      if (scenario === 'hidden-branch') {
+        persisted.session.conversationGraph = forkConversationAfterActivity(
+          persisted.session.conversationGraph!,
+          'prompt-1',
+          'tool-1',
+          'revised-branch',
+          3
+        )
+      }
+      if (scenario === 'non-mcp')
+        persisted.session.runtimeContext!.permission!.request.isMcp = false
+      if (scenario === 'duplicate-flat')
+        persisted.session.activities.push({ ...persisted.session.activities[0] })
+      const restored = normalizeSessionFile(persisted)!
+      if (scenario === 'valid-main') {
+        expect(restored.status).toBe('waiting-permission')
+        expect(restored.runtimeContext?.permission?.state).toBe('pending')
+        expect(restored.activities?.[0].status).toBe('in_progress')
+      } else {
+        expect(restored.status).toBe('error')
+        expect(restored.runtimeContext?.permission).toBeUndefined()
+      }
+    }
+  )
+
   it('fails a permission tool activity hidden by the active conversation branch', () => {
     const persisted = createContinuingPermissionFile([createOpenToolActivity()])
     expect(persisted.session.conversationGraph).toBeDefined()
@@ -5231,4 +5369,26 @@ describe('Session deletion result', () => {
       }).success
     ).toBe(false)
   })
+})
+
+describe('Side chat reasoning effort compatibility', () => {
+  it.each([undefined, 'high'])(
+    'round-trips an optional effort without migrating history: %s',
+    (reasoningEffort) => {
+      const saved = {
+        version: 1,
+        id: 'side-chat-effort',
+        lifecycle: 'open',
+        frameworkId: 'codex',
+        providerId: 'provider',
+        model: 'model',
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        historyPreamble: 'Main context',
+        entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Keep history' }],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      expect(sanitizePersistedSideChat(JSON.parse(JSON.stringify(saved)))).toEqual(saved)
+    }
+  )
 })

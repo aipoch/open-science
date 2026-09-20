@@ -15,8 +15,11 @@ import type {
 } from '../../shared/permission-grants'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { CommandShellDialect } from '../agent-framework/types'
+import { createLogger } from '../logger'
 import { extractProviderToolName } from './runtime-events'
 import {
+  isNativeWebFetchPermission,
+  isNativeWebSearchPermission,
   isMcpToolName,
   resolveMcpProviderLeafIdentity,
   resolveAutomaticPermission,
@@ -31,7 +34,8 @@ import {
   capabilityFromLegacyCategory,
   categoryFromTrustedToolName,
   commandPrefixPermissionCategory,
-  containsSecretBearingMaterial
+  containsSecretBearingMaterial,
+  notebookPermissionRuntimeQualifier
 } from '../permission-grants/capability'
 import { projectPermissionGrantSnapshot } from '../permission-grants/catalog'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -483,25 +487,36 @@ const resolveNotebookRuntime = (tool: string, rawInput: unknown): string | undef
   return tool === 'notebook_execute' ? 'python' : undefined
 }
 
+const resolveNotebookPermissionRuntime = (
+  tool: string,
+  rawInput: unknown,
+  shellRuntime?: string
+): string | undefined =>
+  tool === 'bash_execute'
+    ? notebookPermissionRuntimeQualifier(shellRuntime ?? 'bash')
+    : resolveNotebookRuntime(tool, rawInput)
+
 const resolveNotebookPermissionContext = (
   name: string | null | undefined,
   rawInput: unknown,
-  mcpServerNames: readonly string[]
+  mcpServerNames: readonly string[],
+  shellRuntime?: string
 ): { runtime?: string } | undefined => {
   const identity = resolveMcpToolIdentity(name, mcpServerNames)
   if (!identity) return undefined
 
-  return resolveNotebookPermissionContextForIdentity(identity, rawInput)
+  return resolveNotebookPermissionContextForIdentity(identity, rawInput, shellRuntime)
 }
 
 const resolveNotebookPermissionContextForIdentity = (
   identity: string,
-  rawInput: unknown
+  rawInput: unknown,
+  shellRuntime?: string
 ): { runtime?: string } | undefined => {
   const tool = resolveNotebookExecutionTool(identity)
   if (!tool) return undefined
 
-  return { runtime: resolveNotebookRuntime(tool, rawInput) }
+  return { runtime: resolveNotebookPermissionRuntime(tool, rawInput, shellRuntime) }
 }
 
 const isMcpPermission = (
@@ -516,7 +531,7 @@ const isMcpPermission = (
   )
 }
 
-// Open Science owns per-session grants, so Codex approvals omit options that grant persistent
+// Open-Science owns per-session grants, so Codex approvals omit options that grant persistent
 // (cross-session) access outside the app's visible, revocable grant model.
 const projectPermissionOptions = (
   params: RequestPermissionRequest,
@@ -563,7 +578,8 @@ const projectPermissionOptions = (
 const resolveCategoryKey = (
   params: RequestPermissionRequest,
   mcpServerNames: readonly string[] = [],
-  allowLegacyReportedMcp = false
+  allowLegacyReportedMcp = false,
+  shellRuntime?: string
 ): string | undefined => {
   const { toolCall } = params
   const providerToolName = extractProviderToolName(toolCall)
@@ -583,12 +599,23 @@ const resolveCategoryKey = (
 
     const notebookContext =
       (trustedIdentity
-        ? resolveNotebookPermissionContextForIdentity(trustedIdentity, toolCall.rawInput)
-        : resolveNotebookPermissionContext(providerToolName, toolCall.rawInput, mcpServerNames)) ??
+        ? resolveNotebookPermissionContextForIdentity(
+            trustedIdentity,
+            toolCall.rawInput,
+            shellRuntime
+          )
+        : resolveNotebookPermissionContext(
+            providerToolName,
+            toolCall.rawInput,
+            mcpServerNames,
+            shellRuntime
+          )) ??
       (allowLegacyReportedMcp
         ? (() => {
             const tool = resolveNotebookExecutionTool(identity)
-            return tool ? { runtime: resolveNotebookRuntime(tool, toolCall.rawInput) } : undefined
+            return tool
+              ? { runtime: resolveNotebookPermissionRuntime(tool, toolCall.rawInput, shellRuntime) }
+              : undefined
           })()
         : undefined)
     if (notebookContext) {
@@ -605,7 +632,7 @@ const resolveCategoryKey = (
 
   if (isSkillPermission(params, allowLegacyReportedMcp)) return 'skill'
 
-  // V1 provider-native web tools are always one-shot, including the legacy in-memory broker path.
+  // Without the verified framework contract handled by requestPermission, web names stay Once-only.
   if (providerToolName === 'WebFetch' || providerToolName === 'WebSearch') return undefined
 
   if (providerToolName === 'Bash' || toolCall.kind === 'execute') {
@@ -652,7 +679,7 @@ const describeGrant = (categoryKey: string): AcpPermissionGrant => {
           ? 'R'
           : runtime === 'javascript'
             ? 'JavaScript'
-            : runtime === 'bash'
+            : runtime === 'bash' || runtime === 'wsl2-bash' || runtime?.startsWith('wsl2-bash@')
               ? 'Bash'
               : undefined
     const [server, tool] = identity.split('/')
@@ -737,7 +764,10 @@ const projectRegistrySessionGrants = (
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
   private readonly respondingRequests = new Map<string, PendingPermission>()
-  private readonly restoredAllowOnceBySession = new Map<string, string>()
+  private readonly restoredAllowOnceBySession = new Map<
+    string,
+    Readonly<{ fingerprint: string; categoryKey?: string }>
+  >()
   private readonly durableRequestQueues = new Map<string, string[]>()
   private readonly activeDurableRequestBySession = new Map<string, string>()
   private cancellationGeneration = 0
@@ -851,6 +881,34 @@ class AcpPermissionBroker {
     return resolvedRequestIds
   }
 
+  // Registry notifications also reach sibling delegated runtimes. Recheck only verified search
+  // requests, and release each through its own one-shot response and durable settlement path.
+  async releaseGrantedWebSearchRequests(): Promise<void> {
+    if (!this.permissionGrantRegistry) return
+    for (const [requestId, pending] of Array.from(this.pendingRequests)) {
+      if (
+        pending.categoryKey !== 'builtin:web_search' ||
+        !pending.capability ||
+        !pending.providerAllowOnceOptionId
+      )
+        continue
+      try {
+        const match = await this.permissionGrantRegistry.resolve(pending.capability, {
+          projectId: pending.projectId,
+          sessionId: pending.policyContext?.permissionGrantSessionId ?? pending.request.sessionId
+        })
+        if (match && this.pendingRequests.get(requestId) === pending) {
+          await this.respond({ requestId, optionId: pending.providerAllowOnceOptionId })
+        }
+      } catch (error) {
+        createLogger('acp-permission').warn(
+          'Could not recheck pending web search authorization',
+          error
+        )
+      }
+    }
+  }
+
   // Lists the app conversation's grants so the composer can show and revoke them.
   listGrants(sessionId: string): AcpPermissionGrant[] {
     if (this.permissionGrantRegistry) {
@@ -913,7 +971,7 @@ class AcpPermissionBroker {
       toolCallId: `app-approval:${requestId}`,
       title: input.title,
       appOwned: true,
-      providerToolName: 'Open Science',
+      providerToolName: 'Open-Science',
       rawInput: input.rawInput,
       options: input.options.map((option) => ({ ...option }))
     }
@@ -938,16 +996,26 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
+    const isWebSearch = !isMcp && isNativeWebSearchPermission(params, policyContext)
+    const isWebFetch = !isMcp && isNativeWebFetchPermission(params, policyContext)
     const codexGroupMatch =
       policyContext?.frameworkId === 'codex' && !isMcp
         ? codexCommandGroup(params, policyContext.shellDialect)
         : undefined
     const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
-    const categoryKey =
-      codexGroup?.categoryKey ??
-      (codexGroupMatch?.kind === 'unsafe'
-        ? undefined
-        : resolveCategoryKey(params, mcpServerNames, !this.permissionGrantRegistry))
+    const categoryKey = isWebSearch
+      ? 'builtin:web_search'
+      : isWebFetch
+        ? 'builtin:web_fetch'
+        : (codexGroup?.categoryKey ??
+          (codexGroupMatch?.kind === 'unsafe'
+            ? undefined
+            : resolveCategoryKey(
+                params,
+                mcpServerNames,
+                !this.permissionGrantRegistry,
+                policyContext?.notebookShellRuntimeQualifier ?? policyContext?.notebookShellRuntime
+              )))
     const capability = categoryKey ? capabilityFromLegacyCategory(categoryKey) : undefined
     const mcpIdentity = isMcp
       ? (resolveTrustedMcpToolIdentity(params, mcpServerNames) ??
@@ -978,26 +1046,28 @@ class AcpPermissionBroker {
     )
     if (categoryKey) {
       if (this.permissionGrantRegistry && capability && policyContext?.projectId) {
-        permissionOptions.push(
-          {
-            optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-            name: 'This session',
-            kind: ALLOW_ALWAYS_OPTION_KIND,
-            scope: 'session'
-          },
-          {
-            optionId: `${PROJECT_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-            name: 'This project',
-            kind: ALLOW_ALWAYS_OPTION_KIND,
-            scope: 'project'
-          },
-          {
-            optionId: `${GLOBAL_ALLOW_OPTION_ID_PREFIX}${requestId}`,
-            name: 'Always',
-            kind: ALLOW_ALWAYS_OPTION_KIND,
-            scope: 'global'
-          }
-        )
+        permissionOptions.push({
+          optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+          name: 'This session',
+          kind: ALLOW_ALWAYS_OPTION_KIND,
+          scope: 'session'
+        })
+        // Web reading is deliberately conversation-scoped, including delegated children.
+        if (!isWebFetch && !isWebSearch)
+          permissionOptions.push(
+            {
+              optionId: `${PROJECT_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+              name: 'This project',
+              kind: ALLOW_ALWAYS_OPTION_KIND,
+              scope: 'project'
+            },
+            {
+              optionId: `${GLOBAL_ALLOW_OPTION_ID_PREFIX}${requestId}`,
+              name: 'Always',
+              kind: ALLOW_ALWAYS_OPTION_KIND,
+              scope: 'global'
+            }
+          )
       } else if (!this.permissionGrantRegistry) {
         permissionOptions.push({
           optionId: `${SESSION_ALLOW_OPTION_ID_PREFIX}${requestId}`,
@@ -1013,7 +1083,11 @@ class AcpPermissionBroker {
       toolCallId: params.toolCall.toolCallId,
       title: resolvePermissionTitle(params, isMcp),
       status: params.toolCall.status ?? undefined,
-      providerToolName: extractProviderToolName(params.toolCall),
+      providerToolName: isWebSearch
+        ? 'WebSearch'
+        : isWebFetch
+          ? 'WebFetch'
+          : extractProviderToolName(params.toolCall),
       isMcp,
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,
@@ -1034,9 +1108,16 @@ class AcpPermissionBroker {
         }
       : undefined
 
+    const restoredAllowOnce = this.restoredAllowOnceBySession.get(request.sessionId)
+    const legacyCategoryCanMatch =
+      restoredAllowOnce?.categoryKey === undefined &&
+      /^mcp:open-science-notebook\/(?:notebook_execute|repl_execute):(?:python|r|javascript)$/.test(
+        categoryKey ?? ''
+      )
     if (
       durableCandidate &&
-      this.restoredAllowOnceBySession.get(request.sessionId) === durableCandidate.fingerprint
+      restoredAllowOnce?.fingerprint === durableCandidate.fingerprint &&
+      (restoredAllowOnce.categoryKey === categoryKey || legacyCategoryCanMatch)
     ) {
       this.restoredAllowOnceBySession.delete(request.sessionId)
       return Promise.resolve({
@@ -1165,6 +1246,8 @@ class AcpPermissionBroker {
       reject: rejectResponse
     }
     this.pendingRequests.set(requestId, stored)
+    // Close the gap between the initial registry lookup and joining the pending queue.
+    if (stored.categoryKey === 'builtin:web_search') void this.releaseGrantedWebSearchRequests()
 
     if (!stored.durableCandidate || !this.permissionWaitHooks) {
       this.emitPermissionRequest(entry.request)
@@ -1344,7 +1427,7 @@ class AcpPermissionBroker {
         return true
       }
 
-      // Legacy Session grants are owned by Open Science. The Agent receives only its one-shot option.
+      // Legacy Session grants are owned by Open-Science. The Agent receives only its one-shot option.
       if (pending.categoryKey) {
         this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
       }
@@ -1450,7 +1533,7 @@ class AcpPermissionBroker {
     return request.options.find((option) => option.scope === 'once')?.optionId
   }
 
-  // Records the category when the user picks Open Science's synthetic session scope.
+  // Records the category when the user picks Open-Science's synthetic session scope.
   private rememberSessionGrant(
     request: AcpPermissionRequest,
     categoryKey: string,
@@ -1474,7 +1557,10 @@ class AcpPermissionBroker {
     }
 
     if (option.scope === 'once' || option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND) {
-      this.restoredAllowOnceBySession.set(permission.request.sessionId, permission.fingerprint)
+      this.restoredAllowOnceBySession.set(permission.request.sessionId, {
+        fingerprint: permission.fingerprint,
+        ...(permission.categoryKey ? { categoryKey: permission.categoryKey } : {})
+      })
       return
     }
 

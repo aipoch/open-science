@@ -21,12 +21,14 @@ const {
   ipcMainOnMock,
   ipcMainRemoveListenerMock,
   showMessageBoxMock,
+  showMessageBoxSyncMock,
   webFrameMainFromIdMock
 } = vi.hoisted(() => ({
   openExternalMock: vi.fn(async () => undefined),
   ipcMainOnMock: vi.fn(),
   ipcMainRemoveListenerMock: vi.fn(),
   showMessageBoxMock: vi.fn(),
+  showMessageBoxSyncMock: vi.fn(),
   webFrameMainFromIdMock: vi.fn()
 }))
 
@@ -214,7 +216,7 @@ vi.mock('electron', () => ({
     }
   },
   WebContentsView: class {},
-  dialog: { showMessageBox: showMessageBoxMock },
+  dialog: { showMessageBox: showMessageBoxMock, showMessageBoxSync: showMessageBoxSyncMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },
   shell: { openExternal: openExternalMock },
   webFrameMain: { fromId: webFrameMainFromIdMock }
@@ -656,6 +658,59 @@ describe('window navigation policy', () => {
         callback
       )
       expect(callback).toHaveBeenCalledWith({})
+    }
+  })
+
+  it('publishes committed in-page source URLs without restarting loading', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceUrl = 'https://citation.example/paper'
+    const frame = {
+      frameTreeNodeId: 2,
+      processId: 7,
+      routingId: 8,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    window.webContentsHandlers.get('will-frame-navigate')!({
+      url: sourceUrl,
+      isMainFrame: false,
+      frame,
+      preventDefault: vi.fn()
+    })
+    webFrameMainFromIdMock.mockReturnValue(frame)
+    window.webContentsHandlers.get('did-frame-navigate')!({}, sourceUrl, 200, 'OK', false, 7, 8)
+    expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+      sourceUrl,
+      currentUrl: sourceUrl,
+      navigationId: 1,
+      phase: 'loaded',
+      httpStatusCode: 200,
+      httpStatusText: 'OK'
+    })
+    for (const currentUrl of [
+      `${sourceUrl}#methods`,
+      `${sourceUrl}?section=results`,
+      `${sourceUrl}?section=discussion`,
+      `${sourceUrl}#methods`,
+      sourceUrl
+    ]) {
+      window.webContentsHandlers.get('did-start-navigation')!({
+        url: currentUrl,
+        isSameDocument: true,
+        isMainFrame: false,
+        frame
+      })
+      window.webContentsHandlers.get('did-navigate-in-page')?.({}, currentUrl, false, 7, 8)
+      expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+        sourceUrl,
+        currentUrl,
+        navigationId: 1,
+        phase: 'loaded',
+        httpStatusCode: 200,
+        httpStatusText: 'OK'
+      })
     }
   })
 
@@ -2026,4 +2081,19 @@ describe('createMainWindow close handling', () => {
     expect(resolveCloseAction).toHaveBeenCalledTimes(1)
     resolveFn('cancel')
   })
+})
+
+it.each([0, 1])('requires explicit discard to override an unsaved page unload: %s', (choice) => {
+  createMainWindow()
+  const window = lastWindow!
+  const event = { preventDefault: vi.fn() }
+  showMessageBoxSyncMock.mockReturnValueOnce(choice)
+  const handler = window.webContentsHandlers.get('will-prevent-unload')
+  expect(handler).toBeDefined()
+  handler!(event)
+  expect(showMessageBoxSyncMock).toHaveBeenCalledWith(
+    window,
+    expect.objectContaining({ defaultId: 0, cancelId: 0 })
+  )
+  expect(event.preventDefault).toHaveBeenCalledTimes(choice === 1 ? 1 : 0)
 })

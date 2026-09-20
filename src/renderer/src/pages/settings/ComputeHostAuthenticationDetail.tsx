@@ -1,6 +1,9 @@
+import { fieldErrorClassName } from '@/components/ui/notice-chrome'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { KeyRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
 import type {
   ComputeAuthenticationMode,
@@ -48,11 +51,14 @@ export function ComputeHostAuthenticationDetail({
   changeAuthentication
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const currentMode = host.authentication?.mode ?? 'ssh_config'
   const currentRevision = host.authentication?.revision ?? 1
   const [mode, setMode] = useState<ComputeAuthenticationMode>(currentMode)
   const [username, setUsername] = useState(host.sshOverrides?.user ?? '')
-  const [port, setPort] = useState(String(host.sshOverrides?.port ?? 22))
+  const [port, setPort] = useState(
+    String(host.sshOverrides?.port ?? (currentMode === 'password' ? 22 : ''))
+  )
   const identityFile = host.sshOverrides?.identityFile ?? ''
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -81,7 +87,7 @@ export function ComputeHostAuthenticationDetail({
     if (!isEditing) {
       setMode(currentMode)
       setUsername(host.sshOverrides?.user ?? '')
-      setPort(String(host.sshOverrides?.port ?? 22))
+      setPort(String(host.sshOverrides?.port ?? (currentMode === 'password' ? 22 : '')))
     }
   }
 
@@ -109,7 +115,7 @@ export function ComputeHostAuthenticationDetail({
     onEditingChange(false)
     setMode(currentMode)
     setUsername(host.sshOverrides?.user ?? '')
-    setPort(String(host.sshOverrides?.port ?? 22))
+    setPort(String(host.sshOverrides?.port ?? (currentMode === 'password' ? 22 : '')))
     setPassword('')
     setValidationError(undefined)
   }
@@ -118,18 +124,22 @@ export function ComputeHostAuthenticationDetail({
     setPassword('')
     setFeedback(undefined)
     setValidationError(undefined)
+    if (nextMode === 'password' && !port.trim()) setPort('22')
     setMode(nextMode)
     setAuthenticationOperation(undefined)
   }
 
   const save = async (): Promise<void> => {
-    const parsedPort = Number(port)
+    const parsedPort = mode === 'ssh_config' && !port.trim() ? undefined : Number(port)
     const normalizedUsername = username.trim() || undefined
     if (mode === 'password' && !normalizedUsername) {
       setValidationError({ field: 'username', text: t('Username is required.') })
       return
     }
-    if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535) {
+    if (
+      parsedPort !== undefined &&
+      (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535)
+    ) {
       setValidationError({
         field: 'port',
         text: t('Port must be an integer from 1 through 65535.')
@@ -140,7 +150,7 @@ export function ComputeHostAuthenticationDetail({
       mode === 'ssh_config' ? identityFile.trim() || undefined : undefined
     const modeChanged = mode !== currentMode
     const usernameChanged = normalizedUsername !== (host.sshOverrides?.user || undefined)
-    const portChanged = parsedPort !== (host.sshOverrides?.port ?? 22)
+    const portChanged = parsedPort !== host.sshOverrides?.port
     const identityFileChanged =
       mode === 'ssh_config' &&
       normalizedIdentityFile !== (host.sshOverrides?.identityFile || undefined)
@@ -235,7 +245,10 @@ export function ComputeHostAuthenticationDetail({
             <dt className="text-muted-foreground">{t('Username')}</dt>
             <dd className="col-span-2">{host.sshOverrides?.user || t('From SSH configuration')}</dd>
             <dt className="text-muted-foreground">{t('Port')}</dt>
-            <dd className="col-span-2">{host.sshOverrides?.port ?? 22}</dd>
+            <dd className="col-span-2">
+              {host.sshOverrides?.port ??
+                (currentMode === 'password' ? 22 : t('From SSH configuration'))}
+            </dd>
             <dt className="text-muted-foreground">
               {currentMode === 'password' ? t('Saved password') : t('Credential')}
             </dt>
@@ -273,7 +286,7 @@ export function ComputeHostAuthenticationDetail({
             <dt className="text-muted-foreground">{t('Last verified')}</dt>
             <dd className="col-span-2">
               {host.authentication?.lastVerifiedAt
-                ? new Date(host.authentication.lastVerifiedAt).toLocaleString()
+                ? formatDate(host.authentication.lastVerifiedAt, 'dateTime')
                 : t('Not yet verified')}
             </dd>
           </dl>
@@ -345,17 +358,14 @@ export function ComputeHostAuthenticationDetail({
               }
             />
             {validationError?.field === 'username' ? (
-              <p
-                id="compute-detail-username-error"
-                role="alert"
-                className="text-xs text-destructive"
-              >
+              <p id="compute-detail-username-error" role="alert" className={fieldErrorClassName}>
                 {validationError.text}
               </p>
             ) : null}
             <Label htmlFor="compute-detail-port">{t('Port')}</Label>
             <Input
               id="compute-detail-port"
+              placeholder={mode === 'ssh_config' ? t('From SSH configuration') : undefined}
               inputMode="numeric"
               value={port}
               onChange={(event) => {
@@ -369,7 +379,7 @@ export function ComputeHostAuthenticationDetail({
               }
             />
             {validationError?.field === 'port' ? (
-              <p id="compute-detail-port-error" role="alert" className="text-xs text-destructive">
+              <p id="compute-detail-port-error" role="alert" className={fieldErrorClassName}>
                 {validationError.text}
               </p>
             ) : null}
@@ -395,7 +405,7 @@ export function ComputeHostAuthenticationDetail({
                   <p
                     id="compute-detail-password-error"
                     role="alert"
-                    className="text-xs text-destructive"
+                    className={fieldErrorClassName}
                   >
                     {validationError.text}
                   </p>
@@ -425,12 +435,15 @@ export function ComputeHostAuthenticationDetail({
         </p>
       ) : null}
       {feedback ? (
-        <p
-          role={feedback.kind === 'error' ? 'alert' : 'status'}
-          className={feedback.kind === 'error' ? 'mt-3 text-sm text-destructive' : 'mt-3 text-sm'}
-        >
-          {feedback.text}
-        </p>
+        feedback.kind !== 'error' ? (
+          <p className="mt-3 text-sm" role="status">
+            {feedback.text}
+          </p>
+        ) : (
+          <InlineNotice level="error" role="alert" className="mt-3">
+            {feedback.text}
+          </InlineNotice>
+        )
       ) : null}
     </div>
   )

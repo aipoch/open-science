@@ -958,3 +958,33 @@ describe('Compute authentication identity-change application handler', () => {
     })
   })
 })
+
+it('validates and persists SSH configuration without adding a port override', async () => {
+  const host = {
+    ...publicHost(),
+    sshOverrides: { user: 'before' },
+    authentication: { ...publicHost().authentication!, mode: 'ssh_config' as const }
+  }
+  const validateSshConfig = vi
+    .fn<(candidate: ComputeHost) => Promise<void>>()
+    .mockResolvedValue(undefined)
+  const changeAuthentication = vi.fn(async () => host)
+  const owner = new ComputeAuthOwner({
+    repository: authRepository({ get: vi.fn(async () => host), changeAuthentication }),
+    vault: credentialVault(),
+    passwordAdapter: {} as PasswordSshAdapter,
+    validateSshConfig
+  })
+  await owner.changeAuthentication({
+    providerId: host.providerId,
+    expectedRevision: 1,
+    operationId: 'inherit-port',
+    authenticationMode: 'ssh_config',
+    username: 'after'
+  } as ChangeComputeHostAuthenticationRequest)
+  expect(validateSshConfig.mock.calls[0]?.[0]).toMatchObject({ sshOverrides: { user: 'after' } })
+  expect(
+    (validateSshConfig.mock.calls[0]?.[0] as unknown as ComputeHost).sshOverrides?.port
+  ).toBeUndefined()
+  expect(changeAuthentication).toHaveBeenCalledWith(expect.objectContaining({ port: undefined }))
+})

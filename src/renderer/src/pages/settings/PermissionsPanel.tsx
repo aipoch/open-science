@@ -1,3 +1,6 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
+import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
@@ -157,15 +160,22 @@ const PermissionRow = ({
           : grant.qualifierLabel
   const summary = grant.approvalSummary ? t(grant.approvalSummary) : undefined
   const createdLabel =
-    grant.qualifierKind === 'command_group' && grant.createdAt !== undefined
+    typeof grant.createdAt === 'number' && Number.isFinite(grant.createdAt)
       ? t('Approved {{date}}', {
           date: new Intl.DateTimeFormat(i18n.language, {
             dateStyle: 'medium',
             timeStyle: 'medium'
           }).format(grant.createdAt)
         })
-      : undefined
-  const revokeName = [title, summary, scopeLabel, createdLabel].filter(Boolean).join(' · ')
+      : t('Approval time unknown')
+  const revokeName = [
+    title,
+    summary,
+    scopeLabel,
+    grant.qualifierKind === 'command_group' ? createdLabel : undefined
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const policyHint =
     grant.effectiveState === 'blocked_by_policy'
       ? t('Blocked in Connectors; this permission is currently inactive')
@@ -202,9 +212,9 @@ const PermissionRow = ({
         {grant.qualifierKind === 'command_group' ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {summary ?? t('Command details unavailable for this permission')}
-            {createdLabel ? <span className="ml-2">{createdLabel}</span> : null}
           </p>
         ) : null}
+        <p className="mt-0.5 text-xs text-muted-foreground">{createdLabel}</p>
         {grant.coveredBy ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t('Also allowed {{scope}}', {
@@ -331,7 +341,11 @@ const PermissionsPanel = ({
                       value={profile.id}
                       icon={
                         <Icon
-                          className={cn('size-4', isFull && 'text-amber-600 dark:text-amber-400')}
+                          className={cn(
+                            'size-4',
+                            isFull &&
+                              'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                          )}
                           aria-hidden="true"
                         />
                       }
@@ -341,7 +355,8 @@ const PermissionsPanel = ({
                         <span
                           className={cn(
                             'block font-medium leading-5',
-                            isFull && 'text-amber-600 dark:text-amber-400'
+                            isFull &&
+                              'text-status-warning-foreground dark:text-status-warning-dark-foreground'
                           )}
                         >
                           {t(profile.label)}
@@ -349,7 +364,8 @@ const PermissionsPanel = ({
                         <span
                           className={cn(
                             'block text-xs leading-4 text-muted-foreground whitespace-normal',
-                            isFull && 'text-amber-600/75 dark:text-amber-400/75'
+                            isFull &&
+                              'text-status-warning-foreground/75 dark:text-status-warning-dark-foreground/75'
                           )}
                         >
                           {t(profile.description)}
@@ -363,10 +379,7 @@ const PermissionsPanel = ({
           </SettingsRow>
 
           {defaultPermissionProfile === 'full' ? (
-            <div
-              role="status"
-              className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
-            >
+            <div role="status" className={`${inlineNoticeClassName} mt-1 flex items-start gap-2`}>
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
               {t(
                 'New conversations can run commands, change files, and access the network without asking first. Existing conversations keep their current permission mode.'
@@ -420,7 +433,7 @@ const PermissionsPanel = ({
         </div>
 
         {incompleteStores.length > 0 ? (
-          <div role="status" className="mb-4 rounded-lg border border-border bg-muted/35 px-3 py-2">
+          <InlineNotice role="status" className="mb-4">
             <p className="text-sm text-foreground">
               {t('Some permission details are unavailable')}
             </p>
@@ -434,28 +447,16 @@ const PermissionsPanel = ({
                 'Individual grants remain revocable; Revoke all is disabled until the complete set is known.'
               )}
             </p>
-          </div>
+          </InlineNotice>
         ) : null}
 
         {error ? (
-          <div
+          <ErrorNotice
             role="alert"
-            className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <p>{t(error)}</p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => void load({ force: true })}
-            >
-              {t('Try again')}
-            </Button>
-          </div>
+            className="mb-4"
+            description={t(error)}
+            primaryButton={{ label: t('Try again'), onClick: () => void load({ force: true }) }}
+          />
         ) : null}
 
         <div className="scroll-pb-24">
@@ -536,7 +537,7 @@ const PermissionsPanel = ({
             >
               <div className={dialogHeaderClassName}>
                 <div className="flex min-w-0 items-start gap-3">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground dark:bg-status-warning-dark-surface/40">
                     <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
                   </span>
                   <div className="min-w-0">
@@ -571,7 +572,7 @@ const PermissionsPanel = ({
                 <AlertDialog.Action asChild>
                   <Button
                     type="button"
-                    className="bg-amber-600 text-white hover:bg-amber-700"
+                    className="bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/80 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/80"
                     onClick={() => void setDefaultPermissionProfile('full')}
                   >
                     {t('Use Full access')}

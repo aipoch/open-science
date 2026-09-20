@@ -1,5 +1,15 @@
+import {
+  ensureRuntimeWriter,
+  isRuntimeWriter,
+  runtimeWriterSaveOptions
+} from '../acp/runtime-writer-client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { shallow } from 'zustand/vanilla/shallow'
+import {
+  packageOperationActive,
+  usePackageOperationStore
+} from '../../stores/package-operation-store'
 
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
@@ -7,6 +17,7 @@ import {
   type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
 import {
+  activateConversationBranch,
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
@@ -14,6 +25,7 @@ import {
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  SessionRevisionConflictError,
   isSessionSizeLimitError,
   isSessionRevisionConflictError,
   sessionRevision,
@@ -32,6 +44,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hydrateSession,
   isArtifactFinalizationError,
   isExternallyHydratedSession,
   toPersistedSession,
@@ -43,6 +56,10 @@ import type {
   StreamingMessageContentByMessageId
 } from '../../stores/session-store'
 import { projectRendererFailure } from '../../renderer-diagnostics'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands
+} from '../../stores/session-conversation-intents'
 
 type SessionPersistenceApi = {
   list?: () => Promise<ListSessionSummariesResult>
@@ -89,6 +106,34 @@ const hydratePersistedSessionIfPresent = (
 const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
   window.api.sessions.deleteSession(request)
 
+const MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
+
+// A soft retention weight, not a measurement of the JS heap or serialized file size. Count UTF-16
+// text and object/slot overhead once on load, including inactive branches, without copying text.
+// Bound traversal too: unusually wide metadata is conservatively treated as an oversized body.
+const estimateHistoryBodyBytes = (session: ChatSession): number => {
+  const pending: object[] = [session]
+  const seen = new WeakSet<object>(pending)
+  let bytes = 64
+  let values = 0
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    for (const key in current) {
+      if (!Object.hasOwn(current, key)) continue
+      const value: unknown = Reflect.get(current, key)
+      bytes += 16 + key.length * 2
+      if (typeof value === 'string') bytes += value.length * 2
+      else if (value !== null && typeof value === 'object' && !seen.has(value)) {
+        seen.add(value)
+        pending.push(value)
+        bytes += 64
+      }
+      if (bytes > MAX_HISTORY_BODY_BYTES || ++values > 100_000) return MAX_HISTORY_BODY_BYTES + 1
+    }
+  }
+  return bytes
+}
+
 const toPersistedSessionForAuthorityMaterialization = (
   session: ChatSession
 ): PersistedChatSession => {
@@ -129,6 +174,7 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   ) => Promise<PersistedChatSession>
   seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
   getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
+  releaseAcknowledgedSessionBody: (sessionId: string) => boolean
   clearWriteFailure: (target: string) => void
   clearWriteFailures: () => void
   flush: () => Promise<void>
@@ -189,8 +235,10 @@ const jsonValuesEqual = (left: unknown, right: unknown): boolean => {
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
   const leftRecord = left as Record<string, unknown>
   const rightRecord = right as Record<string, unknown>
-  const leftKeys = Object.keys(leftRecord)
-  const rightKeys = Object.keys(rightRecord)
+  // Disk JSON omits undefined object properties; renderer projections may retain them.
+  // Compare the persisted values so a missing optional field cannot create a false conflict.
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined)
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined)
   return (
     leftKeys.length === rightKeys.length &&
     leftKeys.every(
@@ -443,11 +491,94 @@ const sessionFieldValuesEqual = (
       )
     : jsonValuesEqual(left, right)
 
+// Task completion and live renderer projection can assign different IDs to the same reply.
+// Reconcile only a new leaf with identical runtime evidence and payload. The existing graph
+// rebase retains disjoint changes (such as terminal context samples on the prompt) and rejects
+// competing edits. Only an unsaved projection adopts an existing durable message identity.
+const reconcileCompletedTaskReply = (
+  base: PersistedChatSession,
+  submitted: PersistedChatSession,
+  latest: PersistedChatSession
+): PersistedChatSession => {
+  const graph = submitted.conversationGraph
+  const authority = latest.conversationGraph
+  if (
+    !latest.taskRunCommitId ||
+    latest.status !== 'idle' ||
+    latest.activeRun ||
+    !graph ||
+    !authority
+  )
+    return submitted
+  const branchId = selectedRootBranchId(submitted)
+  if (branchId !== selectedRootBranchId(latest)) return submitted
+  const local = graph.messages.find(
+    ({ id }) => id === graph.branches.find((branch) => branch.id === branchId)?.headMessageId
+  )
+  const durable = authority.messages.find(
+    ({ id }) => id === authority.branches.find((branch) => branch.id === branchId)?.headMessageId
+  )
+  if (
+    !local ||
+    !durable ||
+    local.id === durable.id ||
+    local.role !== 'agent' ||
+    durable.role !== 'agent' ||
+    durable.status !== 'complete' ||
+    !local.eventIds.length ||
+    !local.responseToMessageId ||
+    local.responseToMessageId !== durable.responseToMessageId ||
+    base.conversationGraph?.messages.some(({ id }) => id === local.id) ||
+    !jsonValuesEqual(local.eventIds, durable.eventIds) ||
+    (submitted.activeRun && submitted.activeRun.promptMessageId !== local.responseToMessageId) ||
+    (submitted.status !== 'running' && submitted.status !== 'idle')
+  )
+    return submitted
+  const normalized = { ...local }
+  for (const key of [
+    'id',
+    'streamId',
+    'status',
+    'createdAt',
+    'updatedAt',
+    'completedAt',
+    'turnUsage',
+    'turnUsageUnavailable',
+    'modelCallUsage'
+  ] as const) {
+    Reflect.deleteProperty(normalized, key)
+    if (Object.hasOwn(durable, key)) Object.assign(normalized, { [key]: durable[key] })
+  }
+  if (!jsonValuesEqual(normalized, durable)) return submitted
+  const normalizedGraph = {
+    ...graph,
+    messages: graph.messages.map((message) => (message === local ? durable : message)),
+    branches: graph.branches.map((branch) =>
+      branch.id === branchId ? { ...branch, headMessageId: durable.id } : branch
+    )
+  }
+  const reconciledGraph = rebaseConversationGraph(
+    base.conversationGraph,
+    normalizedGraph,
+    authority
+  )
+  if (!reconciledGraph) return submitted
+  return {
+    ...submitted,
+    conversationGraph: reconciledGraph,
+    messages: resolveActiveConversationMessages(reconciledGraph).map(projectConversationMessage),
+    ...resolveActiveConversationActivities(reconciledGraph),
+    status: latest.status,
+    activeRun: latest.activeRun
+  }
+}
+
 const rebaseSessionAfterRevisionConflict = (
   base: PersistedChatSession,
   submitted: PersistedChatSession,
   latest: PersistedChatSession
 ): PersistedChatSession | undefined => {
+  submitted = reconcileCompletedTaskReply(base, submitted, latest)
   const rebased: PersistedChatSession = structuredClone(latest)
   const graphOwnsCompatibilityProjections = Boolean(
     base.conversationGraph && submitted.conversationGraph && latest.conversationGraph
@@ -521,6 +652,29 @@ const rebaseSessionAfterRevisionConflict = (
           promptMessageId: submittedRun.promptMessageId,
           startedAt: Math.min(submittedRun.startedAt, latestRun.startedAt)
         }
+      } else if (
+        key === 'status' &&
+        base.status === 'waiting-permission' &&
+        latest.status === 'running' &&
+        submitted.status === 'idle' &&
+        !submitted.activeRun &&
+        !latest.runtimeContext?.permission &&
+        base.activeRun?.promptMessageId &&
+        jsonValuesEqual(latest.activeRun, base.activeRun) &&
+        selectedRootBranchId(base) === selectedRootBranchId(submitted) &&
+        selectedRootBranchId(base) === selectedRootBranchId(latest) &&
+        base.conversationGraph?.frames.every((frame) =>
+          [submitted, latest].every((session) =>
+            session.conversationGraph?.frames.some(
+              (candidate) =>
+                candidate.id === frame.id && candidate.activeBranchId === frame.activeBranchId
+            )
+          )
+        )
+      ) {
+        // Permission clearance and renderer completion can overtake one another for the same turn.
+        // Only the proven completed turn may supersede Main's intermediate running status.
+        rebased.status = submitted.status
       } else if (key === 'contextUsage') {
         // Main does not persist live context-window snapshots. Keep the renderer value, including
         // an explicit clear, instead of resurrecting a stale durable copy.
@@ -557,6 +711,17 @@ const rebaseSessionAfterRevisionConflict = (
     if (projection.activityGroups.length > 0) rebased.activityGroups = projection.activityGroups
     else delete rebased.activityGroups
   }
+
+  // A terminal Task receipt describes the preceding prompt, not a locally started follow-up.
+  if (
+    latest.taskRunCommitId &&
+    latest.taskRunCommitId !== base.taskRunCommitId &&
+    latest.status === 'idle' &&
+    submitted.activeRun &&
+    submitted.activeRun.promptMessageId !== base.activeRun?.promptMessageId &&
+    rebased.activeRun?.promptMessageId === submitted.activeRun.promptMessageId
+  )
+    rebased.status = submitted.status
 
   rebased.revision = sessionRevision(latest)
   rebased.updatedAt = Math.max(base.updatedAt, submitted.updatedAt, latest.updatedAt) + 1
@@ -612,8 +777,32 @@ const mergeSaveSessionOptions = (
   const conflictRebaseFields = [
     ...new Set([...(previous?.conflictRebaseFields ?? []), ...(next?.conflictRebaseFields ?? [])])
   ]
-  return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+  const runtimeWriterToken =
+    next && Object.hasOwn(next, 'runtimeWriterToken')
+      ? next.runtimeWriterToken
+      : previous?.runtimeWriterToken
+  const conversationCommands = [
+    ...(previous?.conversationCommands ?? []),
+    ...(next?.conversationCommands ?? [])
+  ].filter(
+    (command, index, commands) => commands.findIndex(({ id }) => id === command.id) === index
+  )
+  return conflictRebaseFields.length > 0 || runtimeWriterToken || conversationCommands.length > 0
+    ? {
+        ...(runtimeWriterToken ? { runtimeWriterToken } : {}),
+        ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+        ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+      }
+    : undefined
 }
+
+const withPendingConversationCommands = (
+  session: PersistedChatSession,
+  options: SaveSessionOptions | undefined
+): SaveSessionOptions | undefined =>
+  mergeSaveSessionOptions(options, {
+    conversationCommands: pendingSessionConversationCommands(session.id)
+  })
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
 // While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
@@ -640,6 +829,34 @@ class SessionPersistenceGenerationChangedError extends Error {
   }
 }
 
+class SessionExportSaveDeferred extends Error {
+  constructor(readonly released: Promise<void>) {
+    super('Session save waits for package export.')
+  }
+}
+
+const deferExportedSessionSave = (target: string): void => {
+  const blocked = (): boolean => {
+    const operation = usePackageOperationStore.getState().operation
+    return (
+      operation?.kind === 'export' &&
+      packageOperationActive(operation) &&
+      target === `session:${operation.session?.sessionId}`
+    )
+  }
+  if (!blocked()) return
+  throw new SessionExportSaveDeferred(
+    new Promise<void>((resolve) => {
+      const remove = usePackageOperationStore.subscribe(() => {
+        if (!blocked()) {
+          remove()
+          resolve()
+        }
+      })
+    })
+  )
+}
+
 // Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
@@ -647,6 +864,9 @@ const createOrderedSessionPersistence = (
   api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
+  let pendingWriteCount = 0
+  let activeFlushes = 0
+  const deferredSaves = new Set<Promise<unknown>>()
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
   const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
@@ -665,7 +885,7 @@ const createOrderedSessionPersistence = (
         ? STREAMING_SESSION_SAVE_INTERVAL_MS
         : LATEST_SESSION_SAVE_INTERVAL_MS
       const waitMs = latestSessionSaveStartedAt + intervalMs - performance.now()
-      if (waitMs <= 0 || entry.bypassCadence) break
+      if (waitMs <= 0 || entry.bypassCadence || activeFlushes > 0) break
       const recheck = await new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => resolve(false), waitMs)
         entry.releaseCadence = () => {
@@ -717,25 +937,54 @@ const createOrderedSessionPersistence = (
       failedWritesByTarget.delete(target)
       return result
     } catch (error) {
-      if (!(error instanceof SessionPersistenceGenerationChangedError)) {
+      if (
+        !(error instanceof SessionPersistenceGenerationChangedError) &&
+        !(error instanceof SessionExportSaveDeferred)
+      ) {
         failedWritesByTarget.set(target, error)
       }
       throw error
     }
   }
 
-  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
-    releasePendingLatestCadence()
-    pendingLatestByTarget.clear()
-    const run = queue.then(
-      () => trackWrite(target, task),
-      () => trackWrite(target, task)
-    )
+  // Exported targets wait outside the shared queue. Explicit writes for another Session and its
+  // manifest can still establish their usual durable barrier before starting a new conversation.
+  const schedule = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
+    pendingWriteCount += 1
+    const run = queue.then(async () => {
+      try {
+        deferExportedSessionSave(target)
+        return { kind: 'completed' as const, value: await trackWrite(target, task) }
+      } catch (error) {
+        if (error instanceof SessionExportSaveDeferred)
+          return { kind: 'deferred' as const, released: error.released }
+        throw error
+      }
+    })
     queue = run.then(
       () => undefined,
       () => undefined
     )
     return run
+      .then(async (result) => {
+        if (result.kind === 'completed') return result.value
+        const resumed = result.released.then(() => schedule(target, task))
+        deferredSaves.add(resumed)
+        try {
+          return await resumed
+        } finally {
+          deferredSaves.delete(resumed)
+        }
+      })
+      .finally(() => {
+        pendingWriteCount -= 1
+      })
+  }
+
+  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
+    releasePendingLatestCadence()
+    pendingLatestByTarget.clear()
+    return schedule(target, task)
   }
 
   const saveSubmittedSession = async (
@@ -751,6 +1000,7 @@ const createOrderedSessionPersistence = (
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
     acknowledgeSession(durable)
+    acknowledgeSessionConversationCommands(durable)
     return durable
   }
 
@@ -763,7 +1013,12 @@ const createOrderedSessionPersistence = (
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
       pending.task = task
-      pending.options = mergeSaveSessionOptions(pending.options, options)
+      // The latest snapshot owns its lease; explicit edits must not inherit an earlier writer's
+      // token. Rebase fields and conversation commands still accumulate across queued snapshots.
+      pending.options = mergeSaveSessionOptions(
+        { ...pending.options, runtimeWriterToken: options?.runtimeWriterToken },
+        options
+      )
       if (pending.streaming && !streaming) {
         // The turn ended: flush the terminal snapshot at the normal cadence instead of waiting
         // out the relaxed streaming interval.
@@ -784,6 +1039,7 @@ const createOrderedSessionPersistence = (
       // A fast IPC/disk round-trip otherwise defeats latest-wins coalescing and rewrites the entire
       // Session at the live presentation frame rate. Keep the entry replaceable while it waits.
       await waitForLatestSessionSaveCadence(entry)
+      deferExportedSessionSave(target)
       if (pendingLatestByTarget.get(target) === entry) pendingLatestByTarget.delete(target)
       if (entry.generation !== hydrationGeneration) {
         throw new SessionPersistenceGenerationChangedError()
@@ -792,16 +1048,9 @@ const createOrderedSessionPersistence = (
       acknowledgeSession(durable)
       return durable
     }
-    const run = queue.then(
-      () => trackWrite(target, runTask),
-      () => trackWrite(target, runTask)
-    )
+    const run = schedule(target, runTask)
     entry.promise = run
     pendingLatestByTarget.set(target, entry)
-    queue = run.then(
-      () => undefined,
-      () => undefined
-    )
     return run
   }
 
@@ -826,29 +1075,58 @@ const createOrderedSessionPersistence = (
       const session = acknowledgedSessions.get(sessionId)
       return session ? structuredClone(session) : undefined
     },
+    releaseAcknowledgedSessionBody: (sessionId) => {
+      if (pendingWriteCount > 0 || failedWritesByTarget.has(`session:${sessionId}`)) return false
+      acknowledgedSessions.delete(sessionId)
+      // Keep the small revision watermark: later explicit writes must not regress their revision.
+      return true
+    },
     clearWriteFailure: (target) => failedWritesByTarget.delete(target),
     clearWriteFailures: () => failedWritesByTarget.clear(),
-    saveSession: (session, options) =>
-      enqueue(`session:${session.id}`, () => saveSubmittedSession(session, options)),
-    saveSessionWithRecovery: (session, options, recover) =>
-      enqueue(`session:${session.id}`, async () => {
+    saveSession: (session, options) => {
+      // Commands must be paired with the snapshot visible when the save is admitted. Reading the
+      // pending buffer after an older save waits in the queue can attach a newer Message command.
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, () => saveSubmittedSession(session, submittedOptions))
+    },
+    saveSessionWithRecovery: (session, options, recover) => {
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, async () => {
         const submitted = structuredClone(session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
         try {
-          return await saveSubmittedSession(submitted, options)
+          return await saveSubmittedSession(submitted, submittedOptions)
         } catch (error) {
-          return recover(error, submitted, saveSubmittedSession)
+          return recover(error, submitted, (retrySession, retryOptions) =>
+            saveSubmittedSession(
+              retrySession,
+              mergeSaveSessionOptions(submittedOptions, retryOptions)
+            )
+          )
         }
-      }),
+      })
+    },
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
-      releasePendingLatestCadence()
-      await queue
-      const failure = failedWritesByTarget.values().next()
-      if (!failure.done) throw failure.value
+      // Runtime/store updates can admit new snapshots while earlier writes are in flight.
+      // Keep cadence disabled until every overlapping flush has finished.
+      activeFlushes += 1
+      try {
+        releasePendingLatestCadence()
+        for (;;) {
+          const draining = queue
+          await draining
+          await Promise.allSettled([...deferredSaves])
+          if (queue === draining && deferredSaves.size === 0) break
+        }
+        const failure = failedWritesByTarget.values().next()
+        if (!failure.done) throw failure.value
+      } finally {
+        activeFlushes -= 1
+      }
     }
   }
 }
@@ -872,13 +1150,15 @@ const resetSessionPersistenceWriteFailuresForTests = (): void => {
 const saveSessionInOrder = async (
   session: PersistedChatSession,
   persistence: OrderedSessionPersistence = liveSessionPersistence,
-  api: SessionReadApi = window.api.sessions
+  api: SessionReadApi = window.api.sessions,
+  options?: SaveSessionOptions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
+    const saveOptions = withPendingConversationCommands(session, options)
     const durable = await persistence.saveSessionWithRecovery(
       session,
-      undefined,
+      saveOptions,
       async (error, submitted, retry) => {
         if (!isSessionRevisionConflictError(error)) throw error
         const base = persistence.getAcknowledgedSession(submitted.id)
@@ -899,6 +1179,7 @@ const saveSessionInOrder = async (
         )
       }
     )
+    acknowledgeSessionConversationCommands(durable)
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
@@ -906,6 +1187,14 @@ const saveSessionInOrder = async (
     throw error
   }
 }
+
+const saveSessionFieldsInOrder = (
+  session: PersistedChatSession,
+  conflictRebaseFields: readonly SessionConflictRebaseField[]
+): Promise<PersistedChatSession> =>
+  saveSessionInOrder(session, liveSessionPersistence, window.api.sessions, {
+    conflictRebaseFields: [...conflictRebaseFields]
+  })
 
 const confirmPendingDelegationPolicyAuthority = async (
   session: ChatSession
@@ -1099,6 +1388,7 @@ const retryPendingArtifactFinalization = async (
 // are isolated and never block the rest; an empty result leaves references untouched so a file still
 // readable at its pending path is never dropped.
 const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
+  if (!(await ensureRuntimeWriter())) return
   for (const session of useSessionStore.getState().sessions) {
     try {
       await reconcileSessionPendingArtifacts(
@@ -1216,6 +1506,7 @@ type SessionPersistenceState = {
   writeErrorRetryable: boolean
   persistenceBlockedSessionIds: readonly string[]
   reportSessionSizeLimit: (sessionId: string) => void
+  dismissWriteWarning: () => void
   dismissLoadWarning: () => void
   startNewConversationAfterSizeLimit: () => void
   retryLoad: () => void
@@ -1236,7 +1527,10 @@ type StoreSaverObserver = {
   onSuccess?: (target: string) => void
 }
 
-type StoreSaver = (state: SessionStoreSnapshot, options?: StoreSaverOptions) => Promise<unknown>
+type StoreSaver = {
+  (state: SessionStoreSnapshot, options?: StoreSaverOptions): Promise<unknown>
+  releaseReadOnlySession: (source: ChatSession, summary: ChatSession) => boolean
+}
 
 const pruneRemovedSessionWriteTargets = (
   targets: Set<string>,
@@ -1312,9 +1606,9 @@ const observePersistencePhase = <Result>(
 }
 
 const SAFE_SESSION_LOAD_ERROR =
-  'Open Science could not read saved conversation data. Retry to continue.'
+  'Open-Science could not read saved conversation data. Retry to continue.'
 const SAFE_SESSION_WRITE_ERROR =
-  'Open Science could not save the latest conversation changes. Retry before closing the app.'
+  'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 const SESSION_REVISION_CONFLICT_WRITE_ERROR =
   'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
 const SESSION_SIZE_LIMIT_WRITE_ERROR =
@@ -1391,6 +1685,30 @@ const hasStagedUploads = (session: ChatSession): boolean =>
     )
   )
 
+// Main-owned metadata and the transient navigation guard must not enqueue a local snapshot.
+// A same-client receipt can update Main-owned fields before the save response arrives.
+// Keep branchContextResetRequired in the comparison: clearing it is a renderer-persisted change.
+const withoutMainOwnedOrTransientSessionMetadata = (session: ChatSession): ChatSession => ({
+  ...session,
+  branchSwitchBlocked: undefined,
+  activePlanProjection: undefined,
+  interactionState: undefined,
+  agentPromptInFlight: undefined,
+  awaitingFirstAgentOutput: undefined,
+  revision: undefined,
+  archivedAt: undefined,
+  enabledComputeHosts: undefined,
+  selectedComputeHosts: undefined,
+  computeConcurrencyLimit: undefined
+})
+
+const selectedRootBranchId = (
+  session: Pick<PersistedChatSession, 'conversationGraph'> | undefined
+): string | undefined =>
+  session?.conversationGraph?.frames.find(
+    (frame) => frame.id === session.conversationGraph?.rootFrameId
+  )?.activeBranchId
+
 // Builds an incremental saver: on each store change it persists only sessions whose reference changed
 // and updates the manifest when selection moves. Explicit deletion owns its durable coordinator call.
 const createStoreSaver = (
@@ -1413,15 +1731,21 @@ const createStoreSaver = (
       .map((session) => [session.id, toPersistedSession(session)])
   )
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
+  // Keep an explicit local selection until its own receipt; a queued runtime update can coalesce
+  // with that save, and an older receipt must not clear a newer navigation intent.
+  const pendingBranchSelections = new Map<
+    string,
+    NonNullable<PersistedChatSession['conversationGraph']>
+  >()
 
   const recoverRevisionConflict = async (
     error: unknown,
     submitted: PersistedChatSession,
+    base: PersistedChatSession | undefined,
     options: SaveSessionOptions | undefined,
     save: SessionPersistenceApi['saveSession']
   ): Promise<PersistedChatSession> => {
     if (!isSessionRevisionConflictError(error)) throw error
-    const base = acknowledgedSessions.get(submitted.id)
     if (!base) throw error
     return saveAfterSessionRevisionConflict(
       error,
@@ -1439,7 +1763,7 @@ const createStoreSaver = (
     )
   }
 
-  return (state, options) => {
+  const save: StoreSaver = (state, options) => {
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
@@ -1489,7 +1813,16 @@ const createStoreSaver = (
             ...(options?.conflictRebaseFieldsByTarget?.get(target) ?? [])
           ])
         ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        // Catalog hydration changes object identity without introducing a local metadata edit.
+        if (!isForced && conflictRebaseFields.length === 0) continue
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const saveOptions =
+          conflictRebaseFields.length > 0 || conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
@@ -1544,11 +1877,66 @@ const createStoreSaver = (
         if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
       }
 
+      // A reader flush must not write a received snapshot back to the authority. Real user edits
+      // differ from the acknowledged snapshot and still follow normal conflict checking.
+      if (
+        isForced &&
+        !isRuntimeWriter() &&
+        jsonValuesEqual(
+          toPersistedSession(session, nextStreamingMessages),
+          acknowledgedSessions.has(session.id)
+            ? toPersistedSession(hydrateSession(acknowledgedSessions.get(session.id)!))
+            : undefined
+        )
+      )
+        continue
+
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
+      const rootBranchId = selectedRootBranchId(session)
+      const graph = session.conversationGraph
+      const previousGraph = previousSession?.conversationGraph
+      if (
+        graph &&
+        previousGraph &&
+        (rootBranchId !== selectedRootBranchId(previousSession) ||
+          // Hydration retains the local root selection but can adopt remote descendant choices.
+          (!authority &&
+            (graph.activeFrameId !== previousGraph.activeFrameId ||
+              previousGraph.frames.some(
+                (previousFrame) =>
+                  graph.frames.find((frame) => frame.id === previousFrame.id)?.activeBranchId !==
+                  previousFrame.activeBranchId
+              ))))
+      ) {
+        pendingBranchSelections.set(session.id, graph)
+      }
+      const selectionIntent = pendingBranchSelections.get(session.id)
+      const hasRetainedLocalRootBranch =
+        !selectionIntent &&
+        rootBranchId !== undefined &&
+        authority?.conversationGraph &&
+        rootBranchId !== selectedRootBranchId(authority)
+      // A retained local reset applies to this window's Branch. Publishing it against another
+      // client's selected Branch would also write this window's old selection back to disk.
       const hasUnsavedContextReset =
+        !hasRetainedLocalRootBranch &&
         Boolean(session.branchContextResetRequired) !==
-        Boolean(authority?.branchContextResetRequired)
+          Boolean(authority?.branchContextResetRequired)
+      if (
+        previousSession &&
+        previousSession !== session &&
+        !isForced &&
+        !hasUnsavedLocalTitle &&
+        !(authority && hasUnsavedContextReset) &&
+        !streamingDirtySessionIds.has(session.id) &&
+        shallow(
+          withoutMainOwnedOrTransientSessionMetadata(previousSession),
+          withoutMainOwnedOrTransientSessionMetadata(session)
+        )
+      ) {
+        continue
+      }
       if (
         (previousById.get(session.id) !== session ||
           isForced ||
@@ -1576,17 +1964,123 @@ const createStoreSaver = (
           ])
         ]
 
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const writerOptions =
+          conflictRebaseFields.length > 0 ||
+          hasUnsavedContextReset ||
+          conversationCommands.length > 0
+            ? undefined
+            : runtimeWriterSaveOptions()
+        const saveOptions =
+          conflictRebaseFields.length > 0 ||
+          writerOptions?.runtimeWriterToken ||
+          conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(writerOptions ?? {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
+        const sourceAuthority = acknowledgedSessions.get(session.id)
+        let submittedAuthority = sourceAuthority
+        let rebasedBeforeSave = false
+        const serializeSession = (): PersistedChatSession => {
+          let persisted = toPersistedSession(session, nextStreamingMessages)
+          // Explicit navigation already carries all ancestor and descendant selections. Only
+          // passive saves restore the authority's root Branch over a retained window-local view.
+          const selected = selectionIntent ? undefined : selectedRootBranchId(sourceAuthority)
+          const graph = persisted.conversationGraph
+          if (
+            selected &&
+            graph &&
+            selected !== selectedRootBranchId(persisted) &&
+            graph.branches.some((branch) => branch.id === selected)
+          ) {
+            const conversationGraph = activateConversationBranch(graph, selected)
+            persisted = {
+              ...persisted,
+              conversationGraph,
+              messages: resolveActiveConversationMessages(conversationGraph).map(
+                projectConversationMessage
+              ),
+              ...resolveActiveConversationActivities(conversationGraph),
+              branchContextResetRequired: sourceAuthority?.branchContextResetRequired
+            }
+          }
+          // A queued snapshot can predate newer content on the same Branch too. Rebase
+          // against its original authority before borrowing the newer revision number.
+          submittedAuthority = acknowledgedSessions.get(session.id)
+          if (sourceAuthority && submittedAuthority) {
+            const reconciled = reconcileCompletedTaskReply(
+              sourceAuthority,
+              persisted,
+              submittedAuthority
+            )
+            rebasedBeforeSave = reconciled !== persisted
+            persisted = reconciled
+          }
+          if (
+            !selectionIntent &&
+            sourceAuthority &&
+            submittedAuthority &&
+            // Main applies captured user commands and preferences to its current transcript;
+            // a stale streaming projection must reach that owner rather than fail a legacy merge.
+            submittedAuthority.runtimeTranscriptOwner !== 'main' &&
+            (selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority) ||
+              (submittedAuthority.taskRunCommitId &&
+                submittedAuthority.taskRunCommitId !== sourceAuthority.taskRunCommitId &&
+                sessionRevision(submittedAuthority) > sessionRevision(sourceAuthority)))
+          ) {
+            const rebased = rebaseSessionAfterRevisionConflict(
+              sourceAuthority,
+              persisted,
+              submittedAuthority
+            )
+            if (!rebased) {
+              throw new SessionRevisionConflictError(
+                sessionRevision(sourceAuthority),
+                sessionRevision(submittedAuthority)
+              )
+            }
+            rebasedBeforeSave = true
+            persisted = rebased
+          }
+          // Non-Task completions can also overtake an unchanged queued running snapshot.
+          if (
+            sourceAuthority &&
+            submittedAuthority &&
+            sessionRevision(submittedAuthority) > sessionRevision(sourceAuthority) &&
+            sourceAuthority.status === 'running' &&
+            submittedAuthority.status === 'idle' &&
+            persisted.status === sourceAuthority.status &&
+            sessionFieldValuesEqual('activeRun', persisted.activeRun, sourceAuthority.activeRun)
+          ) {
+            persisted = {
+              ...persisted,
+              status: submittedAuthority.status,
+              activeRun: submittedAuthority.activeRun
+            }
+          }
+          return persisted
+        }
+
         const applyDurableSession = (
           durableSession: PersistedChatSession,
           options: SaveSessionOptions | undefined,
           recoveredRevisionConflict = false
         ): void => {
+          if (selectionIntent && pendingBranchSelections.get(session.id) === selectionIntent) {
+            pendingBranchSelections.delete(session.id)
+          }
+          const keepLocalBranch = selectedRootBranchId(durableSession) !== rootBranchId
           useSessionStore.getState().applyDurableSessionProjection({
             source: session,
             session: durableSession,
             mode:
-              recoveredRevisionConflict || (options?.conflictRebaseFields?.length ?? 0) > 0
+              !keepLocalBranch &&
+              (rebasedBeforeSave ||
+                recoveredRevisionConflict ||
+                (options?.conflictRebaseFields?.length ?? 0) > 0)
                 ? 'replace-persisted-if-current'
                 : 'merge-upload-identities'
           })
@@ -1597,9 +2091,7 @@ const createStoreSaver = (
           failureContext: { conflictRebaseFields },
           run: isForced
             ? async () => {
-                const persisted = observePersistencePhase('session-serialize', () =>
-                  toPersistedSession(session, nextStreamingMessages)
-                )
+                const persisted = observePersistencePhase('session-serialize', serializeSession)
                 persisted.revision =
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                 let durableSession: PersistedChatSession
@@ -1612,6 +2104,7 @@ const createStoreSaver = (
                       const recovered = await recoverRevisionConflict(
                         error,
                         submitted,
+                        submittedAuthority,
                         saveOptions,
                         retry
                       )
@@ -1625,6 +2118,7 @@ const createStoreSaver = (
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
+                acknowledgeSessionConversationCommands(durableSession)
                 observePersistencePhase('session-apply-durable', () =>
                   applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
                 )
@@ -1633,9 +2127,7 @@ const createStoreSaver = (
                 persistence.saveLatestSession(
                   target,
                   async (coalescedOptions) => {
-                    const persisted = observePersistencePhase('session-serialize', () =>
-                      toPersistedSession(session, nextStreamingMessages)
-                    )
+                    const persisted = observePersistencePhase('session-serialize', serializeSession)
                     persisted.revision =
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
                     let durableSession: PersistedChatSession
@@ -1649,6 +2141,7 @@ const createStoreSaver = (
                         durableSession = await recoverRevisionConflict(
                           error,
                           persisted,
+                          submittedAuthority,
                           coalescedOptions,
                           api.saveSession
                         )
@@ -1660,6 +2153,7 @@ const createStoreSaver = (
                     }
                     acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                     acknowledgedSessions.set(session.id, durableSession)
+                    acknowledgeSessionConversationCommands(durableSession)
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(
                         durableSession,
@@ -1705,6 +2199,9 @@ const createStoreSaver = (
       }
     }
 
+    for (const id of pendingBranchSelections.keys()) {
+      if (!nextById.has(id)) pendingBranchSelections.delete(id)
+    }
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
     previousStreamingMessages = nextStreamingMessages
@@ -1726,6 +2223,23 @@ const createStoreSaver = (
 
     return Promise.all(scheduledTasks).then(() => undefined)
   }
+  save.releaseReadOnlySession = (source, summary) => {
+    const current = useSessionStore.getState()
+    if (
+      current.selectedSessionId === source.id ||
+      current.sessions.find((session) => session.id === source.id) !== source ||
+      previousSessions.find((session) => session.id === source.id) !== source ||
+      !persistence.releaseAcknowledgedSessionBody(source.id)
+    )
+      return false
+    acknowledgedSessions.delete(source.id)
+    // Change the diff baseline before publishing the summary. Unloading is not a metadata edit
+    // and must not enqueue a save which loads the same body straight back into the store.
+    previousSessions = current.sessions.map((session) => (session === source ? summary : session))
+    useSessionStore.setState({ sessions: previousSessions })
+    return true
+  }
+  return save
 }
 
 // Starts session persistence and returns health/recovery state so App can gate input and surface failures.
@@ -1789,6 +2303,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
     },
     [presentOutstandingWriteFailures]
   )
+  // Dismiss only the presentation; failed targets still block flush and remain retryable.
+  const dismissWriteWarning = useCallback(() => setWriteError(undefined), [])
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
   const startNewConversationAfterSizeLimit = useCallback(() => {
     for (const target of sizeLimitTargets.current) {
@@ -2035,6 +2551,37 @@ const useSessionPersistence = (): SessionPersistenceState => {
       activeSaver = save
       saverRef.current = save
       const loadingSessionContent = new Set<string>()
+      // ponytail: only unchanged, passively loaded history is reclaimable. Edited/runtime-owned
+      // sessions stay resident; extend this policy only with a proven save-acknowledgement contract.
+      const readOnlyHistory = new Map<
+        string,
+        { loaded: ChatSession; summary: ChatSession; bytes: number }
+      >()
+      const trimReadOnlyHistory = (): void => {
+        if (!isMounted || readOnlyHistory.size === 0) return
+        const state = useSessionStore.getState()
+        const byId = indexById(state.sessions)
+        let retainedBytes = 0
+        for (const [id, entry] of readOnlyHistory) {
+          if (byId.get(id) !== entry.loaded) {
+            readOnlyHistory.delete(id)
+          } else {
+            retainedBytes += entry.bytes
+          }
+        }
+        const selected = state.selectedSessionId && readOnlyHistory.get(state.selectedSessionId)
+        if (selected) {
+          readOnlyHistory.delete(selected.loaded.id)
+          readOnlyHistory.set(selected.loaded.id, selected)
+        }
+        for (const [id, entry] of readOnlyHistory) {
+          if (readOnlyHistory.size <= 16 && retainedBytes <= MAX_HISTORY_BODY_BYTES) break
+          if (id === state.selectedSessionId) continue
+          if (!save.releaseReadOnlySession(entry.loaded, entry.summary)) continue
+          readOnlyHistory.delete(id)
+          retainedBytes -= entry.bytes
+        }
+      }
 
       unsubscribe = useSessionStore.subscribe((state) => {
         const failedTargetCount = failedWriteTargets.current.size
@@ -2064,7 +2611,43 @@ const useSessionPersistence = (): SessionPersistenceState => {
           void loadPersistedSession({ projectId: selected.projectId, sessionId: selected.id })
             .then((session) => {
               if (!session) throw new Error('Selected Session JSON is missing.')
-              if (isMounted) hydratePersistedSessionIfPresent(session)
+              if (!isMounted) return
+              const unchangedSummary =
+                useSessionStore
+                  .getState()
+                  .sessions.find((candidate) => candidate.id === selected.id) === selected
+              const loaded = hydratePersistedSessionIfPresent(session)
+              if (
+                unchangedSummary &&
+                loaded &&
+                loaded.status === 'idle' &&
+                !loaded.activeRun &&
+                !loaded.unsavedTitle &&
+                !loaded.isPending &&
+                !loaded.runtimeContext?.sideChat &&
+                !loaded.runtimeContext?.sideChats?.length &&
+                !loaded.runtimeContext?.delegatedWork &&
+                !hasStagedUploads(loaded) &&
+                pendingArtifactRequests(loaded, true).length === 0
+              ) {
+                readOnlyHistory.set(loaded.id, {
+                  loaded,
+                  bytes: estimateHistoryBodyBytes(loaded),
+                  summary: {
+                    ...selected,
+                    title: loaded.title,
+                    status: loaded.status,
+                    pinned: loaded.pinned,
+                    archivedAt: loaded.archivedAt,
+                    revision: loaded.revision,
+                    filesRevision: loaded.filesRevision,
+                    updatedAt: loaded.updatedAt,
+                    activeMessageCount: loaded.messages.length,
+                    artifactCount: loaded.artifacts?.length ?? 0
+                  }
+                })
+                trimReadOnlyHistory()
+              }
             })
             .catch((error) => {
               reportPersistenceError(error, 'session-load')
@@ -2072,7 +2655,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
             })
             .finally(() => loadingSessionContent.delete(selected.id))
         }
-        void save(state).catch(reportPersistenceError)
+        void save(state).then(trimReadOnlyHistory).catch(reportPersistenceError)
       })
 
       // Hydration intentionally uses the user's live selection instead of the older disk manifest
@@ -2120,6 +2703,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     persistenceBlockedSessionIds,
     reportSessionSizeLimit,
     dismissLoadWarning,
+    dismissWriteWarning,
     startNewConversationAfterSizeLimit,
     retryLoad,
     retryWrites
@@ -2141,6 +2725,7 @@ export {
   deriveSessionCatalogRecovery,
   deleteSession,
   saveSessionInOrder,
+  saveSessionFieldsInOrder,
   setDelegationPolicyAuthority,
   toPersistedSessionForAuthorityMaterialization,
   useSessionPersistence

@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import type { ShellRuntimeAgentContract } from '../notebook/shell-runtime'
+import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
 import {
   claudeCodeFramework,
   codexFramework,
@@ -57,6 +59,9 @@ const createHarness = (options: {
   projectAgentContextError?: Error
   specialistIdentity?: { append: string; prefix: string }
   capabilityMcpServers?: McpServer[]
+  shellRuntimeAgentContract?: ShellRuntimeAgentContract
+  prepareCommit?: (sessionId: string) => Promise<void>
+  release?: () => void | Promise<void>
 }): CreatorHarness => {
   const order = options.order ?? []
   const sessionSetupAppends: string[][] = []
@@ -100,7 +105,7 @@ const createHarness = (options: {
     }
   }
   const commit = vi.fn(() => order.push('capability commit'))
-  const release = vi.fn()
+  const release = vi.fn(options.release)
   const provision = vi.fn(async () => {
     order.push('capability provision')
     const mcpServers = options.capabilityMcpServers ?? []
@@ -116,6 +121,9 @@ const createHarness = (options: {
     return {
       mcpServers,
       descriptor,
+      ...(options.shellRuntimeAgentContract
+        ? { shellRuntimeAgentContract: options.shellRuntimeAgentContract }
+        : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
         mcpServers: [...mcpServers, ...servers],
         descriptor: {
@@ -125,6 +133,7 @@ const createHarness = (options: {
         }
       }),
       commit,
+      ...(options.prepareCommit ? { prepareCommit: options.prepareCommit } : {}),
       release
     }
   })
@@ -255,6 +264,100 @@ describe('AcpProviderSessionCreator', () => {
       'event callback',
       'state callback'
     ])
+  })
+
+  it('presents the captured WSL2 binding before the first provider turn', async () => {
+    const harness = createHarness({
+      descriptorCapabilities: ['notebook'],
+      shellRuntimeAgentContract: shellRuntimeAgentContract({
+        kind: 'wsl2-bash',
+        profileId: 'private-profile',
+        distro: 'Ubuntu-22.04',
+        user: 'researcher'
+      })
+    })
+
+    await harness.creator.create({ cwd: 'C:\\workspace', projectId: 'project-a' })
+
+    const setupText = harness.sessionSetupAppends[0].join('\n')
+    expect(setupText).toContain('Notebook `bash_execute` is bound to WSL2 Bash')
+    expect(setupText).toContain('host and workspace path are Windows')
+    expect(setupText).not.toMatch(/private-profile|Ubuntu-22\.04|researcher/)
+  })
+
+  it('routes the setup token only to the local capability owner', async () => {
+    const harness = createHarness({})
+    const token = 'local-setup-token-not-for-the-provider'
+
+    const result = await harness.creator.create({ setupSessionToken: token })
+
+    expect(harness.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ setupSessionToken: token })
+    )
+    expect(JSON.stringify(harness.buildSession.mock.calls)).not.toContain(token)
+    expect(JSON.stringify(harness.sessionSetupAppends)).not.toContain(token)
+    expect(JSON.stringify(result)).not.toContain(token)
+    expect(
+      JSON.stringify(harness.registry.lookup('provider-session')?.aggregate.snapshot())
+    ).not.toContain(token)
+  })
+
+  it('waits for setup authority before publishing the Session', async () => {
+    let finishPreparation!: () => void
+    const prepareCommit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPreparation = resolve
+        })
+    )
+    const harness = createHarness({ prepareCommit })
+    const creation = harness.creator.create({ setupSessionToken: 'local-token' })
+
+    await vi.waitFor(() => expect(prepareCommit).toHaveBeenCalledWith('provider-session'))
+    expect(harness.registry.lookup('provider-session')).toBeUndefined()
+    expect(harness.commit).not.toHaveBeenCalled()
+    finishPreparation()
+    await creation
+    expect(harness.registry.lookup('provider-session')?.attachment?.session).toBe(harness.session)
+  })
+
+  it('does not publish when setup authority cannot be persisted', async () => {
+    const failure = new Error('Setup authority could not be persisted.')
+    const harness = createHarness({ prepareCommit: vi.fn().mockRejectedValue(failure) })
+
+    await expect(harness.creator.create({ setupSessionToken: 'local-token' })).rejects.toBe(failure)
+
+    expect(harness.registry.lookup('provider-session')).toBeUndefined()
+    expect(harness.session.dispose).toHaveBeenCalledOnce()
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+  })
+
+  it('waits for prepared setup authority cleanup when configuration fails', async () => {
+    const failure = new Error('Configuration failed after setup preparation.')
+    let finishCleanup!: () => void
+    const release = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve
+        })
+    )
+    const harness = createHarness({
+      prepareCommit: vi.fn().mockResolvedValue(undefined),
+      configure: vi.fn().mockRejectedValue(failure),
+      release
+    })
+    let settled = false
+    const creation = harness.creator.create({ setupSessionToken: 'local-token' }).catch((error) => {
+      settled = true
+      return error
+    })
+
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    expect(settled).toBe(false)
+    expect(harness.registry.lookup('provider-session')).toBeUndefined()
+    finishCleanup()
+    expect(await creation).toBe(failure)
   })
 
   it('disposes the provisional Session and releases capabilities when configuration fails', async () => {

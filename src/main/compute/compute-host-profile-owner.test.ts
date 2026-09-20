@@ -53,15 +53,13 @@ const makeRepo = (
 ): {
   repo: ComputeHostRepository
   updateProbeResult: ReturnType<typeof vi.fn>
-  updateScratchRoot: ReturnType<typeof vi.fn>
   updateDetails: ReturnType<typeof vi.fn>
   updateScratchPinned: ReturnType<typeof vi.fn>
   clearScratchRoot: ReturnType<typeof vi.fn>
   updateConcurrencyLimit: ReturnType<typeof vi.fn>
 } => {
-  const updateProbeResult = vi.fn(() => Promise.resolve())
-  const updateScratchRoot = vi.fn(() => Promise.resolve())
-  const updateDetails = vi.fn(() => Promise.resolve())
+  const updateProbeResult = vi.fn(() => Promise.resolve(true))
+  const updateDetails = vi.fn(() => Promise.resolve(true))
   const updateScratchPinned = vi.fn(() => Promise.resolve())
   const clearScratchRoot = vi.fn(() => Promise.resolve())
   const updateConcurrencyLimit = vi.fn(() => Promise.resolve())
@@ -71,7 +69,6 @@ const makeRepo = (
     create: vi.fn(),
     delete: vi.fn(),
     updateProbeResult,
-    updateScratchRoot,
     updateDetails,
     updateScratchPinned,
     clearScratchRoot,
@@ -80,7 +77,6 @@ const makeRepo = (
   return {
     repo,
     updateProbeResult,
-    updateScratchRoot,
     updateDetails,
     updateScratchPinned,
     clearScratchRoot,
@@ -195,7 +191,9 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       observedHost.providerId,
       expect.objectContaining({ authenticationRevision: 7 }),
-      'scheduler_cluster'
+      'scheduler_cluster',
+      'host-1',
+      '/gpfs/scratch/user123'
     )
   })
 
@@ -207,7 +205,7 @@ describe('ComputeHostProfileOwner.probe', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, updateProbeResult, updateScratchRoot } = makeRepo()
+    const { repo, updateProbeResult } = makeRepo()
     const service = new ComputeHostProfileOwner(runner, repo)
 
     const result = await service.probe('ssh:biowulf')
@@ -223,10 +221,12 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: true, cpus: 64 }),
-      'scheduler_cluster'
+      'scheduler_cluster',
+      'host-1',
+      '/gpfs/scratch/user123'
     )
-    // scratchRoot should be set because scratchPinned=false and scratch is provided.
-    expect(updateScratchRoot).toHaveBeenCalledWith('ssh:biowulf', '/gpfs/scratch/user123')
+    // The repository applies the current pinned state atomically.
+    expect(updateProbeResult.mock.calls[0]?.[4]).toBe('/gpfs/scratch/user123')
   })
 
   it('returns ok:false and maps exit 255 to host_unreachable (connection failure)', async () => {
@@ -237,7 +237,7 @@ describe('ComputeHostProfileOwner.probe', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, updateProbeResult, updateScratchRoot } = makeRepo()
+    const { repo, updateProbeResult } = makeRepo()
     const service = new ComputeHostProfileOwner(runner, repo)
 
     const result = await service.probe('ssh:biowulf')
@@ -249,9 +249,10 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: false }),
-      'direct_ssh'
+      'direct_ssh',
+      'host-1'
     )
-    expect(updateScratchRoot).not.toHaveBeenCalled()
+    expect(updateProbeResult.mock.calls[0]?.[4]).toBeUndefined()
   })
 
   it('returns ok:false on timeout and sets timedOut flag', async () => {
@@ -271,7 +272,8 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: false }),
-      'direct_ssh'
+      'direct_ssh',
+      'host-1'
     )
   })
 
@@ -305,7 +307,8 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: false, authenticationCode: 'authentication_failed' }),
-      'direct_ssh'
+      'direct_ssh',
+      'host-1'
     )
   })
 
@@ -476,11 +479,13 @@ describe('ComputeHostProfileOwner.probe', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: true }),
-      'direct_ssh'
+      'direct_ssh',
+      'host-1',
+      undefined
     )
   })
 
-  it('does NOT update scratchRoot when scratchPinned=true', async () => {
+  it('passes automatic scratch discovery to persistence even when the initial host is pinned', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,
       stdout: SLURM_STDOUT,
@@ -489,12 +494,12 @@ describe('ComputeHostProfileOwner.probe', () => {
       timedOut: false
     })
     const pinnedHost = sampleHost({ scratchPinned: true, scratchRoot: '/my/custom/scratch' })
-    const { repo, updateScratchRoot } = makeRepo(pinnedHost)
+    const { repo, updateProbeResult } = makeRepo(pinnedHost)
     const service = new ComputeHostProfileOwner(runner, repo)
 
     await service.probe('ssh:biowulf')
 
-    expect(updateScratchRoot).not.toHaveBeenCalled()
+    expect(updateProbeResult.mock.calls[0]?.[4]).toBe('/gpfs/scratch/user123')
   })
 
   it('does NOT update scratchRoot when $SCRATCH is empty', async () => {
@@ -506,12 +511,12 @@ describe('ComputeHostProfileOwner.probe', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, updateScratchRoot } = makeRepo()
+    const { repo, updateProbeResult } = makeRepo()
     const service = new ComputeHostProfileOwner(runner, repo)
 
     await service.probe('ssh:biowulf')
 
-    expect(updateScratchRoot).not.toHaveBeenCalled()
+    expect(updateProbeResult.mock.calls[0]?.[4]).toBeUndefined()
   })
 
   it('does NOT persist an invalid $SCRATCH value from a successful probe', async () => {
@@ -532,11 +537,11 @@ describe('ComputeHostProfileOwner.probe', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, updateScratchRoot } = makeRepo()
+    const { repo, updateProbeResult } = makeRepo()
     const service = new ComputeHostProfileOwner(runner, repo)
 
     await expect(service.probe('ssh:biowulf')).resolves.toMatchObject({ ok: true })
-    expect(updateScratchRoot).not.toHaveBeenCalled()
+    expect(updateProbeResult.mock.calls[0]?.[4]).toBeUndefined()
   })
 
   it('does NOT write detailsDoc', async () => {
@@ -574,7 +579,7 @@ describe('ComputeHostProfileOwner.probe', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ComputeHostProfileOwner.getDetails — skeleton synthesis and pass-through
+// ComputeHostProfileOwner.getDetails — persisted document and probe metadata
 // ---------------------------------------------------------------------------
 
 describe('ComputeHostProfileOwner.getDetails', () => {
@@ -586,15 +591,22 @@ describe('ComputeHostProfileOwner.getDetails', () => {
     timedOut: false
   })
 
-  it('returns detailsDoc as-is when it is non-empty', async () => {
-    const { repo } = makeRepo(sampleHost({ detailsDoc: '## Resources\ncpus: 8' }))
+  it('returns the persisted document independently from probe metadata', async () => {
+    const probeResult = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 0,
+      errorTail: null,
+      cpus: 8,
+      detectedScheduler: 'slurm' as const
+    }
+    const { repo } = makeRepo(sampleHost({ detailsDoc: 'Use the long queue.', probeResult }))
     const service = new ComputeHostProfileOwner(fakeRunner, repo)
     const result = await service.getDetails('ssh:biowulf')
-    expect(result.doc).toBe('## Resources\ncpus: 8')
-    expect(result.isSkeleton).toBe(false)
+    expect(result).toEqual({ doc: 'Use the long queue.', probeResult })
   })
 
-  it('returns a skeleton from probeResult when detailsDoc is empty', async () => {
+  it('returns an empty persisted document independently from probe metadata', async () => {
     const probeResult = {
       ok: true,
       probedAt: '2026-01-01T00:00:00Z',
@@ -607,38 +619,9 @@ describe('ComputeHostProfileOwner.getDetails', () => {
     }
     const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult }))
     const service = new ComputeHostProfileOwner(fakeRunner, repo)
-    const result = await service.getDetails('ssh:biowulf')
-    expect(result.isSkeleton).toBe(true)
-    expect(result.doc).toContain('## Resources')
-    expect(result.doc).toContain('cpus:')
-    expect(result.doc).toContain('mem:')
-    expect(result.doc).toContain('gpus:')
-    expect(result.doc).toContain('scheduler:')
-  })
+    const details = await service.getDetails('ssh:biowulf')
 
-  it('returns a skeleton with only available fields when some are missing', async () => {
-    const probeResult = {
-      ok: true,
-      probedAt: '2026-01-01T00:00:00Z',
-      exitCode: 0,
-      errorTail: null,
-      cpus: 8
-    }
-    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult }))
-    const service = new ComputeHostProfileOwner(fakeRunner, repo)
-    const result = await service.getDetails('ssh:biowulf')
-    expect(result.isSkeleton).toBe(true)
-    expect(result.doc).toContain('cpus: 8')
-    expect(result.doc).not.toContain('gpus:')
-    expect(result.doc).not.toContain('mem:')
-  })
-
-  it('returns empty string with isSkeleton=false when no probeResult and detailsDoc is empty', async () => {
-    const { repo } = makeRepo(sampleHost({ detailsDoc: '', probeResult: undefined }))
-    const service = new ComputeHostProfileOwner(fakeRunner, repo)
-    const result = await service.getDetails('ssh:biowulf')
-    expect(result.doc).toBe('')
-    expect(result.isSkeleton).toBe(false)
+    expect(details).toEqual({ doc: '', probeResult })
   })
 
   it('throws when the host does not exist', async () => {
@@ -671,7 +654,13 @@ describe('ComputeHostProfileOwner.replaceDetails', () => {
       oldText: 'hello world',
       author: 'user'
     })
-    expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', 'hello friend', 'user')
+    expect(updateDetails).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      'hello friend',
+      'user',
+      'host-1',
+      'hello world'
+    )
   })
 
   it('returns error and does not write when oldText does not match', async () => {
@@ -705,7 +694,13 @@ describe('ComputeHostProfileOwner.replaceDetails', () => {
       oldText: 'original text',
       author: 'agent'
     })
-    expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', 'new text', 'agent')
+    expect(updateDetails).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      'new text',
+      'agent',
+      'host-1',
+      'original text'
+    )
   })
 })
 
@@ -852,7 +847,13 @@ describe('ComputeHostProfileOwner.appendDetails', () => {
 
     await service.appendDetails('ssh:biowulf', { text: '## Note\nhello', author: 'agent' })
 
-    expect(updateDetails).toHaveBeenCalledWith('ssh:biowulf', '## Note\nhello', 'agent')
+    expect(updateDetails).toHaveBeenCalledWith(
+      'ssh:biowulf',
+      '## Note\nhello',
+      'agent',
+      'host-1',
+      ''
+    )
   })
 
   it('appends text with a newline separator when doc is non-empty', async () => {
@@ -871,7 +872,9 @@ describe('ComputeHostProfileOwner.appendDetails', () => {
     expect(updateDetails).toHaveBeenCalledWith(
       'ssh:biowulf',
       '## Resources\ncpus: 4\n## Note\nhello',
-      'agent'
+      'agent',
+      'host-1',
+      '## Resources\ncpus: 4'
     )
   })
 

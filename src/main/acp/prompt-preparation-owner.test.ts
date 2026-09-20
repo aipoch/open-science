@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createLogger, flushLogs, initLogger } from '../logger'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
@@ -47,7 +51,8 @@ const contextTurn = (): TestContextTurn => {
 const setup = (
   imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>,
   memory?: { recallForPrompt(requestText: string): Promise<string | undefined> },
-  isMemoryEnabledForSession?: (sessionId: string) => boolean
+  isMemoryEnabledForSession?: (sessionId: string) => boolean,
+  classificationOptions: Partial<ConstructorParameters<typeof AcpPromptPreparationOwner>[0]> = {}
 ): Fixture => {
   const turn = contextTurn()
   const promptClose = vi.fn()
@@ -90,6 +95,7 @@ const setup = (
     presentation: new AcpSessionPresentationPolicy(),
     contextUsage,
     selectBridgeSkills: vi.fn(async () => []),
+    ...classificationOptions,
     authorizeReferencedUploads,
     memory,
     isMemoryEnabledForSession,
@@ -143,6 +149,7 @@ const setup = (
       specialistPrefix: 'Specialist identity.',
       projectId: 'project-1',
       fallbackPromptMessageId: 'prompt-fallback',
+      classificationEnabled: true,
       bridgeSkillsAvailable: true,
       skillImportEnabled: true,
       skillImportTurnToken: 'turn-1',
@@ -588,6 +595,26 @@ describe('AcpPromptPreparationOwner', () => {
     expect(recallForPrompt).not.toHaveBeenCalled()
   })
 
+  it('discards recalled records when the Session disables Memory during recall', async () => {
+    let enabled = true
+    const fixture = setup(
+      undefined,
+      {
+        recallForPrompt: vi.fn(async () => {
+          enabled = false
+          return 'recalled memory'
+        })
+      },
+      () => enabled
+    )
+    const handle = await fixture.prepare()
+    expect(handle.status).toBe('ready')
+    const preparedText = (
+      fixture.promptContent.prepare.mock.calls as unknown as Array<[{ text: string }]>
+    )[0]?.[0].text
+    expect(preparedText).not.toContain('recalled memory')
+  })
+
   it('continues prompt preparation when automatic memory recall fails', async () => {
     const fixture = setup(undefined, {
       recallForPrompt: vi.fn(async () => {
@@ -860,4 +887,198 @@ describe('AcpPromptPreparationOwner', () => {
     expect(fixture.promptClose).toHaveBeenCalledOnce()
     expect(fixture.releaseGrant).toHaveBeenCalledOnce()
   })
+})
+
+describe('optional main-prompt classification', () => {
+  const catalog = [{ name: 'Research', description: 'Research', path: '/allowed/SKILL.md' }]
+  it.each(['selected', 'fallback', 'error', 'stale', 'reviewer', 'task'] as const)(
+    'handles %s without misattributing usage or applying stale results',
+    async (mode) => {
+      let current = true
+      const classifySkills = vi.fn(async (input) => {
+        input.observeUsage({
+          eventId: 'classification-1',
+          providerId: 'classification:account',
+          model: 'jev-1.13.0',
+          usage: { inputTokens: 12, outputTokens: 0, cacheTokens: 0, turnCount: 1 }
+        })
+        if (mode === 'stale') current = false
+        if (mode === 'error') throw new Error('classification unavailable')
+        return mode === 'fallback' ? undefined : [{ name: 'Research', path: '/allowed/SKILL.md' }]
+      })
+      const selectBridgeSkills = vi.fn(async () => [
+        { name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }
+      ])
+      const recordClassificationUsage = vi.fn(async () => undefined)
+      const fixture = setup(undefined, undefined, undefined, {
+        classifySkills,
+        selectBridgeSkills,
+        recordClassificationUsage
+      })
+      const selected: unknown[] = []
+      fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+        selected.push(
+          await input.codex.selectSkills(
+            input.selectionText,
+            catalog,
+            input.codex.signal,
+            input.codex.observeUsage
+          )
+        )
+        return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+      })
+      const result = await fixture.prepare({
+        isCurrent: () => current,
+        role: mode === 'reviewer' ? 'reviewer' : 'primary',
+        classificationEnabled: mode !== 'task'
+      })
+      expect(selectBridgeSkills).toHaveBeenCalledTimes(
+        mode === 'fallback' || mode === 'error' || mode === 'reviewer' || mode === 'task' ? 1 : 0
+      )
+      expect(classifySkills).toHaveBeenCalledTimes(mode === 'reviewer' || mode === 'task' ? 0 : 1)
+      expect(recordClassificationUsage).toHaveBeenCalledTimes(
+        mode === 'reviewer' || mode === 'task' ? 0 : 1
+      )
+      if (mode === 'stale') {
+        expect(result.status).toBe('cancelled')
+        expect(selected).toEqual([[]])
+      } else {
+        expect(result).toMatchObject({ status: 'ready' })
+        if (result.status === 'ready') expect(result.preDispatchModelCalls ?? []).toEqual([])
+        expect(selected).toEqual([
+          mode === 'selected'
+            ? [{ name: 'Research', path: '/allowed/SKILL.md' }]
+            : [{ name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }]
+        ])
+      }
+      if (mode !== 'reviewer' && mode !== 'task')
+        expect(classifySkills.mock.calls[0][0].text).not.toContain('replayed history')
+    }
+  )
+
+  it('passes the whole catalog to the default selector with its original usage observer', async () => {
+    const unresolved = [
+      {
+        name: 'mcp-pubmed',
+        description: 'Search papers',
+        path: '/pubmed/SKILL.md',
+        source: 'connector' as const
+      }
+    ]
+    const selectBridgeSkills = vi.fn(async () => [
+      { name: unresolved[0].name, path: unresolved[0].path }
+    ])
+    const classifySkills = vi.fn(async () => undefined)
+    const fixture = setup(undefined, undefined, undefined, { classifySkills, selectBridgeSkills })
+    fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+      const selected = await input.codex.selectSkills(
+        input.selectionText,
+        [...catalog, ...unresolved],
+        input.codex.signal,
+        input.codex.observeUsage
+      )
+      expect(selected).toEqual([{ name: unresolved[0].name, path: unresolved[0].path }])
+      expect(selectBridgeSkills).toHaveBeenCalledExactlyOnceWith(
+        input.selectionText,
+        [...catalog, ...unresolved],
+        input.codex.signal,
+        input.codex.observeUsage
+      )
+      return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+    })
+    expect(await fixture.prepare()).toMatchObject({ status: 'ready' })
+    expect(classifySkills).toHaveBeenCalledOnce()
+  })
+
+  it('uses the existing selector when no classification service is configured', async () => {
+    const selectBridgeSkills = vi.fn(async () => [
+      { name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }
+    ])
+    const fixture = setup(undefined, undefined, undefined, { selectBridgeSkills })
+    const selected: unknown[] = []
+    fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+      selected.push(
+        await input.codex.selectSkills(
+          input.selectionText,
+          catalog,
+          input.codex.signal,
+          input.codex.observeUsage
+        )
+      )
+      return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+    })
+
+    const result = await fixture.prepare({ classificationEnabled: true })
+
+    expect(result).toMatchObject({ status: 'ready' })
+    expect(selectBridgeSkills).toHaveBeenCalledOnce()
+    expect(selected).toEqual([[{ name: 'Fallback', path: '/allowed/Fallback/SKILL.md' }]])
+  })
+})
+
+it('correlates concurrent classification decisions with their sessions and reports usage failures safely', async () => {
+  const logDir = await mkdtemp(join(tmpdir(), 'classification-prompt-logs-'))
+  initLogger({ logDir, mirrorToConsole: false })
+  try {
+    await Promise.all(
+      ['selected', 'fallback', 'stale'].map(async (mode) => {
+        let current = true
+        const fixture = setup(undefined, undefined, undefined, {
+          classifySkills: async ({ observeUsage }) => {
+            await Promise.resolve()
+            createLogger('classification').info('classification transport test marker')
+            observeUsage?.({
+              eventId: mode,
+              providerId: 'account',
+              model: 'jev-latest',
+              usage: { inputTokens: 1, outputTokens: 1, cacheTokens: 0 }
+            })
+            if (mode === 'stale') current = false
+            return mode === 'fallback' ? undefined : []
+          },
+          recordClassificationUsage: async () => {
+            throw new Error('private-usage-failure')
+          },
+          selectBridgeSkills: vi.fn(async () => [])
+        })
+        fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
+          await input.codex.selectSkills(input.selectionText, [], input.codex.signal)
+          return { text: 'prepared task', codexSkillInputs: [], skillRuntimeAllowlist: [] }
+        })
+        await fixture.prepare({ request: request({ sessionId: mode }), isCurrent: () => current })
+      })
+    )
+    await flushLogs()
+    const contents = await readFile(join(logDir, 'main.log'), 'utf8')
+    const records = contents
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    const starts = records.filter((record) => record.msg === 'classification selection started')
+    expect(starts).toHaveLength(3)
+    expect(new Set(starts.map((record) => record.correlationId)).size).toBe(3)
+    for (const start of starts) {
+      expect(start.correlationId).toEqual(expect.any(String))
+      const related = records.filter((record) => record.correlationId === start.correlationId)
+      expect(related.map((record) => record.msg)).toContain('classification transport test marker')
+      expect(related).toContainEqual(
+        expect.objectContaining({
+          msg: 'classification usage recording failed',
+          data: expect.objectContaining({ sessionId: start.data.sessionId, errorCategory: 'error' })
+        })
+      )
+      expect(related.map((record) => record.msg)).toContain(
+        start.data.sessionId === 'selected'
+          ? 'classification selection applied'
+          : start.data.sessionId === 'fallback'
+            ? 'classification selection fallback'
+            : 'classification selection discarded'
+      )
+    }
+    expect(contents).not.toContain('private-usage-failure')
+    expect(contents).not.toContain('Analyze the result.')
+  } finally {
+    await flushLogs()
+    await rm(logDir, { recursive: true, force: true })
+  }
 })

@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import type { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { CancelledNotificationSchema, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
 
 import { createArtifactMcpServer, type ArtifactMcpEnvironment } from '../artifacts/mcp-server'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -61,6 +62,7 @@ type SessionEntry = {
   notebook?: NotebookMcpEnvironment
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
+  planRouteToken?: string
   hostMessage?: HostMessageMcpHandler
   library?: LiteratureLibraryMcpHandler
   literature?: LiteratureMcpHandler
@@ -84,6 +86,28 @@ class AgentMcpHttpHost {
   private startPromise: Promise<HostConnection> | undefined
   private endpoint: string | undefined
   private readonly sessions = new Map<string, SessionEntry>()
+  // HTTP POSTs are stateless, but cancellation must reach the still-running Library or linked-PDF POST.
+  // Entries live only until that response closes; request IDs are scoped to the bound route.
+  private readonly toolRequests = new Map<
+    string,
+    {
+      routingId: string
+      kind: ServerKind
+      receive: NonNullable<StreamableHTTPServerTransport['onmessage']>
+      response: ServerResponse
+    }
+  >()
+
+  // Keep cancellations only for POSTs already arriving; never retain unknown IDs for future calls.
+  private readonly readingToolRequests = new Map<
+    ServerResponse,
+    {
+      routingId: string
+      kind: ServerKind
+      cancelledIds: Set<string>
+      cancellationBytes: number
+    }
+  >()
 
   constructor(options: { token?: string; host?: string; requestBytes?: number } = {}) {
     this.token = options.token ?? randomUUID()
@@ -125,7 +149,7 @@ class AgentMcpHttpHost {
     this.server = undefined
     this.startPromise = undefined
     this.endpoint = undefined
-    this.sessions.clear()
+    this.clear()
 
     if (!server) return
 
@@ -156,10 +180,24 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
-  registerPlan(routingId: string, environment: PlanMcpEnvironment): void {
+  registerPlan(routingId: string, environment: PlanMcpEnvironment): () => (() => void) | undefined {
     const entry = this.sessions.get(routingId) ?? {}
+    const previousPlan = entry.plan
+    const previousRouteToken = entry.planRouteToken
+    const routeToken = randomUUID()
     entry.plan = environment
+    entry.planRouteToken = routeToken
     this.sessions.set(routingId, entry)
+    return () => {
+      if (this.sessions.get(routingId)?.planRouteToken !== routeToken) return undefined
+      return () => {
+        if (!previousPlan || !previousRouteToken) return
+        const restored = this.sessions.get(routingId) ?? {}
+        restored.plan = previousPlan
+        restored.planRouteToken = previousRouteToken
+        this.sessions.set(routingId, restored)
+      }
+    }
   }
 
   registerHostMessage(routingId: string, handler: HostMessageMcpHandler): void {
@@ -183,11 +221,25 @@ class AgentMcpHttpHost {
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
+    for (const [response, pending] of this.readingToolRequests) {
+      if (pending.routingId !== routingId) continue
+      this.readingToolRequests.delete(response)
+      response.destroy()
+    }
+    for (const [key, active] of this.toolRequests) {
+      if (active.routingId !== routingId) continue
+      this.toolRequests.delete(key)
+      active.response.destroy()
+    }
   }
 
   // Drops every registered environment (e.g. on runtime disconnect); the server keeps running for reuse.
   clear(): void {
     this.sessions.clear()
+    for (const response of this.readingToolRequests.keys()) response.destroy()
+    this.readingToolRequests.clear()
+    for (const active of this.toolRequests.values()) active.response.destroy()
+    this.toolRequests.clear()
   }
 
   // Builds the per-session MCP endpoint URL the agent connects to for one kind.
@@ -196,12 +248,22 @@ class AgentMcpHttpHost {
       throw new Error('MCP HTTP host is not started.')
     }
 
-    return `${this.endpoint}/mcp/${kind}/${encodeURIComponent(routingId)}`
+    const route = `${this.endpoint}/mcp/${kind}/${encodeURIComponent(routingId)}`
+    if (kind !== 'plan') return route
+
+    const routeToken = this.sessions.get(routingId)?.planRouteToken
+    if (!routeToken) throw new Error(`No registered plan MCP session: ${routingId}`)
+    // `token` is covered by the shared diagnostic URL redactor if this provider config is logged.
+    return `${route}?token=${encodeURIComponent(routeToken)}`
   }
 
   // Constructs a fresh MCP server for one request from the registered environment, or undefined when
   // the routing id / kind was never registered.
-  private buildServer(kind: ServerKind, routingId: string): ModelContextProtocolServer | undefined {
+  private buildServer(
+    kind: ServerKind,
+    routingId: string,
+    routeToken?: string
+  ): ModelContextProtocolServer | undefined {
     const entry = this.sessions.get(routingId)
 
     if (!entry) return undefined
@@ -222,7 +284,7 @@ class AgentMcpHttpHost {
     }
 
     if (kind === 'plan') {
-      if (!entry.plan) return undefined
+      if (!entry.plan || !routeToken || routeToken !== entry.planRouteToken) return undefined
       return createPlanMcpServerForEnvironment(entry.plan)
     }
 
@@ -266,7 +328,7 @@ class AgentMcpHttpHost {
 
     const kind = match[1]
     const routingId = decodeURIComponent(match[2])
-    const server = this.buildServer(kind, routingId)
+    const server = this.buildServer(kind, routingId, url.searchParams.get('token') ?? undefined)
 
     if (!server) {
       writeJson(response, 404, { error: `No registered ${kind} MCP session: ${routingId}` })
@@ -284,16 +346,73 @@ class AgentMcpHttpHost {
       void server.close()
     })
 
+    const reading = { routingId, kind, cancelledIds: new Set<string>(), cancellationBytes: 0 }
+    if ((kind === 'library' || kind === 'literature') && request.method === 'POST') {
+      this.readingToolRequests.set(response, reading)
+      response.once('close', () => this.readingToolRequests.delete(response))
+    }
     try {
       await server.connect(transport)
+      if (kind === 'library' || kind === 'literature') {
+        const receive = transport.onmessage!
+        transport.onmessage = (message, extra) => {
+          this.readingToolRequests.delete(response)
+          if (isJSONRPCRequest(message) && message.method === 'tools/call') {
+            if (reading.cancelledIds.has(JSON.stringify(message.id))) {
+              response.end()
+              return
+            }
+            const key = JSON.stringify([kind, routingId, message.id])
+            if (this.toolRequests.has(key)) {
+              writeJson(response, 409, { error: 'Duplicate active Literature request id.' })
+              return
+            }
+            const active = { routingId, kind, receive, response }
+            this.toolRequests.set(key, active)
+            response.once('close', () => {
+              if (this.toolRequests.get(key) === active) this.toolRequests.delete(key)
+            })
+          } else {
+            const cancellation = CancelledNotificationSchema.safeParse(message)
+            if (cancellation.success) {
+              const id = JSON.stringify(cancellation.data.params.requestId)
+              for (const [pendingResponse, pending] of this.readingToolRequests) {
+                if (
+                  pending.kind !== kind ||
+                  pending.routingId !== routingId ||
+                  pending.cancelledIds.has(id)
+                )
+                  continue
+                pending.cancellationBytes += Buffer.byteLength(id)
+                if (pending.cancellationBytes > this.requestBytes) {
+                  // Bound cancellation buffering by the same budget as the incoming body.
+                  this.readingToolRequests.delete(pendingResponse)
+                  pendingResponse.destroy()
+                } else pending.cancelledIds.add(id)
+              }
+              const key = JSON.stringify([kind, routingId, cancellation.data.params.requestId])
+              const active = this.toolRequests.get(key)
+              if (active) {
+                active.receive(message, extra)
+                // Cancelled MCP handlers intentionally send no result. End the original POST
+                // as well so its transport, server, and route entry can be released.
+                active.response.end()
+              }
+            }
+          }
+          receive(message, extra)
+        }
+      }
       const body =
         request.method === 'POST'
           ? await readBoundedJsonBody<unknown>(request, this.requestBytes, {
               emptyValue: undefined
             })
           : undefined
+      if (response.destroyed) return
       await transport.handleRequest(request, response, body)
     } catch (error) {
+      this.readingToolRequests.delete(response)
       log.error('MCP host request failed', { kind, error })
 
       if (!response.headersSent) {

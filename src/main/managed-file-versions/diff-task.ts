@@ -4,7 +4,7 @@ import { Worker } from 'node:worker_threads'
 import {
   MANAGED_DIFF_MAX_OUTPUT_BYTES,
   MANAGED_DIFF_MAX_OUTPUT_LINES,
-  type ManagedFileVersionDiffLine
+  type ManagedFileVersionDiffRow
 } from '../../shared/managed-file-versions'
 import { createLogger } from '../logger'
 import { ManagedFileVersionError } from './error'
@@ -431,7 +431,7 @@ if (!changes) {
   return
 }
 let outputBytes = 2
-const pushLine = (line) => {
+const pushOutput = (line) => {
   const nextBytes = Buffer.byteLength(JSON.stringify(line), 'utf8') + (lines.length === 0 ? 0 : 1)
   if (lines.length + 1 > workerData.maxOutputLines || outputBytes + nextBytes > workerData.maxOutputBytes) {
     parentPort.postMessage({ error: 'DIFF_OUTPUT_LIMIT_EXCEEDED' })
@@ -439,6 +439,26 @@ const pushLine = (line) => {
   }
   lines.push(line)
   outputBytes += nextBytes
+  return true
+}
+// Retain each unchanged run's first/last three lines, including file boundaries.
+// Buffer at most six rows; omitted source text never enters the serialized output budget.
+let context = []
+let omitted
+const flushContext = () => {
+  const rows = omitted ? [...context.slice(0, 3), omitted, ...context.slice(3)] : context
+  context = []
+  omitted = undefined
+  return rows.every(pushOutput)
+}
+const pushLine = (line) => {
+  if (line.kind !== 'context') return flushContext() && pushOutput(line)
+  context.push(line)
+  if (context.length > 6) {
+    const skipped = context.splice(3, 1)[0]
+    if (omitted) omitted.count += 1
+    else omitted = { kind: 'omitted', oldLineNumber: skipped.oldLineNumber, newLineNumber: skipped.newLineNumber, count: 1 }
+  }
   return true
 }
 const pushAlignedLine = (aligned) => {
@@ -563,7 +583,7 @@ for (const change of changes) {
     lineGroup.push({ kind, line })
   }
 }
-if (!flushLineGroup()) return
+if (!flushLineGroup() || !flushContext()) return
 parentPort.postMessage(lines)
 }
 run()
@@ -577,7 +597,7 @@ class ManagedTextDiffTaskRunner {
 
   constructor(private readonly options: DiffTaskRunnerOptions = {}) {}
 
-  run(task: DiffTask): Promise<ManagedFileVersionDiffLine[]> {
+  run(task: DiffTask): Promise<ManagedFileVersionDiffRow[]> {
     if (this.active.has(task.requestId)) {
       return Promise.reject(
         new ManagedFileVersionError('INVALID_REQUEST', 'Diff request id is already active.')
@@ -627,7 +647,7 @@ class ManagedTextDiffTaskRunner {
           )
           return
         }
-        const lines = value as ManagedFileVersionDiffLine[]
+        const lines = value as ManagedFileVersionDiffRow[]
         if (
           lines.length > MANAGED_DIFF_MAX_OUTPUT_LINES ||
           Buffer.byteLength(JSON.stringify(lines), 'utf8') > MANAGED_DIFF_MAX_OUTPUT_BYTES

@@ -13,6 +13,7 @@ export type MainSessionConflictRebaseField =
 
 export type MainSaveSessionOptions = {
   conflictRebaseFields?: MainSessionConflictRebaseField[]
+  conversationCommands?: import('../../shared/session-conversation-command').SessionConversationCommand[]
 }
 
 type RebaseFields = NonNullable<MainSaveSessionOptions['conflictRebaseFields']>

@@ -1,3 +1,5 @@
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import { forkEditedConversationMessage } from '../../shared/conversation-graph'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { ArchiveCoordinator, type SessionRuntimeActivity } from '../archive/coordinator'
@@ -89,8 +91,9 @@ const createRepository = (
         : { status: 'missing' as const }
     }),
     assertSessionIdentityOwnership: vi.fn(async () => undefined),
-    saveSession: vi.fn(async (session) => {
+    saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     }),
     saveCommittedProjectSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(async (_projectId, sessionId) => {
@@ -123,6 +126,102 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
+  it('preserves the latest conversation and replay marker when binding a resumed Task provider', async () => {
+    const current = materializeSessionConversationGraph(
+      createSession({
+        title: 'Web title',
+        updatedAt: 10,
+        messages: [
+          {
+            id: 'web-message',
+            role: 'user',
+            content: 'Existing conversation',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        pendingHistoryReplay: { kind: 'before-message', messageId: 'web-message' }
+      })
+    )
+    const { repository } = createRepository([current])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const saved = await coordinator.bindTaskSession({
+      session: {
+        id: current.id,
+        projectId: current.projectId,
+        cwd: current.cwd,
+        providerSessionId: 'resumed-provider',
+        providerContinuityToken: 'resumed-continuity',
+        updatedAt: 3
+      },
+      contextReset: true
+    })
+    expect(saved).toMatchObject({
+      title: current.title,
+      messages: current.messages,
+      conversationGraph: {
+        ...current.conversationGraph,
+        branches: current.conversationGraph.branches.map((branch) => ({
+          ...branch,
+          updatedAt: 11
+        }))
+      },
+      pendingHistoryReplay: current.pendingHistoryReplay,
+      providerSessionId: 'resumed-provider',
+      providerContinuityToken: 'resumed-continuity',
+      status: current.status,
+      updatedAt: 11
+    })
+    expect(saved.activeRun).toBeUndefined()
+  })
+
+  it.each(['archived', 'busy', 'branch'] as const)(
+    'does not admit a prepared Task after the Session becomes %s',
+    async (change) => {
+      const user = {
+        id: 'original-user',
+        role: 'user' as const,
+        content: 'Research',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const original = materializeSessionConversationGraph(createSession({ messages: [user] }))
+      const prepared = {
+        ...original,
+        messages: [...original.messages, { ...user, id: 'next-user', content: 'Follow up' }],
+        activeRun: { promptMessageId: 'next-user', startedAt: 3 },
+        status: 'running' as const
+      }
+      const current =
+        change === 'archived'
+          ? { ...original, archivedAt: 3 }
+          : change === 'busy'
+            ? { ...original, activeRun: { promptMessageId: 'other-user', startedAt: 3 } }
+            : {
+                ...original,
+                messages: [],
+                conversationGraph: forkEditedConversationMessage(
+                  original.conversationGraph,
+                  user.id,
+                  'new-branch',
+                  3
+                )
+              }
+      const { repository } = createRepository([current])
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+      await expect(
+        coordinator.admitTaskTurn({ session: prepared, contextReset: false })
+      ).rejects.toThrow(
+        change === 'archived' ? /archived/ : change === 'busy' ? /active run/ : /branch changed/
+      )
+      expect(repository.saveSession).not.toHaveBeenCalled()
+    }
+  )
+
   it.each(
     (['read', 'write', 'delete'] as const).flatMap((operation) =>
       [false, true].map((withGlobalBarrier) => ({ operation, withGlobalBarrier }))
@@ -315,12 +414,13 @@ describe('SessionPersistenceCoordinator contracts', () => {
     const firstWriteGate = createDeferred()
     const firstWriteStarted = createDeferred()
     const { repository, sessions } = createRepository([])
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       if (session.projectId === 'project-1') {
         firstWriteStarted.resolve()
         await firstWriteGate.promise
       }
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     const first = coordinator.saveSession(
@@ -344,9 +444,10 @@ describe('SessionPersistenceCoordinator contracts', () => {
     const { repository, sessions } = createRepository([
       createSession({ id: 'shared-session', projectId: 'project-1' })
     ])
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       reusedSessionSaveStarted.resolve()
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -398,9 +499,10 @@ describe('SessionPersistenceCoordinator contracts', () => {
         isComplete: true
       }))
     })
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       reusedSessionSaveStarted.resolve()
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -444,9 +546,10 @@ describe('SessionPersistenceCoordinator contracts', () => {
     const { repository, sessions } = createRepository([
       createSession({ id: 'deleted-session', projectId: 'project-1' })
     ])
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       independentSaveStarted.resolve()
       sessions.set(session.id, structuredClone(session))
+      return structuredClone(session)
     })
     const coordinator = new SessionPersistenceCoordinator(
       repository,
@@ -546,7 +649,7 @@ describe('SessionPersistenceCoordinator contracts', () => {
 
   it('applies optimistic archive checks before changing durable Session visibility', async () => {
     const { repository, sessions } = createRepository()
-    repository.saveSession = vi.fn(async (session) => {
+    repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
       const next = { ...session, revision: (sessions.get(session.id)?.revision ?? 0) + 1 }
       sessions.set(session.id, next)
       return next
@@ -782,7 +885,9 @@ const archiveRuntime = (
     countNonTerminalBySession: (sessionId: string) => Promise<number>
     findNonTerminal: () => Promise<{ project_id: string }[]>
   },
-  detect: () => { projectId: string; sessionId: string }[] = () => []
+  detectArchive: () => { projectId: string; sessionId: string }[] = () => [],
+  detectExport: () => { projectId: string; sessionId: string }[] = () => [],
+  hasSideChat: (sessionId: string) => boolean = () => false
 ): SessionRuntimeActivity => {
   const source = ts.createSourceFile(
     'ipc.ts',
@@ -805,11 +910,19 @@ const archiveRuntime = (
   return new Function(
     'sideChatOwnerRef',
     'detectArchiveBlockingSessions',
+    'detectSessionExportBlockingSessions',
     'reviewerProjectRuntime',
     'computeJobActivityRef',
     'runtimeRef',
     script
-  )({}, detect, { isProjectBusy: () => false }, { current: jobs }, {})
+  )(
+    { current: { hasForParent: hasSideChat } },
+    detectArchive,
+    detectExport,
+    { isProjectBusy: () => false },
+    { current: jobs },
+    {}
+  )
 }
 
 const createArchiveHarness = (
@@ -822,7 +935,7 @@ const createArchiveHarness = (
 } => {
   const { repository, sessions } = createRepository([createSession({ revision: 1 })])
   // Model the repository's existing durable revision advancement, including archive writes.
-  repository.saveSession = vi.fn(async (next) => {
+  repository.saveSession = vi.fn<SessionMutationRepository['saveSession']>(async (next) => {
     const persisted = { ...next, revision: (sessions.get(next.id)?.revision ?? 0) + 1 }
     sessions.set(next.id, structuredClone(persisted))
     return persisted
@@ -873,6 +986,46 @@ const sessionArchiveRequest = (
 })
 
 describe('archive admission regressions', () => {
+  it('uses the export-specific activity projection from the real IPC adapter', async () => {
+    const jobs = {
+      countNonTerminalBySession: vi.fn().mockResolvedValue(0),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const detectArchive = vi.fn(() => [{ projectId: 'project-1', sessionId: 'session-1' }])
+    const detectExport = vi.fn(() => [])
+    const { coordinator } = createArchiveHarness(archiveRuntime(jobs, detectArchive, detectExport))
+
+    const release = await coordinator.reserveSessionExport(
+      'project-1',
+      'session-1',
+      async () => undefined
+    )
+
+    expect(detectExport).toHaveBeenCalledTimes(2)
+    expect(detectArchive).not.toHaveBeenCalled()
+    release()
+  })
+
+  it('keeps an open Side Chat archive-blocking in the real IPC adapter', async () => {
+    const jobs = {
+      countNonTerminalBySession: vi.fn().mockResolvedValue(0),
+      findNonTerminal: vi.fn().mockResolvedValue([])
+    }
+    const { coordinator, repository } = createArchiveHarness(
+      archiveRuntime(
+        jobs,
+        () => [],
+        () => [],
+        (sessionId) => sessionId === 'session-1'
+      )
+    )
+
+    await expect(coordinator.updateSessionArchive(sessionArchiveRequest(true, 1))).rejects.toThrow(
+      'Finish or stop'
+    )
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
   it.each(['queued', 'submitted', 'running'])(
     'rejects an idle Session with a %s Compute Job through the real IPC activity adapter',
     async (status) => {

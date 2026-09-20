@@ -24,6 +24,8 @@ const log = createLogger('notebook:recovery')
 export type OperationChildLiveness = 'dead' | 'unknown'
 
 export type OperationRecoveryDeps = {
+  // Rechecks may only reconcile the operations captured at startup, never this process's new writes.
+  operationIds?: ReadonlySet<string>
   // Best-effort liveness of the operation's recorded child, as the two-state above. Callers pass a
   // platform check (see defaultOperationChildLiveness). Never 'alive' — see the type note.
   operationChildLiveness: (record: RuntimeOperationRecord) => Promise<OperationChildLiveness>
@@ -46,6 +48,10 @@ export type OperationRecoveryDeps = {
   // publish those transaction-authorized archives before clearing the journal; it must not rerun the
   // normal interrupted-operation action (notably, a successful install must not be marked broken).
   publishArchives?: (record: RuntimeOperationRecord) => Promise<void>
+  // A materialize transaction whose managed target is provably absent did not commit an environment.
+  // Startup may discard its pre-publication ambiguity and disposable working cache instead of blocking
+  // every later cache writer. The coordinator owns the filesystem/path validation behind this seam.
+  canDiscardPendingArchivePublication?: (record: RuntimeOperationRecord) => Promise<boolean>
   // The coordinator defers clearing successfully published records until their exact disposable cache
   // roots are also removed. Keeping the record durable makes a transient cleanup failure retryable even
   // when the recorded TEMP fallback is no longer one of the current process's candidates.
@@ -54,7 +60,10 @@ export type OperationRecoveryDeps = {
   onReconciled?: (record: RuntimeOperationRecord, action: RecoveryAction) => void
   // Reports a record left pending because its child is unconfirmed or its recovery action failed.
   // Startup uses this to retain shared disposable state without rereading the journal.
-  onRetained?: (record: RuntimeOperationRecord) => void
+  onRetained?: (
+    record: RuntimeOperationRecord,
+    reason: import('../../shared/notebook-env').NotebookRecoveryStatus['operations'][number]['reason']
+  ) => void
   // Fills in a record's childPid/childStartedAt from the SYNCHRONOUS PID sidecar when the journal's
   // async childPid update was lost to a crash. Returns the record enriched (or unchanged). This is what
   // makes a missing childPid provably mean "never spawned" (safe to reconcile) rather than a guess.
@@ -66,6 +75,7 @@ export type RecoveryAction =
   | 'verify-or-rebuild'
   | 'repair-required'
   | 'noop'
+  | 'discard-uncommitted-publication'
   // Liveness was 'unknown' — a survivor might still be writing, so the entry is left for a later startup.
   | 'skipped-child-unknown'
 
@@ -83,10 +93,12 @@ export const reconcileInterruptedOperations = async (
   const reconciled: RuntimeOperationRecord[] = []
 
   for (const raw of pending) {
+    if (deps.operationIds && !deps.operationIds.has(raw.operationId)) continue
+    let record = raw
     try {
       // Fill in the childPid from the synchronous sidecar if the journal's async update was lost to a
       // crash, so the checks below act on the child that actually spawned.
-      const record = deps.hydrateInterruptedChild?.(raw) ?? raw
+      record = deps.hydrateInterruptedChild?.(raw) ?? raw
       // Decide liveness from the spawn-lifecycle sidecar (hydrated above), never a wall-clock guess:
       //   - childPid present            -> probe it ('dead' | 'unknown').
       //   - spawnAttempted, no childPid -> reached the spawn stage but the PID was never recorded (a
@@ -109,11 +121,20 @@ export const reconcileInterruptedOperations = async (
         // journal entry so a LATER startup — when the pid is provably gone — reconciles it. The env
         // self-heals on a subsequent boot; we never destroy data on a guess.
         await deps.blockUnknownChildTarget(record)
-        deps.onRetained?.(record)
+        deps.onRetained?.(
+          record,
+          record.childPid === undefined ? 'child-unrecorded' : 'child-unconfirmed'
+        )
         deps.onReconciled?.(record, 'skipped-child-unknown')
         continue
       }
       if (record.archivePublicationPending) {
+        if (await deps.canDiscardPendingArchivePublication?.(record)) {
+          await journal.complete(record.operationId)
+          reconciled.push(record)
+          deps.onReconciled?.(record, 'discard-uncommitted-publication')
+          continue
+        }
         // The mutation may have committed, but the process died before immutable archive authority was
         // persisted. Normal interrupted-operation repair could be safe for the prefix yet must not also
         // authorize deletion of the only retained archive bytes. Keep both target and working cache
@@ -123,7 +144,7 @@ export const reconcileInterruptedOperations = async (
           await deps.markRepairRequired(record)
         }
         await deps.blockUnknownChildTarget(record)
-        deps.onRetained?.(record)
+        deps.onRetained?.(record, 'archive-unconfirmed')
         continue
       }
       if (record.archivePublications) {
@@ -149,9 +170,14 @@ export const reconcileInterruptedOperations = async (
           })
         }
       }
-      deps.onRetained?.(raw)
+      deps.onRetained?.(raw, 'recovery-failed')
       log.error('operation recovery failed; leaving journal entry', {
         operationId: raw.operationId,
+        operationKind: raw.kind,
+        phase: raw.phase,
+        archivePublicationCount: raw.archivePublications?.length ?? 0,
+        childPid: record.childPid,
+        spawnAttempted: record.spawnAttempted ?? false,
         ...errorLogFields(error)
       })
     }

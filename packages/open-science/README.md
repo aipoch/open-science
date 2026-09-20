@@ -1,6 +1,6 @@
 # @aipoch/open-science
 
-Node.js SDK and command-line client for an Open Science daemon running on the local machine.
+Node.js SDK and command-line client for an Open-Science daemon running on the local machine.
 
 ## Documentation
 
@@ -43,6 +43,8 @@ await client.updateAgentRouting({
   reviewer: { mode: 'inherit' },
   subagent: { mode: 'inherit' }
 })
+
+const runtimes = await client.listRuntimes()
 ```
 
 Session updates use `revision`; Project-default updates use `updatedAt`. Both reject stale writes.
@@ -50,26 +52,52 @@ Project defaults are copied only when a Session is created, with precedence `sta
 Project defaults, application settings, then provider default. Agent-routing updates are atomic and
 never return provider credentials.
 
+Agent runtime listings expose only framework, readiness, version, and managed/external source. They
+do not expose executable paths.
+
 SDK requests have a 30-second default deadline that remains active while the response body is being
 consumed. Override the client default with `requestTimeoutMs`, or pass `{ signal, timeoutMs }` as the
 final options argument to an individual request method. `downloadArtifact` keeps the deadline active
 while its returned `Response` body is streaming. `waitForRun` applies its overall `timeoutMs` and
-caller signal to every in-flight polling request as well as the delay between polls.
+caller signal to every in-flight polling request as well as the delay between polls. Each poll is
+bounded by the smaller of the client's `requestTimeoutMs` and the remaining total wait budget.
+A request timeout fails the wait immediately; it does not silently retry. Without a total
+`timeoutMs`, waiting has no overall deadline. `pollIntervalMs` defaults to 250 and must be a finite
+positive number.
+
+Aborting or timing out a wait stops only the local observation. The Run may continue on the host;
+call `getRun(run.id)` to check it, or explicitly call `cancelRun(run.id)` to stop it. With
+`returnOnAttention: true`, a returned Run may still have `status: 'running'` and need a permission
+or plan decision before it can finish.
+
+```js
+const waitController = new AbortController()
+const result = await client.waitForRun(run.id, {
+  timeoutMs: 120_000, // Total wait budget; each poll still has the client request deadline.
+  pollIntervalMs: 500,
+  returnOnAttention: true,
+  signal: waitController.signal // Aborts observation; does not call cancelRun.
+})
+console.log(result.status, result.attention)
+```
 
 For retry-safe project creation and Run starts, pass the same `idempotencyKey` in the final options
 argument on every attempt. The daemon replays the first response for up to 24 hours while it remains
 running; reusing a key with a different request body fails with `idempotency_conflict`. If the
 bounded replay registry is full, a new unique key fails with `idempotency_unavailable` rather than
-evicting an existing guarantee.
+evicting an existing guarantee. A lost response after submission does not prove that the Run was
+not started. Retry with the original key and identical request while that daemon is still running,
+or query the known Run ID. The replay registry is process-local: a daemon restart loses it, so
+reusing a key after restart is not a durable exactly-once guarantee.
 
 The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
 Project display names are not accepted as routing identifiers.
 
-SDK and HTTP callers must supply an absolute `cwd`. Open Science canonicalizes and validates it,
+SDK and HTTP callers must supply an absolute `cwd`. Open-Science canonicalizes and validates it,
 persists it as the Session working directory, and returns the effective path on every Run. Supplying
 `cwd` with `sessionId` is allowed only when both paths resolve to the same directory. Omit `cwd` to
 use a managed workspace. External working directories remain caller-owned and are never removed by
-Open Science.
+Open-Science.
 
 For live automation feedback, subscribe before starting the Run. `run.progress` reports ordered
 provider-neutral phases and emits a progress heartbeat every ten seconds until the first visible
@@ -132,5 +160,15 @@ const cancelled = await client.cancelRun(run.id)
 console.log(cancelled.status) // cancelled
 ```
 
-The client discovers the local daemon and reads its authentication token from the Open Science config
+The client discovers the local daemon and reads its authentication token from the Open-Science config
 directory. Tokens are sent in request headers and are never included in normal command output.
+
+### Automation new-session defaults
+
+`project session-defaults show|update` manages defaults for new Sessions created through the
+Task CLI/API. Explicit run options override these defaults. Existing Sessions and desktop New
+conversation drafts are not changed.
+
+`--provider-default-model` keeps following the provider-owned default instead of pinning the
+first model in its catalog. An explicit `--model` stays fixed. If a saved selection becomes
+unavailable, choose a replacement explicitly or wait for it to become available again.

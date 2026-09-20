@@ -162,3 +162,12 @@ describe('createMarkdownPluginNeedsScanner', () => {
     expect(incremental('```')).toEqual(getMarkdownPluginNeeds('```'))
   })
 })
+
+it('finds a real chart after code containing a fence info string', () => {
+  const source = '```md\n```js\nconst value = 1\n```\n\n```mermaid\ngraph TD\n A --> B\n```'
+  expect(getMarkdownPluginNeeds(source)).toEqual({ code: true, mermaid: true })
+  const scan = createMarkdownPluginNeedsScanner()
+  for (let end = 1; end <= source.length; end += 1) {
+    expect(scan(source.slice(0, end))).toEqual(getMarkdownPluginNeeds(source.slice(0, end)))
+  }
+})

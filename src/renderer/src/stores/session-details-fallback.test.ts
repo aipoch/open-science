@@ -19,6 +19,45 @@ const message = (overrides: Partial<PersistedChatMessage> = {}): PersistedChatMe
 })
 
 describe('session details fallback', () => {
+  it.each([
+    ['ASCII', 'a'.repeat(100) + '.csv', 'Attached ' + 'a'.repeat(68) + '...'],
+    [
+      'supplementary character',
+      'a'.repeat(67) + '🧪' + 'z'.repeat(40),
+      'Attached ' + 'a'.repeat(67) + '...'
+    ],
+    [
+      'combining sequence',
+      'a'.repeat(67) + 'e\u0301' + 'z'.repeat(40),
+      'Attached ' + 'a'.repeat(67) + '...'
+    ],
+    ['joined emoji', 'a'.repeat(67) + '👩‍🔬' + 'z'.repeat(40), 'Attached ' + 'a'.repeat(67) + '...'],
+    ['exact limit', 'a'.repeat(67) + '.csv', 'Attached ' + 'a'.repeat(67) + '.csv']
+  ])(
+    'bounds an attachment fallback at a complete %s boundary',
+    (_label, originalName, expected) => {
+      const result = formatFallbackSessionDetails(
+        message({
+          content: '',
+          uploads: [
+            {
+              id: 'upload-1',
+              sessionId: 'session-1',
+              name: 'staged.csv',
+              originalName,
+              path: '/private/staging/staged.csv',
+              mimeType: 'text/csv',
+              size: 5,
+              createdAt: '2024-01-01T00:00:00.000Z'
+            }
+          ]
+        })
+      )
+      expect(result).toEqual({ title: expected, description: '' })
+      expect(result.title.length).toBeLessThanOrEqual(80)
+    }
+  )
+
   it('preserves structured mentions in display order without exposing reference identity or paths', () => {
     const source = formatSessionDetailsGenerationSource(
       message({

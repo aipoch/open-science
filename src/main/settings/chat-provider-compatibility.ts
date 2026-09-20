@@ -1,3 +1,7 @@
+import {
+  observeProviderFailure,
+  type ProviderFailureObserver
+} from './provider-failure-observation'
 import type { ServerResponse } from 'node:http'
 
 import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
@@ -14,6 +18,7 @@ type Json = Record<string, unknown>
 type CompatibilityWire = 'anthropic' | 'responses'
 
 export type ChatProviderCompatibilityTarget = Readonly<{
+  onProviderFailure?: ProviderFailureObserver
   endpoint: string
   key?: string
   model: string
@@ -301,12 +306,21 @@ export class ChatProviderCompatibilityBridge {
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'anthropic') headers['anthropic-version'] = '2023-06-01'
+    const startedAt = Date.now()
     const upstream = await fetchProviderRequest(this.fetchImpl, this.target.endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(upstreamBody),
       signal: request.signal
     })
+    const failureTarget = {
+      model: typeof upstreamBody.model === 'string' ? upstreamBody.model : undefined,
+      endpoint: this.target.wire,
+      startedAt
+    }
+    if (upstream.status === 401 || upstream.status === 403) {
+      await observeProviderFailure(this.target.onProviderFailure, failureTarget, upstream.status)
+    }
     const payload = JSON.parse(
       await readBoundedResponseText(
         upstream,
@@ -315,6 +329,14 @@ export class ChatProviderCompatibilityBridge {
       )
     ) as Json
     if (!upstream.ok) {
+      if (upstream.status !== 401 && upstream.status !== 403) {
+        await observeProviderFailure(
+          this.target.onProviderFailure,
+          failureTarget,
+          upstream.status,
+          JSON.stringify(payload)
+        )
+      }
       json(response, upstream.status, payload)
       return
     }

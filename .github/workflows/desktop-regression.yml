@@ -20,19 +20,32 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'Release or Nightly workflow run ID whose macos-arm64 artifact should be tested'
-        required: true
+        description: 'Release or Nightly run ID; required for all/p0, unused for visual'
+        required: false
         type: string
+      suite:
+        description: 'Focused regression to run without building or publishing a release'
+        type: choice
+        default: all
+        options: [all, p0, visual]
 
 permissions:
   actions: read
   contents: read
 
+# Keyed by caller workflow + ref (as package-smoke.yml) so Release and Nightly never queue behind
+# each other; an advisory rerun on the same ref supersedes its predecessor.
+concurrency:
+  group: desktop-regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   source:
     name: Resolve source build
-    continue-on-error: ${{ inputs.allow_failure }}
+    if: inputs.suite != 'visual'
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       available: ${{ steps.resolve.outputs.available }}
       run_id: ${{ steps.resolve.outputs.run_id }}
@@ -44,8 +57,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MANUAL_RUN_ID: ${{ inputs.run_id }}
           CURRENT_RUN_ID: ${{ github.run_id }}
+          REGRESSION_SUITE: ${{ inputs.suite }}
         run: |
           set -euo pipefail
+          if [[ "$REGRESSION_SUITE" == "all" || "$REGRESSION_SUITE" == "p0" ]] && [[ -z "$MANUAL_RUN_ID" ]]; then
+            echo "run_id is required for manual all/p0 regression." >&2
+            exit 1
+          fi
           run_id="${MANUAL_RUN_ID:-$CURRENT_RUN_ID}"
           if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
             echo "Source run ID must be numeric." >&2
@@ -70,8 +88,8 @@ jobs:
   p0:
     name: p0 (macos-arm64 artifact)
     needs: source
-    if: needs.source.outputs.available == 'true'
-    continue-on-error: ${{ inputs.allow_failure }}
+    if: needs.source.outputs.available == 'true' && inputs.suite != 'visual'
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -79,6 +97,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+
+      # Keep business assertions and fake-Agent behavior matched to the immutable package. Only
+      # overlay the launch fixture and Keychain runner being diagnosed from the selected branch.
+      - name: Checkout manual launch tooling
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: .regression-tooling
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            e2e/fixtures/electron-app.ts
+            scripts/ci/run-macos-packaged-e2e.sh
+
+      - name: Apply manual launch tooling
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cp .regression-tooling/e2e/fixtures/electron-app.ts e2e/fixtures/electron-app.ts
+          cp .regression-tooling/scripts/ci/run-macos-packaged-e2e.sh scripts/ci/run-macos-packaged-e2e.sh
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -109,14 +148,14 @@ jobs:
         id: packaged_app
         run: |
           set -euo pipefail
-          executable=$(find extracted -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)
+          executable=$(find extracted -type f -path '*/Open-Science.app/Contents/MacOS/Open-Science' -print -quit)
           test -n "$executable"
           echo "executable=$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$executable")" >> "$GITHUB_OUTPUT"
 
       - name: Run packaged P0 regression
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: npm run test:e2e:p0
+        run: bash scripts/ci/run-macos-packaged-e2e.sh npm run test:e2e:p0
 
       - name: Upload P0 diagnostics
         if: always()
@@ -132,15 +171,18 @@ jobs:
   visual:
     name: visual (canonical macos-14 source build)
     needs: source
-    if: needs.source.outputs.available == 'true'
-    continue-on-error: ${{ inputs.allow_failure }}
+    # An explicit status check allows visual-only runs after source is skipped.
+    if: ${{ !cancelled() && inputs.suite != 'p0' && (inputs.suite == 'visual' || needs.source.outputs.available == 'true') }}
+    continue-on-error: ${{ inputs.allow_failure == true }}
     runs-on: macos-14
     timeout-minutes: 15
     steps:
       - name: Checkout source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.source.outputs.sha }}
+          # Manual diagnosis tests the selected branch; callers retain the package's source revision.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.source.outputs.sha }}
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -163,7 +205,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: desktop-regression-visual-${{ needs.source.outputs.run_id }}
+          name: desktop-regression-visual-${{ needs.source.outputs.run_id || github.run_id }}
           retention-days: 7
           path: |
             test-results/

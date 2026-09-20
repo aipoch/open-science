@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import type { ArtifactFile } from '../../shared/artifacts'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -285,22 +286,12 @@ describe('ArtifactTurnOwner', () => {
       expect.objectContaining({
         executionId: 'root-execution',
         artifactRunId: 'artifact-run-100-1',
-        allowedMethods: [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
+        allowedMethods: ['artifactSaveVersion']
       }),
       expect.objectContaining({
         executionId: 'parallel-execution',
         artifactRunId: 'artifact-run-100-2',
-        allowedMethods: [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
+        allowedMethods: ['artifactSaveVersion']
       })
     ])
     expect(owner.activeRunIds()).toEqual(['artifact-run-100-2'])
@@ -457,12 +448,7 @@ describe('ArtifactTurnOwner', () => {
         artifactStorageSessionId: 'artifact-session-1',
         artifactRunId: 'artifact-run-123-1',
         notebookSessionId: 'session-1',
-        allowedMethods: [
-          'artifactReserveWrite',
-          'artifactReleaseWrite',
-          'artifactCreateVersion',
-          'artifactReplayVersion'
-        ]
+        allowedMethods: ['artifactSaveVersion']
       })
     ])
     expect(notebookContexts).toEqual([
@@ -971,7 +957,9 @@ describe('ArtifactTurnOwner', () => {
           contexts.push(binding.provenanceContext)
           throw new Error('Notebook context failed')
         },
-        clearArtifactTurnBinding: () => contexts.push(undefined)
+        clearArtifactTurnBinding: () => {
+          contexts.push(undefined)
+        }
       }
     })
     const currentRunFile = getArtifactCurrentRunFilePath(
@@ -993,6 +981,39 @@ describe('ArtifactTurnOwner', () => {
     expect(contexts.at(-1)).toBeUndefined()
     expect(revoked).toEqual(['capability-1'])
     expect(owner.activeRunIds()).toEqual([])
+  })
+
+  it('releases Artifact ownership after the Notebook binding reports a stop failure', async () => {
+    const dataRoot = await createRoot()
+    const contexts: unknown[] = []
+    const notebook = recordNotebookContexts(contexts)
+    const stopFailure = new NotebookExecutionStopError()
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
+      notebook: {
+        ...notebook,
+        clearArtifactTurnBinding: async (sessionId, executionId) => {
+          notebook.clearArtifactTurnBinding(sessionId, executionId)
+          throw stopFailure
+        }
+      }
+    })
+    const turn = await openRootExecution(owner, {
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex'
+    })
+    await expect(owner.dispose(turn)).rejects.toBe(stopFailure)
+    expect(contexts.at(-1)).toBeUndefined()
+    expect(owner.activeRunIds()).toEqual([])
+    expect(owner.snapshot(turn).phase).toBe('disposed')
+    expect(() => owner.handleForExecution(owner.snapshot(turn).executionId as string)).toThrow(
+      'No active Artifact turn'
+    )
   })
 
   it('keeps a failed disposal retryable without reopening a successfully disposed turn', async () => {

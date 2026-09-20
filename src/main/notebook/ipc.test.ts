@@ -134,6 +134,7 @@ describe('notebook IPC handlers', () => {
   it('registers every notebook channel and forwards the renderer payload unchanged', async () => {
     const service = {
       state: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      getProjectActivity: vi.fn().mockReturnValue({ kernels: [], backgroundRuns: [] }),
       inspectNamespace: vi.fn().mockResolvedValue({ status: 'unavailable' }),
       getSessionReference: vi.fn().mockResolvedValue(null),
       beginCodeCell: vi.fn().mockResolvedValue({ cellId: 'cell-1', writeId: 'write-1' }),
@@ -151,6 +152,7 @@ describe('notebook IPC handlers', () => {
 
     expect([...ipcHandlers.keys()]).toEqual([
       'notebook:state',
+      'notebook:project-activity',
       'notebook:inspect-namespace',
       'notebook:reference',
       'notebook:begin-code-cell',
@@ -162,10 +164,13 @@ describe('notebook IPC handlers', () => {
       'notebook:export-ipynb',
       'notebook:export-ipynb-all',
       'notebook:restart',
-      'notebook:shutdown'
+      'notebook:shutdown',
+      'notebook:background-run',
+      'notebook:cancel-background-run'
     ])
 
     const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
+    const project = { projectId: 'project-1' }
     const restartTarget = { ...session, language: 'r' as const, environment: 'default-r' }
     const namespace = { ...session, language: 'python' as const, environment: 'default-python' }
     const begin = { ...session }
@@ -189,6 +194,7 @@ describe('notebook IPC handlers', () => {
     const execute = { ...publicExecute, ...forgedTurnContext }
 
     await ipcHandlers.get('notebook:state')?.(undefined, session)
+    await ipcHandlers.get('notebook:project-activity')?.(undefined, project)
     await ipcHandlers.get('notebook:inspect-namespace')?.(undefined, namespace)
     await ipcHandlers.get('notebook:reference')?.(undefined, session)
     await ipcHandlers.get('notebook:begin-code-cell')?.(undefined, begin)
@@ -202,6 +208,7 @@ describe('notebook IPC handlers', () => {
     await ipcHandlers.get('notebook:shutdown')?.(undefined, session)
 
     expect(service.state).toHaveBeenCalledWith(session)
+    expect(service.getProjectActivity).toHaveBeenCalledWith(project)
     expect(service.inspectNamespace).toHaveBeenCalledWith(namespace)
     expect(service.getSessionReference).toHaveBeenCalledWith(session)
     expect(service.beginCodeCell).toHaveBeenCalledWith(begin)

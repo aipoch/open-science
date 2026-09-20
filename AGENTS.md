@@ -1,4 +1,4 @@
-# Open Science — Agent Notes
+# Open-Science — Agent Notes
 
 ## i18n — translating new user-visible strings
 

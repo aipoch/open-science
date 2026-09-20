@@ -279,3 +279,74 @@ describe('memory store', () => {
     })
   })
 })
+
+it('refreshes a visible project name after a project update without a memory revision change', async () => {
+  const listeners = new Set<(project: { id: string }) => void>()
+  const before = {
+    ...snapshot(1),
+    projects: [{ projectId: 'project-a', name: 'Before', archived: false, entries: [] }]
+  }
+  const after = { ...before, projects: [{ ...before.projects[0], name: 'After', archived: true }] }
+  setMemoryApi({
+    snapshot: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after),
+    onChanged: vi.fn(() => () => undefined)
+  })
+  Object.assign(window.api, {
+    projects: {
+      onUpdated: (listener: (project: { id: string }) => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    }
+  })
+  await useMemoryStore.getState().load()
+  const remove = useMemoryStore.getState().listen()
+  try {
+    for (const listener of listeners) listener({ id: 'project-a' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(useMemoryStore.getState().projects).toEqual(after.projects)
+  } finally {
+    remove()
+  }
+})
+
+it('keeps refreshed project metadata after a delayed equal-revision mutation receipt', async () => {
+  const before = {
+    ...snapshot(2),
+    projects: [{ projectId: 'project-a', name: 'Before', archived: false, entries: [] }]
+  }
+  const after = { ...before, projects: [{ ...before.projects[0], name: 'After', archived: true }] }
+  let finish!: (value: MemorySnapshot) => void
+  let updated!: (project: { id: string }) => void
+  setMemoryApi({
+    snapshot: vi.fn().mockResolvedValue(after),
+    setEnabled: vi.fn(
+      () =>
+        new Promise<MemorySnapshot>((resolve) => {
+          finish = resolve
+        })
+    ),
+    onChanged: vi.fn(() => () => undefined)
+  })
+  Object.assign(window.api, {
+    projects: {
+      onUpdated: (listener: typeof updated) => {
+        updated = listener
+        return () => undefined
+      }
+    }
+  })
+  useMemoryStore.setState({ ...before, status: 'ready' })
+  const remove = useMemoryStore.getState().listen()
+  try {
+    const writing = useMemoryStore.getState().setEnabled(false)
+    updated({ id: 'project-a' })
+    await vi.waitFor(() => expect(useMemoryStore.getState().projects).toEqual(after.projects))
+    finish(before)
+    await writing
+    expect(useMemoryStore.getState().projects).toEqual(after.projects)
+  } finally {
+    remove()
+  }
+})

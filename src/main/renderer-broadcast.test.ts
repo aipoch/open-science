@@ -92,3 +92,27 @@ describe('broadcastToRenderers', () => {
     removeSecond()
   })
 })
+
+it('continues broadcasting when one live window fails during send', () => {
+  const failure = new Error('Object has been destroyed')
+  const failed = {
+    destroyed: false,
+    isDestroyed: () => false,
+    webContents: {
+      send: vi.fn(() => {
+        throw failure
+      })
+    }
+  }
+  const healthy = { destroyed: false, isDestroyed: () => false, webContents: { send: vi.fn() } }
+  windows.push(failed, healthy)
+  const hub = new ApplicationEventHub()
+  const uninstall = installRendererBroadcastEventHub(hub)
+  try {
+    hub.publish('runtime:policy-changed', undefined)
+    expect(healthy.webContents.send).toHaveBeenCalledWith('runtime:policy-changed', undefined)
+  } finally {
+    uninstall()
+    hub.dispose()
+  }
+})

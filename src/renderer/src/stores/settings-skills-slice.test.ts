@@ -112,6 +112,35 @@ describe('settings Skills slice', () => {
     expect(store.getState().skills).toEqual([skill('loaded')])
   })
 
+  it('forces reconciliation after a package import even when the catalog was already loaded', async () => {
+    store.setState({ skillsLoaded: true, skills: [skill('existing')] })
+    vi.mocked(commands.listSkills).mockResolvedValue([skill('existing'), skill('bundled', false)])
+
+    await store.getState().loadSkills()
+    expect(commands.listSkills).not.toHaveBeenCalled()
+    await store.getState().loadSkills(true)
+
+    expect(store.getState().skills).toEqual([skill('existing'), skill('bundled', false)])
+  })
+
+  it('does not let an older initial load replace a forced post-import refresh', async () => {
+    let settle!: (skills: SkillView[]) => void
+    vi.mocked(commands.listSkills)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          settle = resolve
+        })
+      )
+      .mockResolvedValueOnce([skill('bundled', false)])
+    const initial = store.getState().loadSkills()
+    await store.getState().loadSkills(true)
+    settle([])
+    await initial
+
+    expect(store.getState().skills).toEqual([skill('bundled', false)])
+    expect(commands.onSkillCatalogChanged).toHaveBeenCalledOnce()
+  })
+
   it('deduplicates overlapping initial catalog loads', async () => {
     let settle!: (skills: SkillView[]) => void
     vi.mocked(commands.listSkills).mockReturnValue(

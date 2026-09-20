@@ -25,6 +25,7 @@ const SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX = 0
 
 type SessionPreviewContent = {
   title: string
+  number?: number
   description?: string
 }
 type SessionPreviewDetails = SessionPreviewContent & { id: string }
@@ -293,6 +294,13 @@ const SessionHoverPreviewCard = ({
         onRenameTitle={onRenameTitle}
         onEditingChange={onEditingChange}
       />
+      {session.number !== undefined &&
+      Number.isSafeInteger(session.number) &&
+      session.number > 0 ? (
+        <p className="mt-1 text-xs leading-4 text-muted-foreground tabular-nums">
+          {`#${session.number}`}
+        </p>
+      ) : null}
       {description ? (
         <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-4 text-muted-foreground">
           {description}

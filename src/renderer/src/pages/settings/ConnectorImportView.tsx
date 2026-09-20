@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import { AlertTriangle, FileJson, Upload } from 'lucide-react'
@@ -24,7 +25,9 @@ type ConnectorImportViewProps = {
 const kb = (bytes: number): string => `${Math.round(bytes / 1024)} KB`
 
 const diagnosticClassName = (diagnostic: ConnectorTemplateDiagnostic): string =>
-  diagnostic.severity === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'
+  diagnostic.severity === 'warning'
+    ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+    : 'text-destructive'
 
 const transportLabel = (
   definition: ConnectorTemplateDefinition,
@@ -108,7 +111,7 @@ export function ConnectorImportView({
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
             {t(
-              'Import an Open Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
+              'Import an Open-Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
             )}
           </p>
         </div>
@@ -143,15 +146,7 @@ export function ConnectorImportView({
           </p>
         ) : null}
 
-        {error ? (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        ) : null}
+        {error ? <ErrorNotice inline role="alert" tone="amber" description={error} /> : null}
 
         {definition ? (
           <div>

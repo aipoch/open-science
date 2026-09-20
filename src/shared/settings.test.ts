@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import { isModelBridgeSupported } from './provider-registry'
 import {
   canonicalSessionProviderId,
+  canUseClaudeProviderTransport,
   CODEX_ISOLATED_PROVIDER_ID,
   CODEX_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
@@ -13,9 +14,62 @@ import {
   isProviderUsableByFramework,
   preferredEndpoint,
   providerEndpoints,
+  providerValidationFailed,
   resolveCodexSubscriptionType,
   requiresChatCompletionsBridge
 } from './settings'
+
+describe('canUseClaudeProviderTransport', () => {
+  it('requires a key only from remote custom gateways', () => {
+    // A keyless loopback gateway (local model server serving the Anthropic route) can use the
+    // app transport; the transport adapters already treat the key as optional.
+    expect(
+      canUseClaudeProviderTransport({
+        type: 'custom',
+        apiEndpoints: ['anthropic'],
+        baseUrl: 'http://localhost:11434'
+      })
+    ).toBe(true)
+    expect(
+      canUseClaudeProviderTransport({
+        type: 'custom',
+        apiEndpoints: ['anthropic'],
+        baseUrl: 'https://gateway.example/v1',
+        key: 'sk-key'
+      })
+    ).toBe(true)
+    expect(
+      canUseClaudeProviderTransport({
+        type: 'custom',
+        apiEndpoints: ['anthropic'],
+        baseUrl: 'https://gateway.example/v1'
+      })
+    ).toBe(false)
+  })
+})
+
+describe('providerValidationFailed', () => {
+  it('treats a legacy incompatible verdict as derivable state, not endpoint-health failure', () => {
+    // Compatibility is recomputed from (provider, framework) on every read; a stored 'incompatible'
+    // verdict must not keep hiding the provider's models after the probe decoupling.
+    expect(
+      providerValidationFailed({ lastValidationFailure: { at: 10, category: 'incompatible' } })
+    ).toBe(false)
+    expect(
+      providerValidationFailed({
+        lastValidatedAt: 5,
+        lastValidationFailure: { at: 10, category: 'incompatible' }
+      })
+    ).toBe(false)
+  })
+
+  it('still reports real endpoint-health failures', () => {
+    expect(providerValidationFailed({ lastValidationFailure: { at: 10, category: 'auth' } })).toBe(
+      true
+    )
+    expect(providerValidationFailed({})).toBe(false)
+  })
+})
 
 describe('provider endpoint compatibility', () => {
   it("derives a provider's endpoints, defaulting absent to anthropic", () => {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ConnectorCredentialControls, ConnectorCredentialDialog } from './ConnectorCredentialDialog'
+import { CredentialRequestBroker } from '../../../../main/connectors/credential-request-broker'
 
 let container: HTMLDivElement
 let root: Root
@@ -60,6 +61,64 @@ afterEach(() => {
 })
 
 describe('ConnectorCredentialDialog', () => {
+  it.each([false, true])(
+    'offers a key link without settling the request (embedded: %s)',
+    (embedded) => {
+      const request = useSettingsStore.getState().pendingCredentialRequests[0]
+      act(() =>
+        root.render(
+          embedded ? (
+            <ConnectorCredentialControls request={request} embedded />
+          ) : (
+            <ConnectorCredentialDialog />
+          )
+        )
+      )
+      const link = document.body.querySelector<HTMLAnchorElement>('a')!
+      expect(link.textContent).toBe('Get an API key')
+      expect(link.href).toBe('https://openalex.org/settings/api')
+      expect(link.target).toBe('_blank')
+      expect(link.rel).toBe('noreferrer')
+      link.addEventListener('click', (event) => event.preventDefault())
+      act(() => link.click())
+      expect(useSettingsStore.getState().respondCredentialRequest).not.toHaveBeenCalled()
+      expect(useSettingsStore.getState().setOpenAlexCredential).not.toHaveBeenCalled()
+      expect(
+        document.body.querySelector('[data-testid="connector-credential-controls"]')
+      ).not.toBeNull()
+    }
+  )
+
+  it('closes queued credential dialogs after one Not now response', async () => {
+    let sequence = 0
+    const broker = new CredentialRequestBroker({
+      generateId: () => `queued-${++sequence}`,
+      broadcast: (request) => useSettingsStore.getState().enqueueCredentialRequest(request),
+      onSettled: (id) => useSettingsStore.getState().dismissCredentialRequest(id)
+    })
+    useSettingsStore.setState({
+      pendingCredentialRequests: [],
+      respondCredentialRequest: async (id, configured) => broker.respond(id, configured)
+    })
+    const info = {
+      credentialId: 'openalex' as const,
+      connector: 'literature',
+      method: 'openalex_search_works'
+    }
+    const first = broker.request(info)
+    const second = broker.request({ ...info, method: 'openalex_get_work' })
+    try {
+      act(() => root.render(<ConnectorCredentialDialog />))
+      expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+      await act(async () => button('Not now')?.click())
+      await flush()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      await expect(Promise.all([first, second])).resolves.toEqual([false, false])
+    } finally {
+      act(() => broker.cancelAll())
+    }
+  })
+
   it('keeps concurrent embedded and fallback fields uniquely labelled', () => {
     act(() =>
       root.render(

@@ -49,6 +49,45 @@ const efoOntology = {
 }
 
 describe('list_ontologies', () => {
+  it.each([401, 403, 429, 503])(
+    'propagates HTTP %s instead of reporting not_found',
+    async (status) => {
+      const fetchImpl = vi.fn(async () => new Response('', { status }))
+      const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+      await expect(
+        engine.call(tool('list_ontologies'), { ontology_ids: ['go'] }, {})
+      ).rejects.toThrow(`HTTP ${status}`)
+      expect(fetchImpl).toHaveBeenCalledTimes(status === 429 || status === 503 ? 3 : 1)
+    }
+  )
+
+  it('propagates exhausted network errors', async () => {
+    const failure = new TypeError('network failure')
+    const fetchImpl = vi.fn().mockRejectedValue(failure)
+    const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+    await expect(engine.call(tool('list_ontologies'), { ontology_ids: ['go'] }, {})).rejects.toBe(
+      failure
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects malformed JSON instead of reporting not_found', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{'))
+    await expect(
+      run('list_ontologies', { ontology_ids: ['go'] }, fetchImpl)
+    ).rejects.toBeInstanceOf(SyntaxError)
+  })
+
+  it('rejects a failed batch instead of returning partial records as a successful result', async () => {
+    const fetchImpl = vi.fn(async (url: string) =>
+      url.endsWith('/efo') ? Response.json(efoOntology) : new Response('', { status: 503 })
+    )
+    await expect(
+      run('list_ontologies', { ontology_ids: ['efo', 'go'] }, fetchImpl)
+    ).rejects.toThrow('HTTP 503')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('fetches metadata for an ID list and reports unknown IDs in not_found', async () => {
     const fetchImpl = vi.fn().mockImplementation((url: string) => {
       if (url.includes('/ontologies/efo')) return Promise.resolve(jsonRes(efoOntology))
@@ -198,6 +237,100 @@ describe('get_ontology_term', () => {
     is_obsolete: false,
     has_children: true
   }
+
+  describe.each([
+    { name: 'relation', args: { relation: 'children' } },
+    { name: 'include_parents', args: { include_parents: true } }
+  ])('$name completeness', ({ args }) => {
+    const query = { ontology: 'go', term_id: 'GO:0006281', ...args }
+    const withPages = (...pages: unknown[]): ReturnType<typeof vi.fn> => {
+      const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ _embedded: { terms: [goTerm] } }))
+      for (const page of pages) fetchImpl.mockResolvedValueOnce(jsonRes(page))
+      return fetchImpl
+    }
+    const page = (count: number, total: number): Record<string, unknown> => ({
+      _embedded: {
+        terms: Array.from({ length: count }, (_, i) => ({
+          iri: `http://example.org/term/${i}`,
+          obo_id: `GO:${i}`
+        }))
+      },
+      page: { totalElements: total }
+    })
+
+    it.each([
+      [1, 2],
+      [2, 1],
+      [1, 0]
+    ])('rejects %i collected records when the service reports %i', async (count, total) => {
+      await expect(run('get_ontology_term', query, withPages(page(count, total)))).rejects.toThrow(
+        `retrieved ${count} of ${total} records`
+      )
+    })
+
+    it.each([undefined, null, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1])(
+      'rejects missing or invalid totalElements: %s',
+      async (totalElements) => {
+        await expect(
+          run(
+            'get_ontology_term',
+            query,
+            withPages({ _embedded: { terms: [] }, page: { totalElements } })
+          )
+        ).rejects.toThrow('missing or invalid totalElements')
+      }
+    )
+
+    it('accepts a verified empty set', async () => {
+      const out = (await run('get_ontology_term', query, withPages(page(0, 0)))) as Record<
+        string,
+        unknown
+      >
+      expect(out['terms'] ?? out['parents']).toEqual([])
+    })
+
+    it('accepts a complete multi-page set', async () => {
+      const fetchImpl = withPages(
+        { ...page(1, 2), _links: { next: { href: 'https://www.ebi.ac.uk/ols4/api/page2' } } },
+        { _embedded: { terms: [{ iri: 'http://example.org/second' }] }, page: { totalElements: 2 } }
+      )
+      const out = (await run('get_ontology_term', query, fetchImpl)) as Record<string, unknown>
+      expect(out['terms'] ?? out['parents']).toHaveLength(2)
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+    })
+
+    it('rejects a changing total even if the final row count matches the initial total', async () => {
+      await expect(
+        run(
+          'get_ontology_term',
+          query,
+          withPages(
+            { ...page(1, 2), _links: { next: { href: 'https://www.ebi.ac.uk/ols4/api/page2' } } },
+            page(1, 3)
+          )
+        )
+      ).rejects.toThrow('totalElements changed')
+    })
+
+    it('rejects a next link pointing back to the current page', async () => {
+      const fetchImpl = withPages()
+      fetchImpl.mockImplementation(async (url: string) =>
+        jsonRes({ ...page(1, 2), _links: { next: { href: url } } })
+      )
+      await expect(run('get_ontology_term', query, fetchImpl)).rejects.toThrow(
+        'pagination did not advance'
+      )
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+
+    it('propagates a failed later page instead of returning a partial set', async () => {
+      const fetchImpl = withPages({
+        ...page(1, 2),
+        _links: { next: { href: 'https://www.ebi.ac.uk/ols4/api/page2' } }
+      }).mockResolvedValueOnce(errRes(503))
+      await expect(run('get_ontology_term', query, fetchImpl)).rejects.toThrow('HTTP 503')
+    })
+  })
 
   it('resolves a CURIE via obo_id and returns the term record (relation=None)', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes({ _embedded: { terms: [goTerm] } }))

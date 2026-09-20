@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, Component, type ReactNode } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,7 +10,9 @@ import {
 } from '../../../../../../shared/web-event-connection'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
+import { PdfOutlineSidebar } from './PdfOutlineSidebar'
 import { requestAnnotationReveal } from '../../annotations/annotation-reveal'
+import { useSessionStore } from '@/stores/session-store'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
@@ -128,6 +131,15 @@ describe('PdfPreviewContent', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     Element.prototype.scrollIntoView = vi.fn()
+    // jsdom implements DOM ranges but has no layout engine.
+    vi.stubGlobal(
+      'Range',
+      class extends Range {
+        getBoundingClientRect(): DOMRect {
+          return new DOMRect()
+        }
+      }
+    )
     window.api = {
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
@@ -168,7 +180,267 @@ describe('PdfPreviewContent', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined } as never)
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  })
+
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+  }
+  const observe = (): {
+    targets: Element[]
+    disconnect: ReturnType<typeof vi.fn>
+    unobserve: ReturnType<typeof vi.fn>
+    notify: (target: Element, near: boolean) => Promise<void>
+  } => {
+    let callback!: IntersectionObserverCallback
+    const targets: Element[] = []
+    const disconnect = vi.fn(),
+      unobserve = vi.fn()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          callback = cb
+        }
+        observe(element: Element): void {
+          targets.push(element)
+        }
+        unobserve = unobserve
+        disconnect = disconnect
+      }
+    )
+    return {
+      targets,
+      disconnect,
+      unobserve,
+      notify: async (target: Element, near: boolean) =>
+        act(async () => {
+          callback(
+            [{ target, isIntersecting: near } as IntersectionObserverEntry],
+            {} as IntersectionObserver
+          )
+          await flush()
+        })
+    }
+  }
+
+  it.each(['ready', 'error'] as const)(
+    're-entering a previously %s page displays loading while pending',
+    async (firstStatus) => {
+      const io = observe()
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const page = await (getPage as ReturnType<typeof vi.fn<() => Promise<unknown>>>)()
+      getPage.mockClear()
+      if (firstStatus === 'error')
+        getPage.mockRejectedValueOnce(new Error('Temporary page read failure'))
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/audit/reenter.pdf" name="reenter.pdf" />)
+        await flush()
+      })
+      const element = container.querySelector('[data-page-number="1"]')!
+      await io.notify(element, true)
+      expect(getPage).toHaveBeenCalledTimes(1)
+      expect(element.textContent?.includes('could not be rendered')).toBe(firstStatus === 'error')
+      await io.notify(element, false)
+      let complete!: (value: unknown) => void
+      getPage.mockReturnValueOnce(new Promise((resolve) => (complete = resolve)))
+      await io.notify(element, true)
+      expect(getPage).toHaveBeenCalledTimes(2)
+      expect(element.querySelector('canvas')).not.toBeNull()
+      expect(element.querySelector('[data-preview-status="compact-loading"]')).not.toBeNull()
+      expect(element.textContent).not.toContain('could not be rendered')
+      await act(async () => {
+        complete(page)
+        await flush()
+      })
+      expect(element.textContent).not.toContain('could not be rendered')
+      expect(element.querySelector('canvas')?.width).toBeGreaterThan(0)
+      errorLog.mockRestore()
+    }
+  )
+
+  it('sidebar expands its visible range when its container grows', async () => {
+    observe()
+    const observers: Array<{ callback: ResizeObserverCallback; targets: Element[] }> = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        entry: { callback: ResizeObserverCallback; targets: Element[] }
+        constructor(callback: ResizeObserverCallback) {
+          this.entry = { callback, targets: [] }
+          observers.push(this.entry)
+        }
+        observe(target: Element): void {
+          this.entry.targets.push(target)
+        }
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    let height = 224
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => height)
+    const sidebar = (pageCount = 100, currentPage = 1): React.JSX.Element => (
+      <PdfOutlineSidebar
+        document={{ getPage } as never}
+        items={[]}
+        pageCount={pageCount}
+        currentPage={currentPage}
+        width={240}
+        onNavigate={vi.fn()}
+        onClose={vi.fn()}
+        onWidthChange={vi.fn()}
+      />
+    )
+    await act(async () => {
+      root.render(sidebar())
+      await flush()
+    })
+    const list = container.querySelector('[aria-label="Pages"]')!.parentElement!
+    const buttons = (): HTMLButtonElement[] =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Page "]'))
+    expect(buttons()).toHaveLength(9)
+    height = 2400
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      observers.forEach(({ callback, targets }) =>
+        callback(
+          targets.map((target) => ({ target, contentRect: { height } }) as ResizeObserverEntry),
+          {} as ResizeObserver
+        )
+      )
+      root.render(sidebar())
+      await flush()
+    })
+    expect(buttons()).toHaveLength(19)
+    await act(async () => {
+      list.dispatchEvent(new Event('scroll'))
+      await flush()
+    })
+    expect(buttons()).toHaveLength(19)
+    await act(async () => {
+      root.render(sidebar(100, 90))
+      await flush()
+    })
+    expect(buttons().some((b) => b.getAttribute('aria-label') === 'Page 90')).toBe(true)
+    expect(buttons().length).toBeLessThanOrEqual(24)
+    await act(async () => {
+      root.render(sidebar(3, 1))
+      await flush()
+    })
+    expect(buttons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Page 1',
+      'Page 2',
+      'Page 3'
+    ])
+  })
+
+  it('switches Literature reading modes without releasing or resetting the original PDF', async () => {
+    window.api.pdfStructure = {
+      readCached: vi.fn().mockResolvedValue(undefined),
+      parse: vi.fn(() => new Promise(() => {})),
+      cancel: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['pdfStructure']
+    window.api.localModels = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        availability: 'ready',
+        installedRevision: 'v1',
+        updateAvailable: false
+      })
+    } as unknown as Window['api']['localModels']
+    await act(async () =>
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+          annotationProps={{
+            item: {
+              id: 'literature:version-1',
+              sessionId: 'literature-library',
+              type: 'file',
+              format: 'pdf',
+              source: 'literature',
+              path: 'literature-attachment-version:version-1',
+              name: 'paper.pdf',
+              title: 'paper.pdf'
+            }
+          }}
+        />
+      )
+    )
+    const original = container.querySelector<HTMLElement>('[data-pdf-original-view]')!
+    const scroller = original.querySelector<HTMLElement>('[role="region"]')!
+    scroller.scrollTop = 275
+    const clickMode = async (label: string): Promise<void> => {
+      const button = [...container.querySelectorAll('button')].find(
+        (node) => node.textContent === label
+      )!
+      await act(async () =>
+        button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+      )
+    }
+    await clickMode('Figures and tables')
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]')!
+    expect(activeTab.textContent).toBe('Figures and tables')
+    expect(container.querySelector('[data-pdf-figures-view]')?.id).toBe(
+      activeTab.getAttribute('aria-controls')
+    )
+    expect(original.getAttribute('aria-hidden')).toBe('true')
+    expect(original.hasAttribute('inert')).toBe(true)
+    const figures = container.querySelector('[data-pdf-figures-content]')
+    expect(figures).not.toBeNull()
+    await act(async () => {
+      ;[...container.querySelectorAll('button')]
+        .find((node) => node.textContent === 'Analyze PDF')!
+        .click()
+    })
+    expect(activeTab.querySelector('[role="status"]')).not.toBeNull()
+    await clickMode('Original PDF')
+    expect(activeTab.querySelector('[role="status"]')).not.toBeNull()
+    expect(window.api.pdfStructure.cancel).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-pdf-original-view]')).toBe(original)
+    expect(scroller.scrollTop).toBe(275)
+    expect(original.hasAttribute('inert')).toBe(false)
+    await clickMode('Figures and tables')
+    expect(container.querySelector('[data-pdf-figures-content]')).toBe(figures)
+    await act(async () => {
+      ;[...container.querySelectorAll('button')]
+        .find((node) => node.textContent === 'Cancel')!
+        .click()
+    })
+    expect(activeTab.querySelector('[role="status"]')).toBeNull()
+    await act(async () =>
+      document.dispatchEvent(
+        new CustomEvent('pdf-reading-reveal', {
+          detail: { path: 'literature-attachment-version:version-1', pageNumber: 1 }
+        })
+      )
+    )
+    expect(original.getAttribute('aria-hidden')).toBe('false')
+    await clickMode('Figures and tables')
+    await act(async () =>
+      document.dispatchEvent(
+        new CustomEvent('annotation-reveal-prepare', {
+          detail: {
+            kind: 'pdf',
+            source: { path: 'literature-attachment-version:version-1' },
+            selector: { pageNumber: 1 }
+          }
+        })
+      )
+    )
+    expect(original.getAttribute('aria-hidden')).toBe('false')
+    await clickMode('Figures and tables')
+    expect(window.api.previewResources.acquire).toHaveBeenCalledOnce()
+    expect(window.api.previewResources.release).not.toHaveBeenCalled()
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/other.pdf" name="other.pdf" source="local" />)
+    )
+    expect(container.querySelector('[data-pdf-figures-content]')).toBeNull()
+    expect(container.querySelector('[data-pdf-original-view]')?.getAttribute('aria-hidden')).toBe(
+      'false'
+    )
   })
 
   it('renders through the managed range resource and releases it on unmount', async () => {
@@ -370,6 +642,48 @@ describe('PdfPreviewContent', () => {
     )
   })
 
+  it('resolves an exact bookmark source without a PDF Agent-context binding', async () => {
+    const resolvePdfSource = vi.fn().mockResolvedValue({ ok: false, reason: 'source-unavailable' })
+    window.api = {
+      ...window.api,
+      bookmarks: { resolvePdfSource }
+    } as unknown as Window['api']
+    useSessionStore.setState({
+      selectedSessionId: 'session-owner',
+      sessions: [{ id: 'session-owner', projectId: 'project-1' }]
+    } as never)
+
+    await act(async () => {
+      root.render(
+        <PdfPreviewRenderer
+          item={{
+            id: 'artifact-1',
+            projectId: 'project-1',
+            sessionId: 'source-session',
+            title: 'report.pdf',
+            type: 'file',
+            source: 'artifact',
+            path: 'artifact-version:stale-projection',
+            name: 'report.pdf',
+            format: 'pdf',
+            managedFileId: 'artifact-1',
+            selectedVersionId: 'artifact-v2'
+          }}
+        />
+      )
+    })
+
+    await vi.waitFor(() =>
+      expect(resolvePdfSource).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-owner',
+        sourceKind: 'artifact-version',
+        sourceFileId: 'artifact-1',
+        versionId: 'artifact-v2'
+      })
+    )
+  })
+
   it('shows a native outline, expands nested sections, and navigates to their PDF pages', async () => {
     const getDestination = vi.fn().mockResolvedValue([{ num: 20, gen: 0 }])
     const getPageIndex = vi.fn(({ num }: { num: number }) => Promise.resolve(num / 10 - 1))
@@ -404,7 +718,7 @@ describe('PdfPreviewContent', () => {
       expect(button).not.toBeNull()
       return button!
     })
-    expect(outlineToggle.title).toBe('Navigation')
+    expect(outlineToggle.hasAttribute('title')).toBe(false)
 
     await act(async () => outlineToggle.click())
     const outline = container.querySelector<HTMLElement>('#pdf-navigation-sidebar')!
@@ -615,6 +929,35 @@ describe('PdfPreviewContent', () => {
     expect(thumbnails.length).toBeLessThanOrEqual(24)
   })
 
+  it('keeps search presentation in document flow without reader controls or intercepted shortcuts', async () => {
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+          presentation="search"
+        />
+      )
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    const original = container.querySelector<HTMLElement>('[data-pdf-original-view]')!
+    const scroll = original.querySelector<HTMLElement>('[role="region"]')!
+    expect(original.classList.contains('absolute')).toBe(false)
+    expect(scroll.classList.contains('overflow-auto')).toBe(false)
+    expect(container.querySelector('[aria-label="PDF reading mode"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Zoom in"]')).toBeNull()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'f',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => scroll.dispatchEvent(shortcut))
+    expect(shortcut.defaultPrevented).toBe(false)
+    expect(container.querySelector('[aria-label="Search document"]')).toBeNull()
+  })
+
   it('scopes Cmd+F to the PDF and searches every page without opening a global search', async () => {
     await act(async () => {
       root.render(<PdfPreviewContent path="/workspace/search.pdf" name="search.pdf" />)
@@ -713,6 +1056,334 @@ describe('PdfPreviewContent', () => {
     await vi.waitFor(() => expect(input.parentElement?.textContent).toContain('1/1'))
     await vi.waitFor(() => expect(highlights.set).toHaveBeenCalledWith('pdf-search-results', {}))
     expect(constructedHighlights.some((ranges) => ranges.length > 0)).toBe(true)
+  })
+
+  const openSearch = async (query: string): Promise<HTMLInputElement> => {
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    await act(async () =>
+      scroll.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'f',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    )
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Search document"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, query)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(180))
+    return input
+  }
+
+  describe.each([true, false])('Intl.Segmenter available: %s', (available) => {
+    it.each([
+      { text: ['İA'], query: 'a', expected: ['A'] },
+      { text: ['İA', 'B'], query: 'ab', expected: ['AB'] },
+      { text: ['AA'], query: 'a', expected: ['A', 'A'] },
+      { text: ['A', 'B'], query: 'ab', expected: ['AB'] },
+      { text: ['İ'], query: 'i', expected: ['İ'] },
+      { text: ['İΟΣ'], query: 'ος', expected: ['ΟΣ'] },
+      { text: ['😀İA'], query: 'a', expected: ['A'] },
+      { text: ['I\u0307A'], query: 'a', expected: ['A'], locale: 'tr' },
+      { text: ['I\u0301A'], query: 'a', expected: ['A'], locale: 'lt' }
+    ])(
+      'highlights original DOM characters for $text searching $query',
+      async ({ text, query, expected, locale = 'en' }) => {
+        vi.useFakeTimers()
+        if (!available)
+          vi.stubGlobal('Intl', Object.create(Intl, { Segmenter: { value: undefined } }))
+        const lower = String.prototype.toLocaleLowerCase
+        vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function (this: string) {
+          return lower.call(this, locale)
+        })
+        const highlights = new Map<string, Set<Range>>()
+        vi.stubGlobal('CSS', { highlights })
+        vi.stubGlobal(
+          'Highlight',
+          class extends Set<Range> {
+            constructor(...ranges: Range[]) {
+              super(ranges)
+            }
+          }
+        )
+        const errors: Error[] = []
+        class SearchBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+          state = { failed: false }
+          static getDerivedStateFromError(): { failed: boolean } {
+            return { failed: true }
+          }
+          componentDidCatch(error: Error): void {
+            errors.push(error)
+          }
+          render(): ReactNode {
+            return this.state.failed ? null : this.props.children
+          }
+        }
+        vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        getPage.mockResolvedValue({
+          getViewport: () => ({ width: 600, height: 800 }),
+          getTextContent: async () => ({ items: text.map((str) => ({ str })), styles: {} }),
+          render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+          cleanup: vi.fn()
+        })
+        await act(async () =>
+          root.render(
+            <SearchBoundary>
+              <PdfPreviewContent path="/workspace/unicode.pdf" name="unicode.pdf" />
+            </SearchBoundary>
+          )
+        )
+        expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe(text.join(''))
+        const input = await openSearch(query)
+        expect(errors.map((error) => error.name)).toEqual([])
+        expect(input.parentElement?.textContent).toContain(`1/${expected.length}`)
+        expect(
+          Array.from(highlights.get('pdf-search-results') ?? [], (range) => range.toString())
+        ).toEqual(expected)
+      }
+    )
+  })
+
+  it.each(['first', 'next'])('reveals the %s match inside a tall PDF page', async (target) => {
+    vi.useFakeTimers()
+    const highlights = new Map<string, Set<Range>>()
+    vi.stubGlobal('CSS', { highlights })
+    vi.stubGlobal(
+      'Highlight',
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges)
+        }
+      }
+    )
+    getPage.mockResolvedValue({
+      getViewport: () => ({ width: 600, height: 1800 }),
+      getTextContent: async () => ({
+        items: [{ str: target === 'next' ? 'needle needle' : 'needle' }],
+        styles: {}
+      }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn()
+    })
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/tall.pdf" name="tall.pdf" />)
+    )
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600))
+    vi.spyOn(scroll, 'clientHeight', 'get').mockReturnValue(600)
+    vi.spyOn(scroll, 'clientWidth', 'get').mockReturnValue(800)
+    vi.stubGlobal(
+      'Range',
+      class extends Range {
+        getBoundingClientRect(): DOMRect {
+          const top = target === 'first' || this.startOffset > 0 ? 1800 : 100
+          return new DOMRect(40, top - scroll.scrollTop, 60, 20)
+        }
+        getClientRects(): DOMRectList {
+          return [this.getBoundingClientRect()] as unknown as DOMRectList
+        }
+      }
+    )
+    const input = await openSearch('needle')
+    expect(input.parentElement?.textContent).toContain(target === 'next' ? '1/2' : '1/1')
+    if (target === 'next') {
+      expect(scroll.scrollTop).toBe(0)
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Next match"]')!.click()
+      )
+      expect(input.parentElement?.textContent).toContain('2/2')
+    }
+    const current = Array.from(highlights.get('pdf-search-current') ?? [])[0]
+    expect(current?.toString()).toBe('needle')
+    const bounds = current.getBoundingClientRect()
+    expect(bounds.top).toBeGreaterThanOrEqual(0)
+    expect(bounds.bottom).toBeLessThanOrEqual(600)
+  })
+
+  it.each(['ready', 'query cleared', 'document replaced'])(
+    'finishes a deferred match reveal only while its request is current: %s',
+    async (outcome) => {
+      vi.useFakeTimers()
+      let intersectionCallback: IntersectionObserverCallback | undefined
+      const observed: Element[] = []
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          observe = (element: Element): void => {
+            observed.push(element)
+          }
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+          constructor(callback: IntersectionObserverCallback) {
+            intersectionCallback = callback
+          }
+        }
+      )
+      getPage.mockImplementation(async () => ({
+        getViewport: () => ({ width: 600, height: 1800 }),
+        getTextContent: async () => ({ items: [{ str: 'needle needle' }], styles: {} }),
+        render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+        cleanup: vi.fn()
+      }))
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/workspace/deferred.pdf" name="deferred.pdf" />)
+      )
+      const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+      vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600))
+      vi.spyOn(scroll, 'clientHeight', 'get').mockReturnValue(600)
+      vi.spyOn(scroll, 'clientWidth', 'get').mockReturnValue(800)
+      vi.stubGlobal(
+        'Range',
+        class extends Range {
+          getBoundingClientRect(): DOMRect {
+            return new DOMRect(40, 1800 - scroll.scrollTop, 60, 20)
+          }
+        }
+      )
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('1/2')
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Next match"]')!.click()
+      )
+      expect(input.parentElement?.textContent).toContain('2/2')
+      expect(container.querySelector('[data-pdf-text-layer]')).toBeNull()
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+        block: 'start',
+        behavior: 'auto'
+      })
+      expect(scroll.scrollTop).toBe(0)
+      if (outcome === 'query cleared') {
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, '')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+      } else if (outcome === 'document replaced') {
+        await act(async () =>
+          root.render(
+            <PdfPreviewContent path="/workspace/replacement.pdf" name="replacement.pdf" />
+          )
+        )
+      }
+      await act(async () => {
+        intersectionCallback?.(
+          [{ isIntersecting: true, target: observed.at(-1) } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      })
+      expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe('needle needle')
+      expect(scroll.scrollTop).toBe(outcome === 'ready' ? 1510 : 0)
+      // A later text-layer render must not pull the reader back to a completed result.
+      scroll.scrollTop = 400
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click()
+      )
+      expect(scroll.scrollTop).toBe(400)
+    }
+  )
+
+  it.each(['mouse', 'keyboard'])(
+    'allows collapsing the active section parent using $0',
+    async (method) => {
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          observe = vi.fn()
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage,
+          destroy: destroyDocument,
+          getOutline: async () => [
+            { title: 'Chapter', dest: [0], items: [{ title: 'Section', dest: [1], items: [] }] }
+          ]
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/workspace/outline-collapse.pdf" name="outline.pdf" />)
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[title="Section"]')!.click()
+      )
+      expect(container.querySelector('[title="Section"]')?.getAttribute('aria-selected')).toBe(
+        'true'
+      )
+      const parent = container.querySelector<HTMLButtonElement>('[title="Chapter"]')!
+      await act(async () => {
+        if (method === 'mouse')
+          container.querySelector<HTMLButtonElement>('[aria-label="Collapse"]')!.click()
+        else parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+      })
+      expect(parent.getAttribute('aria-expanded')).toBe('false')
+      expect(container.querySelector('[title="Section"]')).toBeNull()
+      expect(container.querySelector('[role="treeitem"][tabindex="0"]')).toBe(parent)
+      await act(async () => parent.click())
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Expand"]')!.click()
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[title="Section"]')!.click()
+      )
+      expect(parent.getAttribute('aria-expanded')).toBe('true')
+    }
+  )
+
+  it('reopens active ancestors only when the section changes or the outline is first shown', async () => {
+    const items = [
+      {
+        id: 'chapter',
+        title: 'Chapter',
+        pageNumber: 1,
+        children: [
+          {
+            id: 'section',
+            title: 'Section',
+            pageNumber: 2,
+            children: [{ id: 'subsection', title: 'Subsection', pageNumber: 3, children: [] }]
+          }
+        ]
+      }
+    ]
+    const renderOutline = async (currentPage: number): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <PdfOutlineSidebar
+            document={{ getPage } as never}
+            items={items}
+            pageCount={4}
+            currentPage={currentPage}
+            width={240}
+            onWidthChange={vi.fn()}
+            onClose={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        )
+      )
+    }
+    await renderOutline(3)
+    expect(container.querySelector('[title="Subsection"]')).not.toBeNull()
+    const chapter = container.querySelector<HTMLButtonElement>('[title="Chapter"]')!
+    await act(async () =>
+      chapter.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    )
+    await renderOutline(4)
+    expect(chapter.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('[title="Subsection"]')).toBeNull()
+    expect(container.querySelector('[role="treeitem"][tabindex="0"]')).toBe(chapter)
+    await renderOutline(2)
+    expect(chapter.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('[title="Section"]')?.getAttribute('aria-selected')).toBe('true')
   })
 
   it('stops a stale full-document search before parsing the remaining pages', async () => {
@@ -1017,6 +1688,122 @@ describe('PdfPreviewContent', () => {
     await act(async () => vi.advanceTimersByTimeAsync(100))
 
     expect(container.querySelector('[data-pdf-page-control]')?.textContent).toBe('2/3')
+  })
+
+  it.each([
+    ['interaction', 'Show navigation', 'Hand'],
+    ['view', 'Page 1 of 2', 'Zoom in']
+  ])(
+    'shares a 250ms first hint and 300ms skip window in the %s toolbar',
+    async (_, firstLabel, nextLabel) => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/workspace/hints.pdf" name="hints.pdf" />)
+      })
+      await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+      vi.useFakeTimers()
+      const first = container.querySelector<HTMLButtonElement>(`[aria-label="${firstLabel}"]`)!
+      const next = container.querySelector<HTMLButtonElement>(`[aria-label="${nextLabel}"]`)!
+      const hover = (element: Element): void => {
+        fireEvent.pointerOver(element, { pointerType: 'mouse' })
+        fireEvent.pointerMove(element, { pointerType: 'mouse' })
+      }
+      const leave = (element: Element): void => {
+        fireEvent.pointerLeave(element)
+        fireEvent.pointerMove(document.body, { pointerType: 'mouse', clientX: 1000, clientY: 1000 })
+      }
+      expect(first.hasAttribute('title')).toBe(false)
+      hover(first)
+      await act(async () => vi.advanceTimersByTimeAsync(249))
+      expect(first.getAttribute('data-state')).toBe('closed')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(first.getAttribute('data-state')).toBe('delayed-open')
+      leave(first)
+      hover(next)
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+      expect(next.getAttribute('data-state')).toBe('instant-open')
+      leave(next)
+      await act(async () => vi.advanceTimersByTimeAsync(301))
+      hover(first)
+      await act(async () => vi.advanceTimersByTimeAsync(249))
+      expect(first.getAttribute('data-state')).toBe('closed')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(first.getAttribute('data-state')).toBe('delayed-open')
+      act(() => fireEvent.keyDown(first, { key: 'Escape' }))
+      expect(first.getAttribute('data-state')).toBe('closed')
+    }
+  )
+
+  it('explains page entry on focus and dismisses the hint while editing or cancelling', async () => {
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/hints.pdf" name="hints.pdf" />)
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    const button = container.querySelector<HTMLButtonElement>('[data-pdf-page-control] button')!
+    await act(async () => button.focus())
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+      'Click to enter a page number'
+    )
+    await act(async () => button.click())
+    const input = container.querySelector<HTMLInputElement>('[data-pdf-page-control] input')!
+    expect(document.activeElement).toBe(input)
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    act(() => fireEvent.change(input, { target: { value: '99' } }))
+    act(() => fireEvent.keyDown(input, { key: 'Escape' }))
+    expect(container.querySelector('[data-pdf-page-control]')?.textContent).toBe('1/1')
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  })
+
+  it('provides keyboard hints for search actions and the sidebar close action', async () => {
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/hints.pdf" name="hints.pdf" />)
+    })
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Search"]')!.click()
+    )
+    act(() =>
+      fireEvent.change(container.querySelector('[aria-label="Search document"]')!, {
+        target: { value: 'Selectable' }
+      })
+    )
+    await vi.waitFor(() =>
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="Next match"]')?.disabled
+      ).toBe(false)
+    )
+    for (const label of ['Previous match', 'Next match', 'Close search']) {
+      const button = container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!
+      await act(async () => button.focus())
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(label)
+      act(() => fireEvent.keyDown(button, { key: 'Escape' }))
+      expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    }
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Close search"]')!.click()
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
+    )
+    const close = container.querySelector<HTMLButtonElement>(
+      'aside [aria-label="Hide navigation"]'
+    )!
+    expect(close.hasAttribute('title')).toBe(false)
+    await act(async () => close.focus())
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Hide navigation')
+    await act(async () => close.click())
+    expect(container.querySelector('aside')).toBeNull()
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Show navigation"] .lucide-panel-left')
+    ).not.toBeNull()
   })
 
   it('matches the artifact image zoom action order and reset icon', async () => {
@@ -1874,6 +2661,8 @@ describe('PdfPreviewContent', () => {
       root.render(<PdfPreviewContent path="/workspace/wheel.pdf" name="wheel.pdf" source="local" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')?.width).toBe(400))
+    // Radix tab panels use one frame to suppress their initial enter animation.
+    await act(async () => flushFrame())
 
     // The scroll container owns the wheel listener; it is the parent of the measurement probe.
     const scroll = container.querySelector<HTMLElement>('[aria-hidden="true"]')?.parentElement
@@ -2351,6 +3140,32 @@ describe('PdfPreviewContent', () => {
     expect(container.textContent).not.toContain('could not be rendered')
 
     consoleError.mockRestore()
+  })
+
+  it('releases a canceled PDF load without reporting worker destruction as a failure', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let rejectLoadingTask!: (error: Error) => void
+    const promise = new Promise((_, reject) => {
+      rejectLoadingTask = reject
+    })
+    const destroyLoadingTask = vi.fn(async () => {
+      rejectLoadingTask(new Error('Worker was destroyed'))
+    })
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise,
+      destroy: destroyLoadingTask
+    } as never)
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="/workspace/report.pdf" name="report.pdf" source="local" />
+      )
+    })
+    await act(async () => root.render(null))
+    expect(destroyLoadingTask).toHaveBeenCalledTimes(1)
+    expect(window.api.previewResources.release).toHaveBeenCalledExactlyOnceWith({
+      resourceId: 'resource-1'
+    })
+    expect(consoleError).not.toHaveBeenCalled()
   })
 
   it('destroys the loading task when PDF parsing fails', async () => {

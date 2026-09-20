@@ -33,7 +33,8 @@ const asCheckStatus = (value: string): CheckStatus => {
 
 const toReviewCheck = (
   row: PrismaFinding,
-  unaddressedTrigger?: Exclude<ReviewFindingDispositionTrigger, 'review_submission'>
+  unaddressedTrigger?: Exclude<ReviewFindingDispositionTrigger, 'review_submission'>,
+  unaddressedNote?: string | null
 ): ReviewCheck => {
   const locatorRaw = parseJson<FindingLocator | Record<string, never>>(row.locator, {})
   const hasLocator = 'blockRef' in locatorRaw && locatorRaw.blockRef !== undefined
@@ -51,7 +52,8 @@ const toReviewCheck = (
       row.artifactBindingState === 'scope_validated' ? 'scope_validated' : 'legacy_unverified',
     sortIndex: row.sortIndex,
     reflagCount: row.reflagCount ?? 0,
-    ...(row.resolution === 'unaddressed' && unaddressedTrigger ? { unaddressedTrigger } : {})
+    ...(row.resolution === 'unaddressed' && unaddressedTrigger ? { unaddressedTrigger } : {}),
+    ...(row.resolution === 'unaddressed' && unaddressedNote ? { unaddressedNote } : {})
   }
 }
 
@@ -121,8 +123,10 @@ const loadReviewSubmissionProjections = async (
     string,
     Exclude<ReviewFindingDispositionTrigger, 'review_submission'>
   >()
+  const terminalNoteByFindingId = new Map<string, string | null>()
   for (const disposition of terminalDispositionRows) {
     if (!terminalTriggerByFindingId.has(disposition.sourceFindingId)) {
+      terminalNoteByFindingId.set(disposition.sourceFindingId, disposition.note)
       terminalTriggerByFindingId.set(
         disposition.sourceFindingId,
         disposition.trigger as Exclude<ReviewFindingDispositionTrigger, 'review_submission'>
@@ -146,7 +150,11 @@ const loadReviewSubmissionProjections = async (
   return new Map(
     reviewIds.map((reviewId) => {
       const checks = (findingRowsByReviewId.get(reviewId) ?? []).map((row) =>
-        toReviewCheck(row, terminalTriggerByFindingId.get(row.id))
+        toReviewCheck(
+          row,
+          terminalTriggerByFindingId.get(row.id),
+          terminalNoteByFindingId.get(row.id)
+        )
       )
       const submittedChecks: SubmittedReviewCheck[] = [
         ...checks.map((check): SubmittedReviewCheck => ({
@@ -168,7 +176,8 @@ const loadReviewSubmissionProjections = async (
               assessment,
               sourceCheck: toReviewCheck(
                 disposition.sourceFinding,
-                terminalTriggerByFindingId.get(disposition.sourceFindingId)
+                terminalTriggerByFindingId.get(disposition.sourceFindingId),
+                terminalNoteByFindingId.get(disposition.sourceFindingId)
               )
             }
           }

@@ -124,6 +124,7 @@ type SettingsStoreData = RuntimeSetupState &
     codexManaged: boolean
     codebuddyManaged: boolean
     onboardingCompletedAt: number | undefined
+    credentialStore?: 'os' | 'file'
     encryptionAvailable: boolean
     // Configured package mirror (conda/pip); undefined means automatic mirror selection.
     packageMirror?: PackageMirror
@@ -221,6 +222,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
 
 // Applies a fresh main-process snapshot to the renderer cache.
 const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> => ({
+  credentialStore: snapshot.credentialStore ?? 'os',
   claude: snapshot.claude,
   activeProviderId: snapshot.activeProviderId,
   claudeSubscriptionProviderId: snapshot.claudeSubscriptionProviderId,
@@ -265,11 +267,16 @@ const canApplySnapshot = (state: SettingsStoreData, snapshot: SettingsSnapshot):
 const mergeSnapshot = (
   state: SettingsStoreData,
   snapshot: SettingsSnapshot,
+  writeCoordinator: SettingsWriteCoordinator,
   extra: Partial<SettingsStoreData> = {}
 ): Partial<SettingsStoreData> =>
   canApplySnapshot(state, snapshot)
     ? {
-        ...applySnapshot(snapshot),
+        ...omitInFlightOptimisticPreferences(
+          applySnapshot(snapshot),
+          writeCoordinator.hasPending,
+          writeCoordinator.acceptCommitted
+        ),
         ...(snapshot.revision === undefined ? {} : { settingsSnapshotRevision: snapshot.revision }),
         ...extra
       }
@@ -284,6 +291,18 @@ const DEFAULT_FRAMEWORK_API_ENDPOINTS: ChatApiEndpoint[] = ['anthropic']
 export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEndpoint[] =>
   state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
+
+// The currently-selected agent framework's descriptor; undefined before the framework list has
+// loaded. Returns the stored view object (stable reference), never a fresh literal.
+export const selectActiveAgentFramework = (
+  state: SettingsStoreData
+): AgentFrameworkView | undefined =>
+  state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
+
+// Display name of the active agent framework for surfaces that mention it in copy; falls back to
+// the framework id until the framework list has loaded.
+export const selectFrameworkDisplayName = (state: SettingsStoreData): string =>
+  selectActiveAgentFramework(state)?.displayName ?? state.agentFrameworkId
 
 export const selectVisionRelayAvailable = (state: SettingsStoreData): boolean => {
   const configuration = state.visionModel
@@ -337,7 +356,7 @@ export const selectProviderModelOptions = (
 }
 
 let settingsLoadPromise: Promise<boolean> | undefined
-const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
+const SAFE_SETTINGS_LOAD_ERROR = 'Open-Science could not load settings. Retry to continue.'
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
 const reportSettingsLoadError = (error: unknown): void => {
@@ -358,12 +377,13 @@ const createSettingsStoreState = (
     // Resolve browser globals only when an action runs; node-based renderer tests import this store.
     getCommands: () => window.api.settings,
     reconcileSnapshot: (snapshot, runtimePatch = {}) =>
-      set((state) => mergeSnapshot(state, snapshot, runtimePatch))
+      set((state) => mergeSnapshot(state, snapshot, writeCoordinator, runtimePatch))
   }),
   ...createProviderAuthSlice({
     get,
     getCommands: () => window.api.settings,
-    reconcileSnapshot: (snapshot) => set((state) => mergeSnapshot(state, snapshot)),
+    reconcileSnapshot: (snapshot) =>
+      set((state) => mergeSnapshot(state, snapshot, writeCoordinator)),
     refreshPreflight: () => get().refreshPreflight(),
     refreshFrameworkStatus: async (id) => {
       if (id === 'opencode') {
@@ -385,13 +405,7 @@ const createSettingsStoreState = (
     getCommands: () => window.api.settings,
     reconcileSnapshot: (snapshot) => {
       if (!canApplySnapshot(get(), snapshot)) return false
-      set((state) =>
-        omitInFlightOptimisticPreferences(
-          mergeSnapshot(state, snapshot),
-          writeCoordinator.hasPending,
-          writeCoordinator.acceptCommitted
-        )
-      )
+      set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
       return true
     },
     writeCoordinator
@@ -454,7 +468,7 @@ const createSettingsStoreState = (
         // The persisted Settings authority is enough for an existing user to enter Home. Capability
         // probes continue in this same deduplicated pass; first-run onboarding still waits in App.
         set((state) =>
-          mergeSnapshot(state, snapshot, {
+          mergeSnapshot(state, snapshot, writeCoordinator, {
             ...(shouldInitializeRuntime ? { isLoaded: true } : {}),
             loadError: undefined
           })
@@ -527,14 +541,7 @@ const createSettingsStoreState = (
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
   acceptCommittedSnapshot: (snapshot) =>
-    set((state) => {
-      if (!canApplySnapshot(state, snapshot)) return {}
-      return omitInFlightOptimisticPreferences(
-        mergeSnapshot(state, snapshot),
-        writeCoordinator.hasPending,
-        writeCoordinator.acceptCommitted
-      )
-    })
+    set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>

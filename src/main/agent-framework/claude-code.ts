@@ -22,6 +22,7 @@ import {
   LOAD_SKILL_TOOL_CALLABLE_NAME,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
   SKILL_RUNTIME_MCP_SERVER_NAME,
+  createSkillRuntimeAcpServerConfig,
   createSkillRuntimeMcpServerConfig
 } from '../skills/runtime-mcp-server'
 
@@ -44,7 +45,8 @@ const CLAUDE_CODE_NATIVE_DELEGATION_TOOLS = Object.freeze([
 
 // Shell execution is app-owned so every framework follows the Notebook runtime's managed working
 // directory, environment-mutation guard, permission identity, and durable Run recording contract.
-const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash'] as const)
+// Native bulk discovery does not pass through the Notebook search-scope preflight.
+const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash', 'Glob', 'Grep'] as const)
 const CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV = Object.freeze({
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
 })
@@ -82,6 +84,7 @@ export const claudeCodeFramework: AgentFramework = {
     // Still routes through the existing spawner; env carries the resolved provider overrides.
     return spawnClaudeAgentAcp({
       envOverrides: input.env,
+      spawnProcess: input.spawnProcess,
       executablePath: input.executablePath
     })
   },
@@ -108,15 +111,18 @@ export const claudeCodeFramework: AgentFramework = {
       typeof skillRuntime.root === 'string' &&
       typeof skillRuntime.command === 'string' &&
       typeof skillRuntime.entryPath === 'string'
-    const mcpServers = skillRuntimeEnabled
+    const skillRuntimeConfig = skillRuntimeEnabled
+      ? {
+          command: skillRuntime.command as string,
+          entryPath: skillRuntime.entryPath as string,
+          root: skillRuntime.root as string,
+          ...(ctx.skillRuntimeScope !== 'all' ? { allowedNames: ctx.skillRuntimeScope } : {})
+        }
+      : undefined
+    const mcpServers = skillRuntimeConfig
       ? {
           ...recordValue(sessionOptions.mcpServers),
-          [SKILL_RUNTIME_MCP_SERVER_NAME]: createSkillRuntimeMcpServerConfig({
-            command: skillRuntime.command as string,
-            entryPath: skillRuntime.entryPath as string,
-            root: skillRuntime.root as string,
-            ...(ctx.skillRuntimeScope !== 'all' ? { allowedNames: ctx.skillRuntimeScope } : {})
-          })
+          [SKILL_RUNTIME_MCP_SERVER_NAME]: createSkillRuntimeMcpServerConfig(skillRuntimeConfig)
         }
       : sessionOptions.mcpServers
     const toolAliases = skillRuntimeEnabled
@@ -223,6 +229,10 @@ export const claudeCodeFramework: AgentFramework = {
 
     return {
       meta,
+      // Register SDK-installed tooling with the app's Session capability owner as well.
+      ...(skillRuntimeConfig
+        ? { mcpServers: [createSkillRuntimeAcpServerConfig(skillRuntimeConfig)] }
+        : {}),
       ...(persistentSystemPrompt ? { persistentSystemPrompt } : {}),
       ...(promptPrefix ? { promptPrefix } : {})
     }

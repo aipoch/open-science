@@ -181,16 +181,63 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       producer
     })
   }
+  const pdfElementContext = (appSessionId: string, projectId: string, signal: AbortSignal) => {
+    const interaction = sessionInteractions.current(appSessionId)
+    if (
+      interaction?.kind !== 'prompt' ||
+      !interaction.promptMessageId ||
+      interaction.signal.aborted
+    )
+      throw new Error(
+        'NO_LINKED_PDF_CONTEXT: PDF element tools require an active message with a linked PDF snapshot.'
+      )
+    const currentSignal = AbortSignal.any([signal, interaction.signal])
+    currentSignal.throwIfAborted()
+    return {
+      context: {
+        projectId,
+        sessionId: appSessionId,
+        promptMessageId: interaction.promptMessageId,
+        signal: currentSignal
+      },
+      check: () => {
+        currentSignal.throwIfAborted()
+        if (sessionInteractions.current(appSessionId) !== interaction)
+          throw new Error('NO_LINKED_PDF_CONTEXT: The active PDF message has changed.')
+      }
+    }
+  }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
     artifacts: options.artifacts,
     notebook: options.notebook,
     skillImport: options.skillImport,
     plan: options.plan,
     sideChat: options.sideChat,
+    wslSetupSessions: options.wslSetupSessions,
     literature: options.literature
       ? {
           isEnabled: options.literature.isEnabled,
           handlerFor: (appSessionId, projectId) => ({
+            ...(options.literature!.elements
+              ? {
+                  elements: {
+                    list: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      const result = await options.literature!.elements!.list(guard.context, input)
+                      guard.check()
+                      return result
+                    },
+                    read: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      const result = await options.literature!.elements!.read(guard.context, input)
+                      guard.check()
+                      return result
+                    }
+                  } satisfies NonNullable<
+                    import('../literature/mcp-server').LiteratureMcpHandler['elements']
+                  >
+                }
+              : {}),
             readDocument: (input) => {
               const interaction = sessionInteractions.current(appSessionId)
               if (interaction?.kind !== 'prompt' || !interaction.promptMessageId) {
@@ -214,12 +261,17 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       ? {
           handlerFor: (appSessionId, projectId, workspaceCwd) => ({
             searchLibrary: async (request) => {
+              const interaction = sessionInteractions.current(appSessionId)
               const result = await options.literatureLibrary!.searchLibrary({
                 ...request,
                 projectId
               })
-              const interaction = sessionInteractions.current(appSessionId)
-              if (interaction?.kind === 'prompt' && interaction.promptMessageId) {
+              if (
+                interaction?.kind === 'prompt' &&
+                interaction.promptMessageId &&
+                !interaction.signal.aborted &&
+                sessionInteractions.current(appSessionId) === interaction
+              ) {
                 options.artifacts?.provenance?.recordLiteratureSearch?.({
                   projectId,
                   appSessionId,
@@ -235,18 +287,48 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
               }
               return result
             },
-            readAbstract: (request) =>
-              options.literatureLibrary!.readAbstract({
+            readAbstract: async (request) => {
+              const interaction = sessionInteractions.current(appSessionId)
+              const result = await options.literatureLibrary!.readAbstract({
                 ...request,
                 projectId
-              }),
+              })
+              if (
+                result?.abstract.trim() &&
+                interaction?.kind === 'prompt' &&
+                interaction.promptMessageId &&
+                !interaction.signal.aborted &&
+                sessionInteractions.current(appSessionId) === interaction
+              ) {
+                options.artifacts?.provenance?.recordLiteratureAbstractRead?.({
+                  projectId,
+                  appSessionId,
+                  promptMessageId: interaction.promptMessageId,
+                  itemId: result.itemId
+                })
+              }
+              return result
+            },
             readPdf: async (request) => {
+              const interaction = sessionInteractions.current(appSessionId)
               const result = await options.literatureLibrary!.readPdf({
                 ...request,
                 projectId
               })
-              const interaction = sessionInteractions.current(appSessionId)
-              if (result && interaction?.kind === 'prompt' && interaction.promptMessageId) {
+              const passages = result?.evidence.passages
+              const hasContent =
+                Array.isArray(passages) &&
+                passages.some(
+                  (passage) =>
+                    passage && typeof passage.content === 'string' && passage.content.trim()
+                )
+              if (
+                hasContent &&
+                interaction?.kind === 'prompt' &&
+                interaction.promptMessageId &&
+                !interaction.signal.aborted &&
+                sessionInteractions.current(appSessionId) === interaction
+              ) {
                 options.artifacts?.provenance?.recordLiteraturePdfRead?.({
                   projectId,
                   appSessionId,
@@ -258,18 +340,19 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
             },
             ...(options.literatureLibrary!.resolveSaveReferences
               ? {
-                  resolveSaveReferences: (references: readonly string[]) =>
-                    options.literatureLibrary!.resolveSaveReferences!(references)
+                  resolveSaveReferences: (references: readonly string[], signal?: AbortSignal) =>
+                    options.literatureLibrary!.resolveSaveReferences!(references, signal)
                 }
               : {}),
             ...(options.literatureLibrary!.readCandidateFile
               ? {
-                  readCandidateFile: (filename: string) =>
+                  readCandidateFile: (filename: string, signal?: AbortSignal) =>
                     options.literatureLibrary!.readCandidateFile!({
                       projectId,
                       sessionId: appSessionId,
                       workspaceCwd,
-                      filename
+                      filename,
+                      signal
                     })
                 }
               : {}),

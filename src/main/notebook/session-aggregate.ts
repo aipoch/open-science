@@ -12,6 +12,8 @@ import type {
   NotebookNamespaceVariable,
   NotebookOutput,
   NotebookRunEnvironmentCapture,
+  NotebookRunEnvironmentLockCapture,
+  NotebookRunInputFile,
   NotebookRunSource,
   NotebookRunStatus,
   NotebookWorkingFile,
@@ -24,19 +26,63 @@ import type { TransientViewImage } from './host-view-image-service'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
+import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string
   args?: string[]
   condaPrefix?: string
+  /** Transient execution context from current personal-library consent, never a wire binding. */
+  rLibrary?: string
 }
 
 export const notebookInterpreterIdentity = (
   interpreter: NotebookSessionResolvedInterpreter | undefined
 ): string =>
   interpreter
-    ? [interpreter.command, ...(interpreter.args ?? []), interpreter.condaPrefix ?? ''].join('\n')
+    ? [
+        interpreter.command,
+        ...(interpreter.args ?? []),
+        interpreter.condaPrefix ?? '',
+        ...(interpreter.rLibrary ? [interpreter.rLibrary] : [])
+      ].join('\n')
     : ''
+
+const enqueueSerialTask = <T>(
+  previous: Promise<unknown>,
+  task: () => Promise<T>,
+  signal?: AbortSignal
+): { result: Promise<T>; tail: Promise<unknown> } => {
+  if (!signal) {
+    const result = previous.then(task)
+    return { result, tail: result.catch(() => undefined) }
+  }
+
+  signal.throwIfAborted()
+  let started = false
+  let resolveResult!: (result: T | PromiseLike<T>) => void
+  let rejectResult!: (reason?: unknown) => void
+  const result = new Promise<T>((resolve, reject) => {
+    resolveResult = resolve
+    rejectResult = reject
+  })
+  const onAbort = (): void => {
+    if (!started) rejectResult(signal.reason)
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+
+  const run = previous.then(async () => {
+    if (signal.aborted) return
+    started = true
+    signal.removeEventListener('abort', onAbort)
+    try {
+      resolveResult(await task())
+    } catch (error) {
+      rejectResult(error)
+    }
+  })
+  return { result, tail: run.catch(() => undefined) }
+}
 
 export type NotebookSessionRuntimeBinding = NotebookRuntimeBinding & {
   resolvedInterpreter?: NotebookSessionResolvedInterpreter
@@ -47,7 +93,11 @@ export type NotebookSessionExecutionRequest = {
   // App-owned identity used to seal per-run file evidence. Optional keeps injected executors and
   // direct tests source-compatible; production execution always supplies it.
   runId?: string
+  // Immutable persistent-kernel generation selected before dispatch. The process lifecycle sidecar
+  // binds this domain epoch to the OS process owner so startup recovery never adopts a stale writer.
+  kernelEpochId?: string
   code: string
+  pythonRandomState?: import('../../shared/notebook-execution-context').NotebookExecutionContext['before']['pythonRandomState']
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string
@@ -73,6 +123,8 @@ export type NotebookSessionExecutionRequest = {
   // keeps injected executors and older callers source-compatible; the REPL falls back to its cwd.
   workspaceCwd?: string
   inputRunLeaseId?: string
+  registeredInputFiles?: readonly NotebookRunInputFile[]
+  sourceFileAccessContext?: NotebookSourceFileAccessContext
   // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
   // host.agents.switch approval to this exact outer repl_execute completion.
   controlInvocationId?: string
@@ -83,16 +135,22 @@ export type NotebookSessionExecutionResult = {
   stdout: string
   stderr: string
   traceback: string
+  // Actual data-process cwd, which can differ from the Session's last selected directory.
+  cwdBefore?: string
   cwdAfter: string
   outputs: NotebookOutput[]
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
   fileEvidence?: ExecutionFileEvidenceSummary
+  // Exact session-relative reads from complete source/file-evidence analysis. This is internal
+  // execution metadata used to distinguish an available turn attachment from an input the run used.
+  confirmedReadPaths?: string[]
   environmentOverlay?: NotebookLiveEnvironmentOverlay
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
-  // Internal execution evidence persisted onto data runs. Optional keeps injected/legacy executors
+  environmentLock?: NotebookRunEnvironmentLockCapture
+  // Dispatch evidence persisted onto data runs and exposed in Agent results. Optional keeps injected/legacy executors
   // source-compatible; the execution owner treats a missing value after dispatch conservatively.
   kernelDispatched?: boolean
   // Exact helper initializations acknowledged by the persistent loop before producer dispatch.
@@ -181,6 +239,7 @@ export type NotebookSessionAggregateInit<
   executor: NotebookSessionExecutor<Request, Result>
   executorGeneration: NotebookSessionExecutorGeneration
   lane: NotebookLaneIdentity
+  onKernelEpochsRetired?: (epochs: readonly NotebookKernelEpochOwnership[]) => Promise<void>
 }
 
 export type NotebookSessionSnapshot = Readonly<{
@@ -250,12 +309,17 @@ export class NotebookSessionAggregate<
   private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
   private readonly terminatedKernels = new Set<string>()
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
+  private readonly kernelStatusLastActivityAt = new Map<string, number>()
   private readonly restoredKernelStatusValue?: NotebookKernelMetadata['lastKnownStatus']
   private readonly durableTerminatedKernelKeys = new Set<string>()
   private durableUnknownKernelTermination: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
   private readonly kernelEpochs = new Map<string, NotebookKernelEpochSlot>()
+  private readonly onKernelEpochsRetired?: NotebookSessionAggregateInit<
+    Request,
+    Result
+  >['onKernelEpochsRetired']
 
   constructor(init: NotebookSessionAggregateInit<Request, Result>) {
     this.id = `notebook-session-${init.sessionId}`
@@ -280,6 +344,7 @@ export class NotebookSessionAggregate<
     this.restoredKernelStatusValue = init.initialKernelStatus
     this.executorValue = init.executor
     this.executorGenerationValue = init.executorGeneration
+    this.onKernelEpochsRetired = init.onKernelEpochsRetired
   }
 
   get cwd(): string {
@@ -406,6 +471,12 @@ export class NotebookSessionAggregate<
     return this.activeWriteValue?.cellId === cellId
   }
 
+  discardUnusedCell(cellId: string): boolean {
+    const cell = this.cells.get(cellId)
+    if (!cell || cell.status !== 'idle' || cell.latestRunId || cell.writeId) return false
+    return this.cells.delete(cellId)
+  }
+
   nextExecutionCount(): number {
     this.executionCountValue += 1
     return this.executionCountValue
@@ -448,53 +519,19 @@ export class NotebookSessionAggregate<
     signal?: AbortSignal
   ): Promise<T> {
     const previous = this.executionQueues.get(processKey) ?? Promise.resolve()
-    if (!signal) {
-      const run = previous.then(task)
-      this.executionQueues.set(
-        processKey,
-        run.catch(() => undefined)
-      )
-      return run
-    }
-
-    signal.throwIfAborted()
-    let started = false
-    let resolveResult!: (result: T | PromiseLike<T>) => void
-    let rejectResult!: (reason?: unknown) => void
-    const result = new Promise<T>((resolve, reject) => {
-      resolveResult = resolve
-      rejectResult = reject
-    })
-    const onAbort = (): void => {
-      if (!started) rejectResult(signal.reason)
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-
-    const run = previous.then(async () => {
-      if (signal.aborted) return
-      started = true
-      signal.removeEventListener('abort', onAbort)
-      try {
-        resolveResult(await task())
-      } catch (error) {
-        rejectResult(error)
-      }
-    })
-    this.executionQueues.set(
-      processKey,
-      run.catch(() => undefined)
-    )
-    return result
+    const queued = enqueueSerialTask(previous, task, signal)
+    this.executionQueues.set(processKey, queued.tail)
+    return queued.result
   }
 
   async drainExecution(processKey: string): Promise<void> {
     await (this.executionQueues.get(processKey) ?? Promise.resolve()).catch(() => undefined)
   }
 
-  enqueueControl<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.controlQueue.then(task)
-    this.controlQueue = run.catch(() => undefined)
-    return run
+  enqueueControl<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const queued = enqueueSerialTask(this.controlQueue, task, signal)
+    this.controlQueue = queued.tail
+    return queued.result
   }
 
   // Reserves the next execution turn behind an executor lifecycle projection without making the
@@ -516,9 +553,10 @@ export class NotebookSessionAggregate<
 
   clearProcessState(processKey: string): void {
     this.kernelStatuses.delete(processKey)
+    this.kernelStatusLastActivityAt.delete(processKey)
     this.terminatedKernels.delete(processKey)
     this.executionQueues.delete(processKey)
-    this.kernelEpochs.delete(processKey)
+    void this.retireKernelEpoch(processKey).catch(() => undefined)
   }
 
   kernelStatus(processKey: string): NotebookKernelMetadata['lastKnownStatus'] | undefined {
@@ -533,12 +571,21 @@ export class NotebookSessionAggregate<
     return Array.from(this.kernelStatuses.entries())
   }
 
+  kernelActivityEntries(): Array<[string, NotebookKernelMetadata['lastKnownStatus'], number]> {
+    return Array.from(this.kernelStatuses, ([processKey, status]) => [
+      processKey,
+      status,
+      this.kernelStatusLastActivityAt.get(processKey)!
+    ])
+  }
+
   kernelProcessKeys(): string[] {
     return Array.from(this.kernelStatuses.keys())
   }
 
   setKernelStatus(processKey: string, status: NotebookKernelMetadata['lastKnownStatus']): void {
     this.kernelStatuses.set(processKey, status)
+    this.kernelStatusLastActivityAt.set(processKey, Date.now())
   }
 
   markKernelTerminated(processKey: string): void {
@@ -623,7 +670,7 @@ export class NotebookSessionAggregate<
     reset = false,
     interpreterIdentity?: string
   ): NotebookKernelEpochOwnership {
-    if (reset) this.kernelEpochs.delete(processKey)
+    if (reset) void this.retireKernelEpoch(processKey).catch(() => undefined)
     const existing = this.kernelEpochs.get(processKey)
     if (existing) {
       if (interpreterIdentity === undefined) return existing.ownership
@@ -632,6 +679,7 @@ export class NotebookSessionAggregate<
         return existing.ownership
       }
       if (existing.interpreterIdentity === interpreterIdentity) return existing.ownership
+      void this.retireKernelEpoch(processKey).catch(() => undefined)
     }
     const ownership = { id: randomUUID(), processKey }
     this.kernelEpochs.set(processKey, { ownership, interpreterIdentity })
@@ -642,8 +690,17 @@ export class NotebookSessionAggregate<
     return this.kernelEpochs.get(processKey)?.ownership.id
   }
 
-  retireKernelEpoch(processKey: string): void {
-    this.kernelEpochs.delete(processKey)
+  async retireKernelEpoch(processKey: string): Promise<void> {
+    await this.retireKernelEpochs([processKey])
+  }
+
+  private async retireKernelEpochs(processKeys: readonly string[]): Promise<void> {
+    const epochs = processKeys.flatMap((processKey) => {
+      const epoch = this.kernelEpochs.get(processKey)?.ownership
+      this.kernelEpochs.delete(processKey)
+      return epoch ? [epoch] : []
+    })
+    if (epochs.length > 0) await this.onKernelEpochsRetired?.(epochs)
   }
 
   ownsExecutorGeneration(generation: NotebookSessionExecutorGeneration): boolean {
@@ -667,11 +724,10 @@ export class NotebookSessionAggregate<
     return run
   }
 
-  terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
+  async terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
     const processKey = kind === 'repl' ? 'repl' : `${kind}:${env}`
-    return (this.executorValue.terminate?.(kind, env) ?? Promise.resolve()).then(() => {
-      this.kernelEpochs.delete(processKey)
-    })
+    await (this.executorValue.terminate?.(kind, env) ?? Promise.resolve())
+    await this.retireKernelEpoch(processKey)
   }
 
   async restartExecutor(
@@ -679,7 +735,7 @@ export class NotebookSessionAggregate<
   ): Promise<void> {
     if (this.executorValue.restart) {
       await this.executorValue.restart()
-      this.kernelEpochs.clear()
+      await this.retireKernelEpochs([...this.kernelEpochs.keys()])
       return
     }
     this.executorGenerationActive = false
@@ -690,17 +746,20 @@ export class NotebookSessionAggregate<
     this.executorValue = next.executor
     this.executorGenerationValue = next.generation
     this.executorGenerationActive = true
-    this.kernelEpochs.clear()
+    await this.retireKernelEpochs([...this.kernelEpochs.keys()])
   }
 
-  shutdownExecutor(): Promise<{ reaped: boolean }> {
+  async shutdownExecutor(): Promise<{ reaped: boolean }> {
     if (this.activeWriteValue) {
       this.abortCellWrite(this.activeWriteValue.cellId, this.activeWriteValue.writeId)
     }
     const executor = this.executorValue
     this.executorGenerationActive = false
     const lifecycleDrain = this.executorLifecycleQueue
-    return lifecycleDrain.then(() => executor.shutdown())
+    await lifecycleDrain
+    const result = await executor.shutdown()
+    await this.retireKernelEpochs([...this.kernelEpochs.keys()])
+    return result
   }
 
   async resolveMcpRpcConnection(

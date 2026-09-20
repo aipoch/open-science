@@ -16,6 +16,7 @@ import {
   LOAD_SKILL_TOOL_CALLABLE_NAME,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
 } from '../skills/runtime-mcp-server'
+import { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { AcpRuntimeOptions } from './runtime'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'
@@ -64,7 +65,7 @@ const codexToolLessBridgeLease = (): NonNullable<ResolvedAgentBackend['responses
 })
 
 type RuntimeHarnessOptions = Readonly<{
-  response?: { stopReason: 'end_turn' | 'cancelled' }
+  response?: { stopReason: 'end_turn' | 'cancelled' | 'max_tokens' | 'refusal' }
   events?: AcpRuntimeEvent[]
   permissionRequest?: true
   onRuntime?: () => void
@@ -750,3 +751,48 @@ describe('RestrictedInferenceRunner', () => {
     expect(runtimes[0]?.sendPrompt).not.toHaveBeenCalled()
   })
 })
+
+it.each(['max_tokens', 'cancelled', 'refusal'] as const)(
+  'does not persist visual evidence when the runtime ends with %s',
+  async (stopReason) => {
+    const { runner } = await makeRunner(backend(opencodeFramework), {
+      response: { stopReason },
+      events: [
+        event({
+          role: 'assistant',
+          text: JSON.stringify({
+            summary: 'Partial evidence',
+            findings: [],
+            transcription: '',
+            regions: [],
+            entities: [],
+            relations: [],
+            uncertainty: []
+          })
+        })
+      ]
+    })
+    const save = vi.fn(async () => undefined)
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: async () => target('opencode'),
+      runner,
+      evidenceRepository: { find: vi.fn(async () => undefined), save }
+    })
+    const outcome = await owner
+      .prepare({
+        content: [
+          { type: 'image', mimeType: 'image/png', data: Buffer.from('image').toString('base64') }
+        ],
+        supportsImageInput: false,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        imageSources: [{ kind: 'upload-version', uploadVersionId: 'version-1' }]
+      })
+      .then(
+        () => 'accepted',
+        () => 'rejected'
+      )
+    expect.soft(outcome).toBe('rejected')
+    expect(save).not.toHaveBeenCalled()
+  }
+)

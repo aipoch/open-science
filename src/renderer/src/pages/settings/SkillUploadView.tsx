@@ -1,4 +1,7 @@
-import { AlertTriangle, Upload } from 'lucide-react'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { ErrorNotice } from '@/components/error-notice'
+import type { SkillReplacementPreview } from '../../../../shared/settings'
+import { Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -8,7 +11,7 @@ import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
 import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
-import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { SkillImportCandidatePreview, SkillReplacementSummary } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 // Rounds a byte count to whole MB for a user-facing size-limit message.
@@ -18,10 +21,13 @@ const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
 const ErrorBanner = ({ notice }: { notice: Notice }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000">
-      <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-      <span>{t(notice.key, notice.params)}</span>
-    </div>
+    <ErrorNotice
+      inline
+      role="alert"
+      tone="amber"
+      className="mt-3"
+      description={t(notice.key, notice.params)}
+    />
   )
 }
 
@@ -30,7 +36,7 @@ const ErrorBanner = ({ notice }: { notice: Notice }): React.JSX.Element => {
 const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
-    <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+    <InlineNotice className="mt-3 text-xs">
       <p className="font-medium text-foreground">
         {t('Skipped {{count}} skills', {
           defaultValue_one: 'Skipped {{count}} skill',
@@ -44,7 +50,7 @@ const SkippedNote = ({ items }: { items: SkippedEntry[] }): React.JSX.Element =>
           </li>
         ))}
       </ul>
-    </div>
+    </InlineNotice>
   )
 }
 
@@ -71,6 +77,7 @@ type Candidate =
       previewError?: string
       files: string[]
       alreadyImported: boolean
+      replacement?: SkillReplacementPreview
       replaceableId?: string
     }
   | {
@@ -197,6 +204,7 @@ const SkillUploadView = ({
             previewError: preview.previewError,
             files: preview.files,
             alreadyImported: preview.alreadyImported,
+            replacement: preview.replacement,
             replaceableId: preview.replaceableId
           })),
           skipped: skippedEntries
@@ -463,7 +471,7 @@ const SkillUploadView = ({
                   ? `${candidate.fileName} · ${candidate.subPath}`
                   : candidate.fileName
               return (
-                <li key={candidate.key} className="flex items-center gap-3 py-2.5">
+                <li key={candidate.key} className="flex flex-wrap items-center gap-3 py-2.5">
                   <input
                     type="checkbox"
                     aria-label={t('Select {{name}}', {
@@ -495,6 +503,8 @@ const SkillUploadView = ({
                           sourceLabel: secondary,
                           metadata: candidate.metadata,
                           body: candidate.body,
+                          replacement:
+                            candidate.kind === 'bundle' ? candidate.replacement : undefined,
                           files:
                             candidate.kind === 'bundle' ? candidate.files : [candidate.fileName]
                         }
@@ -520,6 +530,11 @@ const SkillUploadView = ({
                       </span>
                     ) : null}
                   </button>
+                  {candidate.kind === 'bundle' && candidate.replacement ? (
+                    <div className="w-full">
+                      <SkillReplacementSummary replacement={candidate.replacement} />
+                    </div>
+                  ) : null}
                 </li>
               )
             })}

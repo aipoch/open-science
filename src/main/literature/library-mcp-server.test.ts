@@ -76,12 +76,19 @@ describe('Literature Library MCP server', () => {
       status: 'pending-review',
       candidateId: 'inbox-1'
     })
-    expect(acquirePdf).toHaveBeenCalledWith({ candidate: discovery, pdfUrl: undefined })
+    expect(acquirePdf).toHaveBeenCalledWith({
+      candidate: discovery,
+      pdfUrl: undefined,
+      signal: expect.any(AbortSignal)
+    })
     const rejected = await client.callTool({
       name: 'acquire_pdf',
       arguments: { ref: '10.1234/example', candidate: discovery }
     })
     expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected.content)).toContain('Pass exactly one of ref or candidate')
+    const missing = await client.callTool({ name: 'acquire_pdf', arguments: {} })
+    expect(JSON.stringify(missing.content)).toContain('Pass exactly one of ref or candidate')
     expect(acquirePdf).toHaveBeenCalledTimes(1)
     await client.close()
     await server.close()
@@ -159,7 +166,10 @@ describe('Literature Library MCP server', () => {
       name: 'save_to_inbox',
       arguments: { candidates: [discovery] }
     })
-    expect(saveToInbox).toHaveBeenCalledWith({ candidates: [discovery] })
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [discovery],
+      signal: expect.any(AbortSignal)
+    })
     expect(saved.structuredContent).toEqual({
       results: [{ kind: 'candidate', id: 'candidate-1', state: 'pending' }]
     })
@@ -222,8 +232,14 @@ describe('Literature Library MCP server', () => {
       arguments: { filename: 'handoff/literature-inbox-payload.json' }
     })
 
-    expect(readCandidateFile).toHaveBeenCalledWith('handoff/literature-inbox-payload.json')
-    expect(saveToInbox).toHaveBeenCalledWith({ candidates: [discovery] })
+    expect(readCandidateFile).toHaveBeenCalledWith(
+      'handoff/literature-inbox-payload.json',
+      expect.any(AbortSignal)
+    )
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [discovery],
+      signal: expect.any(AbortSignal)
+    })
     expect(saved.structuredContent).toEqual({ results: [] })
 
     await client.close()
@@ -365,8 +381,14 @@ describe('Literature Library MCP server', () => {
       arguments: { refs: ['pmid:35486828', 'doi:10.1000/example'] }
     })
 
-    expect(resolveSaveReferences).toHaveBeenCalledWith(['pmid:35486828', 'doi:10.1000/example'])
-    expect(saveToInbox).toHaveBeenCalledWith({ candidates: [discovery] })
+    expect(resolveSaveReferences).toHaveBeenCalledWith(
+      ['pmid:35486828', 'doi:10.1000/example'],
+      expect.any(AbortSignal)
+    )
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [discovery],
+      signal: expect.any(AbortSignal)
+    })
     expect(saved.structuredContent).toEqual({ results: [] })
 
     const ambiguous = await client.callTool({
@@ -758,4 +780,56 @@ describe('Literature Library MCP server', () => {
     await client.close()
     await server.close()
   })
+})
+
+it('returns a tool error when a search result cannot be retained as review evidence', async () => {
+  const { ArtifactLiteratureManifestOwner } = await import('../artifacts/literature-manifest')
+  const owner = new ArtifactLiteratureManifestOwner(async () => {
+    throw new Error('No catalog read expected')
+  })
+  const server = createLiteratureLibraryMcpServer({
+    searchLibrary: async (request) => {
+      const result = {
+        items: [searchItem('paper', 'Delivered abstract.')],
+        totalCount: 1,
+        hasMore: false
+      }
+      owner.recordSearch({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        promptMessageId: 'message-1',
+        ...request,
+        itemIds: request.itemIds ? [...request.itemIds] : undefined,
+        scope: request.scope ?? 'project',
+        result
+      })
+      return result
+    },
+    readAbstract: vi.fn(),
+    readPdf: vi.fn(),
+    saveToInbox: vi.fn()
+  })
+  const client = await connect(server)
+  try {
+    for (let i = 0; i < 100; i++) {
+      const result = await client.callTool({
+        name: 'search_library',
+        arguments: { query: `query ${i}` }
+      })
+      expect(result.isError).not.toBe(true)
+    }
+    const rejected = await client.callTool({
+      name: 'search_library',
+      arguments: { query: 'another query' }
+    })
+    expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected.content)).toContain('LITERATURE_EVIDENCE_LIMIT')
+    expect(rejected.structuredContent).toBeUndefined()
+    expect(
+      (await client.callTool({ name: 'search_library', arguments: { query: 'query 0' } })).isError
+    ).not.toBe(true)
+  } finally {
+    await client.close()
+    await server.close()
+  }
 })

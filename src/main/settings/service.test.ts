@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import {
   chmod,
   mkdir,
@@ -31,6 +32,12 @@ import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/u
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
+import { codexSubscriptionStorageDir } from '../agent-framework/codex'
+import type { SettingsServiceOptions } from './service'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
+import { SkillMarketplaceService } from '../skills/marketplace-service'
+import { SkillCatalogModule } from './skill-catalog'
+import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -51,6 +58,7 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn((...args: Parameters<typeof fetch>) => globalThis.fetch(...args)) }
 }))
 
+const { initDataRoot } = await import('../storage-root')
 const { SettingsService } = await import('./service')
 const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
 const { SettingsRepository } = await import('./repository')
@@ -200,6 +208,9 @@ const createService = (
     userAgentsDir?: string
     userSkills?: UserSkillRepositoryType
     log?: Logger
+    installCoordinator?: SettingsInstallCoordinator
+    wslSetup?: SettingsServiceOptions['wslSetup']
+    wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -287,7 +298,11 @@ const createService = (
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     claudeIsolatedAuth: options.claudeIsolatedAuth as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    claudeSharedAuth: options.claudeSharedAuth as any
+    claudeSharedAuth: options.claudeSharedAuth as any,
+    installCoordinator: options.installCoordinator,
+    wslSetup: options.wslSetup,
+    wsl2PreviewStatus:
+      options.wsl2PreviewStatus ?? (() => ({ available: true, reason: 'available' }))
   })
 
 beforeEach(async () => {
@@ -317,6 +332,489 @@ afterEach(async () => {
   vi.unstubAllEnvs()
   await makeTreeWritable(storageRoot)
   await rm(storageRoot, { recursive: true, force: true })
+})
+
+describe('SettingsService: Marketplace installation projection', () => {
+  it('aborts batch downloads on disposal and never commits a late download', async () => {
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<SkillMarketplaceService['download']>>>()
+    const retain = vi
+      .spyOn(SkillMarketplaceService.prototype, 'retainSnapshot')
+      .mockReturnValue(vi.fn())
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockReturnValue(pending.promise)
+    const write = vi.spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+    const refresh = vi.spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+    try {
+      const service = createService()
+      const request = {
+        snapshotId: 'a'.repeat(64),
+        items: [
+          { id: 'one', version: '1.0.0', expectedVersion: null },
+          { id: 'two', version: '1.0.0', expectedVersion: null }
+        ]
+      }
+      expect(service.startSkillMarketplaceBatch(request, vi.fn()).ok).toBe(true)
+      const signal = download.mock.calls[0][1]!
+      let disposed = false
+      const disposal = service.dispose().then(() => {
+        disposed = true
+      })
+      expect(signal.aborted).toBe(true)
+      await Promise.resolve()
+      expect(disposed).toBe(false)
+      // Even an adapter that ignores cancellation cannot commit after shutdown starts.
+      pending.resolve({
+        ok: true,
+        value: {
+          files: [],
+          receipt: {
+            marketplace: 'openscience-skills',
+            id: 'one',
+            version: '1.0.0',
+            snapshotId: request.snapshotId,
+            revision: 'b'.repeat(64),
+            descriptorSha256: 'c'.repeat(64),
+            artifactSha256: 'd'.repeat(64),
+            contentSha256: 'e'.repeat(64)
+          }
+        }
+      })
+      await disposal
+      expect(download).toHaveBeenCalledTimes(1)
+      expect(write).not.toHaveBeenCalled()
+      expect(refresh).not.toHaveBeenCalled()
+      expect(service.getSkillMarketplaceBatch()?.items.map(({ status }) => status)).toEqual([
+        'stopped',
+        'stopped'
+      ])
+      expect(service.startSkillMarketplaceBatch(request, vi.fn())).toEqual({
+        ok: false,
+        error: 'busy'
+      })
+    } finally {
+      pending.resolve({ ok: false, error: 'network' })
+      retain.mockRestore()
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+
+  it('keeps Marketplace preview and confirmation tokens at the local service boundary', async () => {
+    const identity = { snapshotId: 'a'.repeat(64), id: 'one' }
+    const pkg = {
+      files: [],
+      receipt: {
+        marketplace: 'openscience-skills' as const,
+        id: 'one',
+        version: '1.0.0',
+        snapshotId: identity.snapshotId,
+        revision: 'b'.repeat(64),
+        descriptorSha256: 'c'.repeat(64),
+        artifactSha256: 'd'.repeat(64),
+        contentSha256: 'e'.repeat(64)
+      }
+    }
+    const entry = {
+      id: 'one',
+      displayName: 'One',
+      summary: 'Example',
+      category: 'Other' as const,
+      version: '1.0.0',
+      publisher: { name: 'Publisher', url: 'https://example.com' },
+      source: { repository: 'https://example.com/repo', commit: 'b'.repeat(40), path: 'one' },
+      license: 'MIT'
+    }
+    const preview = {
+      token: '6f583699-8508-4f5f-bfb3-9e403d759e45',
+      localSkillId: 'personal-one',
+      displayName: 'One',
+      source: 'personal' as const,
+      localChanges: 'unknown' as const,
+      mainEnabled: true,
+      specialists: [],
+      added: [],
+      modified: ['SKILL.md'],
+      removed: [],
+      differences: []
+    }
+    const detail = vi
+      .spyOn(SkillMarketplaceService.prototype, 'detail')
+      .mockResolvedValue({ ok: true, value: { entry, licenseEvidence: [] } })
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockResolvedValue({ ok: true, value: pkg })
+    const inspect = vi
+      .spyOn(SkillCatalogModule.prototype, 'previewMarketplaceUpdate')
+      .mockResolvedValue(preview)
+    const installation = vi
+      .spyOn(SkillCatalogModule.prototype, 'marketplaceInstallation')
+      .mockResolvedValue({
+        kind: 'conflict',
+        reason: 'name-taken',
+        localSkillId: preview.localSkillId
+      })
+    const install = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplace')
+      .mockResolvedValue({ id: preview.localSkillId, status: 'updated' })
+    try {
+      const service = createService()
+      await service.getSkillMarketplaceDetail(identity)
+      expect(download).not.toHaveBeenCalled()
+      expect(
+        await service.getSkillMarketplaceDetail({ ...identity, previewUpdate: true })
+      ).toMatchObject({ ok: true, value: { updatePreview: preview } })
+      expect(detail).toHaveBeenLastCalledWith(identity)
+      expect(download).toHaveBeenLastCalledWith(identity)
+      expect(inspect).toHaveBeenCalledWith(pkg)
+      expect(install).not.toHaveBeenCalled()
+      expect(
+        await service.installSkillMarketplace({
+          ...identity,
+          expectedVersion: null,
+          updateToken: 'invalid'
+        })
+      ).toEqual({ ok: false, error: 'conflict' })
+      expect(install).not.toHaveBeenCalled()
+      expect(
+        await service.installSkillMarketplace({
+          ...identity,
+          expectedVersion: null,
+          updateToken: preview.token
+        })
+      ).toMatchObject({ ok: true, value: { id: preview.localSkillId, status: 'updated' } })
+      expect(download).toHaveBeenLastCalledWith(identity, undefined)
+      expect(install).toHaveBeenLastCalledWith(pkg, null, preview.token)
+    } finally {
+      detail.mockRestore()
+      download.mockRestore()
+      inspect.mockRestore()
+      installation.mockRestore()
+      install.mockRestore()
+    }
+  })
+
+  it('reports a committed direct installation as successful when runtime refresh fails', async () => {
+    const pkg = {
+      files: [],
+      receipt: {
+        marketplace: 'openscience-skills' as const,
+        id: 'one',
+        version: '1.0.0',
+        snapshotId: 'a'.repeat(64),
+        revision: 'b'.repeat(64),
+        descriptorSha256: 'c'.repeat(64),
+        artifactSha256: 'd'.repeat(64),
+        contentSha256: 'e'.repeat(64)
+      }
+    }
+    const download = vi
+      .spyOn(SkillMarketplaceService.prototype, 'download')
+      .mockResolvedValue({ ok: true, value: pkg })
+    const write = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+      .mockResolvedValue({ id: 'imported-one', status: 'imported' })
+    const refresh = vi
+      .spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+      .mockRejectedValueOnce(new Error('runtime unavailable'))
+      .mockResolvedValue(undefined)
+    try {
+      const service = createService()
+      const request = { snapshotId: pkg.receipt.snapshotId, id: 'one', expectedVersion: null }
+      expect(await service.installSkillMarketplace(request)).toEqual({
+        ok: true,
+        value: { id: 'imported-one', status: 'imported', version: '1.0.0', refreshFailed: true }
+      })
+      write.mockResolvedValueOnce({ id: 'imported-one', status: 'unchanged' })
+      expect(
+        await service.installSkillMarketplace({ ...request, expectedVersion: '1.0.0' })
+      ).toEqual({
+        ok: true,
+        value: { id: 'imported-one', status: 'unchanged', version: '1.0.0' }
+      })
+      expect(refresh).toHaveBeenCalledTimes(2)
+    } finally {
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+
+  it('keeps an admitted queue alive independently of callers and uses verified package writes', async () => {
+    const release = vi.fn()
+    const retain = vi
+      .spyOn(SkillMarketplaceService.prototype, 'retainSnapshot')
+      .mockReturnValue(release)
+    const download = vi.spyOn(SkillMarketplaceService.prototype, 'download')
+    const write = vi
+      .spyOn(SkillCatalogModule.prototype, 'installMarketplacePackage')
+      .mockResolvedValue({ id: 'imported-one', status: 'imported' })
+    const refresh = vi
+      .spyOn(SkillCatalogModule.prototype, 'refreshMarketplace')
+      .mockResolvedValue(undefined)
+    const notify = vi.fn()
+    try {
+      const service = createService()
+      let finish!: (value: Awaited<ReturnType<SkillMarketplaceService['download']>>) => void
+      download.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+      download.mockResolvedValueOnce({ ok: false, error: 'integrity' })
+      const request = {
+        snapshotId: 'a'.repeat(64),
+        items: [
+          { id: 'one', version: '1.0.0', expectedVersion: null },
+          { id: 'two', version: '1.0.0', expectedVersion: null }
+        ]
+      }
+      expect(service.startSkillMarketplaceBatch(request, notify).ok).toBe(true)
+      expect(service.getSkillMarketplaceBatch()?.items[0].status).toBe('installing')
+      expect(write).not.toHaveBeenCalled()
+      const pkg = {
+        files: [],
+        receipt: {
+          marketplace: 'openscience-skills' as const,
+          id: 'one',
+          version: '1.0.0',
+          snapshotId: request.snapshotId,
+          revision: 'b'.repeat(64),
+          descriptorSha256: 'c'.repeat(64),
+          artifactSha256: 'd'.repeat(64),
+          contentSha256: 'e'.repeat(64)
+        }
+      }
+      finish({ ok: true, value: pkg })
+      await vi.waitFor(() => expect(service.getSkillMarketplaceBatch()?.status).toBe('completed'))
+      expect(write).toHaveBeenCalledExactlyOnceWith(pkg, null, undefined)
+      expect(service.getSkillMarketplaceBatch()?.items.map(({ status }) => status)).toEqual([
+        'succeeded',
+        'failed'
+      ])
+      expect(refresh).toHaveBeenCalledOnce()
+      expect(notify).toHaveBeenCalledOnce()
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      retain.mockRestore()
+      download.mockRestore()
+      write.mockRestore()
+      refresh.mockRestore()
+    }
+  })
+  it('adds local installation state only after successful catalog verification', async () => {
+    const list = vi.spyOn(SkillMarketplaceService.prototype, 'list')
+    const project = vi.spyOn(SkillCatalogModule.prototype, 'marketplaceInstallations')
+    try {
+      const service = createService()
+      list.mockResolvedValueOnce({ ok: false, error: 'integrity' })
+      expect(await service.listSkillMarketplace()).toEqual({ ok: false, error: 'integrity' })
+      expect(project).not.toHaveBeenCalled()
+      list.mockResolvedValueOnce({ ok: true, value: marketplaceCatalog })
+      project.mockResolvedValueOnce({})
+      expect(await service.listSkillMarketplace()).toEqual({
+        ok: true,
+        value: { ...marketplaceCatalog, installations: {} }
+      })
+      expect(project).toHaveBeenCalledExactlyOnceWith(marketplaceCatalog.entries)
+      expect(marketplaceCatalog).not.toHaveProperty('installations')
+    } finally {
+      list.mockRestore()
+      project.mockRestore()
+    }
+  })
+})
+
+describe('SettingsService: Local Shell runtime', () => {
+  it('projects the current persisted Shell runtime into a cached WSL setup snapshot', async () => {
+    const selection = { distro: 'Ubuntu-24.04', user: 'scientist' }
+    let cachedRuntime: 'powershell' | 'wsl2-bash' = 'wsl2-bash'
+    const getStatus = vi.fn(() => ({
+      revision: 7,
+      snapshot: {
+        state: 'ready' as const,
+        distros: [{ name: selection.distro, version: 2 as const, isDefault: true }],
+        selection,
+        activeRuntime: cachedRuntime,
+        activatedSelection: selection,
+        operationReference: 'cached01'
+      },
+      operation: { state: 'idle' as const }
+    }))
+    const service = createService(undefined, {
+      wslSetup: {
+        getStatus,
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => selection)
+      }
+    })
+    await repository.setLocalShellRuntime('wsl2-bash', selection)
+
+    await service.switchLocalShellToPowerShell()
+    await expect(service.getWslSetupStatus()).resolves.toMatchObject({
+      revision: 7,
+      snapshot: {
+        activeRuntime: 'powershell',
+        activatedSelection: selection
+      }
+    })
+
+    cachedRuntime = 'powershell'
+    await service.useWsl2Bash()
+    await expect(service.getWslSetupStatus()).resolves.toMatchObject({
+      revision: 7,
+      snapshot: {
+        activeRuntime: 'wsl2-bash',
+        activatedSelection: selection
+      }
+    })
+  })
+
+  it('returns an immutable PowerShell binding and preserves the selected WSL profile', async () => {
+    const service = createService()
+    const profile = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    await repository.setWslSelection(profile)
+    await repository.setLocalShellRuntime('wsl2-bash', profile)
+
+    const write = await service.switchLocalShellToPowerShell()
+
+    expect(write.result).toEqual({
+      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      appliesTo: 'subsequent-executions',
+      wslProfilePreserved: true
+    })
+    expect(Object.isFrozen(write)).toBe(true)
+    expect(Object.isFrozen(write.result)).toBe(true)
+    expect(Object.isFrozen(write.result.runtimeBinding)).toBe(true)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell',
+      wslSelection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+  })
+
+  it('uses only the latest service-validated ready WSL2 profile', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const selection = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    const priorActive = { distro: 'Ubuntu-20.04', user: 'active-user' }
+    const service = createService(undefined, {
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => selection)
+      }
+    })
+    await repository.setLocalShellRuntime('wsl2-bash', priorActive)
+    await repository.setLocalShellRuntime('powershell')
+    await repository.setWslSelection(selection)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell',
+      activatedWslSelection: priorActive,
+      wslSelection: selection
+    })
+
+    await expect(service.useWsl2Bash()).resolves.toMatchObject({
+      result: {
+        runtime: 'wsl2-bash',
+        selection,
+        appliesTo: 'subsequent-executions'
+      }
+    })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'wsl2-bash',
+      activatedWslSelection: selection
+    })
+  })
+
+  it('does not enable WSL2 Bash when the latest readiness admission rejects it', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const service = createService(undefined, {
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => {
+          throw new Error('The selected WSL2 Shell profile is not ready.')
+        })
+      }
+    })
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(service.useWsl2Bash()).rejects.toThrow('is not ready')
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell'
+    })
+  })
+
+  it('forwards a revision-bound missing dependency install through the WSL setup owner', async () => {
+    const snapshot = {
+      state: 'ready' as const,
+      distros: [],
+      operationReference: 'dependencies-1'
+    }
+    const installMissingDependencies = vi.fn(async () => snapshot)
+    const service = createService(undefined, {
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies,
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn()
+      }
+    })
+
+    await expect(service.installMissingWslDependencies({ expectedRevision: 17 })).resolves.toBe(
+      snapshot
+    )
+    expect(installMissingDependencies).toHaveBeenCalledWith(17)
+  })
+
+  it('does not persist WSL2 Bash while the main-owned Preview gate is closed', async () => {
+    const service = createService(undefined, {
+      wsl2PreviewStatus: () => ({ available: false, reason: 'build-disabled' }),
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        installMissingDependencies: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => ({
+          distro: 'Ubuntu-22.04',
+          user: 'scientist'
+        }))
+      }
+    })
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(service.useWsl2Bash()).rejects.toThrow(
+      'Notebook WSL2 Bash Preview is unavailable.'
+    )
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell'
+    })
+  })
 })
 
 describe('SettingsService: load diagnostics', () => {
@@ -462,17 +960,17 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
         'cli_auth_credentials_store = "file"',
-        '# Open Science: begin imported Codex route selection',
+        '# Open-Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
-        '# Open Science: end imported Codex route selection',
-        '# Open Science: begin imported Codex provider',
+        '# Open-Science: end imported Codex route selection',
+        '# Open-Science: begin imported Codex provider',
         '[model_providers."subscription-route"]',
         'name = "OpenAI"',
         'base_url = "http://127.0.0.1:1087/v1"',
         'wire_api = "responses"',
         'requires_openai_auth = true',
         'supports_websockets = false',
-        '# Open Science: end imported Codex provider',
+        '# Open-Science: end imported Codex provider',
         ''
       ].join('\n')
     )
@@ -620,7 +1118,7 @@ describe('SettingsService: providers', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')
-    ).resolves.not.toContain('Open Science:')
+    ).resolves.not.toContain('Open-Science:')
     await expect(readFile(join(userCodexDir, 'auth.json'), 'utf8')).resolves.toContain('global')
   })
 
@@ -915,7 +1413,7 @@ describe('SettingsService: providers', () => {
       ok: false,
       category: 'auth',
       message:
-        'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
+        'No existing Codex login was found. Run `codex login` or use the isolated Open-Science login.'
     })
     expect(codexAuth.getStatus).toHaveBeenCalledWith('shared')
   })
@@ -1168,7 +1666,7 @@ describe('SettingsService: providers', () => {
     expect(result).toEqual({
       ok: false,
       category: 'unknown',
-      message: 'No isolated Open Science Codex login is configured.'
+      message: 'No isolated Open-Science Codex login is configured.'
     })
     expect(codexAuth.cancelLogin).not.toHaveBeenCalled()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
@@ -1367,15 +1865,15 @@ describe('SettingsService: providers', () => {
     })
 
     const backend = await resolveActiveBackend(service, {
-      systemPromptAppends: ['Stable Open Science app guidance.']
+      systemPromptAppends: ['Stable Open-Science app guidance.']
     })
 
-    expect(backend.persistentSystemPrompt).toContain('Stable Open Science app guidance.')
+    expect(backend.persistentSystemPrompt).toContain('Stable Open-Science app guidance.')
     const appInstructions = await readFile(
       join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
       'utf8'
     )
-    expect(appInstructions).toContain('Stable Open Science app guidance.')
+    expect(appInstructions).toContain('Stable Open-Science app guidance.')
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'personal'))
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'imported'))
 
@@ -1593,35 +2091,6 @@ describe('SettingsService: validation', () => {
     expect(stored.lastValidatedAt).toBeUndefined()
     expect(stored.lastValidationFailure).toMatchObject({ category: 'auth' })
     expect(stored.lastValidationFailure?.at).toBeGreaterThan(0)
-  })
-
-  it('reports incompatible (no network probe) when the provider cannot drive the active framework', async () => {
-    const service = createService()
-    const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
-    vi.stubGlobal('fetch', fetchMock)
-
-    // Default framework is Claude Code (Anthropic /v1/messages only); an OpenAI-only gateway can't drive
-    // it, so testing must fail with the pairing reason rather than firing a misleading /v1/messages probe.
-    const created = (
-      await service.upsertProvider({
-        type: 'custom',
-        name: 'G',
-        baseUrl: 'https://g',
-        model: 'm',
-        key: 'k',
-        apiEndpoints: ['openai']
-      })
-    ).providers[0]
-
-    const result = await service.validateProvider({ providerId: created.id })
-
-    expect(result).toMatchObject({ ok: false, category: 'incompatible', applied: true })
-    expect(result.message).toContain('/v1/chat/completions')
-    expect(fetchMock).not.toHaveBeenCalled()
-
-    const stored = (await repository.getSettings()).providers.find((p) => p.id === created.id)
-    expect(stored?.lastValidatedAt).toBeUndefined()
-    expect(stored?.lastValidationFailure).toMatchObject({ category: 'incompatible' })
   })
 
   it('probes normally once the active framework can drive the provider', async () => {
@@ -1964,31 +2433,44 @@ describe('SettingsService: preflight & spawn config', () => {
       codebuddyReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
-      activeProviderReady: true
+      activeProviderReady: true,
+      runtimeReadiness: { status: 'ready' },
+      providerReadiness: { status: 'ready' }
     })
   })
 
-  it('closes the provider gate when the configured model leaves the catalog', async () => {
-    const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
-    const created = (
-      await service.upsertProvider({
-        type: 'official',
-        name: 'DeepSeek',
-        vendorId: 'deepseek',
-        key: 'k'
+  it.each([
+    { vendorId: 'anthropic', model: 'claude-opus-5', ready: false },
+    { vendorId: 'deepseek', model: 'deepseek-v4-flash', ready: true }
+  ] as const)(
+    'checks the provider gate after discovery changes for $vendorId',
+    async ({ vendorId, model, ready }) => {
+      const service = createService()
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      const created = (
+        await service.upsertProvider({
+          type: 'official',
+          name: vendorId,
+          vendorId,
+          key: 'k'
+        })
+      ).providers[0]
+      await service.setActiveProvider(created.id, model)
+      const stored = (await repository.getSettings()).providers[0]
+      await repository.upsertProvider({
+        ...stored,
+        fetchedModels: ['replacement-model'],
+        lastValidatedAt: 1
       })
-    ).providers[0]
-    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
-    const stored = (await repository.getSettings()).providers[0]
-    await repository.upsertProvider({
-      ...stored,
-      fetchedModels: ['replacement-model'],
-      lastValidatedAt: 1
-    })
 
-    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
-  })
+      await expect(service.getPreflight()).resolves.toMatchObject({
+        activeProviderReady: ready,
+        providerReadiness: ready
+          ? { status: 'ready' }
+          : { status: 'not_ready', reason: 'model-not-found' }
+      })
+    }
+  )
 
   it('closes the provider gate when the active shared Claude session is signed out', async () => {
     const claudeSharedAuth: ClaudeSharedAuthControllerPort = {
@@ -2242,6 +2724,79 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(preflight.opencodeReady).toBe(false)
   })
 
+  it('projects native ownership separately from the managed adapter without persisting the projection', async () => {
+    const service = createService()
+    const { managedCodexAdapterEntry, managedCodexBinary } = await import('./managed-codex')
+    const adapter = managedCodexAdapterEntry(storageRoot)
+    for (const [nativePath, expected] of [
+      [managedCodexBinary(storageRoot), true],
+      [join(storageRoot, 'external-codex'), false]
+    ] as const) {
+      await repository.setCodexInfo({
+        resolvedPath: adapter,
+        version: '1.6.2',
+        nativePath,
+        nativeVersion: '0.144.6'
+      })
+      const snapshot = await service.getSettingsView()
+      expect(snapshot.codexManaged).toBe(true)
+      expect(snapshot.codex.nativeManaged).toBe(expected)
+      expect((await repository.getSettings()).codex).not.toHaveProperty('nativeManaged')
+    }
+  })
+
+  it('returns structured Codex readiness without starting auth when the runtime is incomplete', async () => {
+    const adapterPath = join(storageRoot, 'bin', 'codex-acp')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
+    const authPath = join(authHome, 'auth.json')
+    const configPath = join(authHome, 'config.toml')
+    await mkdir(dirname(adapterPath), { recursive: true })
+    await mkdir(authHome, { recursive: true })
+    await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
+    const authContent = JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: {
+        id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+        access_token: 'app-owned',
+        refresh_token: 'refresh'
+      },
+      last_refresh: '2026-09-11T00:00:00Z'
+    })
+    await writeFile(authPath, authContent)
+    await writeFile(configPath, 'model = "account-default"\n')
+    const service = createService(undefined, {
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexAdapterPath: adapterPath
+    })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setAgentFramework('codex')
+    await repository.upsertProvider({
+      id: CODEX_ISOLATED_PROVIDER_ID,
+      type: 'codex-isolated',
+      name: 'codex-isolated',
+      apiEndpoints: ['responses'],
+      lastValidatedAt: 100
+    })
+    await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      runtimeReadiness: { status: 'not_ready' },
+      providerReadiness: { status: 'ready' }
+    })
+    expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
+    expect(await readFile(authPath, 'utf8')).toBe(authContent)
+    expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
+
+    await writeFile(authPath, '{}')
+    await expect(service.getPreflight()).resolves.toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(await readFile(authPath, 'utf8')).toBe('{}')
+    expect(await readFile(adapterPath, 'utf8')).toBe(MANAGED_CODEX_ADAPTER_FIXTURE)
+    expect(await readFile(configPath, 'utf8')).toBe('model = "account-default"\n')
+  })
+
   it('detects Codex and exposes readiness for its selected adapter', async () => {
     const adapterPath = '/data/codex-managed/adapter/dist/index.js'
     const nativePath = '/data/codex-managed/codex/vendor/target/bin/codex'
@@ -2260,6 +2815,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(snapshot.codex).toEqual({
       resolvedPath: adapterPath,
       version: '1.6.2',
+      nativeManaged: false,
       nativeVersion: '0.144.6'
     })
     expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
@@ -2402,7 +2958,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service, {
-      systemPromptAppends: ['Stable Open Science developer guidance.']
+      systemPromptAppends: ['Stable Open-Science developer guidance.']
     })
     const selection = await service.captureActiveAgentBackendSelection()
 
@@ -2418,7 +2974,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.CODEX_API_KEY).toBeUndefined()
     const developerInstructions = JSON.parse(backend.env.CODEX_CONFIG ?? '{}')
       .developer_instructions as string
-    expect(developerInstructions).toContain('Stable Open Science developer guidance.')
+    expect(developerInstructions).toContain('Stable Open-Science developer guidance.')
     expect(developerInstructions).toContain(
       'Load the matching `mcp-*` skill before the first `host.mcp` call'
     )
@@ -2643,7 +3199,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await service.setActiveProvider(provider.id)
 
     await expect(resolveActiveBackend(service)).rejects.toThrow(
-      'Open Science Codex ACP adapter not found. Install Codex in settings.'
+      'Open-Science Codex ACP adapter not found. Install Codex in settings.'
     )
   })
 
@@ -2681,8 +3237,19 @@ describe('SettingsService: preflight & spawn config', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: false
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexAuth
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
@@ -2699,8 +3266,14 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 100
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID, 'gpt-5.6-terra')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
 
-    expect(await service.getPreflight()).toMatchObject({ activeProviderReady: false })
+    expect(await service.getPreflight()).toMatchObject({
+      activeProviderReady: false,
+      providerReadiness: { status: 'not_ready', reason: 'credential_invalid' }
+    })
+    expect(codexAuth.getStatus).not.toHaveBeenCalled()
+    expect(existsSync(authHome)).toBe(false)
     const migratedProviders = (await repository.getSettings()).providers
 
     expect(migratedProviders).toEqual([
@@ -2717,8 +3290,19 @@ describe('SettingsService: preflight & spawn config', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
+    const codexAuth: CodexAuthControllerPort = {
+      getStatus: vi.fn().mockResolvedValue({
+        mode: 'isolated',
+        supported: true,
+        authenticated: true
+      }),
+      loginIsolated: vi.fn(),
+      cancelLogin: vi.fn(),
+      logoutIsolated: vi.fn()
+    }
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexAuth,
       resolveCodexProxyEnvironment: () =>
         Promise.resolve({
           HTTP_PROXY: 'http://proxy.example.test:3128',
@@ -2744,6 +3328,20 @@ describe('SettingsService: preflight & spawn config', () => {
       lastValidatedAt: 100
     })
     await service.setActiveProvider(CODEX_ISOLATED_PROVIDER_ID, 'gpt-5.6-terra')
+    const authHome = codexSubscriptionStorageDir(storageRoot)
+    await mkdir(authHome, { recursive: true })
+    await writeFile(
+      join(authHome, 'auth.json'),
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          id_token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.signature',
+          access_token: 'app-owned',
+          refresh_token: 'refresh'
+        },
+        last_refresh: '2026-09-11T00:00:00Z'
+      })
+    )
     const configPath = join(storageRoot, 'codex', 'config.toml')
     await mkdir(dirname(configPath), { recursive: true })
     await writeFile(
@@ -3473,12 +4071,14 @@ describe('SettingsService: official vendors', () => {
           'deepseek-v4-flash',
           'deepseek-v4-pro',
           'deepseek-v4-pro[1m]',
+          'deepseek-flash',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
           'deepseek-v4-flash': 'deepseek-v4-flash',
           'deepseek-v4-pro': 'deepseek-v4-pro',
           'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+          'deepseek-flash': 'deepseek-flash',
           'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
         }
       }
@@ -3491,12 +4091,14 @@ describe('SettingsService: official vendors', () => {
         'deepseek-v4-flash',
         'deepseek-v4-pro',
         'deepseek-v4-pro[1m]',
+        'deepseek-flash',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
         'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
+        'deepseek-flash': 'deepseek-flash',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
       }
     })
@@ -3522,7 +4124,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('refreshes models from the vendor and persists them over the bundled catalog', async () => {
+  it('refreshes DeepSeek models while retaining bundled compatibility names', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -3553,9 +4155,52 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // The fetched list now backs the provider view (and persists).
+    // Preserve the raw discovery result, but expose compatibility names in the effective catalog.
+    expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
+      'deepseek-v5',
+      'deepseek-v4-pro'
+    ])
     const view = (await service.getSettingsView()).providers[0]
-    expect(view.models).toEqual(['deepseek-v5', 'deepseek-v4-pro'])
+    expect(view.models).toEqual([
+      'deepseek-v5',
+      'deepseek-v4-pro',
+      'deepseek-v4-pro[1m]',
+      'deepseek-flash',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp'
+    ])
+  })
+
+  it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+    const selection = await service.captureActiveAgentBackendSelection()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }]
+          })
+        )
+      )
+    )
+    expect(await service.refreshProviderModels({ providerId: created.id })).toMatchObject({
+      ok: true
+    })
+    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
+    const backend = await service.resolveAgentBackend(selection)
+    expect(backend.env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
+    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
@@ -3591,6 +4236,60 @@ describe('SettingsService: official vendors', () => {
     expect(result.ok).toBe(false)
     expect(result.message).toMatch(/no model-list endpoint/i)
   })
+
+  it.each(['opencode', 'claude-code'] as const)(
+    'validates draft and saved OpenCode Go accounts under %s without losing routing headers',
+    async (framework) => {
+      const service = createService()
+      const sessions: string[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input, init) => {
+          const headers = new Headers(init?.headers)
+          const session = headers.get('x-opencode-session')
+          if (!session) {
+            return new Response(
+              JSON.stringify({
+                error: {
+                  message: 'Request is missing x-opencode-session and cannot be routed efficiently.'
+                }
+              }),
+              { status: 400 }
+            )
+          }
+          sessions.push(session)
+          expect(headers.get('user-agent')).toBe('open-science/provider-validation')
+          expect(headers.get('authorization')).toBe('Bearer synthetic-go-key')
+          return new Response('{}')
+        })
+      )
+      await service.setAgentFramework(framework)
+      const draft = {
+        type: 'official' as const,
+        vendorId: 'opencode-go' as const,
+        key: 'synthetic-go-key'
+      }
+      const draftResult = await service.validateProvider({ draft, model: 'kimi-k2.7-code' })
+      expect(draftResult).toMatchObject({ ok: true, category: 'ok' })
+      expect(Boolean(draftResult.frameworkIncompatible)).toBe(framework === 'claude-code')
+
+      const provider = (await service.upsertProvider(draft)).providers.find(
+        (entry) => entry.vendorId === 'opencode-go'
+      )!
+      const result = await service.validateProvider({
+        providerId: provider.id,
+        model: 'kimi-k2.7-code'
+      })
+      expect(result).toMatchObject({ ok: true, category: 'ok', applied: true })
+      const stored = (await repository.getSettings()).providers.find(
+        (entry) => entry.id === provider.id
+      )!
+      expect(stored.lastValidatedAt).toBeGreaterThan(0)
+      expect(stored.lastValidationFailure).toBeUndefined()
+      expect(sessions.length).toBeGreaterThanOrEqual(2)
+      expect(new Set(sessions).size).toBe(sessions.length)
+    }
+  )
 
   it('uses a basic Chat Completions probe outside Codex', async () => {
     const service = createService()
@@ -3759,12 +4458,14 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    let view = (
-      await service.setActiveProvider(created.id, 'deepseek-v4-flash-vision-exp')
-    ).providers.find((provider) => provider.id === created.id)
-    expect(view?.supportsImageInput).toBe(true)
+    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      const snapshot = await service.setActiveProvider(created.id, model)
+      expect(snapshot.activeModel).toBe(model)
+      const view = snapshot.providers.find((provider) => provider.id === created.id)
+      expect(view?.supportsImageInput).toBe(true)
+    }
 
-    view = (await service.setActiveProvider(created.id, 'deepseek-v4-flash')).providers.find(
+    const view = (await service.setActiveProvider(created.id, 'deepseek-v4-pro')).providers.find(
       (provider) => provider.id === created.id
     )
     expect(view?.supportsImageInput).toBe(false)
@@ -3849,7 +4550,9 @@ describe('SettingsService: onboarding', () => {
   it('marks onboarding complete and surfaces it in the snapshot', async () => {
     const service = createService()
 
+    initDataRoot(storageRoot)
     const snapshot = await service.markOnboardingComplete()
+    expect((await service.getStoredSettings()).dataRoot).toBe(storageRoot)
     expect(snapshot.onboardingCompletedAt).toBeTypeOf('number')
 
     // The persisted value is visible on a fresh read too.
@@ -3869,9 +4572,7 @@ describe('SettingsService: onboarding', () => {
   it('persists a new dataRoot with onboarding completion across a fresh read', async () => {
     const service = createService()
 
-    // The repository canonicalizes dataRoot to the host separator on read (for samePath comparisons),
-    // so build the fixture the same way — a bare POSIX literal comes back with backslashes on Windows
-    // and would fail the round-trip.
+    // Use a host-native absolute fixture; the repository preserves its saved spelling.
     const dataRoot = normalize('/mnt/new-data')
     await service.setDataRoot(dataRoot, { completeOnboarding: true })
 
@@ -3910,6 +4611,43 @@ describe('SettingsService: skills', () => {
       configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
+
+  it('prepares complete disabled bound Skill packages for an Attempt without changing Main settings', async () => {
+    const bundle = await seedBundle()
+    await mkdir(join(bundle, 'demo', 'references'), { recursive: true })
+    await writeFile(join(bundle, 'demo', 'references', 'workflow.md'), 'reference body')
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      skillRegistry: new SkillRegistry(bundle)
+    })
+    await service.setSkillEnabled({ id: 'demo', enabled: false })
+    await service.createSkill({ name: 'unbound', description: 'Unbound skill.', body: '# Unbound' })
+    const unbound = (await service.listSkills()).find((entry) => entry.name === 'unbound')!
+    await service.setSkillEnabled({ id: unbound.id, enabled: false })
+    const configRoot = join(storageRoot, 'delegated-attempt', '.claude')
+    const prepared = await service.prepareDelegatedSkills(configRoot, ['demo'])
+    try {
+      expect(prepared.skillIds).toEqual(['demo'])
+      expect(prepared.catalog).toContainEqual({
+        name: 'demo',
+        description: 'A demo skill.',
+        path: join(configRoot, 'skills', 'demo', 'SKILL.md')
+      })
+      await expect(
+        readFile(join(configRoot, 'skills', 'demo', 'references', 'workflow.md'), 'utf8')
+      ).resolves.toBe('reference body')
+      expect(await readdir(join(configRoot, 'skills'))).not.toContain('unbound')
+      expect(await service.skillsNeedingForceLoad(['demo'])).toEqual(['demo'])
+    } finally {
+      await prepared.dispose()
+    }
+    expect(await readdir(join(configRoot, 'skills'))).toEqual([])
+    await expect(service.prepareDelegatedSkills(configRoot, ['missing-skill'])).rejects.toThrow(
+      'could not be prepared'
+    )
+    expect(await readdir(join(configRoot, 'skills'))).toEqual([])
+  })
 
   it('lists skills with enabled reflecting disabledSkillIds and returns detail body', async () => {
     const service = await createSkillService()
@@ -4059,7 +4797,7 @@ describe('SettingsService: skills', () => {
     await expect(service.deleteSkill({ id: 'personal-my-skill' })).rejects.toMatchObject({
       code: 'protected-skill'
     })
-    expect(guard).toHaveBeenCalledWith('personal-my-skill')
+    expect(guard).toHaveBeenCalledWith({ id: 'personal-my-skill' })
     await expect(service.getSkillDetail('personal-my-skill')).resolves.toBeDefined()
   })
 
@@ -4718,6 +5456,18 @@ describe('installClaude (app-managed source)', () => {
 
     expect(service.hasActiveInstall()).toBe(false)
     expect(service.getActiveInstallId()).toBeUndefined()
+  })
+
+  it('reports installations owned by another Settings capability through the shared coordinator', () => {
+    const installCoordinator = new SettingsInstallCoordinator()
+    const service = createService(undefined, { installCoordinator })
+    const lease = installCoordinator.tryAcquire('wsl-platform:install1')
+
+    expect(service.hasActiveInstall()).toBe(true)
+    expect(service.getActiveInstallId()).toBe('wsl-platform:install1')
+
+    lease?.release()
+    expect(service.hasActiveInstall()).toBe(false)
   })
 
   it('aborts and drains an active runtime install during dispose', async () => {
@@ -6393,8 +7143,10 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
       repository,
       configRoot: storageRoot,
       userClaudeDir,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      userSkills: { previewAgentHomeSkill } as any
+      userSkills: {
+        previewAgentHomeSkill,
+        listAgentHomeSkills: vi.fn().mockResolvedValue([])
+      } as unknown as UserSkillRepositoryType
     })
     await repository.setAgentFramework('claude-code')
 
@@ -8002,9 +8754,9 @@ describe('SettingsService: claude-shared login orchestration', () => {
     ).resolves.toMatchObject({
       ok: false,
       category: 'auth',
-      message: expect.stringContaining('disconnected from Open Science')
+      message: expect.stringContaining('disconnected from Open-Science')
     })
-    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open Science/)
+    await expect(resolveActiveBackend(service)).rejects.toThrow(/disconnected from Open-Science/)
 
     await expect(service.loginClaudeShared()).resolves.toMatchObject({ ok: true, applied: true })
     await expect(resolveActiveBackend(service)).resolves.toMatchObject({

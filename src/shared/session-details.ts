@@ -1,5 +1,6 @@
 import {
   SESSION_DETAILS_DESCRIPTION_MAX_LENGTH,
+  SESSION_DETAILS_TITLE_MAX_LENGTH,
   isHiddenControlMessage,
   isHumanUserMessage,
   type MessagePart,
@@ -86,13 +87,29 @@ const formatSessionDetailsGenerationSource = (
   return description.slice(0, SESSION_DETAILS_DESCRIPTION_MAX_LENGTH).trimEnd()
 }
 
+const truncateTitle = (value: string, limit: number): string => {
+  if (value.length <= limit) return value
+  let end = 0
+  for (const { segment, index } of new Intl.Segmenter(undefined, {
+    granularity: 'grapheme'
+  }).segment(value)) {
+    if (index + segment.length > limit - 3) break
+    end = index + segment.length
+  }
+  return `${value.slice(0, end).trimEnd()}...`
+}
+
 const formatSessionDetailsTitle = (
   message: Pick<PersistedChatMessage, 'content' | 'uploads'>
 ): string => {
   const content = collapseTitleWhitespace(message.content)
   if (content) return content.length > 48 ? `${content.slice(0, 48)}...` : content
   const uploads = message.uploads ?? []
-  if (uploads.length === 1) return `Attached ${uploadDisplayName(uploads[0])}`
+  if (uploads.length === 1)
+    return truncateTitle(
+      `Attached ${uploadDisplayName(uploads[0])}`,
+      SESSION_DETAILS_TITLE_MAX_LENGTH
+    )
   if (uploads.length > 1) return `Attached ${uploads.length} files`
   return ''
 }

@@ -1,4 +1,5 @@
 import type { UpdateStrategy } from './strategy'
+import { MAC_INSTALLATION_RESUME_UPDATE_ARG } from '../../shared/mac-installation'
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000
 
@@ -8,7 +9,12 @@ export const startUpdateScheduler = (
   strategy: UpdateStrategy,
   intervalMs: number = SIX_HOURS_MS
 ): (() => void) => {
-  void strategy.check()
+  void strategy.check().then((status) => {
+    if (process.argv.includes(MAC_INSTALLATION_RESUME_UPDATE_ARG) && status.state === 'available') {
+      return strategy.download()
+    }
+    return undefined
+  })
   const timer = setInterval(() => void strategy.check(), intervalMs)
   return () => clearInterval(timer)
 }

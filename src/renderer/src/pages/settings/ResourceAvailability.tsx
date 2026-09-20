@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SettingsToggle } from './SettingsLayout'
 import { SkillUsageAgents } from './SkillUsageAgents'
+import { RequiredSkillToggle } from './RequiredSkillToggle'
 import {
   resourceScope,
   type ResourceScope,
@@ -20,6 +21,7 @@ type ResourceAvailabilityProps = {
   mainToggleLabel: string
   usages: readonly SpecialistUsage[]
   onToggleMain: () => void
+  mainRequired?: boolean
   showAgentPopover?: boolean
   onOpenSpecialist?: (usage: SpecialistUsage) => void
 }
@@ -29,6 +31,7 @@ const ResourceAvailability = ({
   mainToggleLabel,
   usages,
   onToggleMain,
+  mainRequired = false,
   showAgentPopover = false,
   onOpenSpecialist
 }: ResourceAvailabilityProps): React.JSX.Element => {
@@ -47,11 +50,15 @@ const ResourceAvailability = ({
           <p className="text-sm text-foreground">{t('Main Agent')}</p>
           <p className="text-xs text-muted-foreground">{t(SCOPE_LABEL_KEYS[scope])}</p>
         </div>
-        <SettingsToggle
-          enabled={mainEnabled}
-          aria-label={mainToggleLabel}
-          onToggle={onToggleMain}
-        />
+        {mainRequired ? (
+          <RequiredSkillToggle label={mainToggleLabel} />
+        ) : (
+          <SettingsToggle
+            enabled={mainEnabled}
+            aria-label={mainToggleLabel}
+            onToggle={onToggleMain}
+          />
+        )}
       </div>
 
       {showAgentPopover && (mainEnabled || usages.length > 0) ? (

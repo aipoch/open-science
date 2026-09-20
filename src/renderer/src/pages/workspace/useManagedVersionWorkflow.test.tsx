@@ -574,3 +574,51 @@ it.each(['success', 'error', 'reject'] as const)(
     expect(workflow.diffResult).toEqual(result)
   }
 )
+
+it.each([
+  'DIFF_INPUT_LIMIT_EXCEEDED',
+  'DIFF_OUTPUT_LIMIT_EXCEEDED',
+  'DIFF_TIMEOUT',
+  'DIFF_CONCURRENCY_LIMIT',
+  'STORAGE_UNAVAILABLE'
+] as const)('retains the actionable diff failure %s', async (code) => {
+  inspect.mockResolvedValue({ ok: true, value: snapshot('upload', 2) })
+  window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+    ok: false,
+    error: { code, message: 'Internal diagnostic must not become display copy' }
+  })
+  window.api.managedFileVersions.cancelDiff = vi.fn().mockResolvedValue({
+    ok: true,
+    value: { cancelled: true }
+  })
+  await render(itemFor('upload'))
+  await act(async () => workflow.startDiff())
+  expect(window.api.managedFileVersions.diffText).toHaveBeenCalledTimes(1)
+  expect(workflow.diffResult).toBeUndefined()
+  expect(workflow.diffError).toMatchObject({ code })
+})
+
+it('retries a failed comparison through a fresh inspection and clears its error', async () => {
+  inspect.mockResolvedValue({ ok: true, value: snapshot('upload', 2) })
+  const value = { baseVersionId: 'v1', selectedVersionId: 'v2', lines: [] }
+  window.api.managedFileVersions.diffText = vi
+    .fn()
+    .mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'DIFF_CONCURRENCY_LIMIT', message: 'busy' }
+    })
+    .mockResolvedValueOnce({ ok: true, value })
+  window.api.managedFileVersions.cancelDiff = vi
+    .fn()
+    .mockResolvedValue({ ok: true, value: { cancelled: true } })
+  await render(itemFor('upload'))
+  await act(async () => workflow.startDiff())
+  expect(workflow.diffError).toMatchObject({ code: 'DIFF_CONCURRENCY_LIMIT' })
+  await act(async () => workflow.refreshInspect())
+  expect(inspect).toHaveBeenCalledTimes(2)
+  expect(workflow.diffError).toBeUndefined()
+  expect(workflow.diffResult).toEqual(value)
+  const calls = vi.mocked(window.api.managedFileVersions.diffText).mock.calls
+  expect(calls).toHaveLength(2)
+  expect(calls[0][0].requestId).not.toBe(calls[1][0].requestId)
+})

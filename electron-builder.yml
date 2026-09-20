@@ -1,5 +1,5 @@
 appId: com.aipoch.open-science
-productName: Open Science
+productName: Open-Science
 copyright: Copyright © 2026 AIPOCH
 directories:
   buildResources: build
@@ -15,6 +15,7 @@ files:
   # the app to multiple GB AND leaking local agent state into the shipped bundle.
   - '!.claude{,/**/*}'
   - '!.codex{,/**/*}'
+  - '!**/{.worktree,.worktrees,.codegraph,.agents}{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
@@ -38,6 +39,7 @@ files:
   # vendored source/native trees out of app.asar; the executable resources are copied explicitly per
   # platform below so path resolution and code signing remain deterministic.
   - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
+  - '!packages/notebook-network-sandbox{,/**/*}'
   # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
   # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
   # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps
@@ -49,8 +51,14 @@ files:
   - '!node_modules/pdfjs-dist/**/*.map'
 asarUnpack:
   - resources/**
+  - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
+  - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
   # sharp loads its platform N-API binding and libvips shared libraries by physical path.
+  - node_modules/pdfjs-dist/**
+  - node_modules/@napi-rs/**
+  - node_modules/detect-libc/**
+  - node_modules/semver/**
   - node_modules/sharp/**
   - node_modules/@img/**
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
@@ -64,6 +72,9 @@ asarUnpack:
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
+  # Keep the project license readable outside app.asar on every platform.
+  - from: LICENSE
+    to: LICENSE.txt
   - from: node_modules/.prisma
     to: node_modules/.prisma
   - from: node_modules/@prisma/client
@@ -84,6 +95,14 @@ extraResources:
 # Windows: an unsigned NSIS installer. SmartScreen shows a bypassable "unknown publisher" prompt.
 # The afterPack ad-hoc-sign hook is a no-op off macOS, so it is safe on this target.
 win:
+  # Windows ProgID is a persisted association identity; other platforms use a display name.
+  fileAssociations:
+    - ext: science
+      name: Open Science Session package
+      description: Open-Science Session package
+      mimeType: application/x-open-science-session
+      role: Viewer
+      rank: Default
   executableName: open-science
   icon: build/icon.ico
   artifactName: aipoch-${name}-${version}-win-${arch}.${ext}
@@ -106,6 +125,8 @@ win:
       to: windows-notebook-sandbox-uninstall.ps1
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
+    - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json
+      to: notebook-network-sandbox/wsl2/manifest.json
 nsis:
   artifactName: aipoch-${name}-${version}-win-${arch}-setup.${ext}
   shortcutName: ${productName}
@@ -117,8 +138,17 @@ nsis:
   perMachine: false
   allowElevation: false
   allowToChangeInstallationDirectory: true
-  include: build/installer.nsh
+  license: LICENSE
+  include: build/installer-license.nsh
 mac:
+  # Windows ProgID is a persisted association identity; other platforms use a display name.
+  fileAssociations:
+    - ext: science
+      name: Open-Science Session package
+      description: Open-Science Session package
+      mimeType: application/x-open-science-session
+      role: Viewer
+      rank: Default
   # Compile the Icon Composer package into the app bundle (Assets.car + an ICNS fallback for
   # pre-Tahoe macOS). This is intentionally separate from dmg.icon below: the mounted installer
   # volume still uses the legacy, explicitly-designed ICNS artwork.
@@ -130,8 +160,9 @@ mac:
   minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    CFBundleName: Open Science
-    CFBundleDisplayName: Open Science
+    # Electron locates its Helper bundles using this internal name. Keep it aligned with productName.
+    CFBundleName: Open-Science
+    CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
@@ -144,6 +175,23 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
+  title: Open-Science
+  background: build/dmg-background.png
+  iconSize: 88
+  iconTextSize: 12
+  contents:
+    - x: 130
+      y: 286
+      name: Open-Science.app
+    - x: 530
+      y: 286
+      type: link
+      path: /Applications
+    - x: 530
+      y: 75
+      type: file
+      path: LICENSE
+      name: LICENSE.txt
   # The DMG volume icon does not consume the app's Icon Composer asset catalog. Keep the existing
   # ICNS dedicated to the mounted disk image instead of electron-builder's generated app fallback.
   icon: build/icon.icns
@@ -152,6 +200,14 @@ dmg:
   sign: true
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
 linux:
+  # Windows ProgID is a persisted association identity; other platforms use a display name.
+  fileAssociations:
+    - ext: science
+      name: Open-Science Session package
+      description: Open-Science Session package
+      mimeType: application/x-open-science-session
+      role: Viewer
+      rank: Default
   # Keep the installed launcher filename aligned with Electron's Linux app_id/WM_CLASS so desktop
   # environments associate urgency requests with the existing dock/taskbar entry.
   syncDesktopName: true
@@ -167,9 +223,16 @@ linux:
     # looks for it there via process.resourcesPath).
     - from: resources/bin/linux/${arch}/micromamba
       to: micromamba
+    # Debian registers this CLI entry; AppImage retains its explicit user launcher workflow.
+    - from: build/deb-cli-launcher
+      to: open-science-cli
 appImage:
   artifactName: aipoch-${name}-${version}-linux-${arch}.${ext}
 deb:
+  fpm:
+    - build/deb-copyright=/usr/share/doc/open-science/copyright
+  afterInstall: build/deb-after-install.tpl
+  afterRemove: build/deb-after-remove.tpl
   artifactName: aipoch-${name}_${version}_${arch}.${ext}
   depends:
     - libgtk-3-0
@@ -184,13 +247,9 @@ deb:
     - bubblewrap
 npmRebuild: false
 # electron-updater feed. Win/Linux/macOS auto-update reads app-update.yml (generated from this block)
-# and fetches its feed from <url>. Win/Linux use the default `latest` channel (latest.yml /
-# latest-linux.yml). macOS builds override the channel to the arch at build time (see build.yml), so
-# each arch polls its own `${arch}-mac.yml` — arm64 and x64 build on separate runners and would
-# otherwise collide on one latest-mac.yml. Mac in-place update needs a Developer ID signature (now
-# configured) and the feed is regenerated post-staple in notarize-mac.yml. The GitHub Release remains
-# the human-facing download source, populated by release.yml — electron-builder runs with --publish
-# never, so this block only shapes app-update.yml + the feed files, it does not upload anything.
+# and fetches its feed from <url>. Each installed app uses the default latest channel. macOS
+# builds preserve uniquely named per-arch feed artifacts; release.yml merges them into latest-mac.yml
+# after optional notarization. --publish never means this configuration does not upload anything.
 publish:
   provider: generic
   url: https://statics.aipoch.com/open-science/app/stable

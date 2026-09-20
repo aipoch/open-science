@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { EnvironmentCheckId, EnvironmentCheckResult } from '../../../../shared/settings'
 import { EnvironmentCheckRow, PendingCheckRow } from '@/components/environment-check-row'
+import { ErrorNotice } from '@/components/error-notice'
 import { localizeHostEnvironmentCheck } from './environment-check-presentation'
 
 type EnvironmentSetupCardProps = {
@@ -56,15 +57,12 @@ const EnvironmentSetupCard = ({
       ) : null}
 
       {error ? (
-        <div
-          className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3"
+        <ErrorNotice
           role="alert"
-        >
-          <p className="text-xs font-semibold text-destructive">
-            {t('Setup could not be completed')}
-          </p>
-          <p className="mt-1 break-words text-xs text-destructive/90">{error}</p>
-        </div>
+          tone="amber"
+          title={t('Setup could not be completed')}
+          description={error}
+        />
       ) : null}
     </div>
   )

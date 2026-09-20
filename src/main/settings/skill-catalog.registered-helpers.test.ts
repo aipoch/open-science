@@ -226,6 +226,54 @@ describe('SkillCatalogModule registered helper projection', () => {
     ).rejects.toThrow('not authorized')
   })
 
+  it('ignores stale Main disable state for required helpers while preserving Specialist scope', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'required-helper-scope-'))
+    roots.push(storageRoot)
+    const customize = {
+      ...(await skill('featured', 'customize')),
+      activationPolicy: 'always-on' as const
+    }
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['customize'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [customize] } as unknown as SkillRegistry,
+      userSkills: { list: async () => [] } as unknown as UserSkillRepository
+    })
+    const registry = catalog.registeredHelperCatalog()
+
+    await expect(registry.resolve('customize-helper')).resolves.toBeDefined()
+    await expect(
+      registry.resolve('customize-helper', {
+        sessionId: 'specialist-session',
+        allowedSkillIds: []
+      })
+    ).rejects.toThrow('not authorized')
+  })
+
+  it('keeps an injected helper authorization decision authoritative', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'required-helper-authorization-'))
+    roots.push(storageRoot)
+    const customize = {
+      ...(await skill('featured', 'customize')),
+      activationPolicy: 'always-on' as const
+    }
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [customize] } as unknown as SkillRegistry,
+      userSkills: { list: async () => [] } as unknown as UserSkillRepository,
+      authorizeRegisteredHelper: async () => false
+    })
+
+    await expect(catalog.registeredHelperCatalog().resolve('customize-helper')).rejects.toThrow(
+      'not authorized'
+    )
+  })
+
   it('refreshes direct helper edits for new epochs while an active epoch stays pinned', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'helper-direct-refresh-'))
     roots.push(storageRoot)

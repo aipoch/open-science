@@ -622,15 +622,27 @@ describe('ComposerModelPicker', () => {
     expect(trigger?.textContent).toContain('my-model')
   })
 
-  it('shows an actionable warning when the Session configuration is unavailable', () => {
+  it('lets a missing-provider Session explicitly select an available provider and model', async () => {
     useSettingsStore.setState({
       providers: [provider({ id: 'active', name: 'Gateway', model: 'model', models: [] })],
       activeProviderId: 'active',
       activeModel: 'model'
     })
-    render(true)
+    render(true, false, { providerId: 'removed', model: 'old-model', reasoningEffort: 'default' })
 
-    expect(container.querySelector('[aria-label="Session model unavailable"]')).not.toBeNull()
+    const trigger = container.querySelector('[aria-label="Session model unavailable"]')
+    expect(trigger).not.toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    await openMenu(trigger!)
+    await openSubmenu(modelRowTrigger()!)
+    const replacement = radioItems().find((item) => item.textContent === 'model')
+    expect(replacement).toBeDefined()
+    act(() => replacement!.click())
+    expect(onChange).toHaveBeenCalledWith({
+      providerId: 'active',
+      model: 'model',
+      reasoningEffort: 'default'
+    })
   })
 
   it('suffixes the trigger with the effort label when a non-default effort is set and supported', () => {

@@ -19,7 +19,7 @@ type DestinationPolicyOptions = Readonly<{
 
 type DestinationVerdict =
   | Readonly<{ kind: 'allow'; address: string }>
-  | Readonly<{ kind: 'ask'; host: string; address: string }>
+  | Readonly<{ kind: 'ask'; source: 'explicit' | 'unknown'; host: string; address: string }>
   | Readonly<{ kind: 'deny'; reason: string; configurable: boolean }>
 
 const parseRule = (text: string): Rule => {
@@ -121,49 +121,56 @@ const ipv6In = (address: bigint, base: bigint, bits: number): boolean => {
   return address >> shift === base >> shift
 }
 
+// Conservative destination classification, reviewed against IANA's special-purpose
+// registries (2025-10-09 revisions). Protocol-assignment blocks remain excluded,
+// including their globally reachable exceptions: they are not ordinary web hosts.
+// https://www.iana.org/assignments/iana-ipv4-special-registry/
+// https://www.iana.org/assignments/iana-ipv6-special-registry/
+const NON_PUBLIC_IPV4: readonly (readonly [string, number])[] = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.88.99.0', 24], // Deprecated 6to4 / non-public 6a44 relay
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4]
+]
+
+// Only global unicast 2000::/3 is eligible below. This excludes mapped,
+// compatible and NAT64 translation forms, discard/dummy prefixes, SRv6,
+// unique-local, link/site-local, multicast and currently unallocated space.
+const SPECIAL_GLOBAL_IPV6 = (
+  [
+    ['2001::', 23], // IETF assignments, including Teredo, ORCHID and benchmarking
+    ['2001:db8::', 32],
+    ['2002::', 16], // 6to4 embeds an IPv4 destination
+    ['3fff::', 20]
+  ] as const
+).map(([base, bits]) => [parseIpv6(base)!, bits] as const)
+const GLOBAL_UNICAST_IPV6 = parseIpv6('2000::')!
+
 const isInternetAddress = (address: string): boolean => {
+  if (address.includes('%')) return false
   const family = isIP(address)
   if (family === 4) {
     const value = ipv4Number(address)
-    const reserved: readonly [string, number][] = [
-      ['0.0.0.0', 8],
-      ['10.0.0.0', 8],
-      ['100.64.0.0', 10],
-      ['127.0.0.0', 8],
-      ['169.254.0.0', 16],
-      ['172.16.0.0', 12],
-      ['192.0.0.0', 24],
-      ['192.0.2.0', 24],
-      ['192.168.0.0', 16],
-      ['198.18.0.0', 15],
-      ['198.51.100.0', 24],
-      ['203.0.113.0', 24],
-      ['224.0.0.0', 4],
-      ['240.0.0.0', 4]
-    ]
-    return !reserved.some(([base, bits]) => ipv4In(value, base, bits))
+    return !NON_PUBLIC_IPV4.some(([base, bits]) => ipv4In(value, base, bits))
   }
   if (family !== 6) return false
   const value = parseIpv6(address)
-  if (value === undefined) return false
-  const blocked: readonly [string, number][] = [
-    ['::', 128],
-    ['::1', 128],
-    ['::ffff:0:0', 96],
-    ['64:ff9b::', 96],
-    ['64:ff9b:1::', 48],
-    ['100::', 64],
-    ['2001:db8::', 32],
-    ['2001:10::', 28],
-    ['fc00::', 7],
-    ['fec0::', 10],
-    ['fe80::', 10],
-    ['ff00::', 8]
-  ]
-  return !blocked.some(([base, bits]) => {
-    const parsed = parseIpv6(base)
-    return parsed !== undefined && ipv6In(value, parsed, bits)
-  })
+  return (
+    value !== undefined &&
+    ipv6In(value, GLOBAL_UNICAST_IPV6, 3) &&
+    !SPECIAL_GLOBAL_IPV6.some(([base, bits]) => ipv6In(value, base, bits))
+  )
 }
 
 class DestinationPolicy {
@@ -217,7 +224,7 @@ class DestinationPolicy {
     ) {
       return { kind: 'allow', address }
     }
-    return { kind: 'ask', host, address }
+    return { kind: 'ask', source: needsApproval ? 'explicit' : 'unknown', host, address }
   }
 }
 

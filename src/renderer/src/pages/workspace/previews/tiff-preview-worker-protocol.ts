@@ -11,6 +11,6 @@ type TiffDecodeWorkerRequest = {
 
 type TiffDecodeWorkerResponse =
   | { type: 'decoded'; requestId: number; page: DecodedTiffPage }
-  | { type: 'error'; requestId: number; message: string }
+  | { type: 'error'; requestId: number; message: string; pageCount?: number }
 
 export type { TiffDecodeWorkerRequest, TiffDecodeWorkerResponse }

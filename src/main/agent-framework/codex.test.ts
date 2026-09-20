@@ -1,11 +1,11 @@
 import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { once } from 'node:events'
+import { once, EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CODEX_BRIDGE_MODEL,
@@ -19,9 +19,49 @@ import { terminateProcessTree } from '../process-tree'
 import { CODEX_VERSION } from '../settings/managed-codex'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 
-const fakeChild = {} as ChildProcessWithoutNullStreams
+const fakeChild = new EventEmitter() as ChildProcessWithoutNullStreams
+afterEach(async () => {
+  await terminateProcessTree(fakeChild)
+})
 
 describe('codexFramework', () => {
+  it('offers the scoped Skill loader and recovery guidance without enabling shell', () => {
+    const framework = createCodexFramework()
+    const sessionOptions = {
+      openScienceSkillRuntime: {
+        command: process.execPath,
+        entryPath: '/app/main.js',
+        root: '/codex',
+        skillsDirectory: '/codex/skills'
+      }
+    }
+    const setup = framework.buildSessionSetup({
+      systemPromptAppends: [],
+      skillRuntimeScope: ['mcp-genomes'],
+      sessionOptions
+    })
+    expect(setup.mcpServers).toContainEqual(
+      expect.objectContaining({
+        name: 'skills',
+        env: expect.arrayContaining([
+          { name: 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES', value: '["mcp-genomes"]' },
+          { name: 'OPEN_SCIENCE_SKILL_RUNTIME_DIRECTORY', value: '/codex/skills' }
+        ])
+      })
+    )
+    expect(setup.promptPrefix).toContain('mcp__skills__load_skill')
+    expect(setup.promptPrefix).toContain('already loaded')
+    expect(setup.promptPrefix).toContain('Do not')
+    for (const skillRuntimeScope of [undefined, []] as const) {
+      expect(
+        framework.buildSessionSetup({
+          systemPromptAppends: [],
+          sessionOptions,
+          ...(skillRuntimeScope ? { skillRuntimeScope: [...skillRuntimeScope] } : {})
+        }).mcpServers
+      ).toBeUndefined()
+    }
+  })
   it.runIf(process.platform !== 'win32')(
     'reaps a descendant that leaves the owned ACP process group while its leader is alive',
     async () => {
@@ -357,10 +397,14 @@ describe('codexFramework', () => {
     const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
 
     expect(codexConfigs.map(({ features }) => features)).toEqual(
-      configurations.map(() => ({
+      configurations.map((_configuration, index) => ({
         memories: false,
         multi_agent: false,
         multi_agent_v2: false,
+        code_mode: {
+          direct_only_tool_namespaces:
+            index === 2 ? ['mcp__skills', 'mcp__open_science_plan'] : ['mcp__skills']
+        },
         shell_tool: false
       }))
     )
@@ -432,33 +476,36 @@ describe('codexFramework', () => {
     })
   })
 
-  it('keeps Codex bundled model metadata for a trusted official OpenAI model', () => {
-    const framework = createCodexFramework()
-    const config = framework.prepareModelConfig(
-      {
-        type: 'official',
-        vendorId: 'openai',
-        apiEndpoints: ['responses'],
-        baseUrl: 'https://gateway.example/v1',
-        model: 'gpt-5.4',
-        key: 'sk-plaintext-secret'
-      },
-      {
-        storageRoot: '/data',
-        executablePath: '/runtime/codex-acp',
-        nativeVersion: CODEX_VERSION
-      }
-    )
+  it.each(['gpt-5.4', 'gpt-6-astra'])(
+    'keeps bundled metadata for trusted official model %s',
+    (model) => {
+      const framework = createCodexFramework()
+      const config = framework.prepareModelConfig(
+        {
+          type: 'official',
+          vendorId: 'openai',
+          apiEndpoints: ['responses'],
+          baseUrl: 'https://gateway.example/v1',
+          model,
+          key: 'sk-plaintext-secret'
+        },
+        {
+          storageRoot: '/data',
+          executablePath: '/runtime/codex-acp',
+          nativeVersion: CODEX_VERSION
+        }
+      )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
-    expect(config.configFiles).toEqual([
-      {
-        path: join('/data', 'codex', 'config.toml'),
-        content: 'cli_auth_credentials_store = "ephemeral"\n',
-        mode: 0o600
-      }
-    ])
-  })
+      expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
+      expect(config.configFiles).toEqual([
+        {
+          path: join('/data', 'codex', 'config.toml'),
+          content: 'cli_auth_credentials_store = "ephemeral"\n',
+          mode: 0o600
+        }
+      ])
+    }
+  )
 
   it('keeps the native catalog when an unbundled official model is only a sibling option', () => {
     const framework = createCodexFramework()
@@ -498,7 +545,7 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        nativeVersion: CODEX_VERSION,
+        nativeVersion: '0.144.6',
         reasoningEffort: 'max',
         reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
       }
@@ -632,6 +679,11 @@ describe('codexFramework', () => {
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: CODEX_BRIDGE_MODEL,
       developer_instructions: 'Stable bridge guidance.',
+      features: {
+        code_mode: {
+          direct_only_tool_namespaces: ['mcp__skills', 'mcp__open_science_plan']
+        }
+      },
       model_context_window: 128_000,
       model_auto_compact_token_limit: 121_600,
       model_provider: 'open-science',
@@ -722,7 +774,7 @@ describe('codexFramework', () => {
           visibility: 'list',
           supported_in_api: true,
           base_instructions: expect.stringContaining(
-            'inside Open Science through the Agent Client Protocol'
+            'inside Open-Science through the Agent Client Protocol'
           ),
           include_skills_usage_instructions: true,
           default_reasoning_level: 'none',
@@ -893,6 +945,7 @@ describe('codexFramework', () => {
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
           memories: { generate_memories: false, use_memories: false }
@@ -917,6 +970,7 @@ describe('codexFramework', () => {
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
           memories: { generate_memories: false, use_memories: false }
@@ -1062,7 +1116,7 @@ describe('codexFramework', () => {
     })
   })
 
-  it('delivers Open Science session guidance as persistent developer instructions', () => {
+  it('delivers Open-Science session guidance as persistent developer instructions', () => {
     const framework = createCodexFramework()
 
     const config = framework.prepareModelConfig(
@@ -1166,7 +1220,7 @@ describe('codexFramework', () => {
   it('runs an app-managed JavaScript adapter with Electron as Node', () => {
     const spawnProcess = vi.fn().mockReturnValue(fakeChild)
     const framework = createCodexFramework({
-      execPath: '/Applications/Open Science/Electron',
+      execPath: '/Applications/Open-Science/Electron',
       platform: 'darwin',
       spawnProcess
     })
@@ -1179,7 +1233,7 @@ describe('codexFramework', () => {
       })
     ).toBe(fakeChild)
     expect(spawnProcess).toHaveBeenCalledWith(
-      '/Applications/Open Science/Electron',
+      '/Applications/Open-Science/Electron',
       ['/data/codex-acp/dist/index.js', '--flag'],
       expect.objectContaining({
         env: expect.objectContaining({
@@ -1347,4 +1401,33 @@ describe('buildCodexConfig reasoning effort', () => {
 
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '').model_reasoning_effort).toBe('max')
   })
+})
+
+it('prevents physical launch when delegated ownership admission fails', () => {
+  const ordinarySpawn = vi.fn(() => ({}) as ChildProcessWithoutNullStreams)
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const framework = createCodexFramework({
+    platform: 'win32',
+    sourceEnv: { PATH: 'C:\\bin' },
+    spawnProcess: ordinarySpawn
+  })
+  const input = {
+    executablePath: 'C:\\runtime\\codex.exe',
+    args: ['--trace'],
+    env: { OWNED: 'yes' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => framework.spawn(input)).toThrow('ownership receipt write failed')
+  expect(ordinarySpawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    input.executablePath,
+    ['--trace'],
+    expect.objectContaining({
+      env: expect.objectContaining({ OWNED: 'yes' }),
+      stdio: 'pipe',
+      windowsHide: true
+    })
+  )
 })

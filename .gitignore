@@ -115,3 +115,6 @@ resources/default-envs/
 # Python bytecode cache generated when the notebook kernel loop scripts are imported/run locally.
 __pycache__/
 *.pyc
+
+# Playwright shard reports (merged by CI).
+blob-report/

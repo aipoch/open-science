@@ -13,7 +13,13 @@ import {
 import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
-import { withTrustedMcpToolIdentity } from './permission-policy'
+import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
+import { claudeCodeFramework } from '../agent-framework'
+import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
+import {
+  AcpSessionCapabilityOwner,
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+} from './session-capability-owner'
 
 let storageRoot: string | undefined
 let client: PrismaClient | undefined
@@ -23,6 +29,145 @@ afterEach(async () => {
   client = undefined
   if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   storageRoot = undefined
+})
+
+it('offers conversation approval for the Claude Code configured Skill loader', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'open-science-skill-permission-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  await client.project.create({ data: { id: 'project-skill', name: 'Skill project' } })
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  const owner = new AcpSessionCapabilityOwner({})
+  const provision = await owner.provision({
+    stableAppSessionId: 'session-skill',
+    framework: claudeCodeFramework,
+    nativeMcpEnabled: true,
+    bridgeMcpAliasesEnabled: false,
+    policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+    sessionCwd: storageRoot,
+    projectId: 'project-skill'
+  })
+  const setup = claudeCodeFramework.buildSessionSetup({
+    systemPromptAppends: [],
+    skillRuntimeScope: 'all',
+    sessionOptions: {
+      openScienceSkillRuntime: {
+        command: process.execPath,
+        entryPath: join(storageRoot, 'main.js'),
+        root: storageRoot
+      }
+    }
+  })
+  provision.includeFrameworkMcpServers(setup.mcpServers ?? [])
+  provision.commit('session-skill')
+  const emit = vi.fn()
+  const context = new AcpPermissionContext({
+    emitPermissionRequest: emit,
+    permissionGrantRegistry: registry,
+    routing: {
+      resolveAppSessionId: (id) => id,
+      sessionSnapshot: () => ({
+        cwd: storageRoot!,
+        frameworkId: 'claude-code',
+        permissionProfile: { selectedProfile: 'ask' }
+      }),
+      hasActivePrimarySession: () => true,
+      capturePrompt: () => undefined,
+      currentInteractionSequence: () => undefined,
+      mcpServerNamesFor: (id) => owner.mcpServerNamesFor(id),
+      reviewerContextFor: () => undefined,
+      resolveReviewerPermission: () => undefined,
+      currentFramework: () => claudeCodeFramework,
+      resolveProjectId: () => 'project-skill'
+    }
+  })
+  // claude-agent-acp 0.70.0 tools.js emits MCP title/kind without provider metadata.
+  const toolCall = {
+    toolCallId: 'load-1',
+    title: 'mcp__skills__load_skill',
+    kind: 'other' as const,
+    rawInput: { skill: 'literature-review' }
+  }
+  const requestLoad = (toolCallId: string, sessionId = 'session-skill'): Promise<unknown> => {
+    const call = { ...toolCall, toolCallId }
+    context.observeToolCall(
+      {
+        sessionId,
+        update: { sessionUpdate: 'tool_call', status: 'pending', ...call }
+      },
+      {
+        sessionId,
+        framework: 'claude-code',
+        mcpServerNames: owner.mcpServerNamesFor(sessionId)
+      }
+    )
+    return context.handleProviderRequest({
+      sessionId,
+      toolCall: call,
+      options: [
+        { optionId: 'reject', name: 'Deny', kind: 'reject_once' },
+        { optionId: 'allow', name: 'Allow Once', kind: 'allow_once' },
+        { optionId: 'allow_always', name: 'Always Allow', kind: 'allow_always' }
+      ]
+    })
+  }
+  const pending = requestLoad('load-1')
+  await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+  const request = emit.mock.calls[0][0]
+  try {
+    const sessionOption = request.options.find(
+      (option: { scope?: string }) => option.scope === 'session'
+    )
+    expect(sessionOption).toBeDefined()
+    await context.respondToPermission(
+      { requestId: request.requestId, optionId: sessionOption.optionId },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(pending).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
+    await expect(requestLoad('load-2')).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow' }
+    })
+    expect(emit).toHaveBeenCalledOnce()
+    const [grant] = await registry.list()
+    expect(grant).toMatchObject({
+      capability: { kind: 'mcp_tool', key: 'mcp:skills/load_skill' },
+      scope: { kind: 'session', projectId: 'project-skill', sessionId: 'session-skill' }
+    })
+    const secondProvision = await owner.provision({
+      stableAppSessionId: 'session-other',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: storageRoot,
+      projectId: 'project-skill'
+    })
+    secondProvision.includeFrameworkMcpServers(setup.mcpServers ?? [])
+    secondProvision.commit('session-other')
+    const otherSession = requestLoad('load-other', 'session-other')
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2))
+    await context.respondToPermission(
+      { requestId: emit.mock.calls[1][0].requestId, optionId: 'reject' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(otherSession).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject' }
+    })
+    await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+    const revoked = requestLoad('load-3')
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(3))
+    await context.respondToPermission(
+      { requestId: emit.mock.calls[2][0].requestId, optionId: 'reject' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(revoked).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'reject' } })
+    expect(await registry.list()).toEqual([])
+  } finally {
+    context.cancelAllPending()
+    await pending
+    owner.revokeSession('session-skill')
+    owner.revokeSession('session-other')
+  }
 })
 
 const shellRequest = (sessionId: string): RequestPermissionRequest => ({
@@ -1438,4 +1583,104 @@ describe('ACP permission broker with durable grants', () => {
     expect(broker.listGrants('session-1')).toEqual([])
     await expect(registry.list()).resolves.toEqual([])
   })
+})
+
+it('releases queued durable searches without granting other capabilities or conversations', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'search-queued-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  await client.project.create({ data: { id: 'project-web', name: 'Search' } })
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  const emit = vi.fn()
+  let active: string | undefined
+  const persist = vi.fn(async (candidate) => {
+    if (!candidate.promptMessageId) return false
+    if (active) throw new Error('Concurrent durable permission persistence')
+    active = candidate.request.requestId
+    return true
+  })
+  const settleLive = vi.fn(async (candidate) => {
+    expect(active).toBe(candidate.request.requestId)
+    active = undefined
+  })
+  const settled = vi.fn()
+  const broker = new AcpPermissionBroker(emit, undefined, registry, settled, {
+    persist,
+    settleLive
+  })
+  const unsubscribe = registry.subscribe(() => {
+    void broker.releaseGrantedWebSearchRequests()
+  })
+  const request = (
+    id: string,
+    sessionId = 'parent',
+    tool = 'WebSearch'
+  ): RequestPermissionRequest =>
+    withTrustedNativeToolIdentity(
+      {
+        sessionId,
+        toolCall: {
+          toolCallId: id,
+          title: tool,
+          kind: 'fetch',
+          rawInput: tool === 'WebSearch' ? { query: id } : { url: 'https://example.org/' },
+          _meta: { toolName: tool }
+        },
+        options: [
+          { optionId: id + ':once', name: 'Once', kind: 'allow_once' },
+          { optionId: id + ':deny', name: 'Deny', kind: 'reject_once' }
+        ]
+      },
+      tool === 'WebSearch' ? 'claude-code/websearch' : 'claude-code/webfetch'
+    )
+  const policy = {
+    profile: 'ask' as const,
+    frameworkId: 'claude-code' as const,
+    projectId: 'project-web',
+    promptMessageId: 'prompt'
+  }
+  try {
+    // The old reading grant cannot release a search, even in the same conversation.
+    await registry.remember({
+      capability: { kind: 'builtin_tool', key: 'builtin:web_fetch' },
+      scope: { kind: 'session', projectId: 'project-web', sessionId: 'parent' }
+    })
+    const first = broker.requestPermission(request('first'), policy)
+    const second = broker.requestPermission(request('second'), policy)
+    const third = broker.requestPermission(request('third'), policy)
+    const foreign = broker.requestPermission(request('foreign', 'foreign'), {
+      ...policy,
+      promptMessageId: undefined
+    })
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2))
+    const card = broker.getPendingRequests().find(({ sessionId }) => sessionId === 'parent')!
+    await broker.respond({
+      requestId: card.requestId,
+      optionId: card.options.find(({ scope }) => scope === 'session')!.optionId
+    })
+    for (const [result, id] of [
+      [first, 'first'],
+      [second, 'second'],
+      [third, 'third']
+    ] as const) {
+      await expect(result).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: id + ':once' }
+      })
+    }
+    expect(active).toBeUndefined()
+    expect(settleLive.mock.calls.length).toBe(
+      persist.mock.calls.filter(([candidate]) => candidate.promptMessageId).length
+    )
+    expect(settled.mock.calls.filter(([, state]) => state === 'resolved')).toHaveLength(3)
+    const pending = broker.getPendingRequests()
+    expect(pending).toHaveLength(1)
+    expect(pending[0].sessionId).toBe('foreign')
+    await broker.respond({ requestId: pending[0].requestId, optionId: 'foreign:deny' })
+    await expect(foreign).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'foreign:deny' }
+    })
+  } finally {
+    unsubscribe()
+    broker.cancelAllPending()
+  }
 })

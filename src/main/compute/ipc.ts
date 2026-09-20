@@ -7,6 +7,7 @@ import { BrowserWindow, shell } from 'electron'
 import type {
   ChangeComputeHostAuthenticationRequest,
   CancelComputeJobRequest,
+  RetryComputeJobHarvestRequest,
   ChangeComputeHostAuthenticationResult,
   ComputeApprovalDecision,
   ComputeHost,
@@ -39,7 +40,8 @@ import type { TaskNotificationService } from '../notifications/task-notification
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
 import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
-import { ConcurrencyManager, type SessionConcurrencyLimitPersistence } from './concurrency-manager'
+import { ConcurrencyManager } from './concurrency-manager'
+import type { SessionComputePolicyAuthority } from '../session-persistence/compute-policy'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
@@ -148,7 +150,8 @@ export const toJobSummary = async (
     featured_file_count: featuredFiles.length,
     left_on_remote_count: leftOnRemote.length,
     left_on_remote: leftOnRemote,
-    harvest_error: job.harvest_error ?? undefined
+    harvest_error: job.harvest_error ?? undefined,
+    harvested_at: job.harvested_at
   }
 }
 
@@ -173,8 +176,9 @@ type ComputeHandlers = {
   sshConfigAliases: () => Promise<string[]>
   // Runs the probe bundle against the host and persists the result. Returns the ProbeResult.
   probe: (providerId: string) => Promise<ProbeResult>
-  // Details document: read (with skeleton synthesis) and save (replace with old_text guard).
-  detailsGet: (providerId: string) => Promise<{ doc: string; isSkeleton: boolean }>
+  // Persisted instructions only; resource observations are exposed on the host's probeResult.
+  // The read doc is the exact oldText baseline for a guarded replacement.
+  detailsGet: (providerId: string) => Promise<{ doc: string }>
   detailsSave: (
     providerId: string,
     text: string,
@@ -195,6 +199,7 @@ type ComputeHandlers = {
     active_count: number
     queued_count: number
     provider_ceilings: Record<string, number>
+    queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
   }>
   listDir: (providerId: string, path: string) => Promise<DirListing>
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
@@ -221,6 +226,7 @@ type ComputeHandlers = {
   jobsCancel: (
     request: CancelComputeJobRequest
   ) => Promise<import('../../shared/compute').JobStatusResult>
+  jobsRetryHarvest: (request: RetryComputeJobHarvestRequest) => Promise<void>
   jobsSetRemoteCleanup: (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
   jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
@@ -228,6 +234,11 @@ type ComputeHandlers = {
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
   jobsTransitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
 }
+
+type ComputeResultDeliveryProjection = Readonly<{
+  observeJob(job: JobSummary): Promise<void>
+  hasDeliveryPath(jobId: string): Promise<boolean>
+}>
 
 const createComputeHandlers = (
   repository: ComputeHostRepository,
@@ -248,7 +259,9 @@ const createComputeHandlers = (
   authenticationDependencies?: ComputeAuthenticationDependencies,
   sessionCacheOwner?: SessionCacheOwner,
   operationRepository?: ComputeJobOperationRepository,
-  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
+  sessionLimitPersistence?: SessionComputePolicyAuthority,
+  resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>,
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -358,9 +371,25 @@ const createComputeHandlers = (
           sessionLimitPersistence
         )
       : undefined
+  const summarizeJob = async (
+    job: ComputeJob,
+    displayName: string,
+    root: string
+  ): Promise<JobSummary> => ({
+    ...(await toJobSummary(job, displayName, root)),
+    ...(job.status === 'queued' && concurrencyManager
+      ? {
+          queue_blocked_reason: await concurrencyManager.getQueueBlockedReason(
+            job.session_id,
+            job.project_id
+          )
+        }
+      : {})
+  })
   const service =
     injectedService ??
     new ComputeService({
+      admitSessionWork,
       runner: sshRunner,
       repository,
       approvalBroker: broker,
@@ -412,6 +441,16 @@ const createComputeHandlers = (
       return new Map(hosts.map((host) => [host.providerId, host.displayName]))
     } catch {
       return new Map()
+    }
+  }
+  const projectDeliveryPath = async (summary: JobSummary): Promise<JobSummary> => {
+    try {
+      return resultDelivery && (await resultDelivery.hasDeliveryPath(summary.job_id))
+        ? { ...summary, result_delivery_path: 'agent-result-delivery' }
+        : summary
+    } catch (error) {
+      log.warn('agent result delivery projection failed', errorLogFields(error))
+      return summary
     }
   }
 
@@ -506,8 +545,8 @@ const createComputeHandlers = (
     sshConfigAliases: () => listSshAliases(),
     probe: (providerId) => service.probe(providerId),
     detailsGet: async (providerId) => {
-      const { doc, isSkeleton } = await service.getDetails(providerId)
-      return { doc, isSkeleton }
+      const { doc } = await service.getDetails(providerId)
+      return { doc }
     },
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
@@ -543,13 +582,26 @@ const createComputeHandlers = (
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hostNameMap = await listHostNames()
+      if ('projectId' in filter) {
+        const jobs = await jobRepository.findProjectOverview(
+          filter.projectId,
+          new Date(filter.since)
+        )
+        return Promise.all(
+          jobs.map((job) =>
+            summarizeJob(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+          )
+        )
+      }
       const jobs =
         'nonTerminal' in filter
           ? await jobRepository.findNonTerminal()
           : await jobRepository.findBySession(filter.sessionId, filter.status)
       return Promise.all(
-        jobs.map((j) =>
-          toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+        jobs.map(async (j) =>
+          projectDeliveryPath(
+            await summarizeJob(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+          )
         )
       )
     },
@@ -559,6 +611,7 @@ const createComputeHandlers = (
         sessionId: request.sessionId,
         providerId: request.providerId
       }),
+    jobsRetryHarvest: (request) => service.retryJobHarvest(request),
     jobsSetRemoteCleanup: async (request) => {
       if (!jobDeletionOwner) throw new Error('Compute Job cleanup owner is unavailable.')
       if (request.disposition === 'cleaned') {
@@ -575,8 +628,10 @@ const createComputeHandlers = (
           ? await jobRepository.findPendingNotifications(filter)
           : await jobRepository.findPendingNotifications()
       return Promise.all(
-        jobs.map((j) =>
-          toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+        jobs.map(async (j) =>
+          projectDeliveryPath(
+            await summarizeJob(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+          )
         )
       )
     },
@@ -599,8 +654,14 @@ const createComputeHandlers = (
       }
       const hostNameMap = await listHostNames()
       return Promise.all(
-        jobs.map((job) =>
-          toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+        jobs.map(async (job) =>
+          projectDeliveryPath(
+            await summarizeJob(
+              job,
+              hostNameMap.get(job.provider_id) ?? job.provider_id,
+              storageRoot
+            )
+          )
         )
       )
     },
@@ -629,9 +690,46 @@ export const createJobUpdatedBroadcaster =
   (
     hostRepository: ComputeHostRepository,
     storageRoot: string,
-    jobRepository: Pick<ComputeJobRepository, 'get'>
+    jobRepository: Pick<ComputeJobRepository, 'get'>,
+    resultDelivery?: ComputeResultDeliveryProjection,
+    scheduling?: (
+      job: ComputeJob
+    ) => Promise<import('../../shared/compute').ComputeQueueBlockedReason | undefined>
   ): ((job: ComputeJob) => void) =>
   (job) => {
+    // Register the canonical nonterminal observation before any filesystem/Host lookup yields.
+    // A dispatch can fail and notify very quickly; entering the adapter's per-Job chain here makes
+    // waiting-result registration happen before that terminal notification is processed.
+    if (
+      resultDelivery &&
+      (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
+    ) {
+      void resultDelivery
+        .observeJob({
+          job_id: job.job_id,
+          provider_id: job.provider_id,
+          display_name: job.provider_id,
+          shape: job.shape,
+          session_id: job.session_id,
+          project_id: job.project_id,
+          status: job.status,
+          cancellation_status: job.cancellation_status,
+          intent: job.intent,
+          created_at: job.created_at,
+          started_at: job.started_at,
+          finished_at: job.finished_at,
+          exit_code: job.exit_code,
+          error_code: job.error_code,
+          remote_workdir: job.remote_workdir,
+          stdout_tail: job.stdout_tail,
+          stderr_tail: job.stderr_tail,
+          notified_at: job.notified_at,
+          notification_consumed_at: job.notification_consumed_at
+        })
+        .catch((error) =>
+          log.warn('agent result delivery observation failed', errorLogFields(error))
+        )
+    }
     void (async () => {
       let displayName = job.provider_id
       try {
@@ -643,6 +741,8 @@ export const createJobUpdatedBroadcaster =
       const current = await jobRepository.get(job.job_id).catch(() => null)
       if (!current) return
       let summary = await toJobSummary(current, displayName, storageRoot)
+      if (summary.status === 'queued' && scheduling)
+        summary.queue_blocked_reason = await scheduling(current)
       // Filesystem scanning above yields. Re-read immediately before delivery so a terminal or
       // consumed transition committed during that scan cannot be overwritten by an older snapshot.
       const verified = await jobRepository.get(job.job_id).catch(() => null)
@@ -657,6 +757,14 @@ export const createJobUpdatedBroadcaster =
         verified.harvest_error !== current.harvest_error
       ) {
         summary = await toJobSummary(verified, displayName, storageRoot)
+      }
+      try {
+        await resultDelivery?.observeJob(summary)
+        if (resultDelivery && (await resultDelivery.hasDeliveryPath(summary.job_id))) {
+          summary = { ...summary, result_delivery_path: 'agent-result-delivery' }
+        }
+      } catch (error) {
+        log.warn('agent result delivery projection failed', errorLogFields(error))
       }
       broadcastJobUpdated(summary)
     })().catch(() => undefined)
@@ -693,7 +801,9 @@ const createComputeIpcModule = (
   permissionGrantRegistry?: PermissionGrantRegistry,
   legacyComputeGrants?: LegacyComputeGrantPort,
   hostLifecycle?: ComputeHostLifecycle,
-  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
+  sessionLimitPersistence?: SessionComputePolicyAuthority,
+  resultDelivery?: ComputeResultDeliveryProjection,
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const configRoot = resolveConfigRoot()
@@ -706,7 +816,15 @@ const createComputeIpcModule = (
     legacyComputeGrants ?? createSettingsComputeGrantPort(configRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
-  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot, jobRepository)
+  const onJobUpdated = createJobUpdatedBroadcaster(
+    repository,
+    dataRoot,
+    jobRepository,
+    resultDelivery,
+    (job) =>
+      handlers.concurrencyManager?.getQueueBlockedReason(job.session_id, job.project_id) ??
+      Promise.resolve(undefined)
+  )
   const handlers = createComputeHandlers(
     repository,
     undefined,
@@ -723,7 +841,9 @@ const createComputeIpcModule = (
     undefined,
     sessionCacheOwner,
     operationRepository,
-    sessionLimitPersistence
+    sessionLimitPersistence,
+    resultDelivery,
+    admitSessionWork
   )
   const jobDeletionOwner = handlers.jobDeletionOwner
   if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')
@@ -751,4 +871,9 @@ export {
 }
 export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
 export type { ComputeIpcAdapter } from './electron-ipc-adapter'
-export type { ComputeHandlers, ComputeHostLifecycle, ComputeIpcModule }
+export type {
+  ComputeHandlers,
+  ComputeHostLifecycle,
+  ComputeIpcModule,
+  ComputeResultDeliveryProjection
+}

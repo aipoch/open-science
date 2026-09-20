@@ -36,7 +36,10 @@ describe('archive undo store deletion reconciliation', () => {
     useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
   })
 
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
 
   it.each(['project', 'session'] as const)(
     'keeps the %s Undo generation captured at archive time',
@@ -108,5 +111,51 @@ describe('archive undo store deletion reconciliation', () => {
       notices: [],
       restoringKey: undefined
     })
+  })
+  it('preserves a paused receipt through pruning and resumes its remaining deadline', () => {
+    vi.useFakeTimers()
+    const store = useArchiveUndoStore.getState()
+    store.enqueueProject(project)
+    const original = useArchiveUndoStore.getState().notices[0]
+    vi.advanceTimersByTime(3000)
+    store.setPaused(original.key, true)
+    vi.advanceTimersByTime(10000)
+    store.enqueueSession({ ...session, id: 'other-session' })
+    store.reconcileProject(project)
+    expect(
+      useArchiveUndoStore.getState().notices.some((notice) => notice.key === original.key)
+    ).toBe(true)
+    store.setPaused(original.key, false)
+    const resumed = useArchiveUndoStore
+      .getState()
+      .notices.find((notice) => notice.key === original.key)!
+    expect(resumed.expiresAt - Date.now()).toBe(5000)
+    vi.advanceTimersByTime(5000)
+    store.enqueueSession({ ...session, id: 'third-session' })
+    expect(
+      useArchiveUndoStore.getState().notices.some((notice) => notice.key === original.key)
+    ).toBe(false)
+  })
+  it('does not prune or dispatch a second restore while the first request is pending', async () => {
+    vi.useFakeTimers()
+    let finish: (() => void) | undefined
+    const command = vi.spyOn(useProjectStore.getState(), 'updateProjectArchive').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(project)
+        })
+    )
+    const store = useArchiveUndoStore.getState()
+    store.enqueueProject(project)
+    const key = useArchiveUndoStore.getState().notices[0].key
+    const pending = store.undo(key)
+    vi.advanceTimersByTime(10000)
+    store.enqueueSession({ ...session, id: 'another-session' })
+    expect(useArchiveUndoStore.getState().notices.some((notice) => notice.key === key)).toBe(true)
+    await store.undo(key)
+    expect(command).toHaveBeenCalledOnce()
+    finish?.()
+    await pending
+    expect(useArchiveUndoStore.getState().notices.some((notice) => notice.key === key)).toBe(false)
   })
 })

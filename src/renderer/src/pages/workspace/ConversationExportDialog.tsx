@@ -14,9 +14,11 @@ import {
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
+import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import type { ChatSession } from '@/stores/session-store'
 import {
-  createConversationExportDocument,
+  serializeConversationExportContent,
+  hashConversationExportContent,
   createConversationExportTurns,
   type ConversationExportFormat,
   type ExportConversationRequest,
@@ -65,18 +67,30 @@ const ConversationExportDialogContent = ({
   const turns = useMemo(() => createConversationExportTurns(session.messages), [session.messages])
   const conversationChanged = useMemo(() => {
     if (!currentSession) return true
-    const snapshot = createConversationExportDocument(session, 0)
-    const current = createConversationExportDocument(currentSession, 0)
-    return JSON.stringify(snapshot) !== JSON.stringify(current)
+    return (
+      serializeConversationExportContent(session) !==
+      serializeConversationExportContent(currentSession)
+    )
   }, [currentSession, session])
-  const allSelected = turns.length > 0 && selectedPromptIds.size === turns.length
-  const partlySelected = selectedPromptIds.size > 0 && !allSelected
+  const validSelectedPromptIds = turns.flatMap((turn) =>
+    selectedPromptIds.has(turn.promptMessageId) ? [turn.promptMessageId] : []
+  )
+  const selectedCount = validSelectedPromptIds.length
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
+    if (open) {
+      setSelectedPromptIds(new Set())
+      setError(undefined)
+    }
+  }
+  const allSelected = turns.length > 0 && selectedCount === turns.length
+  const partlySelected = selectedCount > 0 && !allSelected
   const unavailable = currentSession
     ? projectPresentedSessionActionability(currentSession).activity !== 'inactive'
     : true
-  const noSelection = scope === 'selected' && selectedPromptIds.size === 0
+  const noSelection = scope === 'selected' && selectedCount === 0
   const disabled = unavailable || conversationChanged || noSelection || isExporting
-
   const toggleTurn = (promptMessageId: string): void => {
     setError(undefined)
     setSelectedPromptIds((current) => {
@@ -102,15 +116,16 @@ const ConversationExportDialogContent = ({
     setIsExporting(true)
     setError(undefined)
     try {
+      const expectedContentHash = await hashConversationExportContent(session)
+      await flushSessionPersistence()
       const result = await exporter({
         projectId: session.projectId,
         sessionId: session.id,
         format,
+        expectedContentHash,
         ...(scope === 'selected'
           ? {
-              selectedPromptMessageIds: turns.flatMap((turn) =>
-                selectedPromptIds.has(turn.promptMessageId) ? [turn.promptMessageId] : []
-              )
+              selectedPromptMessageIds: validSelectedPromptIds
             }
           : {})
       })
@@ -248,7 +263,7 @@ const ConversationExportDialogContent = ({
                     </h2>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {t('{{selected}} of {{total}} selected', {
-                        selected: selectedPromptIds.size,
+                        selected: selectedCount,
                         total: turns.length
                       })}
                     </p>
@@ -360,21 +375,24 @@ const ConversationExportDialogContent = ({
                 className="min-h-9 min-w-28"
                 disabled={disabled}
                 onClick={submit}
+                aria-busy={Boolean(isExporting)}
               >
-                {isExporting ? (
-                  <>
-                    <LoaderCircle
-                      className="size-4 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                    {t('Exporting…')}
-                  </>
-                ) : (
-                  <>
-                    <Download className="size-4" aria-hidden="true" />
-                    {exportLabel}
-                  </>
-                )}
+                <span key={String(isExporting)} className="button-feedback">
+                  {isExporting ? (
+                    <>
+                      <LoaderCircle
+                        className="size-4 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      {t('Exporting…')}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="size-4" aria-hidden="true" />
+                      {exportLabel}
+                    </>
+                  )}
+                </span>
               </Button>
             </div>
           </footer>

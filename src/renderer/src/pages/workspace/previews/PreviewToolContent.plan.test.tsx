@@ -428,11 +428,17 @@ describe('Plan Preview workbench integration', () => {
     expect(respondPlan).not.toHaveBeenCalled()
   })
 
-  it('keeps the parent Plan read-only while its Side chat is open', () => {
+  it('keeps the parent Plan actionable while its Side chat is open', () => {
     sideChatState.parentSessionId = 'session-1'
 
     render(
       <PreviewToolContent
+        restoredPlanResponder={{
+          sessionId: 'session-1',
+          enabled: true,
+          canRespondToSession: () => true,
+          respond: respondToRestoredPlan
+        }}
         item={{
           id: 'tool:session-1:plan',
           projectId: 'project-1',
@@ -444,7 +450,7 @@ describe('Plan Preview workbench integration', () => {
       />
     )
 
-    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeNull()
   })
 })

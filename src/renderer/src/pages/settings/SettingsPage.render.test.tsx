@@ -36,6 +36,7 @@ const originalSettingsActions = (() => {
   const state = useSettingsStore.getState()
   return {
     persistProvider: state.persistProvider,
+    saveValidatedProvider: state.saveValidatedProvider,
     validateProvider: state.validateProvider,
     addCustomServer: state.addCustomServer,
     updateCustomServer: state.updateCustomServer
@@ -71,10 +72,19 @@ beforeAll(async () => {
   ])
 })
 
+import {
+  marketplaceCatalog,
+  marketplaceDetail
+} from '../../../../shared/__fixtures__/skill-marketplace'
+
 // Minimal window.api surface the settings store touches when the dialog opens. Attached onto the
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.
 const installApi = (): void => {
   ;(window as unknown as { api: unknown }).api = {
+    runtime: {
+      onPolicyChanged: vi.fn(() => vi.fn()),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true)
+    },
     settings: {
       getSettings: vi.fn().mockResolvedValue({
         claude: {},
@@ -113,6 +123,11 @@ const installApi = (): void => {
       isNpmAvailable: vi.fn().mockResolvedValue(true),
       listAppIcons: vi.fn().mockResolvedValue([]),
       setAppIconVariant: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+      listSkillMarketplace: vi.fn().mockResolvedValue({ ok: true, value: marketplaceCatalog }),
+      getSkillMarketplaceDetail: vi.fn().mockResolvedValue({ ok: true, value: marketplaceDetail }),
+      getSkillMarketplaceBatch: vi.fn().mockResolvedValue(null),
+      startSkillMarketplaceBatch: vi.fn(),
+      stopSkillMarketplaceBatch: vi.fn(),
       listSkills: vi.fn().mockResolvedValue([
         {
           id: 'alpha',
@@ -184,7 +199,7 @@ const installApi = (): void => {
     logs: {
       getStatus: vi.fn().mockResolvedValue({
         configured: true,
-        path: '/Users/x/Library/Logs/Open Science/main.log',
+        path: '/Users/x/Library/Logs/Open-Science/main.log',
         existing: true,
         lastWriteSucceeded: true,
         lastFailureCategory: null
@@ -461,6 +476,33 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('retains model tab DOM across model routes and navigation Back', async () => {
+    window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
+    window.api.localModels = {
+      getSnapshot: vi.fn().mockResolvedValue({
+        availability: 'notInstalled',
+        recommendedRevision: 'v1',
+        downloadBytes: 0,
+        installedBytes: 0,
+        transferredBytes: 0,
+        updateAvailable: false,
+        hasFiles: false,
+        inUse: false
+      })
+    } as unknown as typeof window.api.localModels
+    useSettingsStore.getState().openSettingsToPanel('model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const list = document.querySelector('[role="tablist"][aria-label="Models"]')!
+    expect(list).not.toBeNull()
+    const tabs = list.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    await act(async () => fireEvent.keyDown(tabs[1], { key: 'Enter' }))
+    expect(tabs[1].isConnected).toBe(true)
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true')
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click())
+    expect(tabs[0].isConnected).toBe(true)
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+  })
+
   it('gives Memory a definite-height owner so its note list scrolls internally', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Memory')?.click())
@@ -992,7 +1034,7 @@ describe('SettingsPage layout', () => {
 
   it('shows and dismisses a settings write failure above the scrolling content', async () => {
     useSettingsStore.setState({
-      settingsWriteError: 'Could not save notification preference. Try again.'
+      settingsWriteError: 'notifications'
     })
 
     act(() => {
@@ -1001,16 +1043,13 @@ describe('SettingsPage layout', () => {
 
     const alert = document.body.querySelector<HTMLElement>('[data-slot="settings-write-error"]')
     const scroll = document.body.querySelector<HTMLElement>('[data-slot="settings-content-scroll"]')
-    expect(alert?.getAttribute('role')).toBe('alert')
+    expect(alert?.querySelector('[role="alert"]')).not.toBeNull()
+    expect(alert?.textContent).toContain('Settings could not be saved')
     expect(alert?.textContent).toContain('Could not save notification preference. Try again.')
-    expect(alert?.className).toContain('border-danger-000/30')
-    expect(alert?.className).toContain('bg-danger-000/10')
-    expect(alert?.className).toContain('text-danger-000')
+    expect(alert?.querySelector('section')?.className).toContain('border-border')
     expect(alert?.nextElementSibling).toBe(scroll)
 
     const dismiss = alert?.querySelector<HTMLButtonElement>('[aria-label="Dismiss settings error"]')
-    await act(async () => dismiss?.focus())
-    expect(document.body.textContent).toContain('Close')
 
     act(() => {
       dismiss?.click()
@@ -1018,6 +1057,44 @@ describe('SettingsPage layout', () => {
 
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
+  })
+
+  it('keeps the dialog open when Escape closes the global search results', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+
+    const search = document.body.querySelector<HTMLInputElement>(
+      '[data-slot="settings-global-search"] input'
+    )
+    expect(search).not.toBeNull()
+
+    await act(async () => {
+      search?.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        search,
+        'proxy'
+      )
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // First Escape closes only the results list; the dialog stays open.
+    await act(async () => {
+      search?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-slot="settings-surface"]')).not.toBeNull()
+
+    // Second Escape, with the list closed, falls through to the dialog's normal close path.
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onClose).toHaveBeenCalled()
   })
 
   it('mounts the sidebar + content with grouped nav items and a close control', () => {
@@ -1048,12 +1125,15 @@ describe('SettingsPage layout', () => {
     // Dialog content is portaled to the document body.
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog).not.toBeNull()
-    expect(dialog?.getAttribute('data-slot')).toBe('settings-surface')
-    expect(dialog?.className).toContain('overscroll-contain')
+    expect(dialog?.getAttribute('data-slot')).toBe('settings-dialog')
+    expect(dialog?.querySelector('[data-slot="settings-surface"]')?.className).toContain(
+      'overscroll-contain'
+    )
 
-    // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Memory, Compute, Network)
-    // and Workspace (Model, Agent, Tags, Permissions, Credentials, Runtimes, Storage, Remote,
-    // Usage, General, Archived). Feedback remains a separate fixed footer action.
+    // Left navigation grouped as Intelligence (Model, Agent, Skills, Specialists, Memory),
+    // Connections (Connectors, Network, Remote, Credentials), Workspace (Tags, Permissions,
+    // Runtimes, Storage, Compute, Usage, Archived) and System (General). Feedback remains a
+    // separate fixed footer action.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -1066,28 +1146,30 @@ describe('SettingsPage layout', () => {
     expect(navScroll?.className).toContain('overflow-y-auto')
     expect(navFooter?.className).toContain('border-t')
     expect(nav?.parentElement?.nextElementSibling?.className).toContain('bg-card')
-    expect(nav?.textContent).toContain('Capabilities')
+    expect(nav?.textContent).toContain('Intelligence')
+    expect(nav?.textContent).toContain('Connections')
     expect(nav?.textContent).toContain('Workspace')
+    expect(nav?.textContent).toContain('System')
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = navScroll?.querySelectorAll('li') ?? []
     expect(navItems).toHaveLength(17)
-    expect(navItems[0]?.textContent).toContain('Skills')
-    expect(navItems[1]?.textContent).toContain('Connectors')
-    expect(navItems[2]?.textContent).toContain('Specialists')
-    expect(navItems[3]?.textContent).toContain('Memory')
-    expect(navItems[4]?.textContent).toContain('Compute')
-    expect(navItems[5]?.textContent).toContain('Network')
-    expect(navItems[6]?.textContent).toContain('Model')
-    expect(navItems[7]?.textContent).toContain('Agent')
-    expect(navItems[8]?.textContent).toContain('Tags')
-    expect(navItems[9]?.textContent).toContain('Permissions')
-    expect(navItems[10]?.textContent).toContain('Credentials')
+    expect(navItems[0]?.textContent).toContain('Model')
+    expect(navItems[1]?.textContent).toContain('Agent')
+    expect(navItems[2]?.textContent).toContain('Skills')
+    expect(navItems[3]?.textContent).toContain('Specialists')
+    expect(navItems[4]?.textContent).toContain('Memory')
+    expect(navItems[5]?.textContent).toContain('Connectors')
+    expect(navItems[6]?.textContent).toContain('Network')
+    expect(navItems[7]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[8]?.textContent).toContain('Credentials')
+    expect(navItems[9]?.textContent).toContain('Tags')
+    expect(navItems[10]?.textContent).toContain('Permissions')
     expect(navItems[11]?.textContent).toContain('Runtimes')
     expect(navItems[12]?.textContent).toContain('Storage')
-    expect(navItems[13]?.textContent?.trim()).toBe('Remote')
+    expect(navItems[13]?.textContent).toContain('Compute')
     expect(navItems[14]?.textContent).toContain('Usage')
-    expect(navItems[15]?.textContent).toContain('General')
-    expect(navItems[16]?.textContent).toContain('Archived')
+    expect(navItems[15]?.textContent).toContain('Archived')
+    expect(navItems[16]?.textContent).toContain('General')
     expect(navFooter?.textContent).toContain('Feedback')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
@@ -1559,6 +1641,22 @@ describe('SettingsPage layout', () => {
     expect(content?.getAttribute('aria-hidden')).toBe('true')
     expect(nav?.contains(document.activeElement)).toBe(true)
 
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(nav?.getAttribute('aria-hidden')).toBe('true')
+    expect(drawer?.getAttribute('role')).toBeNull()
+    expect(content?.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Open settings navigation')
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Open settings navigation"]')
+        ?.click()
+    })
+
     const generalTab = Array.from(nav?.querySelectorAll('button') ?? []).find((button) =>
       /general/i.test(button.textContent ?? '')
     )
@@ -1631,6 +1729,41 @@ describe('SettingsPage layout', () => {
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+  })
+
+  it('switches an edited SenseNova Global provider to the China catalog and back', async () => {
+    const provider: ProviderView = {
+      id: 'sensenova-global',
+      type: 'official',
+      vendorId: 'sensenova',
+      name: 'SenseNova',
+      region: 'global',
+      models: ['sensenova-6.8-flash-lite'],
+      maskedKey: '••••test',
+      hasKey: true,
+      needsKey: false,
+      supportsImageInput: true
+    }
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => {
+      useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
+    })
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    expect(document.body.textContent).not.toContain('deepseek-v4-pro')
+    for (const region of ['China', 'Global']) {
+      openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Endpoint"]'))
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+          (option) => option.textContent === region
+        )
+      )
+      expect(document.body.querySelector('[aria-label="Endpoint"]')?.textContent).toBe(region)
+      expect(document.body.textContent?.includes('deepseek-v4-pro')).toBe(region === 'China')
+      expect(document.body.textContent).toContain('sensenova-6.8-flash-lite')
+    }
+    expect(useSettingsStore.getState().providers[0]?.region).toBe('global')
   })
 
   it('shows an error when refreshing a provider model catalog rejects', async () => {
@@ -1899,11 +2032,50 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('tests the current Provider edit without saving and keeps actions outside the scrolling form', async () => {
+    installCustomProviderSnapshot()
+    const validateProvider = vi.fn().mockResolvedValue({ ok: false, category: 'auth' })
+    const saveValidatedProvider = vi.fn()
+    useSettingsStore.setState({ validateProvider, saveValidatedProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'candidate-key' }
+    })
+    const test = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Test connection'
+    )
+    expect(test).toBeDefined()
+    expect(test?.closest('[data-slot="settings-content-scroll"]')).toBeNull()
+    await act(async () => test?.click())
+    expect(validateProvider).toHaveBeenCalledWith({
+      edit: expect.objectContaining({
+        id: 'custom-messages',
+        key: 'candidate-key',
+        requireExisting: true
+      })
+    })
+    expect(saveValidatedProvider).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Authentication failed. Check the API key.')
+    expect(document.body.textContent).toContain('Changes have not been saved.')
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe(
+      'candidate-key'
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'another-key' }
+    })
+    expect(document.body.textContent).not.toContain('Authentication failed. Check the API key.')
+  })
+
   it('blocks Provider save and preserves the draft when a live refresh removes the target', async () => {
     const provider = installCustomProviderSnapshot()
-    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: provider.id, validation: { ok: true, category: 'ok' } })
     useSettingsStore.setState({
-      persistProvider,
+      saveValidatedProvider,
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
 
@@ -1929,14 +2101,57 @@ describe('SettingsPage layout', () => {
       'replacement-key'
     )
     expect(save?.disabled).toBe(true)
-    expect(persistProvider).not.toHaveBeenCalled()
+    expect(saveValidatedProvider).not.toHaveBeenCalled()
+  })
+
+  it('keeps a conflicting provider draft and reapplies only edited fields to the latest revision', async () => {
+    const provider = installCustomProviderSnapshot()
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: provider.id, validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({
+      saveValidatedProvider,
+      validateProvider: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'new-secret' }
+    })
+    act(() =>
+      useSettingsStore.setState({
+        providers: [{ ...provider, baseUrl: 'https://new.example', configRevision: 1 }]
+      })
+    )
+    const button = (label: string): HTMLButtonElement | undefined =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (entry) => entry.textContent?.trim() === label
+      )
+    expect(button('Save')?.disabled).toBe(true)
+    expect(document.body.textContent).toContain(
+      'Provider configuration changed. Your draft has not been saved.'
+    )
+    await act(async () => button('Reapply my changes to the latest configuration')?.click())
+    await act(async () => button('Save')?.click())
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://new.example',
+        key: 'new-secret',
+        expectedConfigRevision: 1,
+        requireExisting: true
+      })
+    )
   })
 
   it('marks a Provider edit save as requiring the existing target', async () => {
     const provider = installCustomProviderSnapshot()
-    const persistProvider = vi.fn().mockResolvedValue(provider.id)
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: provider.id, validation: { ok: true, category: 'ok' } })
     useSettingsStore.setState({
-      persistProvider,
+      saveValidatedProvider,
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
 
@@ -1950,7 +2165,7 @@ describe('SettingsPage layout', () => {
         ?.click()
     )
 
-    expect(persistProvider).toHaveBeenCalledWith(
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
       expect.objectContaining({ id: provider.id, requireExisting: true })
     )
   })
@@ -1981,14 +2196,35 @@ describe('SettingsPage layout', () => {
     expect(persistProvider).not.toHaveBeenCalled()
   })
 
-  it('reports when post-save Provider validation does not complete', async () => {
-    installCustomProviderSnapshot()
-    const validateProvider = vi.fn().mockRejectedValue(new Error('settings IPC unavailable'))
-    useSettingsStore.setState({
-      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
-      validateProvider
+  it('closes the Provider form when a committed save publishes its new revision before returning', async () => {
+    const provider = installCustomProviderSnapshot()
+    const saveValidatedProvider = vi.fn(async () => {
+      useSettingsStore.setState({ providers: [{ ...provider, configRevision: 1 }] })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return { providerId: provider.id, validation: { ok: true, category: 'ok' as const } }
     })
+    useSettingsStore.setState({ saveValidatedProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    })
+    expect(document.body.querySelector('[data-slot="provider-form-footer"]')).toBeNull()
+  })
 
+  it('reports a committed Provider save separately from a failed Agent reconnect', async () => {
+    installCustomProviderSnapshot()
+    const saveValidatedProvider = vi.fn().mockResolvedValue({
+      providerId: 'custom-messages',
+      validation: { ok: true, category: 'ok' },
+      runtimeReconnectFailed: true
+    })
+    useSettingsStore.setState({ saveValidatedProvider })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -1998,101 +2234,114 @@ describe('SettingsPage layout', () => {
         .find((button) => button.textContent?.trim() === 'Save')
         ?.click()
     )
-
-    await waitFor(() => {
-      expect(validateProvider).toHaveBeenCalledWith({ providerId: 'custom-messages' })
-      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-        'Could not test the provider connection.'
-      )
-    })
+    expect(document.body.querySelector('[data-slot="provider-form-footer"]')).toBeNull()
+    expect(document.body.textContent).toContain(
+      'Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.'
+    )
+    expect(saveValidatedProvider).toHaveBeenCalledOnce()
   })
 
-  it('ignores an older post-save Provider validation failure', async () => {
-    installCustomProviderSnapshot()
-    let rejectFirstValidation: ((error: Error) => void) | undefined
-    let resolveSecondValidation: (() => void) | undefined
-    const validateProvider = vi
+  it('keeps a rejected save in the form without covering the saved configuration', async () => {
+    const provider = installCustomProviderSnapshot()
+    const saveValidatedProvider = vi
       .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((_resolve, reject) => {
-            rejectFirstValidation = reject
-          })
-      )
-      .mockImplementationOnce(
-        () =>
-          new Promise<void>((resolve) => {
-            resolveSecondValidation = resolve
-          })
-      )
-    useSettingsStore.setState({
-      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
-      validateProvider
+      .mockResolvedValue({ validation: { ok: false, category: 'auth' } })
+    const persistProvider = vi.fn()
+    useSettingsStore.setState({ saveValidatedProvider, persistProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    fireEvent.change(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')!, {
+      target: { value: 'rejected-key' }
     })
+    await act(async () =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    )
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'rejected-key', expectedConfigRevision: 0 })
+    )
+    expect(document.body.textContent).toContain('Changes have not been saved.')
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="API key"]')?.value).toBe(
+      'rejected-key'
+    )
+    expect(useSettingsStore.getState().providers).toContainEqual(provider)
+    expect(persistProvider).not.toHaveBeenCalled()
+  })
 
+  it('does not present a superseded Provider test as a successful connection', async () => {
+    installCustomProviderSnapshot()
+    useSettingsStore.setState({
+      validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: false })
+    })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
     )
     await act(async () =>
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Save')
+        .find((button) => button.textContent?.trim() === 'Test connection')
         ?.click()
     )
-    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(1))
-
-    await act(async () =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    expect(document.body.textContent).not.toContain('Connection succeeded.')
+    expect(document.body.textContent).toContain(
+      'Provider configuration changed. Your draft has not been saved.'
     )
-    await act(async () =>
-      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Save')
-        ?.click()
-    )
-    await waitFor(() => expect(validateProvider).toHaveBeenCalledTimes(2))
-
-    await act(async () => rejectFirstValidation?.(new Error('stale settings IPC failure')))
-
-    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
-      'Could not test the provider connection.'
-    )
-    expect(document.body.textContent).toContain('Testing…')
-
-    await act(async () => resolveSecondValidation?.())
-    await waitFor(() => expect(document.body.textContent).not.toContain('Testing…'))
   })
 
-  it('ignores post-save Provider validation after the provider disappears', async () => {
+  it('ignores a pending test after leaving and reopening the same Provider form', async () => {
     installCustomProviderSnapshot()
-    let rejectValidation: ((error: Error) => void) | undefined
+    let finish: ((result: { ok: boolean; category: 'auth' }) => void) | undefined
     const validateProvider = vi.fn(
       () =>
-        new Promise<never>((_resolve, reject) => {
-          rejectValidation = reject
+        new Promise<{ ok: boolean; category: 'auth' }>((resolve) => {
+          finish = resolve
         })
     )
-    useSettingsStore.setState({
-      persistProvider: vi.fn().mockResolvedValue('custom-messages'),
-      validateProvider
-    })
+    useSettingsStore.setState({ validateProvider })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    const button = (label: string): HTMLButtonElement | undefined =>
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (entry) => entry.textContent?.trim() === label
+      )
+    await act(async () => button('Test connection')?.click())
+    await act(async () => button('Cancel')?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
+    )
+    await act(async () => finish?.({ ok: false, category: 'auth' }))
+    expect(document.body.textContent).not.toContain('Authentication failed. Check the API key.')
+    expect(button('Test connection')?.disabled).toBe(false)
+  })
 
+  it('ignores a pending test after the saved Provider is deleted', async () => {
+    installCustomProviderSnapshot()
+    let finish: ((result: { ok: boolean; category: 'auth' }) => void) | undefined
+    const validateProvider = vi.fn(
+      () =>
+        new Promise<{ ok: boolean; category: 'auth' }>((resolve) => {
+          finish = resolve
+        })
+    )
+    useSettingsStore.setState({ validateProvider })
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
     )
     await act(async () =>
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
-        .find((button) => button.textContent?.trim() === 'Save')
+        .find((button) => button.textContent?.trim() === 'Test connection')
         ?.click()
     )
-    await waitFor(() => expect(validateProvider).toHaveBeenCalledOnce())
-
     act(() => useSettingsStore.setState({ providers: [] }))
-    await act(async () => rejectValidation?.(new Error('deleted provider validation failure')))
-
-    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(
-      'Could not test the provider connection.'
-    )
+    await act(async () => finish?.({ ok: false, category: 'auth' }))
+    expect(document.body.textContent).not.toContain('Authentication failed. Check the API key.')
+    expect(document.body.textContent).toContain('This Provider no longer exists.')
   })
 
   it('switches to the General panel and shows the diagnostic log file', async () => {
@@ -2154,7 +2403,7 @@ describe('SettingsPage layout', () => {
     ).api.logs
     logs.getStatus.mockResolvedValueOnce({
       configured: true,
-      path: '/Users/x/Library/Logs/Open Science/main.log',
+      path: '/Users/x/Library/Logs/Open-Science/main.log',
       existing: false,
       lastWriteSucceeded: null,
       lastFailureCategory: null
@@ -3113,7 +3362,9 @@ describe('SettingsPage layout', () => {
 
     expect(writeText).toHaveBeenCalledWith(publicSnapshot.accessUrl)
     const copyError = document.body.querySelector('[data-testid="remote-link-copy-error"]')
-    expect(copyError?.getAttribute('role')).toBe('alert')
+    expect(copyError?.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not copy the browser link'
+    )
     expect(copyError?.textContent).toContain('Could not copy the browser link')
   })
 
@@ -3182,7 +3433,7 @@ describe('SettingsPage layout', () => {
         .settings.listConnectors
     ).toHaveBeenCalled()
     expect(document.body.textContent).toContain('Chemistry')
-    expect(document.body.textContent).toContain('Contact email')
+    expect(document.body.textContent).not.toContain('Contact email')
   })
 
   it('keeps a Connector draft when device credential creation uses Settings history', async () => {
@@ -3564,6 +3815,253 @@ describe('SettingsPage layout', () => {
       crumb?.click()
     })
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+  })
+
+  it('opens Connector management through the shared breadcrumb and returns to the catalog', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Connectors')?.click())
+    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Manage'
+    )
+    expect(manage).toBeDefined()
+    await act(async () => manage?.click())
+    expect(document.body.textContent).toContain('Manage connectors')
+    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).not.toBeNull()
+    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')
+    expect(
+      layout
+        ?.closest('[data-slot="settings-content-scroll"]')
+        ?.firstElementChild?.classList.contains('h-full')
+    ).toBe(true)
+    expect(document.body.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
+    const crumb = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to connectors"]'
+    )
+    expect(crumb).not.toBeNull()
+    await act(async () => crumb?.click())
+    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
+  })
+
+  it('cancels inline Skill removal with Escape without closing Settings', async () => {
+    vi.mocked(window.api.settings.listSkills).mockResolvedValue([
+      {
+        id: 'personal-test',
+        name: 'Test skill',
+        displayName: 'Test skill',
+        description: 'Test',
+        source: 'personal',
+        enabled: true,
+        updatedAt: '2026-09-13T00:00:00Z'
+      }
+    ])
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Skills')?.click())
+    const clickText = async (label: string): Promise<void> => {
+      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === label
+      )!
+      expect(button).toBeDefined()
+      await act(async () => button.click())
+    }
+    await clickText('Manage')
+    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')!
+    expect(
+      layout
+        .closest('[data-slot="settings-content-scroll"]')
+        ?.firstElementChild?.classList.contains('h-full')
+    ).toBe(true)
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
+    )
+    await clickText('Delete…')
+    const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
+    expect(document.activeElement).toBe(title)
+    await act(async () =>
+      title.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
+    expect(document.activeElement).toBe(document.body.querySelector('[data-batch-delete-trigger]'))
+  })
+
+  it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {
+    const clickText = async (label: string): Promise<void> => {
+      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === label
+      )
+      expect(button).toBeDefined()
+      await act(async () => button!.click())
+    }
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    await clickText('Browse Marketplace')
+    const setQuery = async (value: string): Promise<void> => {
+      const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          input,
+          value
+        )
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    await setQuery('abstract')
+    await clickText('Batch manage')
+    const crumb = (): HTMLButtonElement | null =>
+      document.body.querySelector('[aria-label="Back to Marketplace"]')
+    expect(crumb()?.closest('div')?.textContent).toContain('Skills›Marketplace›Batch manage')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')?.value
+    ).toBe('abstract')
+    await setQuery('no-such-skill')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+    )
+    expect(crumb()).toBeNull()
+    expect(document.body.querySelector('h3')?.textContent).toBe('Browse Marketplace')
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')?.value
+    ).toBe('abstract')
+    expect(window.api.settings.listSkillMarketplace).toHaveBeenCalledOnce()
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
+    )
+    expect(crumb()).not.toBeNull()
+    expect(document.body.querySelector('h3')?.textContent).toBe('Batch manage')
+    await act(async () => crumb()!.click())
+    expect(crumb()).toBeNull()
+    expect(document.body.querySelector('h3')?.textContent).toBe('Browse Marketplace')
+  })
+
+  it.each(['install', 'update'] as const)(
+    'preserves batch %s selection when returning from a card detail',
+    async (mode) => {
+      vi.mocked(window.api.settings.listSkillMarketplace).mockResolvedValue({
+        ok: true,
+        value: {
+          ...marketplaceCatalog,
+          installations:
+            mode === 'update'
+              ? {
+                  'abstract-trimmer': {
+                    kind: 'installed',
+                    localSkillId: 'alpha',
+                    version: '0.9.0',
+                    canUpdate: true
+                  }
+                }
+              : {}
+        }
+      })
+      const clickText = async (text: string): Promise<void> => {
+        const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+          (item) => item.textContent?.trim() === text
+        )!
+        expect(button).toBeDefined()
+        await act(async () => button.click())
+      }
+      await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+      await act(async () => navButton('Skills')?.click())
+      await clickText('Browse Marketplace')
+      await clickText('Batch manage')
+      if (mode === 'update') await clickText('Updates1')
+      const query = (): HTMLInputElement | null =>
+        document.body.querySelector('[aria-label="Search skills"]')
+      await act(async () => fireEvent.change(query()!, { target: { value: 'trimmer' } }))
+      const checkbox = (): HTMLInputElement | null =>
+        document.body.querySelector('[data-slot="skill-marketplace-card"] input[type="checkbox"]')
+      await act(async () => checkbox()!.click())
+      expect(checkbox()?.checked).toBe(true)
+      await clickText('Abstract Trimmer')
+      expect(document.body.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
+      await act(async () =>
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+      )
+      expect(checkbox()?.checked).toBe(true)
+      expect(query()?.value).toBe('trimmer')
+      expect(
+        document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')?.textContent
+      ).toContain(mode === 'update' ? 'Update…' : 'Install…')
+      await act(async () =>
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')!.click()
+      )
+      expect(document.body.querySelector('[data-slot="skill-marketplace-detail"]')).not.toBeNull()
+      await act(async () =>
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+      )
+      expect(checkbox()?.checked).toBe(true)
+      await clickText('Back to Marketplace')
+      expect(query()?.value).toBe('')
+      await clickText('Batch manage')
+      expect(document.body.querySelector('[data-slot="skill-marketplace-batch-dock"]')).toBeNull()
+      expect(window.api.settings.listSkillMarketplace).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('cancels inline batch review with Escape without closing Settings', async () => {
+    const onClose = vi.fn()
+    vi.mocked(window.api.settings.listSkillMarketplace).mockResolvedValue({
+      ok: true,
+      value: { ...marketplaceCatalog, installations: {} }
+    })
+    const clickText = async (label: string): Promise<void> => {
+      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent?.trim() === label
+      )
+      expect(button).toBeDefined()
+      await act(async () => button!.click())
+    }
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Skills')?.click())
+    await clickText('Browse Marketplace')
+    await clickText('Batch manage')
+    const checkbox = document.body.querySelector<HTMLInputElement>(
+      '[data-slot="skill-marketplace-card"] input[type="checkbox"]'
+    )!
+    expect(checkbox).not.toBeNull()
+    await act(async () => checkbox.click())
+    await clickText('Install…')
+    const review = document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')!
+    expect(review).not.toBeNull()
+    await act(async () => fireEvent.keyDown(review.querySelector('h4')!, { key: 'Escape' }))
+    expect(document.body.querySelector('[data-slot="skill-marketplace-batch-review"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement?.textContent).toBe('Install…')
+    await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('navigates Skill Marketplace and detail through shared breadcrumbs', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    const browse = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Browse Marketplace'
+    )
+    expect(browse).toBeDefined()
+    await act(async () => browse?.click())
+    expect(document.body.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(1)
+    const title = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="skill-marketplace-card"] button'
+    )!
+    const name = title.textContent
+    await act(async () => title.click())
+    expect(
+      document.body.querySelector('[data-slot="skill-marketplace-detail"]')?.textContent
+    ).toContain(name)
+    const marketplaceCrumb = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to Marketplace"]'
+    )
+    expect(marketplaceCrumb).not.toBeNull()
+    await act(async () => marketplaceCrumb?.click())
+    expect(document.body.querySelectorAll('[data-slot="skill-marketplace-card"]')).toHaveLength(1)
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')?.click()
+    )
+    expect(document.body.querySelector('[data-slot="skill-marketplace"]')).toBeNull()
   })
 
   it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {
@@ -4052,6 +4550,86 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('labels Specialist export in shared navigation and preserves Back/Forward history', async () => {
+    window.api.specialist.previewExport = vi.fn().mockResolvedValue({
+      specialistId: 'export-fixture',
+      name: 'Export fixture',
+      version: '1.0.0',
+      fileName: 'export-fixture.zip',
+      expectedRevision: 1,
+      skills: [],
+      connectorIds: [],
+      diagnostics: [],
+      canExport: false
+    })
+    window.api.specialist.exportSpecialist = vi.fn()
+    window.api.specialist.list = vi.fn().mockResolvedValue({
+      items: [
+        {
+          kind: 'custom',
+          id: 'export-fixture',
+          name: 'Export fixture',
+          description: 'Fixture.',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          revision: 1,
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+        }
+      ],
+      integrity: { status: 'ok' }
+    })
+    useSettingsStore.getState().openSettingsToPanel('specialists')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    openRadixMenu(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Export fixture"]')
+    )
+    await act(async () =>
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+          item.textContent?.includes('Export ZIP')
+        )
+      )
+    )
+    expect(document.body.textContent).toContain('Choose Skills to include')
+    expect(document.body.textContent).not.toContain('Edit specialist')
+    expect(
+      document.body.querySelector('[aria-label="Back to specialists"]')?.parentElement?.textContent
+    ).toContain('Export ZIP')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.textContent).not.toContain('Choose Skills to include')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')?.click()
+    )
+    expect(document.body.textContent).toContain('Choose Skills to include')
+    expect(document.body.textContent).not.toContain('Edit specialist')
+  })
+
+  it('labels the Specialist ZIP import breadcrumb with the active workflow', async () => {
+    window.api.specialist.selectPackage = vi.fn().mockResolvedValue({ cancelled: true })
+    useSettingsStore.getState().openSettingsToPanel('specialists')
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    openRadixMenu(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+        button.textContent?.includes('Add specialist')
+      )
+    )
+    await act(async () => {
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+          item.textContent?.includes('Import ZIP')
+        )
+      )
+    })
+    expect(document.body.textContent).toContain('Select a Specialist ZIP')
+    expect(document.body.textContent).not.toContain('Edit specialist')
+  })
+
   it('opens the specialist creation form from Write from scratch', async () => {
     useSettingsStore.getState().openSettingsToPanel('specialists')
 
@@ -4087,7 +4665,7 @@ describe('SettingsPage layout', () => {
           {
             id: 'official',
             kind: 'official',
-            name: 'OpenScience Marketplace',
+            name: 'Open-Science Marketplace',
             repositoryUrl: 'https://github.com/aipoch/marketplace',
             ref: 'published',
             trust: 'official',
@@ -4099,7 +4677,7 @@ describe('SettingsPage layout', () => {
         specialists: [
           {
             sourceId: 'official',
-            sourceName: 'OpenScience Marketplace',
+            sourceName: 'Open-Science Marketplace',
             sourceTrust: 'official',
             id: 'example-specialist',
             displayName: 'Example Specialist',
@@ -4171,7 +4749,7 @@ describe('SettingsPage layout', () => {
           id: 'storage' as const,
           label: 'App storage permission',
           status: 'failed' as const,
-          summary: 'Open Science cannot write to its private data folder.'
+          summary: 'Open-Science cannot write to its private data folder.'
         }
       ],
       ready: false,
@@ -4187,7 +4765,7 @@ describe('SettingsPage layout', () => {
           id: 'storage' as const,
           label: 'App storage permission',
           status: 'passed' as const,
-          summary: 'Open Science can write to its private data folder.'
+          summary: 'Open-Science can write to its private data folder.'
         },
         {
           id: 'agent' as const,
@@ -4653,6 +5231,82 @@ describe('SettingsPage Codex framework', () => {
     }
   ]
 
+  it('omits the version line when Codex has never been detected', async () => {
+    window.api.settings.getSettings = vi.fn().mockResolvedValue({
+      claude: {},
+      opencode: {},
+      codebuddy: {},
+      codex: {},
+      providers: [],
+      agentFrameworkId: 'codex',
+      agentFrameworks: frameworks,
+      claudeManaged: false,
+      opencodeManaged: false,
+      codexManaged: false
+    })
+    window.api.settings.getPreflight = vi.fn().mockResolvedValue({
+      codexReady: false,
+      agentReady: false,
+      agentFrameworkId: 'codex',
+      activeProviderReady: false
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await openAgentPanel()
+    expect(document.body.textContent).not.toContain('Codex CLI Unknown')
+  })
+
+  it.each([
+    [true, '0.144.6', true],
+    [false, '0.144.6', false],
+    [true, '0.153.4', false],
+    [true, '0.154.0', false],
+    [true, undefined, false]
+  ])(
+    'offers a tested native update only for an older managed CLI (%s, %s)',
+    async (nativeManaged, nativeVersion, expected) => {
+      const api = window.api.settings
+      const snapshot = {
+        claude: {},
+        opencode: {},
+        codebuddy: {},
+        codex: {
+          resolvedPath: '/data/codex-managed/adapter/dist/index.js',
+          version: '1.6.2',
+          nativeVersion,
+          nativeManaged
+        },
+        providers: [],
+        agentFrameworkId: 'codex',
+        agentFrameworks: frameworks,
+        claudeManaged: false,
+        opencodeManaged: false,
+        codexManaged: true
+      }
+      api.getSettings = vi.fn().mockResolvedValue(snapshot)
+      api.getPreflight = vi.fn().mockResolvedValue({
+        codexReady: true,
+        agentReady: true,
+        agentFrameworkId: 'codex',
+        activeProviderReady: false
+      })
+      await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+      await openAgentPanel()
+      const update = document.body.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')
+      expect(Boolean(update)).toBe(expected)
+      if (!nativeManaged)
+        expect(document.body.textContent).toContain('Update your external installation manually')
+      if (expected) {
+        const installCodex = vi
+          .fn()
+          .mockResolvedValue({ installId: 'upgrade', ok: false, error: 'Codex is in use' })
+        api.installCodex = installCodex
+        api.onInstallLog = vi.fn().mockReturnValue(() => undefined)
+        await act(async () => update?.click())
+        expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
+      }
+    }
+  )
+
   it('offers Codex as a selectable framework behind the switch confirmation', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
@@ -4694,8 +5348,8 @@ describe('SettingsPage Codex framework', () => {
 
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
-    // The adapter version shows as a muted v-tag after the name; the repo link points at the ACP adapter.
-    expect(document.body.textContent).toContain('v1.6.2')
+    // The native and adapter versions are displayed separately; the repo link points at the ACP adapter.
+    expect(document.body.textContent).toContain('Codex CLI 0.144.6 · ACP 1.6.2')
     expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
@@ -10,12 +11,21 @@ import { createServer, type Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import { hostSdkHelp } from '../host-sdk/help'
+import { HostLineageService } from './host-lineage-service'
+import { HostFramesService } from './host-frames-service'
+import { parseCollectRpcCall } from '../host-sdk/delegate-contract'
+import { StructuredOutputError } from '../delegation/structured-output'
+import { resolveInputs } from '../compute/compute-job-workflow-owner'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { AgentsService } from '../agents/agents-service'
 import { createSpecialistService } from '../specialist/service'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
+import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import { startWorkingFileObservation } from './working-file-observer'
+import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
+import type { NotebookRunRecord } from '../../shared/notebook'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/notebook/repl-loop.integration.test.ts
 // Node is always available in vitest, so the only gate is RUN_KERNEL. The child is spawned exactly
@@ -62,6 +72,136 @@ const startLoop = (
     })
   return { child, send }
 }
+
+it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON)(
+  'captures REPL globals through handoff JSON into a real Python output graph',
+  async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'repl-handoff-'))
+    const notebookSessionRoot = join(storageRoot, 'notebooks/project/session')
+    const dataRoot = join(notebookSessionRoot, 'data')
+    const handoff = join(notebookSessionRoot, 'handoff')
+    await mkdir(dataRoot, { recursive: true })
+    await mkdir(handoff, { recursive: true })
+    const { child, send } = startLoop({ OPEN_SCIENCE_HANDOFF_DIR: handoff })
+    const runs: NotebookRunRecord[] = []
+    const activities: Parameters<typeof sealArtifactProvenanceGraph>[0]['notebookActivities'] = []
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: async () => runs }
+    })
+    const scripts = [
+      'globalThis.rows = [1, 2, 3];',
+      "const fs = require('node:fs'); const path = require('node:path'); const h = process.env.OPEN_SCIENCE_HANDOFF_DIR; fs.writeFileSync(path.join(h, 'rows.json'), JSON.stringify(rows));",
+      "import json, os\nh = os.environ['OPEN_SCIENCE_HANDOFF_DIR']\nrows = json.load(open(os.path.join(h, 'rows.json')))\nwith open(os.path.join(h, 'result.json'), 'w') as output:\n    json.dump(rows, output)"
+    ]
+    try {
+      for (const [index, script] of scripts.entries()) {
+        const kernelKind = index < 2 ? 'repl' : 'python'
+        const run: NotebookRunRecord = {
+          runId: `run-${index}`,
+          cellId: `cell-${index}`,
+          source: 'agent',
+          kernelKind,
+          kernelEpochId: kernelKind,
+          script,
+          status: 'running',
+          startedAt: index,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: [],
+          inputFiles: []
+        }
+        runs.push(run)
+        const sourceFileAccessContext = await analyzer.sourceFileAccessContext({
+          projectId: 'project',
+          sessionId: 'session',
+          currentRunId: run.runId,
+          language: kernelKind,
+          kernelEpochId: kernelKind,
+          includeManagedEnvironment: true
+        })
+        const observation = await startWorkingFileObservation({
+          notebookSessionRoot,
+          dataRoot,
+          cwd: dataRoot,
+          kind: kernelKind,
+          ...(kernelKind === 'python' ? { language: kernelKind } : {}),
+          code: script,
+          runId: run.runId,
+          fileEvidenceStorageRoot: storageRoot,
+          sourceFileAccessContext
+        })
+        if (kernelKind === 'repl') expect((await send(script)).error).toBeNull()
+        else
+          await promisify(execFile)(process.env.OPEN_SCIENCE_TEST_PYTHON!, ['-c', script], {
+            cwd: dataRoot,
+            env: { ...process.env, OPEN_SCIENCE_HANDOFF_DIR: handoff },
+            timeout: 30_000
+          })
+        const captured = await observation.finish()
+        expect(captured.fileEvidence).toMatchObject({
+          state: 'available',
+          fileReads: 'complete',
+          writerAttribution: 'complete'
+        })
+        Object.assign(run, {
+          status: 'completed',
+          endedAt: index + 1,
+          fileEvidence: captured.fileEvidence,
+          workingFiles: captured.workingFiles
+        })
+        activities.push({
+          run,
+          runIndex: index,
+          evidenceJson: await readFile(join(storageRoot, captured.fileEvidence.storageKey!), 'utf8')
+        })
+      }
+      const projection = await analyzer.project({ projectId: 'project', sessionId: 'session' })
+      expect(projection.dependenciesByRunId?.['run-1']).toEqual(['run-0'])
+      const finalEvidence = JSON.parse(activities[2]!.evidenceJson!)
+      const output = finalEvidence.relations.find(
+        (entry: { relativePath: string }) => entry.relativePath === 'handoff/result.json'
+      ).generation
+      const graph = sealArtifactProvenanceGraph({
+        target: {
+          versionId: 'version',
+          filename: 'result.json',
+          producerRunId: 'run-2',
+          sourceGenerationId: output.generationId,
+          checksum: output.checksum,
+          sizeBytes: output.sizeBytes
+        },
+        notebookActivities: activities,
+        computeActivities: [],
+        notebookDependencies: projection
+      })
+      expect(graph.activities.map((activity) => activity.activityId)).toEqual(
+        expect.arrayContaining(['run-0', 'run-1', 'run-2'])
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'depends-on',
+          activityId: 'run-1',
+          dependencyActivityId: 'run-0',
+          authority: 'authoritative'
+        })
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          activityId: 'run-2',
+          relativePath: 'handoff/rows.json',
+          authority: 'authoritative'
+        })
+      )
+      expect(await readFile(join(handoff, 'result.json'), 'utf8')).toBe('[1, 2, 3]')
+    } finally {
+      child.kill()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  },
+  60_000
+)
 
 describe('repl_loop local RPC transport', () => {
   it('exposes only the camelCase public method names', async () => {
@@ -135,6 +275,117 @@ describe('repl_loop local RPC transport', () => {
       })
     } finally {
       child.kill()
+    }
+  })
+
+  it('lets callers repair invalid public options using the final uncaught error', async () => {
+    const context = { projectId: 'project-a', sessionId: 'session-a' }
+    const lineage = new HostLineageService({
+      catalog: { readHostArtifactCatalog: async () => [] },
+      provenance: {
+        readDependencyRelations: async () => [],
+        getVersionCore: async () => {
+          throw new Error('unused')
+        }
+      }
+    })
+    const frames = new HostFramesService({
+      readProject: async () => ({ sessions: [], isComplete: true }),
+      readSession: async () => ({ status: 'missing' })
+    })
+    const accepted: string[] = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => {
+        body += chunk
+      })
+      request.on('end', async () => {
+        const { method, params } = JSON.parse(body)
+        try {
+          let result: unknown
+          if (method === 'lineageCall') {
+            // No matching Version is deliberate: reaching the catalog proves repaired options
+            // passed the real owner validator, without inventing a successful provenance graph.
+            result = await lineage.graph(params.version_id, params.options, context)
+          } else if (method === 'framesCall') {
+            result = await frames.list(params.options, context)
+          } else if (method === 'computeCall') {
+            await resolveInputs(params.inputs, undefined, undefined)
+            result = { job_id: 'job-1' }
+          } else {
+            parseCollectRpcCall(params)
+            result = []
+          }
+          accepted.push(method)
+          response.writeHead(200).end(JSON.stringify({ result }))
+        } catch (error) {
+          response.writeHead(400).end(JSON.stringify({ error: (error as Error).message }))
+        }
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'public-parameter-recovery',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath
+    })
+    try {
+      for (const [field, invalid, valid, minimum, maximum] of [
+        ['maxDepth', -1, 1, 0, 20],
+        ['maxNodes', 0, 5, 1, 500]
+      ] as const) {
+        const failed = await send(`await host.lineage.graph('missing', { ${field}: ${invalid} })`)
+        expect(failed.error).toContain(field)
+        expect(failed.error).toMatch(/integer/i)
+        for (const bound of [minimum, maximum]) {
+          expect(failed.error).toMatch(new RegExp(`\\b${bound}\\b`))
+        }
+        const repaired = await send(`await host.lineage.graph('missing', { ${field}: ${valid} })`)
+        expect(repaired.error).toMatch(/Artifact Version.*not found/i)
+        expect(repaired.error).toContain('missing')
+      }
+      const framesFailure = await send('await host.frames.list({ rootsOnly: 1 })')
+      expect(framesFailure.error).toContain('rootsOnly')
+      expect(framesFailure.error).toMatch(/boolean/i)
+      expect((await send('await host.frames.list({ rootsOnly: false })')).error).toBeNull()
+
+      const collectFailure = await send(
+        "await host.collect(['frame-1'], { returnWhen: 'invalid' })"
+      )
+      expect(collectFailure.error).toContain('returnWhen')
+      expect(collectFailure.error).toMatch(/\ball\b/)
+      expect(collectFailure.error).toMatch(/\bany\b/)
+      expect(
+        (await send("await host.collect(['frame-1'], { returnWhen: 'any' })")).error
+      ).toBeNull()
+
+      for (const [field, invalid, valid, constraint] of [
+        ['remotePath', 'relative', '/scratch/input.csv', /absolute/i],
+        ['dstFilename', 'nested/input.csv', 'input.csv', /bare filename|path separators/i]
+      ] as const) {
+        const input = { remotePath: '/scratch/input.csv', [field]: invalid }
+        const failed = await send(
+          `await host.compute.create('ssh:test').submitJob('test', 'true', { inputs: [${JSON.stringify(input)}] })`
+        )
+        expect(failed.error).toContain(field)
+        expect(failed.error).toMatch(constraint)
+        input[field] = valid
+        expect(
+          (
+            await send(
+              `await host.compute.create('ssh:test').submitJob('test', 'true', { inputs: [${JSON.stringify(input)}] })`
+            )
+          ).error
+        ).toBeNull()
+      }
+      expect(accepted).toEqual(['framesCall', 'delegatedWorkCall', 'computeCall', 'computeCall'])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+      })
     }
   })
 
@@ -215,6 +466,97 @@ describe('repl_loop local RPC transport', () => {
       )
     }
   }, 60_000)
+
+  it('carries structured output diagnostics from the real RPC owner through uncaught REPL', async () => {
+    const rpc = new NotebookLocalRpcServer({} as never, {
+      transport: 'pipe',
+      delegatedWorkService: {
+        delegate: async () => {
+          throw new Error('unused')
+        },
+        submitOutput: async () => {
+          throw new StructuredOutputError(
+            'structured_output_validation_failed',
+            'Structured output does not match the admitted schema.',
+            'required',
+            '/summary',
+            'count'
+          )
+        }
+      }
+    })
+    const connection = await rpc.issueControlConnection('session', 'project', 'child', {
+      role: 'delegate',
+      attemptId: 'attempt-1'
+    })
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1',
+      originatingTurnId: 'prompt-1',
+      originatingUserMessageId: 'prompt-1',
+      attachmentIds: [],
+      artifactIds: []
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token
+    })
+    try {
+      const result = await send('await host.submitOutput({})')
+      expect(result.error).toContain('Structured output does not match the admitted schema.')
+      expect(result.error).toContain('structured_output_validation_failed')
+      expect(result.error).toContain('/summary')
+      expect(result.error).toContain('count')
+    } finally {
+      child.kill()
+      endInvocation()
+      connection.release()
+      await rpc.close()
+    }
+  })
+
+  it.each(['host.agents.switch(null)', "host.viewImage({ path: 'plot.png' })"])(
+    'preserves structured background-safety guidance from %s',
+    async (expression) => {
+      const server = createServer((_request, response) => {
+        response.writeHead(409, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            error: {
+              code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+              method: expression.split('(')[0],
+              retryable: false,
+              hint: 'Run this Host SDK operation in foreground repl_execute.'
+            }
+          })
+        )
+      })
+      const connection = await listenForLocalRpc(server, {
+        name: 'repl-loop-background-safety-test',
+        transport: 'pipe'
+      })
+      const { child, send } = startLoop({
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+        OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+        OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+      })
+
+      try {
+        const result = await send(`return await ${expression}`)
+        expect(result.error).toContain('BACKGROUND_HOST_METHOD_UNSAFE')
+        expect(result.error).toContain(expression.split('(')[0])
+        expect(result.error).not.toContain('[object Object]')
+        expect(result.error).toContain('foreground repl_execute')
+      } finally {
+        child.kill()
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve()))
+        )
+      }
+    },
+    60_000
+  )
 
   it('routes the reserved Windows RPC endpoint through the authenticated command gateway', async () => {
     let received:
@@ -403,6 +745,77 @@ describe('repl_loop local RPC transport', () => {
       )
     }
   }, 60_000)
+
+  it('exposes partial stop handles through RPC and lets the REPL query those exact Attempts', async () => {
+    const session = { projectId: 'project', sessionId: 'session' }
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session,
+      rootFrameId: 'root',
+      originMessageId: 'prompt'
+    })
+    let failedFrame = ''
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      revokeAttemptWrites: async ({ frameId }) => {
+        if (frameId === failedFrame) throw new Error('private dependency secret')
+      }
+    })
+    const rpc = new NotebookLocalRpcServer({} as never, {
+      transport: 'pipe',
+      delegatedWorkService: work
+    })
+    const connection = await rpc.issueControlConnection('session', 'project', 'root', {
+      role: 'main'
+    })
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool',
+      originatingUserMessageId: 'prompt'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token
+    })
+    try {
+      const admitted = await send(
+        "return await host.delegate([{ name: 'First', task: 'First' }, { name: 'Second', task: 'Second' }], { wait: false })"
+      )
+      expect(admitted.error).toBeNull()
+      const handles = JSON.parse(admitted.result!).children
+      await expect.poll(() => execution.controls()).toHaveLength(2)
+      failedFrame = handles[1].frameId
+      const stopped = await send(
+        `await host.stopChild(${JSON.stringify(handles.map(({ frameId }: { frameId: string }) => frameId))})`
+      )
+      expect(stopped.error).not.toContain('private dependency secret')
+      const report = JSON.parse(stopped.error!.match(/\{.*\}/)![0])
+      expect(report.hint).toContain('host.collect')
+      const selectors = report.attempts.map(
+        ({ frameId, attemptId }: { frameId: string; attemptId: string }) => ({ frameId, attemptId })
+      )
+      const observed = await send(
+        `return await host.collect(${JSON.stringify(selectors)}, { timeoutSeconds: 0 })`
+      )
+      expect(observed.error).toBeNull()
+      expect(JSON.parse(observed.result!).map(({ status }: { status: string }) => status)).toEqual([
+        'cancelled',
+        'running'
+      ])
+      failedFrame = ''
+      expect(
+        (await send(`await host.stopChild([${JSON.stringify(handles[1].frameId)}])`)).error
+      ).toBeNull()
+    } finally {
+      child.kill()
+      endInvocation()
+      connection.release()
+      await rpc.close()
+    }
+  })
 
   it('discovers a public Specialist and delegates by its stable id and exact name through the authenticated REPL', async () => {
     const profileStorage = await mkdtemp(join(tmpdir(), 'repl-delegate-profile-roundtrip-'))
@@ -3038,7 +3451,8 @@ gate('repl_loop.js host.compute', () => {
         error: JSON.stringify({
           error_code: 'host_unreachable',
           message: 'SSH connect failed',
-          retry_after_user_action: true
+          retry_after_user_action: true,
+          cause: { credential: 'private-compute-secret' }
         })
       }
     }
@@ -3057,13 +3471,55 @@ gate('repl_loop.js host.compute', () => {
       expect(parsed.code).toBe('host_unreachable')
       expect(parsed.retry).toBe(true)
       expect(parsed.msg).toContain('SSH connect failed')
+      const uncaught = await send("await host.compute.create('ssh:x').callCommand('id', 'probe')")
+      expect(uncaught.error).toContain('"error_code":"host_unreachable"')
+      expect(uncaught.error).toContain('"retry_after_user_action":true')
+      expect(uncaught.error?.match(/SSH connect failed/g)).toHaveLength(1)
+      expect(uncaught.error).not.toContain('private-compute-secret')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('preserves the Compute reason and recovery fields when an uncaught diagnostic is clipped', async () => {
+    next = {
+      status: 500,
+      body: {
+        error: JSON.stringify({
+          error_code: 'host_unreachable',
+          message:
+            'SSH transport failed. ' +
+            '診断'.repeat(2000) +
+            ' Execution outcome unknown. No Job receipt is available; do not submit the same work again.',
+          retry_after_user_action: false
+        })
+      }
+    }
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
+      OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES: '512'
+    })
+    try {
+      const result = await send("await host.compute.create('ssh:x').callCommand('id', 'probe')")
+      expect(result.error).toContain('SSH transport failed.')
+      expect(result.error).toContain('Execution outcome unknown.')
+      expect(result.error).toContain(
+        'No Job receipt is available; do not submit the same work again.'
+      )
+      expect(result.error).toContain('"error_code":"host_unreachable"')
+      expect(result.error).toContain('"retry_after_user_action":false')
+      expect(result.error).toContain('[diagnostic truncated]')
+      expect(result.outputTruncated).toBe(true)
+      expect(Buffer.byteLength(result.error ?? '', 'utf8')).toBeLessThanOrEqual(512)
+      expect(result.error).not.toContain('�')
     } finally {
       child.kill()
     }
   }, 60_000)
 
   it('details() maps public oldText to wire old_text and returns the result', async () => {
-    next = { status: 200, body: { result: { doc: 'the doc', isSkeleton: false } } }
+    next = { status: 200, body: { result: { doc: 'the doc', probe: null } } }
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok'

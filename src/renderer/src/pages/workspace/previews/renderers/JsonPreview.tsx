@@ -5,22 +5,6 @@ import type { PreviewFileRendererProps } from '../preview-types'
 import type { PreviewFileContentLoadState } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
-// `unknownErrorText` is passed in because this runs outside React and can't call the t() hook; the
-// caller supplies the localized wording for a thrown value that isn't an Error.
-const formatJsonPreview = (
-  content: string,
-  unknownErrorText: string
-): { formatted: string; error?: string } => {
-  try {
-    return { formatted: JSON.stringify(JSON.parse(content), null, 2) }
-  } catch (error) {
-    return {
-      formatted: content,
-      error: error instanceof Error ? error.message : unknownErrorText
-    }
-  }
-}
-
 // Presentation half of the JSON preview, split from the reading half so the Plan-aware JSON
 // renderer can back both its raw view and its fallback path with one loaded preview.
 export const JsonPreviewBody = ({
@@ -46,13 +30,25 @@ export const JsonPreviewBody = ({
     return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
   }
 
-  const { formatted, error } = formatJsonPreview(state.preview.content, t('Invalid JSON'))
+  let errorContent: React.JSX.Element | undefined
+  try {
+    // Validate syntax only: parsing must never replace the source shown to the user.
+    JSON.parse(state.preview.content)
+  } catch (error) {
+    errorContent = (
+      <div className="shrink-0 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-danger-000">
+        {error instanceof SyntaxError
+          ? t('Invalid JSON: {{error}}', { error: error.message || t('Invalid JSON') })
+          : t('JSON validation unavailable')}
+      </div>
+    )
+  }
 
-  const errorContent = error ? (
-    <div className="shrink-0 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-danger-000">
-      {t('Invalid JSON: {{error}}', { error })}
-    </div>
-  ) : undefined
-
-  return <SourcePreviewContent content={formatted} topContent={errorContent} />
+  return (
+    <SourcePreviewContent
+      content={state.preview.content}
+      pagination={state.pagination}
+      topContent={errorContent}
+    />
+  )
 }

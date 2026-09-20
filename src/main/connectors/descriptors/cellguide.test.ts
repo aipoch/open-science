@@ -108,14 +108,103 @@ function mockFetch(
         if (!r.text) throw new SyntaxError('Unexpected end of JSON input')
         return JSON.parse(r.text)
       },
-      text: async () => r.text ?? ''
+      text: async () => r.text ?? ('json' in r ? JSON.stringify(r.json) : '')
     } as Response
   }) as unknown as typeof fetch
 }
 
 const engine = (fetchImpl: typeof fetch): ParserEngine => new ParserEngine({ fetchImpl })
 
+describe('cellguide optional blob failures', () => {
+  const cases = [
+    ['get_marker_genes', 'computational_marker_genes', {}],
+    ['get_marker_genes', 'canonical_marker_genes', { marker_type: 'canonical' }],
+    ['get_source_data', 'source_collections', {}],
+    ['get_cell_tissues', 'source_collections', {}]
+  ] as const
+
+  it.each(cases)('preserves absent data for %s / %s', async (id, path, args) => {
+    for (const response of [{ status: 404 }, { text: '' }, { text: ' \n' }, { json: [] }]) {
+      const fetchImpl = mockFetch({
+        latest_snapshot_identifier: { text: SNAPSHOT },
+        '/celltype_metadata.json': { json: METADATA },
+        [`/${path}/`]: response
+      })
+      const out = (await engine(fetchImpl).call(
+        tool(id),
+        { cell_type: 'CL:0000622', ...args },
+        {}
+      )) as Record<string, unknown>
+      expect(out.returned ?? out.count).toBe(0)
+      expect(out.markerGenes ?? out.sources ?? out.tissues).toEqual([])
+    }
+  })
+
+  it.each(cases)('propagates exhausted HTTP failures from %s / %s', async (id, path, args) => {
+    for (const status of [401, 403, 429, 503]) {
+      const fetchImpl = mockFetch({
+        latest_snapshot_identifier: { text: SNAPSHOT },
+        '/celltype_metadata.json': { json: METADATA },
+        [`/${path}/`]: { status }
+      })
+      const parser = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+      await expect(parser.call(tool(id), { cell_type: 'CL:0000622', ...args }, {})).rejects.toThrow(
+        `HTTP ${status}`
+      )
+      const requests = vi
+        .mocked(fetchImpl)
+        .mock.calls.filter(([url]) => String(url).includes(`/${path}/`))
+      expect(requests).toHaveLength(status === 429 || status === 503 ? 3 : 1)
+    }
+  })
+
+  it.each(['{', '<html>upstream error</html>'])(
+    'rejects malformed nonempty JSON: %s',
+    async (text) => {
+      const fetchImpl = mockFetch({
+        latest_snapshot_identifier: { text: SNAPSHOT },
+        '/celltype_metadata.json': { json: METADATA },
+        '/computational_marker_genes/': { text }
+      })
+      await expect(
+        engine(fetchImpl).call(tool('get_marker_genes'), { cell_type: 'CL:0000622' }, {})
+      ).rejects.toBeInstanceOf(SyntaxError)
+    }
+  )
+
+  it('propagates network errors after retries', async () => {
+    const fetchImpl = mockFetch({
+      latest_snapshot_identifier: { text: SNAPSHOT },
+      '/celltype_metadata.json': { json: METADATA }
+    })
+    const parser = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+    await expect(
+      parser.call(tool('get_marker_genes'), { cell_type: 'CL:0000622' }, {})
+    ).rejects.toThrow('unexpected fetch:')
+  })
+})
+
 describe('cellguide / get_cell_type_info', () => {
+  it.each([false, true])(
+    'preserves description fallback when enrichment fails (both=%s)',
+    async (both) => {
+      const fetchImpl = mockFetch({
+        latest_snapshot_identifier: { text: SNAPSHOT },
+        '/celltype_metadata.json': { json: METADATA },
+        '/validated_descriptions/': { status: 503 },
+        '/gpt_descriptions/': both ? { status: 503 } : { json: 'Fallback description' }
+      })
+      const parser = new ParserEngine({ fetchImpl, retryBackoffMs: 1 })
+      await expect(
+        parser.call(tool('get_cell_type_info'), { cell_type: 'CL:0000622' }, {})
+      ).resolves.toMatchObject({
+        name: 'acinar cell',
+        description: both ? '' : 'Fallback description',
+        descriptionSource: both ? 'none' : 'gpt'
+      })
+    }
+  )
+
   it('resolves a CL id to name, synonyms, ontology + curated description', async () => {
     const fetchImpl = mockFetch({
       latest_snapshot_identifier: { text: SNAPSHOT },

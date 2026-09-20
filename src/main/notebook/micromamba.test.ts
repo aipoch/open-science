@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -39,6 +39,16 @@ describe('micromamba argv builders', () => {
       '/root'
     ])
     expect(argv.join(' ')).not.toContain('conda-forge')
+  })
+
+  it('can create from an imported explicit lock with network access', () => {
+    const argv = createFromLockArgv('/mm', '/root', '/root/envs/repro-lock', '/tmp/lock', {
+      offline: false
+    })
+    expect(argv).not.toContain('--offline')
+    expect(argv).toEqual(
+      expect.arrayContaining(['--file', '/tmp/lock', '-p', '/root/envs/repro-lock'])
+    )
   })
 
   it('createFromPackagesArgv is the online channel form with packages last', () => {
@@ -290,7 +300,7 @@ describe('micromambaSpawnEnv', () => {
       verifyOwnership: () => true
     })
 
-    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\OpenScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
+    expect(env.CONDA_PKGS_DIRS).toMatch(/^C:\\Open-ScienceTmp\\m-[0-9a-hjkmnp-tv-z]{8}$/)
   })
 
   it('cleans inherited conda/mamba values before injecting the Windows app cache and CA vars', () => {
@@ -323,13 +333,14 @@ describe('micromambaSpawnEnv', () => {
     'confines all managed Micromamba state to the runtime on %s',
     (platform) => {
       const root = platform === 'win32' ? 'D:\\OpenScience\\runtime' : '/runtime'
-      const runtimePath = platform === 'win32' ? win32 : { join }
-      const cache = runtimePath.join(root, 'pkgs')
+      const runtimePath = platform === 'win32' ? win32 : posix
+      const cache = runtimePath.join(root, 'coordinated-pkgs')
       const home = runtimePath.join(root, 'home')
       const env = micromambaSpawnEnv(root, '/ca.pem', {
         platform,
         env: {
           HOME: '/host-home',
+          HTTPS_PROXY: 'http://proxy.test:8080',
           USERPROFILE: 'C:\\Users\\host-user',
           CONDA_PKGS_DIRS: '/existing',
           CONDA_ENVS_PATH: '/existing-envs',
@@ -343,6 +354,7 @@ describe('micromambaSpawnEnv', () => {
       })
 
       expect(env.HOME).toBe(home)
+      expect(env.HTTPS_PROXY).toBe('http://proxy.test:8080')
       expect(env.USERPROFILE).toBe(home)
       expect(env.MAMBA_ROOT_PREFIX).toBe(root)
       expect(env.CONDA_PKGS_DIRS).toBe(cache)

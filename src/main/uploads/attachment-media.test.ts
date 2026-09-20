@@ -496,15 +496,18 @@ describe('buildImageContentData', () => {
     expect(sharpFactory).not.toHaveBeenCalled()
   })
 
-  it('passes small images through untouched as raw base64', async () => {
+  it('processes small images without returning original metadata bytes', async () => {
     const filePath = join(root, 'small.png')
     const bytes = Buffer.from('tiny-image-bytes')
     await writeFile(filePath, bytes)
 
     const result = await buildImageContentData(filePath, 'image/png', bytes.byteLength)
 
-    expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/png' })
-    expect(sharpFactory).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      data: Buffer.from('png-bytes').toString('base64'),
+      mimeType: 'image/png'
+    })
+    expect(sharpFactory).toHaveBeenCalledWith(bytes)
   })
 
   it('reads small managed images from the trusted byte source instead of the path', async () => {
@@ -518,7 +521,10 @@ describe('buildImageContentData', () => {
       readBytes
     )
 
-    expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/png' })
+    expect(result).toEqual({
+      data: Buffer.from('png-bytes').toString('base64'),
+      mimeType: 'image/png'
+    })
     expect(readBytes).toHaveBeenCalledOnce()
   })
 

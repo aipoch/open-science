@@ -9,7 +9,12 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
-import type { NotebookRunInputFile, NotebookRunProvenanceContext } from '../../shared/notebook'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import {
+  NotebookBackgroundRunError,
+  type NotebookRunInputFile,
+  type NotebookRunProvenanceContext
+} from '../../shared/notebook'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import { AcpSessionAggregate } from '../acp/session-aggregate'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
@@ -149,6 +154,370 @@ describe('notebook local RPC server', () => {
       await acceptMissingDataRoot()
       await response.catch(() => undefined)
       connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each(
+    (['execute', 'runCell', 'executeControl', 'executeShell'] as const).flatMap((method) =>
+      (['ended', 'replaced', 'active'] as const).map((turn) => ({ method, turn }))
+    )
+  )('scopes a slow $method body to its $turn turn', async ({ method, turn }) => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const dispatch = vi.spyOn(service, method).mockImplementation(async () => {
+      throw new Error('Execution from the ended turn reached the runtime.')
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const binding = {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    }
+    server.setArtifactTurnBinding('session-1', binding)
+    // Observe Node's existing HTTP request event, as the partial-body shutdown tests do.
+    const underlying = (server as unknown as { server?: Server }).server
+    if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+    const accepted = once(underlying, 'request')
+    const payload = JSON.stringify({
+      method,
+      params: {
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        ...(method === 'executeShell'
+          ? { command: 'echo hi' }
+          : method === 'runCell'
+            ? { cellId: 'cell-1' }
+            : { code: '1' })
+      }
+    })
+    let request!: ClientRequest
+    const outcome = new Promise<number | Error>((resolve) => {
+      request = httpRequest(
+        connection.endpoint,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(payload)
+          }
+        },
+        (response) => {
+          response.resume()
+          resolve(response.statusCode ?? 500)
+        }
+      )
+      request.once('error', resolve)
+    })
+    try {
+      request.write(payload.slice(0, -1))
+      await accepted
+      if (turn === 'ended') await server.clearArtifactTurnBinding('session-1', 'turn-1')
+      if (turn === 'replaced') {
+        server.setArtifactTurnBinding('session-1', { ...binding, ownerExecutionId: 'turn-2' })
+      }
+      request.end(payload.slice(-1))
+      const status = await outcome
+      if (turn === 'active') {
+        expect(dispatch).toHaveBeenCalledTimes(1)
+        expect(status).toBe(500)
+      } else {
+        expect(dispatch).not.toHaveBeenCalled()
+        expect(status).toBe(409)
+      }
+    } finally {
+      request.destroy()
+      await outcome
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each([
+    'http-disconnect',
+    'turn-ended',
+    'background-turn-ended',
+    'other-turn-ended',
+    'delegated-turn-ended'
+  ] as const)('scopes heartbeat cancellation after %s', async (end) => {
+    const root = await createStorageRoot()
+    const started = createDeferred<AbortSignal>()
+    const tick = createDeferred()
+    const finished = createDeferred()
+    const heartbeat = join(root, 'cancellation-heartbeat.txt')
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request) => {
+          if (!request.signal) throw new Error('Expected execution cancellation signal')
+          await writeFile(heartbeat, '')
+          started.resolve(request.signal)
+          // Model the next heartbeat with a barrier, avoiding wall-clock races.
+          await tick.promise
+          if (!request.signal.aborted) {
+            await writeFile(heartbeat, '1\n')
+            await writeFile(join(root, 'finished.txt'), 'finished\n')
+          }
+          finished.resolve()
+          return {
+            status: request.signal.aborted ? 'cancelled' : 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const execute = service.execute.bind(service)
+    let executionSettled: Promise<unknown> | undefined
+    vi.spyOn(service, 'execute').mockImplementation((...args) => {
+      const result = execute(...args)
+      executionSettled = result.catch(() => undefined)
+      return result
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection =
+      end === 'delegated-turn-ended'
+        ? await server.issueDelegatedNotebookConnection({
+            projectId: 'default-project',
+            sessionId: 'session-1',
+            rootFrameId: 'root-frame-session-1',
+            agentFrameId: 'child-frame',
+            attemptId: 'child-attempt',
+            messageBranchId: 'child-branch',
+            runtimeSegmentId: 'child-runtime',
+            promptMessageId: 'child-prompt',
+            workspaceCwd: root,
+            isAttemptWritable: () => true
+          })
+        : await server.issueSessionConnection(
+            'session-1',
+            'default-project',
+            'root-frame-session-1'
+          )
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    const disconnect = new AbortController()
+    let pending: Promise<unknown> | undefined
+    try {
+      pending = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: root,
+              code: 'heartbeat()',
+              background: end === 'background-turn-ended'
+            }
+          }),
+          signal: disconnect.signal
+        },
+        'foreground heartbeat'
+      ).then(
+        async (response) => ({ status: response.status, body: await response.json() }),
+        (error) => ({ error })
+      )
+      const signal = await started.promise
+      if (end === 'http-disconnect') {
+        disconnect.abort()
+        await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      } else {
+        const clearing = server.clearArtifactTurnBinding(
+          'session-1',
+          end === 'other-turn-ended' ? 'unrelated-turn' : 'turn-1'
+        )
+        if (end === 'delegated-turn-ended') {
+          let cleared = false
+          void clearing.then(() => {
+            cleared = true
+          })
+          // Child execution belongs to its Attempt, so Main cleanup must finish before
+          // the independently running child's next heartbeat is released.
+          await vi.waitFor(() => expect(cleared).toBe(true))
+          expect(signal.aborted).toBe(false)
+        }
+      }
+      tick.resolve()
+      await finished.promise
+      const survives =
+        end === 'background-turn-ended' ||
+        end === 'other-turn-ended' ||
+        end === 'delegated-turn-ended'
+      expect(await readFile(heartbeat, 'utf8')).toBe(survives ? '1\n' : '')
+      if (survives) expect((await stat(join(root, 'finished.txt'))).isFile()).toBe(true)
+      else await expect(stat(join(root, 'finished.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      tick.resolve()
+      await pending
+      await executionSettled
+      if (end === 'background-turn-ended') {
+        // A background RPC settles at admission; wait for terminal persistence before removing
+        // the test storage root. The executor heartbeat alone does not mean the run has settled.
+        const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        await Promise.all(state.runs.map((run) => service.waitForBackgroundRun(run.runId)))
+      }
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each(
+    (['execute', 'executeControl'] as const).flatMap((method) =>
+      (
+        [
+          'before-clear',
+          'during-clear',
+          'before-replace',
+          'during-replace',
+          'during-close'
+        ] as const
+      ).map((timing) => ({ method, timing }))
+    )
+  )('retains a $method stop failure $timing for turn cleanup', async ({ method, timing }) => {
+    const root = await createStorageRoot()
+    const started = createDeferred()
+    const failStop = createDeferred()
+    const stopError = new NotebookExecutionStopError()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => {
+          started.resolve()
+          await failStop.promise
+          // The Kernel boundary separately verifies failed OS teardown. This fixture checks
+          // preservation of that typed failure through the real runtime and RPC drain.
+          throw stopError
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'turn-1',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'root-frame-session-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    const pending = fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method,
+          params: { sessionId: 'session-1', workspaceCwd: root, code: 'work()' }
+        })
+      },
+      'failed execution stop propagation'
+    ).then(async (response) => ({ status: response.status, body: await response.json() }))
+    // Closing can reject the transport before turn cleanup observes the retained stop failure.
+    // Handle that rejection immediately; assert its outcome below and always finish teardown.
+    void pending.catch(() => undefined)
+    let closing: Promise<void> | undefined
+    try {
+      await started.promise
+      if (timing === 'before-clear' || timing === 'before-replace') {
+        failStop.resolve()
+        await expect(pending).resolves.toEqual({
+          status: 500,
+          body: { error: stopError.message }
+        })
+      }
+      if (timing === 'before-replace' || timing === 'during-replace') {
+        server.setArtifactTurnBinding('session-1', {
+          ownerExecutionId: 'turn-2',
+          projectId: 'default-project',
+          provenanceContext: {
+            rootFrameId: 'root-frame-session-1',
+            agentFrameId: 'root-frame-session-1',
+            messageBranchId: 'branch-2',
+            runtimeSegmentId: 'runtime-2',
+            promptMessageId: 'prompt-2'
+          }
+        })
+      }
+      if (timing === 'during-close') {
+        closing = server.close()
+        // Exercise the bounded shutdown path deterministically: the pending execution outlives
+        // the HTTP grace window, but its typed stop failure must still reach turn cleanup.
+        await closing
+      }
+      const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
+      const rejected = expect(clearing).rejects.toBe(stopError)
+      failStop.resolve()
+      await rejected
+      if (timing === 'during-close') {
+        await expect(pending).rejects.toMatchObject({ cause: expect.any(Error) })
+      } else {
+        await expect(pending).resolves.toEqual({
+          status: 500,
+          body: { error: stopError.message }
+        })
+      }
+    } finally {
+      failStop.resolve()
+      await pending.catch(() => undefined)
+      connection.release?.()
+      await closing
       await server.close()
       await service.dispose()
     }
@@ -1118,7 +1487,9 @@ describe('notebook local RPC server', () => {
     const server = new NotebookLocalRpcServer({
       execute: vi.fn(async (request: unknown) => request),
       executeControl: vi.fn(async (request: unknown) => request),
-      executeShell: vi.fn(async (request: unknown) => request)
+      executeControlBackground: vi.fn(async (request: unknown) => request),
+      executeShell: vi.fn(async (request: unknown) => request),
+      executeShellBackground: vi.fn(async (request: unknown) => request)
     } as never)
     const connections: Array<Awaited<ReturnType<typeof server.issueSessionConnection>>> = []
     const dispatch = async (
@@ -1185,6 +1556,7 @@ describe('notebook local RPC server', () => {
       const fresh = await dispatch('fresh')
       expect(fresh).toMatchObject({ executionInvocationId: freshId })
       expect(fresh).not.toHaveProperty('registeredHelperSkillIds')
+      await expect(dispatch('fresh')).resolves.toMatchObject({ executionInvocationId: freshId })
 
       setTurn('missing')
       expect(await dispatch('missing')).not.toHaveProperty('executionInvocationId')
@@ -1302,6 +1674,106 @@ describe('notebook local RPC server', () => {
       expect(await replResponse.json()).toMatchObject({
         result: { executionInvocationId: replId }
       })
+      const replRetry = await fetchLocalRpc(
+        replConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${replConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeControl',
+            params: {
+              sessionId: 'repl-default',
+              workspaceCwd: '/workspace',
+              code: 'return 1',
+              timeoutMs: 1_815_000
+            }
+          })
+        },
+        'Notebook execution RPC retry'
+      )
+      expect(await replRetry.json()).toMatchObject({
+        result: { executionInvocationId: replId }
+      })
+
+      setTurn('repl-background-mismatch')
+      server.authorizeExecution({
+        sessionId: 'repl-background-mismatch',
+        toolCallId: 'tool-repl-background-mismatch',
+        promptMessageId: 'prompt-1',
+        method: 'executeControl',
+        rawInput: { code: 'return 1', background: true }
+      })
+      const mismatchConnection = await server.issueSessionConnection(
+        'repl-background-mismatch',
+        'project-1',
+        'root-frame-repl-background-mismatch'
+      )
+      connections.push(mismatchConnection)
+      const backgroundMismatch = await fetchLocalRpc(
+        mismatchConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${mismatchConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeControl',
+            params: {
+              sessionId: 'repl-background-mismatch',
+              workspaceCwd: '/workspace',
+              code: 'return 1',
+              timeoutMs: 1_815_000
+            }
+          })
+        },
+        'Notebook background mode authorization mismatch'
+      )
+      expect(await backgroundMismatch.json()).not.toMatchObject({
+        result: { executionInvocationId: expect.any(String) }
+      })
+
+      setTurn('repl-background')
+      const backgroundId = server.authorizeExecution({
+        sessionId: 'repl-background',
+        toolCallId: 'tool-repl-background',
+        promptMessageId: 'prompt-1',
+        method: 'executeControl',
+        rawInput: { code: 'return 1', background: true }
+      })
+      const backgroundConnection = await server.issueSessionConnection(
+        'repl-background',
+        'project-1',
+        'root-frame-repl-background'
+      )
+      connections.push(backgroundConnection)
+      const backgroundResponse = await fetchLocalRpc(
+        backgroundConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${backgroundConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeControl',
+            params: {
+              sessionId: 'repl-background',
+              workspaceCwd: '/workspace',
+              code: 'return 1',
+              background: true,
+              timeoutMs: 1_815_000
+            }
+          })
+        },
+        'Notebook background mode authorization'
+      )
+      expect(await backgroundResponse.json()).toMatchObject({
+        result: { executionInvocationId: backgroundId, background: true }
+      })
 
       setTurn('shell-default')
       const shellId = server.authorizeExecution({
@@ -1340,6 +1812,113 @@ describe('notebook local RPC server', () => {
       expect(shellResponse.status).toBe(200)
       expect(await shellResponse.json()).toMatchObject({
         result: { executionInvocationId: shellId }
+      })
+      const shellRetry = await fetchLocalRpc(
+        shellConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${shellConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeShell',
+            params: {
+              sessionId: 'shell-default',
+              workspaceCwd: '/workspace',
+              command: 'echo hi',
+              timeoutMs: 120_000
+            }
+          })
+        },
+        'Notebook Shell execution RPC retry'
+      )
+      expect(await shellRetry.json()).toMatchObject({
+        result: { executionInvocationId: shellId }
+      })
+
+      setTurn('shell-background-mismatch')
+      server.authorizeExecution({
+        sessionId: 'shell-background-mismatch',
+        toolCallId: 'tool-shell-background-mismatch',
+        promptMessageId: 'prompt-1',
+        method: 'executeShell',
+        rawInput: { command: 'echo hi', background: true }
+      })
+      const shellMismatchConnection = await server.issueSessionConnection(
+        'shell-background-mismatch',
+        'project-1',
+        'root-frame-shell-background-mismatch'
+      )
+      connections.push(shellMismatchConnection)
+      const shellBackgroundMismatch = await fetchLocalRpc(
+        shellMismatchConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${shellMismatchConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeShell',
+            params: {
+              sessionId: 'shell-background-mismatch',
+              workspaceCwd: '/workspace',
+              command: 'echo hi'
+            }
+          })
+        },
+        'Notebook Shell background mode authorization mismatch'
+      )
+      expect(await shellBackgroundMismatch.json()).not.toMatchObject({
+        result: { executionInvocationId: expect.any(String) }
+      })
+
+      setTurn('shell-background')
+      const shellBackgroundId = server.authorizeExecution({
+        sessionId: 'shell-background',
+        toolCallId: 'tool-shell-background',
+        promptMessageId: 'prompt-1',
+        method: 'executeShell',
+        rawInput: { command: 'echo hi', background: true }
+      })
+      const shellBackgroundConnection = await server.issueSessionConnection(
+        'shell-background',
+        'project-1',
+        'root-frame-shell-background'
+      )
+      connections.push(shellBackgroundConnection)
+      const dispatchShellBackground = async (): Promise<Record<string, unknown>> => {
+        const response = await fetchLocalRpc(
+          shellBackgroundConnection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${shellBackgroundConnection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'executeShell',
+              params: {
+                sessionId: 'shell-background',
+                workspaceCwd: '/workspace',
+                command: 'echo hi',
+                background: true
+              }
+            })
+          },
+          'Notebook background Shell execution RPC'
+        )
+        expect(response.status).toBe(200)
+        return ((await response.json()) as { result: Record<string, unknown> }).result
+      }
+      await expect(dispatchShellBackground()).resolves.toMatchObject({
+        executionInvocationId: shellBackgroundId,
+        background: true
+      })
+      await expect(dispatchShellBackground()).resolves.toMatchObject({
+        executionInvocationId: shellBackgroundId,
+        background: true
       })
     } finally {
       for (const connection of connections) connection.release?.()
@@ -1637,52 +2216,111 @@ describe('notebook local RPC server', () => {
     }
   )
 
-  it.each(['tcp', 'pipe'] as const)(
-    'aborts notebook data execution when its client disconnects over %s',
-    async (transport) => {
-      const callStarted = createDeferred<AbortSignal>()
-      const pendingCall = createDeferred<unknown>()
-      const server = new NotebookLocalRpcServer(
-        {
-          execute: async (_request: unknown, signal?: AbortSignal) => {
-            if (!signal) throw new Error('Expected a notebook execution signal.')
-            callStarted.resolve(signal)
-            return pendingCall.promise
-          }
-        } as never,
-        { transport }
-      )
-      const connection = await server.ensureStarted()
-      const disconnect = new AbortController()
-
-      try {
-        const request = fetchLocalRpc(
-          connection,
-          {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${connection.token}`,
-              'content-type': 'application/json'
-            },
-            body: JSON.stringify({
-              method: 'execute',
-              params: { sessionId: 'session-1', workspaceCwd: '/workspace', code: 'long()' }
-            }),
-            signal: disconnect.signal
-          },
-          'Notebook execution RPC'
-        )
-        const signal = await callStarted.promise
-        expect(signal.aborted).toBe(false)
-        disconnect.abort()
-        await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
-        await vi.waitFor(() => expect(signal.aborted).toBe(true))
-      } finally {
-        pendingCall.resolve(undefined)
-        await server.close()
+  it('aborts an admitted Plan call when its issued capability is released', async () => {
+    const root = await createStorageRoot()
+    const callStarted = createDeferred<AbortSignal>()
+    const pendingCall = createDeferred<unknown>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      planService: {
+        call: async (input) => {
+          callStarted.resolve(input.signal)
+          input.signal.addEventListener('abort', () => pendingCall.resolve(undefined), {
+            once: true
+          })
+          return pendingCall.promise
+        }
       }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    let request: Promise<Response> | undefined
+
+    try {
+      request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: {
+              operation: 'updateStepStatus',
+              input: { title: 'Analyze the data', status: 'completed' }
+            }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
+      const signal = await callStarted.promise
+      expect(signal.aborted).toBe(false)
+
+      connection.release?.()
+
+      await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      await expect(request).resolves.toMatchObject({ status: 200 })
+    } finally {
+      pendingCall.resolve(undefined)
+      await request?.catch(() => undefined)
+      connection.release?.()
+      await server.close()
     }
-  )
+  })
+
+  it.each([
+    ['tcp', 'execute'],
+    ['pipe', 'execute'],
+    ['tcp', 'executeControl'],
+    ['pipe', 'executeControl']
+  ] as const)('aborts durable notebook execution over %s for %s', async (transport, method) => {
+    const callStarted = createDeferred<AbortSignal>()
+    const pendingCall = createDeferred<unknown>()
+    const execute = async (_request: unknown, signal?: AbortSignal): Promise<unknown> => {
+      if (!signal) throw new Error('Expected a notebook execution signal.')
+      callStarted.resolve(signal)
+      return pendingCall.promise
+    }
+    const server = new NotebookLocalRpcServer(
+      (method === 'execute' ? { execute } : { executeControl: execute }) as never,
+      { transport }
+    )
+    const connection = await server.ensureStarted()
+    const disconnect = new AbortController()
+
+    try {
+      const request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method,
+            params: { sessionId: 'session-1', workspaceCwd: '/workspace', code: 'long()' }
+          }),
+          signal: disconnect.signal
+        },
+        'Notebook execution RPC'
+      )
+      const signal = await callStarted.promise
+      expect(signal.aborted).toBe(false)
+      disconnect.abort()
+      await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
+      await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    } finally {
+      pendingCall.resolve(undefined)
+      await server.close()
+    }
+  })
 
   it.each([
     ['managePackages', { language: 'python', packages: ['numpy'] }],
@@ -1822,17 +2460,24 @@ describe('notebook local RPC server', () => {
       }
     })
     const connection = await server.issuePlanConnection('session-1', 'project-1')
-    const bindings = (
-      server as unknown as {
-        sessionRpcCapabilities: Map<string, unknown>
-      }
-    ).sessionRpcCapabilities
+    const lifecycle = server as unknown as {
+      sessionRpcCapabilities: Map<string, unknown>
+      serverLifecycle?: { activeRequests: Set<{ bodyComplete: boolean }> }
+    }
+    const bindings = lifecycle.sessionRpcCapabilities
     const getBinding = bindings.get.bind(bindings)
     let request: Promise<Response> | undefined
     let close: Promise<void> | undefined
     vi.spyOn(bindings, 'get').mockImplementation((token) => {
       const binding = getBinding(token)
-      if (token === connection.token && !close) close = server.close()
+      // Exercise admission after a complete body, not the earlier authentication snapshot.
+      if (
+        token === connection.token &&
+        !close &&
+        [...(lifecycle.serverLifecycle?.activeRequests ?? [])].some((active) => active.bodyComplete)
+      ) {
+        close = server.close()
+      }
       return binding
     })
 
@@ -2946,523 +3591,150 @@ describe('notebook local RPC server', () => {
     }
   })
 
-  it('dispatches Artifact Version creation through the authenticated main-process bridge', async () => {
+  it('binds complete Artifact saves to immutable capability scope and drains accepted work', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const requests: unknown[] = []
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: {
-        createVersion: async (request) => {
-          requests.push(request)
-          return {
-            id: 'version-1',
-            artifactId: 'artifact-1',
-            versionId: 'version-1',
-            versionNumber: 1,
-            checksum: 'a'.repeat(64),
-            createdAt: '2026-07-27T00:00:00.000Z',
-            projectId: 'project-1',
-            sessionId: 'session-1',
-            runId: 'artifact-run-1',
-            name: 'sin.png',
-            path: '/managed/content',
-            fileUrl: 'file:///managed/content',
-            mimeType: 'image/png',
-            size: 12,
-            mtimeMs: 1
-          }
-        }
-      }
-    })
-    const connection = await server.ensureStarted()
-    const artifactToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-    const request = {
       projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'b'.repeat(64),
-      resourceReservationId: 'reservation-1',
-      resourceSizeBytes: 12,
-      resourceChecksum: 'a'.repeat(64),
-      rootFrameId: 'frame-root',
-      agentFrameId: 'frame-root',
-      messageBranchId: 'branch-root',
-      messageBranchAncestry: ['forged-branch'],
-      messageAncestry: ['forged-message'],
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'message-user-1',
-      agentName: 'forged-agent',
-      notebookSessionId: 'forged-notebook-session',
-      filename: 'sin.png',
-      contentType: 'image/png'
-    }
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${artifactToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method: 'artifactCreateVersion', params: request })
-      })
-      const payload = (await response.json()) as {
-        result: { artifactId: string; versionId: string }
-      }
-
-      expect(response.status).toBe(200)
-      expect(payload.result).toMatchObject({ artifactId: 'artifact-1', versionId: 'version-1' })
-      expect(requests).toEqual([
-        {
-          ...request,
-          messageBranchAncestry: ['branch-parent', 'branch-root'],
-          messageAncestry: ['message-parent', 'message-user-1'],
-          agentName: 'Claude Code',
-          notebookSessionId: 'notebook-session-1'
-        }
-      ])
-    } finally {
-      await server.close()
-    }
-  })
-
-  it('binds Artifact reservations to the capability and releases ownership on revoke and close', async () => {
-    const reserveWrite = vi.fn(async () => ({
-      id: 'reservation-1',
-      fileBytes: 12,
-      expiresAt: Date.now() + 60_000
-    }))
-    const releaseWriteReservation = vi.fn(async () => undefined)
-    const releaseRunWriteReservations = vi.fn(async () => undefined)
-    const releaseAllWriteReservations = vi.fn(async () => undefined)
-    const createVersion = vi.fn()
-    const server = new NotebookLocalRpcServer({} as never, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: {
-        createVersion,
-        reserveWrite,
-        releaseWriteReservation,
-        releaseRunWriteReservations,
-        releaseAllWriteReservations
-      }
-    })
-    const connection = await server.ensureStarted()
-    const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
-    let closed = false
-    const call = (method: string, params: Record<string, unknown>): Promise<Response> =>
-      fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method, params })
-      })
-
-    try {
-      const reserved = await call('artifactReserveWrite', {
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        writeOperationId: 'write-1',
-        filename: 'sin.png',
-        fileBytes: 12
-      })
-      await expect(reserved.json()).resolves.toEqual({
-        result: expect.objectContaining({ id: 'reservation-1', fileBytes: 12 })
-      })
-      expect(reserveWrite).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        writeOperationId: 'write-1',
-        filename: 'sin.png',
-        fileBytes: 12
-      })
-
-      const released = await call('artifactReleaseWrite', {
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        reservationId: 'reservation-1'
-      })
-      expect(released.status).toBe(200)
-      expect(releaseWriteReservation).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1',
-        reservationId: 'reservation-1'
-      })
-
-      const bypass = await call('artifactCreateVersion', {
-        ...artifactCapabilityBinding,
-        writeOperationId: 'write-without-reservation',
-        writeRequestChecksum: 'a'.repeat(64),
-        filename: 'bypass.txt'
-      })
-      expect(bypass.status).toBe(400)
-      await expect(bypass.json()).resolves.toEqual({
-        error: 'Artifact Version creation requires a write reservation.'
-      })
-      expect(createVersion).not.toHaveBeenCalled()
-
-      await server.revokeArtifactRunCapability(token)
-      expect(releaseRunWriteReservations).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactStorageSessionId: 'artifact-session-1',
-        artifactRunId: 'artifact-run-1'
-      })
-      await server.close()
-      closed = true
-      expect(releaseAllWriteReservations).toHaveBeenCalledOnce()
-    } finally {
-      if (!closed) await server.close()
-    }
-  })
-
-  it('revokes new Artifact requests while draining one already-authorized write', async () => {
-    const root = await createStorageRoot()
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
-    const createStarted = createDeferred()
-    const releaseCreate = createDeferred()
-    let now = 1_000
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const accepted = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const saveVersion = vi.fn(async () => {
+      entered()
+      await gate
+      return { versionId: 'version-1' } as never
+    })
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
-      token: 'secret-token',
-      now: () => now,
-      artifactProvenance: {
-        createVersion: async () => {
-          createStarted.resolve()
-          await releaseCreate.promise
-          return {
-            id: 'version-1',
-            artifactId: 'artifact-1',
-            versionId: 'version-1',
-            versionNumber: 1,
-            checksum: 'a'.repeat(64),
-            createdAt: '2026-07-27T00:00:00.000Z',
-            projectId: 'project-1',
-            sessionId: 'session-1',
-            runId: 'artifact-run-1',
-            name: 'sin.png',
-            path: '/managed/content',
-            fileUrl: 'file:///managed/content',
-            mimeType: 'image/png',
-            size: 12,
-            mtimeMs: 1
-          }
-        }
-      }
+      artifactProvenance: { createVersion: vi.fn(), saveVersion }
     })
     const connection = await server.ensureStarted()
-    const token = server.issueArtifactRunCapability(artifactCapabilityBinding, 100)
-    const call = (): Promise<Response> =>
+    const roots = [root]
+    const binding = {
+      ...artifactCapabilityBinding,
+      sourceScope: { allowedImportRoots: roots, workspaceCwd: root }
+    }
+    const token = server.issueArtifactRunCapability(binding)
+    roots.push('/forged-after-issuance')
+    const params = {
+      ...artifactCapabilityBinding,
+      filename: 'result.txt',
+      writeOperationId: 'write-1',
+      source: { kind: 'inline', content: 'b2s=', encoding: 'base64' },
+      agentName: 'forged',
+      sourceScope: { allowedImportRoots: ['/'] }
+    }
+    const call = (
+      capability = token,
+      request = params,
+      method = 'artifactSaveVersion'
+    ): Promise<Response> =>
       fetch(connection.endpoint, {
         method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            writeOperationId: 'write-drain',
-            writeRequestChecksum: 'a'.repeat(64),
-            resourceReservationId: 'reservation-drain',
-            resourceSizeBytes: 12,
-            resourceChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
+        headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method, params: request })
       })
-
     try {
-      const acceptedRequest = call()
-      await createStarted.promise
-      now = 1_101
-      const expiredRequest = await call()
-      expect(expiredRequest.status).toBe(401)
-      await expect(expiredRequest.json()).resolves.toEqual({
-        error: 'Artifact RPC capability expired.'
-      })
-
+      const pending = call()
+      await accepted
+      expect(saveVersion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentName: 'Claude Code',
+          messageBranchAncestry: [...artifactCapabilityBinding.messageBranchAncestry]
+        }),
+        { allowedImportRoots: [root], workspaceCwd: root },
+        expect.any(AbortSignal),
+        expect.any(Function)
+      )
       let drained = false
-      const firstDrain = Promise.resolve(server.revokeArtifactRunCapability(token)).then(() => {
+      const drain = server.revokeArtifactRunCapability(token).then(() => {
         drained = true
       })
-      const repeatedDrain = Promise.resolve(server.revokeArtifactRunCapability(token))
-      await Promise.resolve()
+      expect((await call()).status).toBe(401)
       expect(drained).toBe(false)
-
-      const rejectedRequest = await call()
-      expect(rejectedRequest.status).toBe(401)
-
-      releaseCreate.resolve()
-      await expect(acceptedRequest.then((response) => response.status)).resolves.toBe(200)
-      await expect(Promise.all([firstDrain, repeatedDrain])).resolves.toEqual([
-        undefined,
-        undefined
-      ])
+      release()
+      expect((await pending).status).toBe(200)
+      await drain
       expect(drained).toBe(true)
     } finally {
-      releaseCreate.resolve()
+      release()
       await server.close()
     }
   })
 
-  it('rejects an Artifact capability when the request names a different run', async () => {
+  it('rejects mismatched, expired, missing-scope and old split Artifact protocols before dispatch', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectId: 'default-project',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(root)
     })
+    let now = 0
+    const saveVersion = vi.fn()
     const createVersion = vi.fn()
     const server = new NotebookLocalRpcServer(service, {
       transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: { createVersion }
-    })
-    const connection = await server.ensureStarted()
-    const artifactToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${artifactToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            artifactRunId: 'artifact-run-forged',
-            writeOperationId: 'write-forged',
-            writeRequestChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
-      })
-
-      expect(response.status).toBe(403)
-      await expect(response.json()).resolves.toEqual({
-        error: 'Artifact RPC capability does not match artifactRunId.'
-      })
-      expect(createVersion).not.toHaveBeenCalled()
-    } finally {
-      await server.close()
-    }
-  })
-
-  it('rejects expired and revoked Artifact run capabilities', async () => {
-    const root = await createStorageRoot()
-    let now = 1_000
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const createVersion = vi.fn()
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
       now: () => now,
-      artifactProvenance: { createVersion }
+      artifactProvenance: { createVersion, saveVersion }
     })
     const connection = await server.ensureStarted()
-    const expiredToken = server.issueArtifactRunCapability(artifactCapabilityBinding, 100)
-    now = 1_101
-
-    const call = (token: string): Promise<Response> =>
+    const binding = { ...artifactCapabilityBinding, sourceScope: { allowedImportRoots: [] } }
+    const token = server.issueArtifactRunCapability(binding, 100)
+    const params = {
+      ...artifactCapabilityBinding,
+      filename: 'result.txt',
+      writeOperationId: 'write-1',
+      source: { kind: 'inline', content: '', encoding: 'base64' }
+    }
+    const call = (
+      capability: string,
+      method: string,
+      request: Record<string, unknown> = params
+    ): Promise<Response> =>
       fetch(connection.endpoint, {
         method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            writeOperationId: 'write-1',
-            writeRequestChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
+        headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method, params: request })
       })
-
     try {
-      const expired = await call(expiredToken)
-      expect(expired.status).toBe(401)
-      await expect(expired.json()).resolves.toEqual({ error: 'Artifact RPC capability expired.' })
-
-      const replayOnlyToken = server.issueArtifactRunCapability({
-        ...artifactCapabilityBinding,
-        allowedMethods: ['artifactReplayVersion']
-      })
-      const disallowed = await call(replayOnlyToken)
-      expect(disallowed.status).toBe(403)
-      await expect(disallowed.json()).resolves.toEqual({
-        error: 'Artifact RPC capability does not allow artifactCreateVersion.'
-      })
-
-      const revokedToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-      server.revokeArtifactRunCapability(revokedToken)
-      const revoked = await call(revokedToken)
-      expect(revoked.status).toBe(401)
-      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid notebook RPC token.' })
+      expect(
+        (await call(token, 'artifactSaveVersion', { ...params, artifactRunId: 'forged-run' }))
+          .status
+      ).toBe(403)
+      expect(
+        (
+          await call(
+            server.issueArtifactRunCapability(artifactCapabilityBinding),
+            'artifactSaveVersion'
+          )
+        ).status
+      ).toBe(403)
+      for (const method of [
+        'artifactCreateVersion',
+        'artifactReserveWrite',
+        'artifactReleaseWrite',
+        'artifactReplayVersion'
+      ] as const) {
+        const legacy = server.issueArtifactRunCapability({ ...binding, allowedMethods: [method] })
+        const response = await call(legacy, method)
+        expect(response.status).toBe(409)
+        expect(await response.text()).toContain('Restart')
+      }
+      now = 101
+      expect((await call(token, 'artifactSaveVersion')).status).toBe(401)
+      expect(saveVersion).not.toHaveBeenCalled()
       expect(createVersion).not.toHaveBeenCalled()
     } finally {
       await server.close()
-    }
-  })
-
-  it('keeps the default Artifact capability valid throughout a long-running turn', async () => {
-    const root = await createStorageRoot()
-    let now = 1_000
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const createVersion = vi.fn().mockResolvedValue({ versionId: 'version-1' })
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      now: () => now,
-      artifactProvenance: { createVersion }
-    })
-    const connection = await server.ensureStarted()
-    const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
-    now += 31 * 60 * 1_000
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          method: 'artifactCreateVersion',
-          params: {
-            ...artifactCapabilityBinding,
-            writeOperationId: 'write-long-turn',
-            writeRequestChecksum: 'a'.repeat(64),
-            resourceReservationId: 'reservation-long-turn',
-            resourceSizeBytes: 12,
-            resourceChecksum: 'a'.repeat(64),
-            filename: 'sin.png'
-          }
-        })
-      })
-
-      expect(response.status).toBe(200)
-      expect(createVersion).toHaveBeenCalledOnce()
-    } finally {
-      await server.close()
-    }
-  })
-
-  it('dispatches exact Artifact Version replays and reports an unconfigured replay bridge', async () => {
-    const root = await createStorageRoot()
-    const service = new NotebookRuntimeService({
-      configRoot: root,
-      dataRoot: root,
-      projectId: 'default-project',
-      repository: new NotebookRunRepository(root)
-    })
-    const replayRequests: unknown[] = []
-    const request = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'b'.repeat(64),
-      rootFrameId: 'frame-root',
-      agentFrameId: 'frame-root',
-      messageBranchId: 'branch-root',
-      runtimeSegmentId: 'runtime-1',
-      promptMessageId: 'message-user-1'
-    }
-    const server = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: {
-        createVersion: vi.fn(),
-        replayVersion: async (replayRequest) => {
-          replayRequests.push(replayRequest)
-          return undefined
-        }
-      }
-    })
-    const connection = await server.ensureStarted()
-    const replayToken = server.issueArtifactRunCapability(artifactCapabilityBinding)
-
-    try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${replayToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
-      })
-      await expect(response.json()).resolves.toEqual({})
-      expect(response.status).toBe(200)
-      expect(replayRequests).toEqual([request])
-    } finally {
-      await server.close()
-    }
-
-    const unconfigured = new NotebookLocalRpcServer(service, {
-      transport: 'tcp',
-      token: 'secret-token',
-      artifactProvenance: { createVersion: vi.fn() }
-    })
-    const unconfiguredConnection = await unconfigured.ensureStarted()
-    const unconfiguredToken = unconfigured.issueArtifactRunCapability(artifactCapabilityBinding)
-    try {
-      const response = await fetch(unconfiguredConnection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${unconfiguredToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
-      })
-      await expect(response.json()).resolves.toEqual({
-        error: 'Artifact Provenance persistence is not configured.'
-      })
-      expect(response.status).toBe(500)
-    } finally {
-      await unconfigured.close()
     }
   })
 
@@ -3485,17 +3757,19 @@ describe('notebook local RPC server', () => {
       storageKey: 'artifacts/default-project/panel-worker-1/panel-a-v1/content',
       association: 'turn-attached'
     }
-    const openRun = vi.fn(
-      async () =>
-        ({
-          getRunInputFiles: () => [leasedInput, workflowArtifact],
-          resolve: async () => {
-            leasedInput.association = 'resolver-accessed'
-            return '/managed/groups.csv'
-          },
-          close: () => [{ ...leasedInput }, { ...workflowArtifact }]
-        }) as never
-    )
+    let capturedScope: { assertActive: () => void } | undefined
+    const openRun = vi.fn(async (request: { producerScope?: { assertActive: () => void } }) => {
+      capturedScope = request.producerScope
+      request.producerScope?.assertActive()
+      return {
+        getRunInputFiles: () => [leasedInput, workflowArtifact],
+        resolve: async () => {
+          leasedInput.association = 'resolver-accessed'
+          return '/managed/groups.csv'
+        },
+        close: () => [{ ...leasedInput }, { ...workflowArtifact }]
+      } as never
+    })
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -3551,6 +3825,7 @@ describe('notebook local RPC server', () => {
     rpcToken = connection.token
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'execution-1',
+      artifactRunId: 'artifact-run-1',
       projectId: 'default-project',
       provenanceContext: {
         rootFrameId: 'root-frame-1',
@@ -3582,12 +3857,13 @@ describe('notebook local RPC server', () => {
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
             code: 'print("ok")',
-            artifactVersionInputs: ['panel-a-v1']
+            artifactVersionInputs: ['panel-a-v1'],
+            provenanceContext: { promptMessageId: 'forged-prompt' }
           }
         })
       })
 
-      expect(response.status).toBe(200)
+      expect(response.status, await response.clone().text()).toBe(200)
       expect(leasedInput.association).toBe('resolver-accessed')
       const document = JSON.parse(
         await readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
@@ -3604,7 +3880,14 @@ describe('notebook local RPC server', () => {
         projectId: 'default-project',
         appSessionId: 'session-1',
         promptMessageId: 'message-user-1',
-        artifactVersionInputs: ['panel-a-v1']
+        artifactVersionInputs: ['panel-a-v1'],
+        producerScope: expect.objectContaining({
+          artifactRunId: 'artifact-run-1',
+          appSessionId: 'session-1',
+          promptMessageId: 'message-user-1',
+          agentFrameId: 'root-frame-1',
+          assertActive: expect.any(Function)
+        })
       })
       const payload = (await response.json()) as {
         result: { inputFiles: Array<Record<string, unknown>> }
@@ -3617,6 +3900,9 @@ describe('notebook local RPC server', () => {
         expect.objectContaining({ inputFileVersionId: 'panel-a-v1' })
       ])
       expect(payload.result.inputFiles[0]).not.toHaveProperty('storageKey')
+      expect(capturedScope).toBeDefined()
+      await server.clearArtifactTurnBinding('session-1', 'execution-1')
+      expect(() => capturedScope!.assertActive()).toThrow()
     } finally {
       await server.close()
     }
@@ -3767,7 +4053,13 @@ describe('notebook local RPC server', () => {
         projectId: 'project-from-root-owner',
         appSessionId: 'session-1',
         promptMessageId: 'prompt-1',
-        artifactVersionInputs: ['panel-a-v1']
+        artifactVersionInputs: ['panel-a-v1'],
+        producerScope: expect.objectContaining({
+          artifactRunId: expect.stringMatching(/^artifact-run-/),
+          appSessionId: 'session-1',
+          promptMessageId: 'prompt-1',
+          assertActive: expect.any(Function)
+        })
       })
     } finally {
       connection.release?.()
@@ -3832,15 +4124,26 @@ describe('notebook local RPC server', () => {
       projectId: 'project-1',
       provenanceContext: provenanceContext('prompt-2')
     })
-    server.clearArtifactTurnBinding('session-1', 'execution-1')
+    const invocationId = server.authorizeExecution({
+      sessionId: 'session-1',
+      toolCallId: 'new-turn-tool',
+      promptMessageId: 'prompt-2',
+      method: 'execute',
+      rawInput: { code: 'print("ok")', artifactVersionInputs: ['panel-a-v1'] }
+    })
+    await server.clearArtifactTurnBinding('session-1', 'execution-1')
 
     try {
-      await expect(execute()).resolves.toMatchObject({ status: 200 })
+      const replacement = await execute()
+      expect(replacement.status).toBe(200)
+      await expect(replacement.json()).resolves.toMatchObject({
+        result: { executionInvocationId: invocationId }
+      })
       expect(openRun).toHaveBeenLastCalledWith(
         expect.objectContaining({ promptMessageId: 'prompt-2' })
       )
 
-      server.clearArtifactTurnBinding('session-1', 'execution-2')
+      await server.clearArtifactTurnBinding('session-1', 'execution-2')
       const cleared = await execute()
       expect(cleared.status).toBe(500)
       await expect(cleared.json()).resolves.toEqual({
@@ -3996,6 +4299,315 @@ describe('notebook local RPC server', () => {
         })
       ).rejects.toThrow('Notebook input resolution requires an active run lease.')
     } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['execute', 'executeBackground'],
+    ['executeControl', 'executeControlBackground']
+  ] as const)(
+    'retains the input-run lease until an admitted background Run reaches terminal state for %s',
+    async (method, serviceMethod) => {
+      const completion = createDeferred()
+      const close = vi.fn()
+      const executeBackground = vi.fn().mockResolvedValue({ runId: 'run-background-1' })
+      const executeControlBackground = vi.fn().mockResolvedValue({ runId: 'run-background-1' })
+      const waitForBackgroundRun = vi.fn(() => completion.promise)
+      const server = new NotebookLocalRpcServer(
+        { executeBackground, executeControlBackground, waitForBackgroundRun } as never,
+        {
+          transport: 'tcp',
+          token: 'secret-token',
+          inputRegistry: {
+            registerTurn: vi.fn().mockResolvedValue(undefined),
+            getTurnInputs: () => [registeredInput],
+            openRun: vi.fn().mockResolvedValue({
+              getRunInputFiles: () => [registeredInput],
+              resolve: vi.fn().mockResolvedValue('/managed/groups.csv'),
+              close
+            }),
+            clearSession: vi.fn()
+          }
+        }
+      )
+      const connection = await server.ensureStarted()
+      server.setArtifactTurnBinding('session-1', {
+        ownerExecutionId: 'execution-1',
+        projectId: 'default-project',
+        provenanceContext: {
+          rootFrameId: 'root-frame-1',
+          agentFrameId: 'root-frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId: 'message-user-1'
+        }
+      })
+      await server.registerNotebookTurnInputs({
+        projectId: 'default-project',
+        appSessionId: 'session-1',
+        promptMessageId: 'message-user-1',
+        uploads: [],
+        references: []
+      })
+
+      try {
+        const response = await fetch(connection.endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer secret-token',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method,
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              code: 'print("later")',
+              background: true
+            }
+          })
+        })
+
+        expect(response.status).toBe(200)
+        await expect(response.json()).resolves.toEqual({ result: { runId: 'run-background-1' } })
+        expect(
+          { executeBackground, executeControlBackground }[serviceMethod]
+        ).toHaveBeenCalledOnce()
+        expect(waitForBackgroundRun).toHaveBeenCalledWith('run-background-1')
+        expect(close).not.toHaveBeenCalled()
+
+        completion.resolve()
+        await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+      } finally {
+        completion.resolve()
+        await server.close()
+      }
+    }
+  )
+
+  it('rejects outer-completion Host SDK methods from a background REPL with structured guidance', async () => {
+    const dispatch = vi.fn()
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      agentsService: { read: dispatch, dispatch }
+    })
+    const connection = await server.issueControlConnection('session-1', 'project-1', 'frame-1')
+    const release = connection.beginControlInvocation({
+      turnId: 'run-background-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'run-background-1',
+      originatingUserMessageId: 'message-user-1',
+      executionMode: 'background'
+    })
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'agentsCall', params: { op: 'switch', name: null } })
+      })
+
+      expect(response.status).toBe(409)
+      await expect(response.json()).resolves.toEqual({
+        error: {
+          code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+          method: 'host.agents.switch',
+          retryable: false,
+          hint: 'Run this Host SDK operation in foreground repl_execute.'
+        }
+      })
+      expect(dispatch).not.toHaveBeenCalled()
+
+      const viewImageResponse = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'viewImageCall',
+          params: { source: { path: 'results/plot.png' } }
+        })
+      })
+      expect(viewImageResponse.status).toBe(409)
+      await expect(viewImageResponse.json()).resolves.toEqual({
+        error: {
+          code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+          method: 'host.viewImage',
+          retryable: false,
+          hint: 'Run this Host SDK operation in foreground repl_execute.'
+        }
+      })
+    } finally {
+      release()
+      connection.release()
+      await server.close()
+    }
+  })
+
+  it('retains frozen inputs for an admitted background Shell Run after the RPC response', async () => {
+    const completion = createDeferred()
+    const close = vi.fn()
+    const executeShellBackground = vi.fn().mockResolvedValue({ runId: 'shell-background-1' })
+    const waitForBackgroundRun = vi.fn(() => completion.promise)
+    const server = new NotebookLocalRpcServer(
+      { executeShellBackground, waitForBackgroundRun } as never,
+      {
+        transport: 'tcp',
+        token: 'secret-token',
+        inputRegistry: {
+          registerTurn: vi.fn().mockResolvedValue(undefined),
+          getTurnInputs: () => [registeredInput],
+          openRun: vi.fn().mockResolvedValue({
+            getRunInputFiles: () => [registeredInput],
+            resolve: vi.fn().mockResolvedValue('/managed/groups.csv'),
+            close
+          }),
+          clearSession: vi.fn()
+        }
+      }
+    )
+    const connection = await server.ensureStarted()
+    server.setArtifactTurnBinding('session-shell', {
+      ownerExecutionId: 'execution-shell',
+      projectId: 'default-project',
+      provenanceContext: {
+        rootFrameId: 'root-frame-shell',
+        agentFrameId: 'root-frame-shell',
+        messageBranchId: 'branch-shell',
+        runtimeSegmentId: 'runtime-shell',
+        promptMessageId: 'message-shell'
+      }
+    })
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'executeShell',
+          params: {
+            sessionId: 'session-shell',
+            workspaceCwd: '/workspace',
+            command: 'long-command',
+            background: true
+          }
+        })
+      })
+
+      expect(response.status).toBe(200)
+      expect(executeShellBackground).toHaveBeenCalledWith(
+        expect.objectContaining({
+          background: true,
+          registeredInputFiles: [registeredInput],
+          inputRunLeaseId: expect.any(String)
+        }),
+        expect.any(AbortSignal)
+      )
+      expect(waitForBackgroundRun).toHaveBeenCalledWith('shell-background-1')
+      expect(close).not.toHaveBeenCalled()
+
+      completion.resolve()
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+    } finally {
+      completion.resolve()
+      await server.close()
+    }
+  })
+
+  it('preserves structured background recovery errors on the local RPC wire', async () => {
+    const detail = {
+      code: 'BACKGROUND_RUN_NOT_FOUND',
+      stage: 'query' as const,
+      retryable: true,
+      hint: 'Query by submissionIdentity before deciding whether to resubmit.',
+      submissionIdentity: 'submission-1'
+    }
+    const server = new NotebookLocalRpcServer(
+      {
+        getBackgroundRun: vi.fn(async () => {
+          throw new NotebookBackgroundRunError(detail, 'No matching Run.')
+        })
+      } as never,
+      { transport: 'tcp', token: 'secret-token' }
+    )
+    const connection = await server.ensureStarted()
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'getBackgroundRun',
+          params: {
+            sessionId: 'session-1',
+            workspaceCwd: '/workspace',
+            submissionIdentity: 'submission-1'
+          }
+        })
+      })
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({
+        error: { ...detail, message: 'No matching Run.' }
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('overwrites a background lookup lane with the authenticated Agent Frame', async () => {
+    const getBackgroundRun = vi.fn(async (request: unknown) => request)
+    const server = new NotebookLocalRpcServer({ getBackgroundRun } as never, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection('session-1', 'project-1', 'frame-bound')
+    server.setArtifactTurnBinding('session-1', {
+      ownerExecutionId: 'execution-1',
+      projectId: 'project-1',
+      provenanceContext: {
+        rootFrameId: 'frame-bound',
+        agentFrameId: 'frame-bound',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'getBackgroundRun',
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: '/workspace',
+              runId: 'run-1',
+              agentFrameId: 'frame-forged'
+            }
+          })
+        },
+        'background lookup frame binding test'
+      )
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual({
+        result: expect.objectContaining({ agentFrameId: 'frame-bound' })
+      })
+    } finally {
+      connection.release?.()
       await server.close()
     }
   })
@@ -4172,7 +4784,7 @@ describe('notebook local RPC server', () => {
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: true, probeResult: undefined }),
+      getDetails: async () => ({ doc: '', probeResult: undefined }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       download: async () => ({}),
@@ -4259,7 +4871,7 @@ describe('notebook local RPC server', () => {
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: true, probeResult: undefined }),
+      getDetails: async () => ({ doc: '', probeResult: undefined }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       download: async () => ({}),
@@ -4319,7 +4931,7 @@ describe('notebook local RPC server', () => {
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
-      getDetails: async () => ({ doc: '', isSkeleton: true, probeResult: undefined }),
+      getDetails: async () => ({ doc: '', probeResult: undefined }),
       appendDetails: async () => {},
       replaceDetails: async () => {},
       download: async () => ({}),

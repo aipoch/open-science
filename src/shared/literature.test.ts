@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createLiteratureAttachmentVersionReference,
   createLiteratureIdentifierUrl,
+  literatureApplicationCommandContracts,
   literatureCatalogCommandSchema,
   literatureCatalogSearchRequestSchema,
   literatureCollectionViewSchema,
@@ -13,6 +14,21 @@ import {
   normalizeLiteratureIdentifierValue,
   parseLiteratureAttachmentVersionReference
 } from './literature'
+
+describe('Literature DOI draft lookup contract', () => {
+  it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {
+    const { args } = literatureApplicationCommandContracts.lookupMetadata
+    expect(args.parse(['10.1007/s11914-026-00956-3'])).toEqual(['10.1007/s11914-026-00956-3'])
+    for (const input of [
+      [],
+      ['https://example.com'],
+      ['10.1007/has space'],
+      ['10.1007/' + 'a'.repeat(2048)]
+    ]) {
+      expect(() => args.parse(input)).toThrow()
+    }
+  })
+})
 
 describe('Literature citation style requests', () => {
   it('keeps style listing on the stable parameter-free request shape', () => {
@@ -164,11 +180,16 @@ describe('Literature Collection contracts', () => {
     expect(
       literatureCatalogCommandSchema.parse({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: 'collection-1',
         name: 'Included studies',
         description: 'Final synthesis set.'
       })
-    ).toMatchObject({ kind: 'update-collection', collectionId: 'collection-1' })
+    ).toMatchObject({
+      kind: 'update-collection',
+      expectedRevision: 1,
+      collectionId: 'collection-1'
+    })
     expect(
       literatureCatalogCommandSchema.parse({
         kind: 'delete-collection',
@@ -177,6 +198,7 @@ describe('Literature Collection contracts', () => {
     ).toEqual({ kind: 'delete-collection', collectionId: 'collection-1' })
     expect(
       literatureCollectionViewSchema.parse({
+        revision: 1,
         id: 'collection-1',
         name: 'Included studies',
         description: 'Final synthesis set.',
@@ -236,5 +258,32 @@ describe('Literature Inbox contracts', () => {
       kind: 'restore-candidates',
       candidateIds: ['candidate-1', 'candidate-2']
     })
+  })
+})
+
+describe('Literature full-text transfer contract', () => {
+  it('restores a transfer by item and acknowledges only an explicit task identity', () => {
+    const { args, result } = literatureApplicationCommandContracts.fullText
+    expect(args.parse([{ mode: 'transfer', itemId: 'item' }])).toEqual([
+      { mode: 'transfer', itemId: 'item' }
+    ])
+    expect(() => args.parse([{ mode: 'transfer', itemId: 'item', acknowledgeId: '' }])).toThrow()
+    expect(result.parse({ mode: 'transfer' })).toEqual({ mode: 'transfer' })
+    const transfer = {
+      id: 'task',
+      itemId: 'item',
+      status: 'running',
+      candidate: {
+        id: 'candidate',
+        provider: 'unpaywall',
+        source: 'Repository',
+        url: 'https://example.com/paper.pdf'
+      },
+      progress: { receivedBytes: 10, bytesPerSecond: 2, phase: 'downloading' }
+    }
+    expect(result.parse({ mode: 'transfer', transfer })).toEqual({ mode: 'transfer', transfer })
+    expect(() =>
+      result.parse({ mode: 'transfer', transfer: { ...transfer, status: 'invented' } })
+    ).toThrow()
   })
 })

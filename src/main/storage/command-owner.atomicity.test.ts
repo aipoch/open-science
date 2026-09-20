@@ -68,10 +68,10 @@ describe('storage command owner onboarding persistence', () => {
 
   beforeEach(async () => {
     currentParent = await mkdtemp(join(tmpdir(), 'storage-owner-current-'))
-    currentDataRoot = join(currentParent, 'OpenScience')
+    currentDataRoot = join(currentParent, 'Open-Science')
     await mkdir(currentDataRoot)
     targetParent = await mkdtemp(join(tmpdir(), 'storage-owner-target-'))
-    targetDataRoot = join(targetParent, 'OpenScience')
+    targetDataRoot = join(targetParent, 'Open-Science')
     electronHome.path = currentParent
     initDataRoot(currentDataRoot)
     fsFaults.deniedScanPath = undefined

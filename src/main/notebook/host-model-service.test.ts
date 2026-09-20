@@ -440,6 +440,67 @@ describe('HostModelService', () => {
     expect(maxActive).toBe(expected)
   })
 
+  it.each(['single', 'batch', 'mixed'] as const)(
+    'PERF-02 bounds %s requests before dispatch and releases admission on cancellation',
+    async (mode) => {
+      let blocked = true
+      const { service, runner, captureTarget } = makeService(async ({ prompt, signal }) => {
+        if (blocked)
+          await new Promise<void>((_resolve, reject) => {
+            if (signal?.aborted) reject(new RestrictedInferenceError('cancelled', 'Cancelled.'))
+            else
+              signal?.addEventListener(
+                'abort',
+                () => {
+                  reject(new RestrictedInferenceError('cancelled', 'Cancelled.'))
+                },
+                { once: true }
+              )
+          })
+        return inferenceResult(prompt)
+      })
+      const controller = new AbortController()
+      const inputs =
+        mode === 'single'
+          ? Array.from({ length: 32 }, () => ({ request: 'x'.repeat(MAX_PROMPT_BYTES) }))
+          : mode === 'batch'
+            ? [
+                {
+                  requests: Array.from({ length: 32 }, () => 'batch'),
+                  options: { max_concurrency: 4 }
+                }
+              ]
+            : [
+                ...Array.from({ length: 16 }, () => ({ request: 'single' })),
+                { requests: Array.from({ length: 16 }, () => 'batch') }
+              ]
+      const calls = inputs.map((input) =>
+        service.call(input, controller.signal).catch((error) => error)
+      )
+      let overload: unknown
+      try {
+        await vi.waitFor(() => expect(runner.run).toHaveBeenCalledTimes(4))
+        const captured = captureTarget.mock.calls.length
+        const extra = service.call({ request: 'excess' }, controller.signal).catch((error) => {
+          overload = error
+        })
+        calls.push(extra)
+        await vi.waitFor(() => expect(overload).toBeInstanceOf(Error), { timeout: 300 })
+        expect((overload as Error).message).toContain('HOST_LLM_BUSY')
+        expect(captureTarget).toHaveBeenCalledTimes(captured)
+        expect(runner.run).toHaveBeenCalledTimes(4)
+      } finally {
+        controller.abort()
+        await Promise.all(calls)
+        blocked = false
+      }
+      await expect(
+        service.call({ requests: Array.from({ length: 32 }, () => 'again') })
+      ).resolves.toHaveLength(32)
+      await service.shutdown()
+    }
+  )
+
   it('caps runner concurrency across overlapping public calls', async () => {
     let active = 0
     let maxActive = 0

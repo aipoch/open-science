@@ -2,6 +2,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { executionRecoveryContext } from './execution-recovery'
 
 import {
   MAX_AGENT_USER_CHOICE_OPTIONS,
@@ -19,7 +20,13 @@ import {
 } from '../local-rpc-transport'
 import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
-import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
+import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS, type ShellRuntimeBinding } from '../../shared/notebook'
+import {
+  defaultShellRuntimeBinding,
+  shellRuntimeAgentContract,
+  shellRuntimeBindingSchema
+} from './shell-runtime'
+import { redactRuntimeDiagnosticText } from './runtime-diagnostics'
 import {
   memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,
@@ -32,9 +39,11 @@ const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
   "Host SDK discovery in `repl_execute`: `await host.help()` is the role-aware catalog with field descriptions; query only needed topics. Main/root agents may call `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
+  'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools. Keep equivalent
-// guidance concise because this prompt and the complete Notebook MCP schema share a 3,500-token cap.
+// guidance concise; the prompt and complete MCP schema share the tested static context budget.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Guidance only applies when using open-science-notebook tools.',
@@ -42,12 +51,15 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
   'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
   HOST_SDK_DISCOVERY_GUIDANCE,
+  'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
   '`manage_environments` creates separate runtimes and returns `created.runtimeId`; bind/switch them and move data with files.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'Retry once at most; repeated kernel-process failures mean stop Notebook tools and report the failure.',
-  'After OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED, call `request_network_access` with the exact hostname, runtime, reason, and failed bash command when applicable. Never call speculatively; retry only after an allowed result.',
+  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before replaying. Retry at most once when safe; repeated kernel failures mean stop Notebook tools and report the failure.',
+  'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
+  'Follow recovery guidance; never bypass protection/TLS. Check settings for setup failures.',
+  'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
   'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
   '</open_science_notebook_instructions>'
@@ -65,6 +77,8 @@ type NotebookMcpEnvironment = NotebookRpcConnection &
     sessionId: string
     workspaceCwd: string
     memoryTools?: boolean
+    shellRuntime?: ShellRuntimeBinding
+    wslSetupTools?: boolean
   }
 
 type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'> & {
@@ -75,6 +89,10 @@ type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'
 
 const executeToolSchema = {
   code: z.string(),
+  background: z
+    .boolean()
+    .optional()
+    .describe('Return after durable admission; keep this Python/R Run active in the Session.'),
   cellId: z.string().min(1).optional(),
   language: z.enum(['python', 'r']).optional(),
   kernelSkillIds: z
@@ -90,19 +108,26 @@ const executeToolSchema = {
 
 const replExecuteToolSchema = {
   code: z.string(),
+  background: z
+    .boolean()
+    .optional()
+    .describe(
+      'Return after durable admission; keep this JavaScript REPL Run active in the Session.'
+    ),
   timeoutMs: z.number().int().positive().default(NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS)
 }
 
-const bashExecuteToolSchema = {
-  command: z.string(),
-  timeoutMs: z.number().int().positive().optional()
+const backgroundRunToolSchema = {
+  action: z.enum(['query', 'cancel']),
+  runId: z.string().min(1).optional(),
+  submissionIdentity: z.string().min(1).optional()
 }
 
 const requestNetworkAccessToolSchema = {
   hostname: z.string().trim().min(1).max(253),
   reason: z.string().trim().min(1).max(1_000),
-  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional().describe('Blocked runtime.'),
-  command: z.string().min(1).optional().describe('Exact failed bash command.')
+  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
+  command: z.string().min(1).optional().describe('Exact bash command, not Notebook source.')
 }
 
 const managePackagesToolSchema = {
@@ -162,6 +187,18 @@ const requestUserInputToolSchema = {
   questions: z.array(userChoiceQuestionSchema).min(1).max(MAX_AGENT_USER_CHOICE_QUESTIONS)
 }
 
+const wslSetupSelectProfileSchema = {
+  distro: z.string().trim().min(1).max(256),
+  user: z.string().trim().min(1).max(128),
+  expectedRevision: z.number().int().nonnegative()
+}
+
+const wslSetupOpenTerminalSchema = {
+  target: z.enum(['powershell', 'distro']),
+  distro: z.string().trim().min(1).max(256).optional(),
+  user: z.string().trim().min(1).max(128).optional()
+}
+
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
 // The process boundary enforces the same approved-domain policy for every installer worker.
 const INSPECT_PACKAGES_DOC = [
@@ -183,7 +220,7 @@ const MANAGE_ENVIRONMENTS_DOC = [
   'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
   `Only action:"list" returns the full snapshot (at most ${MAX_ENVIRONMENT_RESULTS}, with offset/limit/nextOffset); action:"create" needs language/name (optional packages), and action:"remove" needs name. Mutations return only target receipts.`,
   'Create returns created.runtimeId and does not select it; bind the first target, otherwise switch.',
-  'Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
+  'Removal is limited to agent-created named environments without live Kernels or active/revoking Runtime Bindings; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
   'Named data kernels cannot call connectors; use repl_execute and the OPEN_SCIENCE_HANDOFF_DIR environment path.'
 ].join('\n')
 
@@ -211,38 +248,58 @@ const REPL_EXECUTE_DOC = [
   'Only this kernel supports temporary tool-less inference (`await host.llm(prompt)` or bounded prompt batches), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`), and Specialist management (`host.agents`). Discover other namespaces with `host.help()`.',
   'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
+  'Use foreground when reasoning needs the result now; use background:true only for longer independent work. Background-safe calls include host.mcp, host.compute, host.llm, host.delegate, and read-only Host SDK operations. host.viewImage, host.agents.switch, and live user input are unsafe in background execution because their results require the live foreground response. Save the returned runId; do not poll frequently. A Turn end or MCP disconnect does not cancel an accepted background Run; cancel it explicitly with background_run. If a Host SDK operation reports BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
   'Globals persist; trailing expressions return results for Agent inspection. Defaults allow the Host SDK maximum 30-minute bounded wait; timeoutMs overrides. To hand off large data from the REPL to Python/R, write under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
 // The tool name is retained for backward compatibility, but Windows deliberately runs PowerShell.
-const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): string => {
-  const shellDescription =
-    platform === 'win32'
-      ? 'Run one Windows PowerShell command in the shared session workspace. This is not Bash: use PowerShell syntax and do not assume a POSIX shell exists.'
-      : 'Run one shell command with `sh -c` in the shared session workspace.'
+const buildShellExecuteDoc = (
+  runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
+): string => {
+  const binding = typeof runtime === 'string' ? defaultShellRuntimeBinding(runtime) : runtime
+  const agentContract = shellRuntimeAgentContract(binding)
   const handoffVariable =
-    platform === 'win32' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
+    binding.kind === 'powershell' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
   const platformContract =
-    platform === 'win32'
+    binding.kind === 'powershell'
       ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
       : undefined
   const exitCodeContract =
-    platform === 'win32'
+    binding.kind === 'powershell'
       ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
       : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
 
   return [
-    shellDescription,
+    agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
     `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
     exitCodeContract,
+    'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
+    'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
+    'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
     'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
-    'Use only for one-off command inspection. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
+    'Use only for one managed command. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
   ].join('\n')
 }
 
+const buildShellExecuteToolSchema = (
+  runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
+): NotebookToolSchema => {
+  const binding = typeof runtime === 'string' ? defaultShellRuntimeBinding(runtime) : runtime
+
+  return {
+    command: z.string().describe(shellRuntimeAgentContract(binding).commandDescription),
+    background: z
+      .boolean()
+      .optional()
+      .describe('Return after durable admission; keep this Shell Command active in the Session.'),
+    timeoutMs: z.number().int().positive().optional()
+  }
+}
+
 const BASH_EXECUTE_DOC = buildShellExecuteDoc()
+const bashExecuteToolSchema = buildShellExecuteToolSchema()
 
 type RpcRequest = {
   method: string
@@ -251,7 +308,7 @@ type RpcRequest = {
 
 type RpcResponse = {
   result?: unknown
-  error?: string
+  error?: unknown
 }
 
 type NotebookToolSchema = Record<string, z.ZodTypeAny>
@@ -261,6 +318,7 @@ type NotebookRpcToolDefinition = {
   title: string
   description: string
   method: string
+  resolveMethod?: (input: unknown) => string
   inputSchema: NotebookToolSchema
   outputSchema?: z.ZodTypeAny
   // Optional projection of the raw RPC result before it is serialized for the agent. Used to keep
@@ -275,9 +333,9 @@ type NotebookToolContent =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
 const notebookRpcSignal = (
-  method: string,
+  _method: string,
   signal: AbortSignal | undefined
-): AbortSignal | undefined => (method === 'executeControl' ? undefined : signal)
+): AbortSignal | undefined => signal
 
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
 const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
@@ -296,6 +354,15 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
       { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: projectId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: request.sessionId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: request.workspaceCwd },
+      ...(request.shellRuntime
+        ? [
+            {
+              name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+              value: JSON.stringify(request.shellRuntime)
+            }
+          ]
+        : []),
+      ...(request.wslSetupTools ? [{ name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' }] : []),
       {
         name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
         value: request.memoryTools ? '1' : '0'
@@ -328,6 +395,19 @@ const createNotebookMcpEnvironmentFromProcess = (
     throw new Error('Conflicting projectId and legacy projectName values.')
   }
   const projectId = resolveProjectId({ projectId: currentProjectId ?? legacyProjectId })
+  const shellRuntimeText = env.OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME
+  let shellRuntime: ShellRuntimeBinding | undefined
+  if (shellRuntimeText) {
+    let decoded: unknown
+    try {
+      decoded = JSON.parse(shellRuntimeText)
+    } catch {
+      throw new Error('Invalid notebook Shell runtime binding.')
+    }
+    const parsed = shellRuntimeBindingSchema.safeParse(decoded)
+    if (!parsed.success) throw new Error('Invalid notebook Shell runtime binding.')
+    shellRuntime = parsed.data
+  }
   return {
     endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
     socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
@@ -335,7 +415,9 @@ const createNotebookMcpEnvironmentFromProcess = (
     projectId,
     sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
     workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD'),
-    memoryTools: env.OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS === '1'
+    memoryTools: env.OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS === '1',
+    wslSetupTools: env.OPEN_SCIENCE_WSL_SETUP_TOOLS === '1',
+    ...(shellRuntime ? { shellRuntime } : {})
   }
 }
 
@@ -362,7 +444,10 @@ const callNotebookRpc = async (
           ...((params ?? {}) as Record<string, unknown>),
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
-          projectId
+          projectId,
+          ...(method === 'executeShell' && environment.shellRuntime
+            ? { shellRuntime: environment.shellRuntime }
+            : {})
         }
       } satisfies RpcRequest),
       // Control REPL does not yet consume cancellation below the RPC boundary. Keep its transport
@@ -376,7 +461,13 @@ const callNotebookRpc = async (
   const payload = (await response.json()) as RpcResponse
 
   if (!response.ok || payload.error) {
-    throw new Error(payload.error ?? `Notebook RPC failed with status ${response.status}`)
+    throw new Error(
+      payload.error === undefined
+        ? `Notebook RPC failed with status ${response.status}`
+        : typeof payload.error === 'string'
+          ? payload.error
+          : JSON.stringify(payload.error)
+    )
   }
 
   return payload.result
@@ -552,6 +643,32 @@ const compactArtifacts = (value: unknown): unknown[] => {
   })
 }
 
+const compactFileEvidence = (value: unknown): Record<string, unknown> | undefined => {
+  const record = asRecord(value)
+  if (!record) return undefined
+  return {
+    ...pickDefined(record, [
+      'schemaVersion',
+      'activityId',
+      'activityKind',
+      'state',
+      'evidenceId',
+      'checksum',
+      'storageKey',
+      'relationCount',
+      'generationCount',
+      'scientificOutputCount',
+      'initialViewState',
+      'managedRootsFinalState',
+      'scientificOutputAnalysis',
+      'fileReads',
+      'externalPaths',
+      'writerAttribution'
+    ]),
+    ...(Array.isArray(record.reasonCodes) ? { reasonCodes: record.reasonCodes.slice(0, 32) } : {})
+  }
+}
+
 const compactExecutionOutputs = (
   value: unknown,
   canonicalTraceback: string
@@ -641,6 +758,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const record = asRecord(raw)
   if (!record) return raw
   const request = asRecord(input)
+  const recovery = executionRecoveryContext(record.recovery)
   const text = asRecord(record.text)
   const stream = (field: 'stdout' | 'stderr' | 'traceback'): string => {
     const value = record[field] ?? text?.[field]
@@ -652,6 +770,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
+  const fileEvidence = compactFileEvidence(record.fileEvidence)
   const staleness = compactStaleness(record.staleness, EXECUTION_STALENESS_LIMITS)
   const filesOmitted =
     (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
@@ -683,7 +802,9 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const hint =
     importedKernelSkillId && requestedKernelSkillIds.includes(importedKernelSkillId)
       ? `Kernel Skill "${importedKernelSkillId}" is injected by kernelSkillIds and is not a Python package. Remove the "${missingModule}" import, keep kernelSkillIds: ${JSON.stringify(requestedKernelSkillIds)}, call its exported functions directly, and retry. Do not install ${missingModule}.`
-      : undefined
+      : record.kernelKind === 'bash' && record.status === 'failed'
+        ? 'For a denied path or unavailable runtime, stop dependent work; do not retry through another runtime or request unsupported escalation. Load Skill documents with the current framework Skill loader. For other command errors, correct the cause before retrying once.'
+        : undefined
   const invalidatedRuns = Array.isArray(record.invalidatedRuns)
     ? record.invalidatedRuns.slice(0, 50).flatMap((value) => {
         const invalidated = asRecord(value)
@@ -705,13 +826,17 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'executionInvocationId',
       'cellId',
       'kernelKind',
+      'kernelDispatched',
       'status',
       'executionCount',
       'environment',
       'startedAt',
       'endedAt',
-      'exitCode'
+      'exitCode',
+      'runtimeStatus',
+      'errorCode'
     ]),
+    ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
     ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
@@ -722,6 +847,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(artifacts.length ? { artifacts } : {}),
+    ...(fileEvidence ? { fileEvidence } : {}),
     ...(record.cwdBefore !== record.cwdAfter && record.cwdAfter !== undefined
       ? { cwdAfter: record.cwdAfter }
       : {}),
@@ -734,6 +860,50 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
               : 'Notebook output was truncated during capture.'
             : 'Agent-facing result shortened; full output remains in the notebook preview.'
         }
+      : {})
+  }
+}
+
+const compactBackgroundRunReceipt = (raw: unknown): unknown => {
+  const receipt = asRecord(raw)
+  return receipt
+    ? pickDefined(receipt, [
+        'runId',
+        'executionType',
+        'projectId',
+        'sessionId',
+        'status',
+        'acceptedAt',
+        'lifecycleScope',
+        'submissionIdentity',
+        'shellConcurrency'
+      ])
+    : raw
+}
+
+const compactBackgroundRunSubmissionReceipt = (raw: unknown): unknown => {
+  const receipt = compactBackgroundRunReceipt(raw)
+  const receiptRecord = asRecord(receipt)
+  return receiptRecord
+    ? { ...receiptRecord, nextAction: LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE }
+    : receipt
+}
+
+const compactBackgroundRunResult = (raw: unknown): unknown => {
+  const result = asRecord(raw)
+  if (!result) return raw
+  const receipt = asRecord(result.receipt)
+  const run = asRecord(result.run)
+  const compactRun =
+    run?.kernelKind === 'repl'
+      ? compactReplExecutionResult(result.run)
+      : compactNotebookExecutionResult(result.run)
+  // Keep the durable receipt internal; queries already carry the Run identity and scope.
+  return {
+    ...asRecord(compactRun),
+    ...(receipt ? pickDefined(receipt, ['shellConcurrency']) : {}),
+    ...(typeof result.followUpDelivery === 'string'
+      ? { followUpDelivery: result.followUpDelivery }
       : {})
   }
 }
@@ -812,12 +982,14 @@ const compactStateRun = (
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
+  const recovery = includeOutputPreview ? executionRecoveryContext(record.recovery) : undefined
 
   return {
     ...pickDefined(record, [
       'runId',
       'cellId',
       'kernelKind',
+      'kernelDispatched',
       'status',
       'executionCount',
       'environment',
@@ -828,6 +1000,7 @@ const compactStateRun = (
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(compactedStaleness.value ? { staleness: compactedStaleness.value } : {}),
+    ...(recovery ? { recovery } : {}),
     ...(outputPreview ? { outputPreview } : {})
   }
 }
@@ -1018,11 +1191,12 @@ const registerNotebookRpcTool = (
       heartbeat?.unref()
 
       try {
+        const rpcMethod = definition.resolveMethod?.(input) ?? definition.method
         const raw = await callNotebookRpc(
           environment,
-          definition.method,
+          rpcMethod,
           rpcInput,
-          resolveNotebookRpcFetch(definition.method),
+          resolveNotebookRpcFetch(rpcMethod),
           extra.signal
         )
         const rejected =
@@ -1228,9 +1402,49 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
       ? Number(logTruncation.droppedBytes)
       : undefined
   const target = compactRuntimeTarget(result.target)
+  // Installer logs are useful on failure, but successful solver output is usually large noise.
+  // Keep both edges: setup errors may be first, while the final installer diagnosis is often last.
+  const failureLog =
+    result.ok === false && typeof result.log === 'string'
+      ? redactRuntimeDiagnosticText(result.log)
+          // pip ends a missing-distribution error with a second, less informative summary.
+          // Match adjacent lines for the exact same requirement; retain version candidates,
+          // index context, and all other diagnostics rather than deduplicating arbitrary logs.
+          .replace(
+            /^(ERROR: Could not find a version that satisfies the requirement (.+) \(from versions: [^\r\n]*\))\r?\nERROR: No matching distribution found for \2(?=\r?$)/gm,
+            '$1'
+          )
+          .trim()
+      : ''
+  const diagnostics =
+    failureLog.length > 2_400
+      ? `${failureLog.slice(0, 800)}\n…[${failureLog.length - 2_400} chars omitted from installer output]…\n${failureLog.slice(-1_600)}`
+      : failureLog
+  const attempts =
+    result.ok === false && Array.isArray(result.attempts)
+      ? result.attempts.slice(0, 8).flatMap((value) => {
+          const attempt = asRecord(value)
+          return attempt
+            ? [
+                pickDefined(attempt, [
+                  'groupOrdinal',
+                  'installer',
+                  'status',
+                  'mutationRisk',
+                  'reason'
+                ])
+              ]
+            : []
+        })
+      : []
   const base = {
     ok: result.ok,
     needsRestart: result.needsRestart,
+    ...(diagnostics ? { diagnostics } : {}),
+    ...(attempts.length ? { attempts } : {}),
+    ...(result.ok === false && Array.isArray(result.attempts) && result.attempts.length > 8
+      ? { omittedAttempts: result.attempts.length - 8 }
+      : {}),
     ...(result.environmentName !== undefined ? { environmentName: result.environmentName } : {}),
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(asRecord(result.source)
@@ -1275,7 +1489,14 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     }
     const source = asRecord(item.source)
     if (source) {
-      compact.source = pickDefined(source, ['type', 'repository', 'ref', 'commit', 'version'])
+      compact.source = pickDefined(source, [
+        'type',
+        'repository',
+        'ref',
+        'commit',
+        'subdirectory',
+        'version'
+      ])
     }
     return [compact]
   })
@@ -1314,13 +1535,32 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_execute',
     title: 'Execute notebook code',
-    description:
+    description: [
       "artifactVersionInputs: this Run's provenance inputs (Version IDs). Use runId as producerRunId.",
+      'Use foreground when reasoning needs the result now; use background:true for longer independent work.',
+      'Save the returned runId; follow its dependency-point query guidance.',
+      'Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.'
+    ].join(' '),
     method: 'execute',
     inputSchema: executeToolSchema,
-    mapResult: compactNotebookExecutionResult,
+    mapResult: (raw, input) =>
+      asRecord(input)?.background === true
+        ? compactBackgroundRunSubmissionReceipt(raw)
+        : compactNotebookExecutionResult(raw, input),
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
     progressMessage: 'Notebook execution is still running.'
+  },
+  {
+    name: 'background_run',
+    title: 'Query or cancel a local background Run',
+    description:
+      'Query a saved runId as a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means query won; "committed" means fallback crossed dispatch. Unread results may arrive in a follow-up Turn. submissionIdentity recovers only a missing receipt. Cancel is idempotent for active Runs.',
+    method: 'getBackgroundRun',
+    resolveMethod: (input) =>
+      asRecord(input)?.action === 'cancel' ? 'cancelBackgroundRun' : 'getBackgroundRun',
+    inputSchema: backgroundRunToolSchema,
+    mapResult: compactBackgroundRunResult,
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
     name: 'repl_execute',
@@ -1328,7 +1568,10 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: REPL_EXECUTE_DOC,
     method: 'executeControl',
     inputSchema: replExecuteToolSchema,
-    mapResult: compactReplExecutionResult,
+    mapResult: (raw, input) =>
+      asRecord(input)?.background === true
+        ? compactBackgroundRunSubmissionReceipt(raw)
+        : compactReplExecutionResult(raw),
     includeViewImages: true,
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
     progressMessage: 'Control-plane REPL execution is still running.'
@@ -1339,18 +1582,22 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,
-    mapResult: compactNotebookExecutionResult,
+    mapResult: (raw, input) =>
+      asRecord(input)?.background === true
+        ? compactBackgroundRunSubmissionReceipt(raw)
+        : compactNotebookExecutionResult(raw),
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
     name: 'request_network_access',
     title: 'Request Notebook network access',
     description:
-      'Call only after Notebook execution reports OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Provide the exact hostname, blocked runtime, reason, and exact command for bash. Retry the failed execution only when the result is allowed.',
+      'Request before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Once: bash runtime+command or matching failure; otherwise Global. Execute or retry only when the result is allowed.',
     method: 'requestNetworkAccess',
     inputSchema: requestNetworkAccessToolSchema,
     mapResult: (raw) => raw,
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'Waiting for Notebook network approval.'
   },
   {
     name: 'notebook_state',
@@ -1393,7 +1640,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Restart the shared notebook interpreter, clearing in-memory variables (run history is preserved). RARELY NEEDED: hangs and crashes recover on their own, and installing a package does NOT require a restart — a running kernel picks it up on its next import/library(). Use it only to (a) deliberately wipe the namespace / free memory, or (b) reload a NEWER version of a package you already imported this session.',
+      'Restart the shared notebook interpreter, clearing in-memory variables (run history is preserved). Use when manage_packages reports needsRestart:true, to reload an updated package already imported in this session, or to deliberately clear the namespace / free memory. Installing a new Python package usually does not require a restart; follow the actual needsRestart result for the selected runtime.',
     method: 'restart',
     inputSchema: {},
     mapResult: compactRestartResult,
@@ -1472,12 +1719,75 @@ const MEMORY_NOTEBOOK_RPC_METHODS = new Set([
   'memoryRemember'
 ])
 
+const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
+  {
+    name: 'wsl_setup_diagnostics',
+    title: 'Refresh WSL2 setup diagnostics',
+    description:
+      'Call this first in a WSL setup Session. It refreshes app-owned diagnostics and returns the bundled, version-matched setup guide markdown that governs the available setup tools.',
+    method: 'wslSetupDiagnostics',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
+  {
+    name: 'wsl_setup_install_platform',
+    title: 'Install the WSL platform',
+    description:
+      'Start the existing app-owned Windows WSL platform installation operation. Windows handles UAC; inspect the returned outcome and never claim success for restart-required, cancelled, failed, or unknown results.',
+    method: 'wslSetupInstallPlatform',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'The WSL platform operation is still running.'
+  },
+  {
+    name: 'wsl_setup_install_recommended_distro',
+    title: 'Install the recommended WSL distribution',
+    description:
+      'Start the existing app-owned recommended distribution operation after diagnostics show a distribution is required. Inspect the returned snapshot and do not claim completion unless it is ready.',
+    method: 'wslSetupInstallRecommendedDistro',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'The WSL distribution operation is still running.'
+  },
+  {
+    name: 'wsl_setup_select_profile',
+    title: 'Save a candidate WSL2 Shell profile',
+    description:
+      'Save and verify one detected WSL2 distribution and non-root Linux user. expectedRevision must match the latest app-owned diagnostics; stale writes are refused. This does not activate WSL2 Bash.',
+    method: 'wslSetupSelectProfile',
+    inputSchema: wslSetupSelectProfileSchema,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
+  {
+    name: 'wsl_setup_open_terminal',
+    title: 'Open a visible WSL setup terminal',
+    description:
+      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro", distro, and optionally a verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
+    method: 'wslSetupOpenTerminal',
+    inputSchema: wslSetupOpenTerminalSchema,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  }
+]
+
 const notebookRpcToolsForEnvironment = (
   environment: NotebookMcpEnvironment
-): readonly NotebookRpcToolDefinition[] =>
-  environment.memoryTools
-    ? NOTEBOOK_RPC_TOOLS
-    : NOTEBOOK_RPC_TOOLS.filter((tool) => !MEMORY_NOTEBOOK_RPC_METHODS.has(tool.method))
+): readonly NotebookRpcToolDefinition[] => {
+  const definitions = environment.wslSetupTools
+    ? [...NOTEBOOK_RPC_TOOLS, ...WSL_SETUP_RPC_TOOLS]
+    : NOTEBOOK_RPC_TOOLS
+  const tools = definitions.map((tool) =>
+    tool.method === 'executeShell' && environment.shellRuntime
+      ? {
+          ...tool,
+          description: buildShellExecuteDoc(environment.shellRuntime),
+          inputSchema: buildShellExecuteToolSchema(environment.shellRuntime)
+        }
+      : tool
+  )
+  return environment.memoryTools
+    ? tools
+    : tools.filter((tool) => !MEMORY_NOTEBOOK_RPC_METHODS.has(tool.method))
+}
 
 // Creates the stdio MCP server and attaches every notebook tool to it.
 const createNotebookMcpServer = (
@@ -1515,6 +1825,7 @@ export {
   REPL_EXECUTE_DOC,
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
+  buildShellExecuteToolSchema,
   buildNotebookToolContent,
   NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
   NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
@@ -1526,6 +1837,8 @@ export {
   callNotebookRpc,
   resolveNotebookRpcFetch,
   compactNotebookExecutionResult,
+  compactBackgroundRunReceipt,
+  compactBackgroundRunResult,
   compactNotebookStateResult,
   compactManagePackagesResult,
   compactInspectPackagesResult,

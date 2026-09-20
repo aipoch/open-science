@@ -2,7 +2,10 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { MessageAttribution } from '../../shared/session-persistence'
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanProtectedContextSource
+} from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -10,6 +13,7 @@ import {
 } from '../../shared/permission-profiles'
 import type { AgentFramework } from '../agent-framework'
 import { createLogger, errorLogFields } from '../logger'
+import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
@@ -25,6 +29,9 @@ import {
   type AcpPromptFinalizationOutcome
 } from './prompt-outcome-finalizer'
 import type { AcpPromptPreparationOwner, PreparedPromptHandle } from './prompt-preparation-owner'
+import { PlanToolWaitObserver } from './plan-review-provider-stop'
+import { combineProviderPromptFacts } from './provider-prompt-facts'
+import type { AcpProviderTurnResult } from './provider-turn-adapter'
 import type { AcpProviderPromptExecutor, ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
@@ -33,11 +40,19 @@ import type { AcpSessionToolingAvailability } from './session-presentation-polic
 import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
+import {
+  NotebookWorkingFileObserver,
+  type NotebookWorkingFile
+} from './artifact-publication-continuation'
 
 const log = createLogger('acp-prompt-turn-workflow')
 
 type AcpPromptTurnMode =
-  | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+  | Readonly<{
+      kind: 'user'
+      promptAttemptId?: string
+      runtimeReviewOwner?: 'task' | 'renderer'
+    }>
   | Readonly<{
       kind: 'application'
       attribution: MessageAttribution
@@ -47,12 +62,14 @@ type AcpPromptTurnMode =
       kind: 'app-continuation'
       promptAttemptId?: string
       planDelivery?: Readonly<{ projectId: string; commandId: string }>
+      delegatedMessageId?: string
     }>
 
 type AcpPromptTurnPlanContext = Readonly<{
   active?: ActivePlanProjection
   protectedPending?: ActivePlanProjection
   protectedRejected?: ActivePlanProjection
+  source?: PlanProtectedContextSource
 }>
 
 type AcpActivatedPromptTurn = Readonly<{
@@ -83,6 +100,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   ) => void
   onSkillImportAttachmentEligible?: (sessionId: string, turnToken: string, uri: string) => void
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
+  onRuntimeSessionProviderAccepted?: (sessionId: string, promptMessageId: string) => Promise<void>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
       | Readonly<{
@@ -93,6 +111,11 @@ type AcpPromptTurnEnvironment = Readonly<{
       | undefined
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
+  requestArtifactPublicationContinuation?: (input: {
+    sessionId: string
+    provenanceContext?: AcpPromptRequest['provenanceContext']
+    files: readonly NotebookWorkingFile[]
+  }) => void
   diagnosticContext: () => Record<string, unknown>
   pushUserMessage: (input: {
     sessionId: string
@@ -122,6 +145,7 @@ type AcpPromptTurnArtifacts = Readonly<{
     onPublished: () => void
   ) => Promise<void>
   dispose: (artifact: ArtifactTurnHandle | undefined) => Promise<void>
+  publicationCount: (artifact: ArtifactTurnHandle | undefined) => number
 }>
 
 type AcpPromptTurnPlanWorkflow = Readonly<{
@@ -134,6 +158,18 @@ type AcpPromptTurnPlanWorkflow = Readonly<{
     interaction: AcpPromptSessionInteractionScope,
     plan: AcpPromptTurnPlanContext
   ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
+  toolWaitFailed?: (interaction: AcpPromptSessionInteractionScope) => void
+  providerStopped?: (interaction: AcpPromptSessionInteractionScope) => void
+  isProviderPaused?: (interaction: AcpPromptSessionInteractionScope) => boolean
+  resumeAfterProviderStop?: (interaction: AcpPromptSessionInteractionScope) => Promise<
+    | {
+        content: string
+        dispatch?: () => Promise<void>
+        notDispatched?: () => Promise<void>
+        accepted: () => Promise<void>
+      }
+    | undefined
+  >
   providerAccepted: (sessionId: string, mode: AcpPromptTurnMode) => void | Promise<void>
   beforeRelease: (sessionId: string, interaction: AcpPromptSessionInteractionScope) => void
   afterRelease: (sessionId: string) => Promise<void>
@@ -143,6 +179,7 @@ type AcpPromptTurnFinalization = Readonly<{
   errorMessage: AcpPromptFinalizationHandles['errorMessage']
   errorKind: AcpPromptFinalizationHandles['errorKind']
   pushEvent: AcpPromptFinalizationHandles['pushEvent']
+  commitTerminal?: AcpPromptFinalizationHandles['commitTerminal']
   onPromptEnded: (sessionId: string, turnToken: string) => void
   generationActivityChanged: () => void
   autoCompact: (
@@ -181,6 +218,9 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectId: (sessionId: string) => string
+  prepareContinuationReplay: (
+    request: AcpPromptRequest
+  ) => Promise<AcpPromptRequest['resumeFallback']>
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
@@ -189,16 +229,55 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     permissionProfile: PermissionProfileId
   }) => Promise<{ contextReset?: boolean }>
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
+  beginRuntimeSessionTurn?: (
+    request: AcpPromptRequest,
+    executionId: string,
+    reviewOwner: 'task' | 'renderer',
+    planDeliveryCommandId?: string,
+    delegatedMessageId?: string
+  ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
 }>
 
 class AcpPromptTurnWorkflow {
+  // A send outlives the provider generation replaced by a forced Skill reload.
+  private readonly requests = new Map<string, { cancelled: boolean }>()
+
+  captureCancellation(sessionId: string): (() => void) | undefined {
+    const request = this.requests.get(sessionId)
+    return request
+      ? () => {
+          request.cancelled = true
+        }
+      : undefined
+  }
+
   constructor(private readonly options: AcpPromptTurnWorkflowOptions) {}
 
   async run(
     request: AcpPromptRequest,
     mode: AcpPromptTurnMode,
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+  ): Promise<PromptResponse> {
+    if (!this.activeSession(request.sessionId)) {
+      throw new Error(`ACP session not found: ${request.sessionId}`)
+    }
+    this.assertSessionIdle(request.sessionId)
+    const cancellation = { cancelled: false }
+    this.requests.set(request.sessionId, cancellation)
+    try {
+      return await this.runRequest(request, mode, cancellation, onPromptAdmitted)
+    } finally {
+      if (this.requests.get(request.sessionId) === cancellation)
+        this.requests.delete(request.sessionId)
+    }
+  }
+
+  private async runRequest(
+    request: AcpPromptRequest,
+    mode: AcpPromptTurnMode,
+    cancellation: { cancelled: boolean },
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
     let activeSession = this.activeSession(request.sessionId)
@@ -228,9 +307,32 @@ class AcpPromptTurnWorkflow {
     const rejectedSkillOutcome =
       skill.reloadDecision.kind === 'reload' ? 'reload-restored' : 'failed'
 
+    if (
+      skill.reloadDecision.kind === 'reload' &&
+      mode.kind === 'app-continuation' &&
+      !request.resumeFallback
+    ) {
+      try {
+        this.assertSessionIdle(request.sessionId)
+        request.resumeFallback = await this.options.prepareContinuationReplay(request)
+        reservation.signal.throwIfAborted()
+        this.assertSessionIdle(request.sessionId)
+      } catch (error) {
+        // No provider reconnect has begun, so releasing authorization must not schedule one.
+        skill.close('failed', { reload: false })
+        this.options.interactions.release(reservation)
+        throw error
+      }
+    }
+
     try {
       if (skill.reloadDecision.kind === 'reload') {
         this.assertSessionIdle(request.sessionId)
+        if (cancellation.cancelled) {
+          skill.close('reload-restored')
+          this.options.interactions.release(reservation)
+          return { stopReason: 'cancelled' }
+        }
         const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
         const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
@@ -242,6 +344,11 @@ class AcpPromptTurnWorkflow {
             snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {})
         })
+        if (cancellation.cancelled) {
+          skill.close('reload-restored')
+          this.options.interactions.release(reservation)
+          return { stopReason: 'cancelled' }
+        }
         if (resumed.contextReset) {
           request.historyPreamble = request.resumeFallback?.historyPreamble
           request.historyAttachments = request.resumeFallback?.historyAttachments
@@ -285,11 +392,26 @@ class AcpPromptTurnWorkflow {
         this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
+      if (this.options.beginRuntimeSessionTurn) {
+        await this.options.beginRuntimeSessionTurn(
+          admittedRequest,
+          interaction.turnToken,
+          mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
+          mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined,
+          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined
+        )
+      }
       this.options.registry.select(admittedRequest.sessionId)
       this.options.recordAdmittedPrompt(admittedRequest)
     } catch (error) {
       skill.close(rejectedSkillOutcome)
       this.options.interactions.release(interaction ?? reservation)
+      if (mode.kind === 'app-continuation' && mode.delegatedMessageId) {
+        throw new DelegateMessagePreAcceptanceError(
+          error instanceof Error ? error.message : String(error),
+          error
+        )
+      }
       throw error
     }
 
@@ -341,6 +463,8 @@ class AcpPromptTurnWorkflow {
     let userMessageEmitted = false
     let sideChatRelay: ReturnType<NonNullable<typeof env.sideChatRelays>['claim']>
     let sideChatRelaySettled = false
+    const notebookWorkingFiles = new NotebookWorkingFileObserver()
+    const planToolWait = new PlanToolWaitObserver()
     const emitUserMessage = (): void => {
       if (
         (turn.mode.kind !== 'user' && turn.mode.kind !== 'application') ||
@@ -379,6 +503,11 @@ class AcpPromptTurnWorkflow {
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       prepared = await preparation.prepare({
         request: preparationRequest,
+        classificationEnabled:
+          turn.mode.kind === 'user' &&
+          turn.mode.runtimeReviewOwner !== 'task' &&
+          !request.continuation &&
+          !request.suppressUserMessage,
         connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
@@ -392,7 +521,9 @@ class AcpPromptTurnWorkflow {
         skillImportTurnToken: turnToken,
         turnSkill: skill,
         selectedComputeHostIds: env.resolveComputeExecutionTargetIds?.(sessionId) ?? [],
-        ...(planContext ? { protectedContext: formatPlanProtectedContext(planContext) } : {}),
+        ...(planContext
+          ? { protectedContext: formatPlanProtectedContext(planContext, turn.plan.source) }
+          : {}),
         ...(request.turnIntent === 'plan-first'
           ? { turnPromptReminders: [PLAN_FIRST_TURN_PROMPT_REMINDER] }
           : {}),
@@ -423,13 +554,20 @@ class AcpPromptTurnWorkflow {
       const promptBackend = env.backend()
       const framework = promptBackend.framework
       const cwd = promptSnapshot?.cwd ?? this.options.currentCwd()
+      let providerContent = readyPrepared.content
+      let resumeAccepted: (() => Promise<void>) | undefined
+      let resumeDispatch: (() => Promise<void>) | undefined
+      let resumeNotDispatched: (() => Promise<void>) | undefined
+      let deliveryClaimed = false
+      let providerDispatched = false
+      let accumulatedFacts: AcpProviderTurnResult | undefined
       const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
         executor.execute({
           session,
-          content: readyPrepared.content,
+          content: providerContent,
           cwd,
           frameworkId: promptSnapshot?.frameworkId ?? framework.id,
-          ...(readyPrepared.preDispatchModelCalls
+          ...(!accumulatedFacts && readyPrepared.preDispatchModelCalls
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
           isCurrent: () => this.isCurrent(turn),
@@ -444,7 +582,7 @@ class AcpPromptTurnWorkflow {
                 ? { skillRuntimeAllowlist: readyPrepared.skillRuntimeAllowlist }
                 : {})
             })
-            if (request.historyPreamble) {
+            if (!accumulatedFacts && request.historyPreamble) {
               log.info('session transcript replay dispatched', {
                 sessionId,
                 historyTextLength: request.historyPreamble.length,
@@ -453,11 +591,30 @@ class AcpPromptTurnWorkflow {
                 ...env.diagnosticContext()
               })
             }
-            return 'active'
+            if (resumeDispatch) {
+              await resumeDispatch()
+              deliveryClaimed = true
+            }
+            return this.checkpoint(interaction)
           },
-          captureStop: () => interactions.captureTerminal(interaction, 'stop'),
+          onDispatched: () => {
+            providerDispatched = true
+          },
+          captureStop: () => {
+            if (plan.isProviderPaused?.(interaction)) {
+              plan.providerStopped?.(interaction)
+              return true
+            }
+            return interactions.captureTerminal(interaction, 'stop')
+          },
           onAccepted: async () => {
-            await plan.providerAccepted(sessionId, turn.mode)
+            if (resumeAccepted) {
+              const accept = resumeAccepted
+              resumeAccepted = undefined
+              await accept()
+            } else {
+              await plan.providerAccepted(sessionId, turn.mode)
+            }
             if (sideChatRelay && !sideChatRelaySettled) {
               sideChatRelaySettled = true
               try {
@@ -472,6 +629,12 @@ class AcpPromptTurnWorkflow {
             // Receipts describe provider acceptance and keep their durable notifications. Only
             // the current turn may publish live acceptance and Skill completion after those waits.
             if (!this.isCurrent(turn)) return
+            if (request.provenanceContext?.promptMessageId) {
+              await env.onRuntimeSessionProviderAccepted?.(
+                sessionId,
+                request.provenanceContext.promptMessageId
+              )
+            }
             this.safeCallback('provider-prompt-accepted callback failed', () =>
               env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
             )
@@ -485,7 +648,13 @@ class AcpPromptTurnWorkflow {
           // the response, tools, stop metadata, and durable transcript all settle. Dropping these
           // notifications left Reviewer Corrections with only the [Auditor] prompt persisted, so the
           // fix loop could never observe the completed correction and refused its scoped re-review.
-          routeNotification: (notification) => env.routeNotification(notification, sessionId),
+          routeNotification: (notification) => {
+            if (planToolWait.failed(notification)) plan.toolWaitFailed?.(interaction)
+            this.safeCallback('Notebook working-file observation failed', () =>
+              notebookWorkingFiles.observe(notification)
+            )
+            env.routeNotification(notification, sessionId)
+          },
           reportBestEffortFailure: (stage, error) =>
             log.warn('provider prompt observation failed', {
               sessionId,
@@ -494,7 +663,48 @@ class AcpPromptTurnWorkflow {
             })
         })
 
-      return this.options.serialization.run(framework, executeProviderTurn)
+      for (;;) {
+        // Release the shared Provider slot before waiting for human review.
+        let outcome: ProviderPromptOutcome
+        deliveryClaimed = false
+        providerDispatched = false
+        try {
+          outcome = await this.options.serialization.run(framework, executeProviderTurn)
+        } finally {
+          if (deliveryClaimed && !providerDispatched) await resumeNotDispatched?.()
+        }
+        if (outcome.kind !== 'stopped') {
+          if (outcome.kind === 'not-dispatched' && accumulatedFacts) {
+            interactions.captureTerminal(interaction, 'cancelled')
+            return {
+              kind: 'stopped',
+              response: { stopReason: 'cancelled' },
+              facts: accumulatedFacts
+            }
+          }
+          return outcome
+        }
+        accumulatedFacts = accumulatedFacts
+          ? combineProviderPromptFacts(accumulatedFacts, outcome.facts)
+          : outcome.facts
+        if (!plan.isProviderPaused?.(interaction)) {
+          return { ...outcome, facts: accumulatedFacts }
+        }
+        let resumed: Awaited<ReturnType<NonNullable<typeof plan.resumeAfterProviderStop>>>
+        try {
+          resumed = await plan.resumeAfterProviderStop?.(interaction)
+        } catch (error) {
+          if (!interaction.signal.aborted) throw error
+        }
+        if (!resumed || (await this.checkpoint(interaction)) === 'cancelled') {
+          interactions.captureTerminal(interaction, 'cancelled')
+          return { kind: 'stopped', response: { stopReason: 'cancelled' }, facts: accumulatedFacts }
+        }
+        providerContent = resumed.content
+        resumeAccepted = resumed.accepted
+        resumeDispatch = resumed.dispatch
+        resumeNotDispatched = resumed.notDispatched
+      }
     }
     let outcome: AcpPromptFinalizationOutcome
     try {
@@ -507,7 +717,7 @@ class AcpPromptTurnWorkflow {
       sideChatRelay.restore()
     }
     const model = env.backend().session.model
-    return finalizer.finalize(
+    const response = await finalizer.finalize(
       {
         sessionId,
         ...eventIdentity,
@@ -540,6 +750,7 @@ class AcpPromptTurnWorkflow {
         errorMessage: finalization.errorMessage,
         errorKind: finalization.errorKind,
         pushEvent: finalization.pushEvent,
+        ...(finalization.commitTerminal ? { commitTerminal: finalization.commitTerminal } : {}),
         emitState: this.options.emitState,
         onPromptEnded: () => finalization.onPromptEnded(sessionId, turnToken),
         generationActivityChanged: finalization.generationActivityChanged,
@@ -552,6 +763,23 @@ class AcpPromptTurnWorkflow {
       },
       outcome
     )
+    const unpublishedFiles = notebookWorkingFiles.snapshot()
+    if (
+      response.stopReason === 'end_turn' &&
+      turn.mode.kind !== 'app-continuation' &&
+      env.tooling().artifacts &&
+      artifacts.publicationCount(artifact) === 0 &&
+      unpublishedFiles.length > 0
+    ) {
+      this.safeCallback('artifact publication continuation callback failed', () =>
+        env.requestArtifactPublicationContinuation?.({
+          sessionId,
+          provenanceContext: request.provenanceContext,
+          files: unpublishedFiles
+        })
+      )
+    }
+    return response
   }
 
   private activeSession(sessionId: string): ActiveSession | undefined {

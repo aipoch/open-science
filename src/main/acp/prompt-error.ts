@@ -209,6 +209,7 @@ const isProviderErrorKind = (error: unknown): boolean => {
 // broad human-message pattern matching:
 //   - the agent tagged the failure as an upstream `APIError` (covers auth/rate/quota/5xx/etc.), or
 //   - the agent tagged `data.errorKind: 'provider-error'` (the bridges' machine-readable marker), or
+//   - Codex attached its explicit serverOverloaded detail to an ACP internal error, or
 //   - Claude Code emitted its fixed ACP internal wrapper with an explicit provider 4xx status or
 //     a recognized transport failure, or
 //   - it is a provider "resource not found" (wrong model id / endpoint), which requires the same
@@ -218,7 +219,25 @@ export const isProviderPromptError = (error: unknown): boolean => {
   if (isProviderErrorKind(error)) return true
   if (isClaudeProviderApiError(error)) return true
 
+  // Codex's native error data already identifies capacity failures. Keep unknown/internal Codex
+  // failures reportable, and never infer provider ownership from the human-readable message.
+  const data = (error as { data?: { codexErrorInfo?: unknown } } | null)?.data
+  if (errorCode(error) === -32603 && data?.codexErrorInfo === 'serverOverloaded') return true
+
   const raw = rawErrorMessage(error)
 
   return isProviderNotFound(error, raw, extractUpstreamDetail(raw))
+}
+
+// OpenCode reports a provider-side Session that no longer exists as a generic JSON-RPC Internal
+// error with a machine-readable service marker. This is distinct from provider/MCP failures and can
+// be recovered by replacing the lost provider Session while keeping the app Session and transcript.
+export const isOpenCodeSessionServiceFailure = (error: unknown): boolean => {
+  if (errorCode(error) !== -32603) return false
+  if (typeof error !== 'object' || error === null) return false
+
+  const data = (error as { data?: unknown }).data
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return false
+
+  return (data as { service?: unknown }).service === 'session'
 }

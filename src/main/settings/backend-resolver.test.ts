@@ -1,6 +1,12 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
+
+import { SideChatRuntimeOwner } from '../side-chat/runtime-owner'
+import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
+import type { ResolvedAgentBackend } from '../agent-framework'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
@@ -150,6 +156,7 @@ const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDoub
 })
 
 type HarnessOptions = {
+  storageRoot?: string
   settings?: StoredSettings
   frameworkOverride?: string
   connectorIds?: string[]
@@ -311,7 +318,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     providers,
     runtime,
     connectors,
-    storageRoot: '/storage',
+    storageRoot: options.storageRoot ?? '/storage',
     userClaudeDir: '/user/.claude',
     skillRuntimeMcpEntryPath: '/app/main.js',
     readFrameworkOverride,
@@ -479,6 +486,162 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await backend.responsesBridgeLease?.release()
   })
 
+  it.each(['start', 'resume'] as const)(
+    '%s Side chat with the same Codex subscription that resolves for Main',
+    async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), 'side-chat-subscription-'))
+      const provider: StoredProvider = {
+        id: 'builtin-codex-subscription',
+        type: 'codex-isolated',
+        codexAuthMode: 'isolated',
+        name: 'Codex subscription',
+        model: 'gpt-5.4'
+      }
+      const harness = makeHarness({
+        storageRoot: root,
+        settings: makeSettings({
+          providers: [provider],
+          activeProviderId: provider.id,
+          activeModel: provider.model,
+          agentFrameworkId: 'codex'
+        }),
+        targetOverride: () => ({
+          apiEndpoints: ['responses'],
+          provider: { apiEndpoints: ['responses'] }
+        })
+      })
+      let prepared: ResolvedAgentBackend | undefined
+      const owner = new SideChatRuntimeOwner({
+        appVersion: '0.26.0',
+        configRoot: root,
+        captureTarget: () => harness.resolver.captureExplicitTarget(),
+        resolveTarget: (target, context) => harness.resolver.resolveExplicitTarget(target, context),
+        relay: new SideChatRelayOwner({
+          targetState: () => 'idle',
+          appendRelay: async () => undefined
+        }),
+        persistence: {
+          save: async (input) => input.sideChat,
+          clear: async () => true
+        },
+        onEvent: vi.fn(),
+        createRuntime: (options) => ({
+          createSession: async () => {
+            prepared = await options.resolveBackend!({
+              forcedSkillIds: [],
+              systemPromptAppends: []
+            })
+            return { sessionId: 'side-provider-session', frameworkId: 'codex' as const }
+          },
+          sendPrompt: async (request) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          },
+          cancelPrompt: async () => {
+            throw new Error('Unexpected cancellation during startup')
+          },
+          deleteSession: async () => {
+            throw new Error('Unexpected deletion during startup')
+          },
+          resumeSession: async () => {
+            prepared = await options.resolveBackend!({
+              forcedSkillIds: [],
+              systemPromptAppends: []
+            })
+            return { sessionId: 'side-provider-session', frameworkId: 'codex' as const }
+          },
+          respondToPermission: async () => {
+            throw new Error('Unexpected permission during startup')
+          },
+          applyModelChange: async () => false,
+          applyReasoningEffortChange: async () => false,
+          requestProviderReconnect: async () => {
+            prepared = await options.resolveBackend!({
+              forcedSkillIds: [],
+              systemPromptAppends: []
+            })
+          },
+          shutdownForQuit: async () => ({ reaped: true })
+        })
+      })
+      try {
+        const home = join(root, 'codex-subscription')
+        await mkdir(home, { recursive: true })
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify({
+            tokens: { access_token: 'test-only-token' }
+          })
+        )
+        const target = await harness.resolver.captureExplicitTarget()
+        await expect(harness.resolver.resolveExplicitTarget(target)).resolves.toMatchObject({
+          providerId: provider.id
+        })
+        if (mode === 'start') {
+          await expect(
+            owner.start({
+              parentSessionId: 'main-session',
+              projectId: 'project',
+              text: 'Explain this separately.'
+            })
+          ).resolves.toMatchObject({ frameworkId: 'codex' })
+        } else {
+          owner.hydrate([
+            {
+              parentSessionId: 'main-session',
+              projectId: 'project',
+              sideChat: {
+                version: 1,
+                id: 'side-chat-restored',
+                lifecycle: 'open',
+                frameworkId: 'codex',
+                providerId: provider.id,
+                backendId: `codex:${provider.id}`,
+                providerSessionId: 'side-provider-session',
+                historyPreamble: 'Main conversation snapshot.',
+                entries: [],
+                createdAt: 1,
+                updatedAt: 2
+              }
+            }
+          ])
+          await expect(
+            owner.send({ sideSessionId: 'side-chat-restored', text: 'Continue.' })
+          ).resolves.toBeUndefined()
+        }
+        const sideHome = prepared!.env.CODEX_HOME!
+        expect(sideHome).not.toBe(home)
+        await expect(readFile(join(sideHome, 'auth.json'), 'utf8')).resolves.toContain(
+          'test-only-token'
+        )
+        expect(JSON.parse(prepared!.env.CODEX_CONFIG!)).toMatchObject({
+          features: {
+            shell_tool: false,
+            multi_agent: false,
+            code_mode: false,
+            apply_patch_freeform: false
+          },
+          tools: { web_search: false }
+        })
+        await writeFile(
+          join(home, 'auth.json'),
+          JSON.stringify({ tokens: { access_token: 'refreshed-test-token' } })
+        )
+        await owner.requestProviderReconnect()
+        expect(prepared!.env.CODEX_HOME).toBe(sideHome)
+        await expect(readFile(join(sideHome, 'auth.json'), 'utf8')).resolves.toContain(
+          'refreshed-test-token'
+        )
+        expect(prepared?.providerId).toBe(provider.id)
+        expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
+        expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+      } finally {
+        await owner.shutdown()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('fails closed for Codex subscription reconstruction before starting a runtime', async () => {
     const provider: StoredProvider = {
       id: 'builtin-codex-subscription',
@@ -553,6 +716,12 @@ describe('AgentBackendResolver configured and explicit targets', () => {
 
     expect(harness.ensureCodexSubscriptionHome).toHaveBeenCalledWith('https')
     expect(backend.codexSubscriptionTransport).toBe('https')
+    expect(backend.sessionOptions).toMatchObject({
+      [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+        root: join('/storage', 'codex-subscription'),
+        skillsDirectory: join('/storage', 'codex-subscription', 'skills')
+      }
+    })
   })
 
   it.each(['https', 'websocket'] as const)(
@@ -776,21 +945,21 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         model: { kind: 'required', id: 'model-a' },
         reasoningEffort: 'high'
       },
-      { systemPromptAppends: ['Stable Open Science app guidance.'] }
+      { systemPromptAppends: ['Stable Open-Science app guidance.'] }
     )
 
     expect(backend.systemPromptAppends?.join('\n')).toContain(
       join('/storage', 'skills', 'personal')
     )
     expect(backend.systemPromptAppends?.join('\n')).not.toContain(
-      'Stable Open Science app guidance.'
+      'Stable Open-Science app guidance.'
     )
     await backend.anthropicBridgeLease?.release()
   })
 
   it('persists application guidance before user Skill directories for OpenCode', async () => {
     const harness = makeHarness()
-    const applicationGuidance = 'Stable Open Science app guidance.'
+    const applicationGuidance = 'Stable Open-Science app guidance.'
 
     const backend = await harness.resolver.resolveExplicitTarget(
       {
@@ -848,7 +1017,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       expect(instructions).toBe(restrictedPrompt)
     }
     expect(instructions).not.toContain('<open_science_user_skill_directories>')
-    expect(instructions).not.toContain('# Open Science data connector conventions')
+    expect(instructions).not.toContain('# Open-Science data connector conventions')
     expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
     if (testCase.frameworkId === 'claude-code') {
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
@@ -1510,6 +1679,17 @@ describe('AgentBackendResolver runtime delegation', () => {
     expect(harness.runtime.reserveOpenCodeUsagePort).toHaveBeenCalledTimes(
       testCase.frameworkId === 'opencode' ? 1 : 0
     )
+    if (testCase.frameworkId === 'opencode') {
+      const files = harness.runtime.materializeAgentConfigFiles.mock.calls[0][0]!
+      expect(backend.opencodeConfigFiles).toEqual(files)
+      expect(backend.opencodeConfigFiles).not.toBe(files)
+      const snapshot = backend.opencodeConfigFiles![0].content
+      files[0].content = 'a later materialization must not change the admitted snapshot'
+      expect(backend.opencodeConfigFiles![0].content).toBe(snapshot)
+      expect(backend.opencodeConfigFiles!.some((file) => file.path.includes('plugins'))).toBe(true)
+    } else {
+      expect(backend.opencodeConfigFiles).toBeUndefined()
+    }
     expect(harness.runtime.probeCodexNativeVersion).toHaveBeenCalledTimes(
       testCase.frameworkId === 'codex' ? 1 : 0
     )
@@ -1756,7 +1936,7 @@ describe('AgentBackendResolver bridge predicates', () => {
         })
       })
 
-      const applicationGuidance = 'Stable Open Science app guidance.'
+      const applicationGuidance = 'Stable Open-Science app guidance.'
       const backend = await harness.resolver.resolveExplicitTarget(
         {
           frameworkId: 'codex',
@@ -1772,7 +1952,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(developerInstructions).toBeDefined()
       const userSkillIndex = developerInstructions?.indexOf('<open_science_user_skill_directories>')
       const connectorIndex = developerInstructions?.indexOf(
-        '# Open Science data connector conventions'
+        '# Open-Science data connector conventions'
       )
       expect(developerInstructions?.indexOf(applicationGuidance)).toBeGreaterThanOrEqual(0)
       expect(userSkillIndex).toBeGreaterThan(
@@ -1785,6 +1965,14 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(developerInstructions).toContain('Never guess a connector server or method name')
       expect(developerInstructions).not.toContain('search_articles')
       expect(backend.persistentSystemPrompt).toBe(developerInstructions)
+      expect(backend.sessionOptions).toMatchObject({
+        [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+          root: join('/storage', 'codex'),
+          skillsDirectory: join('/storage', 'codex', 'skills'),
+          command: process.execPath,
+          entryPath: '/app/main.js'
+        }
+      })
       expect(backend.systemPromptAppends).toBeUndefined()
       await backend.responsesBridgeLease?.release()
     }

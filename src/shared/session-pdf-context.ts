@@ -4,9 +4,13 @@ import { createLiteratureAttachmentVersionReference } from './literature'
 import type {
   MessagePdfContextSnapshot,
   PdfReadingPosition,
-  SessionPdfBinding
+  SessionPdfBinding,
+  SessionPdfContextSource
 } from './session-persistence'
 import { createUploadVersionReference } from './uploads'
+
+// Transient send identity; staged uploads resolve to immutable versions before linking.
+export type PdfReadingPositionSource = SessionPdfContextSource | { attachmentId: string }
 
 export const sessionPdfBindingToFileReference = (
   projectId: string,

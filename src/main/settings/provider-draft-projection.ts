@@ -12,7 +12,7 @@ import { resolveCustomTokenLimits } from './provider-token-limits'
 
 export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => {
   if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
-    const draftModel = draft.model ?? defaultVendorModel(draft.vendorId)
+    const draftModel = draft.model ?? defaultVendorModel(draft.vendorId, draft.region)
     return {
       type: 'custom',
       vendorId: draft.vendorId,

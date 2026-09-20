@@ -82,6 +82,15 @@ describe('VisionEvidenceRepository', () => {
       repository.find({
         identityKey: IDENTITY,
         imageChecksum: HASH_A,
+        extractorFingerprint: HASH_A,
+        evidenceSchemaVersion: 3
+      })
+    ).resolves.toBeUndefined()
+
+    await expect(
+      repository.find({
+        identityKey: IDENTITY,
+        imageChecksum: HASH_A,
         extractorFingerprint: HASH_B,
         evidenceSchemaVersion: 2
       })

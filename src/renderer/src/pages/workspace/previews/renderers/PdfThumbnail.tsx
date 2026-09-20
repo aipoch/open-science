@@ -1,5 +1,5 @@
 import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -313,6 +313,14 @@ export const PdfThumbnail = ({
   const cached = getCachedThumbnail(requestKey)
   const hasCurrentResult = result?.requestKey === requestKey
   const hasCurrentError = hasCurrentResult && result.status === 'error'
+  const retryRef = useRef({ requestKey, used: false })
+  useEffect(() => {
+    if (retryRef.current.requestKey !== requestKey) retryRef.current = { requestKey, used: false }
+    if (!isNearViewport && hasCurrentError && !retryRef.current.used) {
+      retryRef.current.used = true
+      setResult(null)
+    }
+  }, [requestKey, isNearViewport, hasCurrentError])
   // Off-screen tiles retain only an encoded thumbnail and do not keep a PDF document alive.
   const shouldRender = isNearViewport && !hasCurrentError && (!hasCurrentResult || !cached)
 

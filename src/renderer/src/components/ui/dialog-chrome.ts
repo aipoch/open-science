@@ -5,17 +5,17 @@ const dialogOverlayClassName =
 
 const dialogPanelClassName = (...className: Array<string | false | null | undefined>): string =>
   cn(
-    'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog outline-none data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:fill-mode-forwards motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
+    'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 max-h-[calc(100svh-2rem)] overflow-y-auto rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog outline-none data-[state=closed]:pointer-events-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:fill-mode-forwards motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
     ...className
   )
 
 const dialogHeaderClassName =
-  'flex items-center justify-between gap-3 border-b border-border-300/90 px-5 py-3.5'
-const dialogBodyClassName = 'p-5'
-const dialogTitleClassName = 'text-lg font-semibold text-text-000'
+  'flex shrink-0 items-center justify-between gap-3 border-b border-border-300/90 px-5 py-3.5'
+const dialogBodyClassName = 'min-w-0 p-5 [overflow-wrap:anywhere]'
+const dialogTitleClassName = 'min-w-0 text-lg font-semibold text-text-000 [overflow-wrap:anywhere]'
 const dialogDescriptionClassName = 'mt-1 text-sm leading-relaxed text-muted-foreground'
 const dialogFooterClassName =
-  'flex justify-end gap-3 border-t border-border-300/90 px-5 py-3.5 [&_button:enabled]:cursor-pointer'
+  'flex shrink-0 flex-wrap justify-end gap-3 [&_button]:h-auto [&_button]:min-h-8 [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:[overflow-wrap:anywhere] border-t border-border-300/90 px-5 py-3.5 [&_button:enabled]:cursor-pointer'
 const dialogCloseButtonClassName = 'cursor-pointer rounded-lg text-muted-foreground'
 const dialogFormLabelClassName = 'block text-sm font-medium text-foreground mb-1'
 const dialogFormHelpClassName = 'text-xs leading-relaxed text-foreground/90 mb-2'

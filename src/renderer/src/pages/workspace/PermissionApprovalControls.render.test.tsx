@@ -15,6 +15,53 @@ import { PermissionApprovalControls } from './PermissionApprovalControls'
 
 const longRequestTitle =
   'Bash pwd echo whoami echo list home directory with enough extra words to clip'
+
+it.each(['WebFetch', 'WebSearch'] as const)(
+  'explains conversation-wide %s including delegated children before approval',
+  (tool) => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            requestId: 'web',
+            sessionId: 'parent',
+            toolCallId: 'child',
+            title: 'https://www.resurchify.com/impact/details/20982',
+            providerToolName: tool,
+            toolKind: 'fetch',
+            isMcp: false,
+            delegated: {
+              frameId: 'child',
+              attemptId: 'attempt',
+              childTitle: 'rct5-10-round2',
+              riskScope: 'This session or this call'
+            },
+            options: [
+              { optionId: 'once', name: 'Once', kind: 'allow_once', scope: 'once' },
+              {
+                optionId: 'session',
+                name: 'This conversation',
+                kind: 'allow_always',
+                scope: 'session'
+              },
+              { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+    expect(html).toContain(tool === 'WebFetch' ? 'Allow web reading?' : 'Allow web search?')
+    expect(html).toContain(
+      tool === 'WebFetch'
+        ? 'Conversation approval allows web reading across websites for this conversation and its subagents.'
+        : 'Conversation approval allows text searches on the web for this conversation and its subagents.'
+    )
+    expect(html).toContain('for this conversation')
+    expect(html).toContain('data-testid="scope-chevron"')
+    expect(html).toContain('rct5-10-round2')
+  }
+)
 const longAlwaysOptionName =
   'Always Allow Bash permission that keeps going across the composer and should be hidden'
 const allowOnceOptionNameWithAlways = 'Always in this label should not become always action'
@@ -173,10 +220,11 @@ const networkApprovalRequest: AcpPermissionRequest = {
   toolCallId: 'app-approval:network-1',
   title: 'Connect to data.example.org?',
   appOwned: true,
-  providerToolName: 'Open Science',
+  providerToolName: 'Open-Science',
   rawInput: {
     notebookNetworkApproval: {
       hostname: 'data.example.org',
+      runtime: 'python',
       port: 443,
       reason: 'Download the dataset requested in this conversation.'
     }
@@ -288,6 +336,9 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Connect to data.example.org?')
     expect(html).toContain('Network access')
     expect(html).toContain('Notebook code requested access to data.example.org:443.')
+    expect(html).toContain(
+      'Allow once applies to the next execution of the same command in this session and runtime. It allows multiple connections to this domain during that execution.'
+    )
     expect(html).toContain('Reason: Download the dataset requested in this conversation.')
     expect(html).toContain('Details')
     expect(html).toContain('Allow once')
@@ -296,6 +347,22 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('data-testid="extra-option"')
     expect(html).not.toContain('notebookNetworkApproval')
   })
+
+  it.each(['python', 'r', 'repl', 'bash', undefined])(
+    'TB-06 describes the existing %s execution contract',
+    (runtime) => {
+      const request = {
+        ...networkApprovalRequest,
+        rawInput: { notebookNetworkApproval: { hostname: 'data.example.org', runtime } }
+      }
+      const html = renderToStaticMarkup(
+        <PermissionApprovalControls requests={[request]} onRespond={() => undefined} />
+      )
+      expect(html.includes('same command in this session and runtime')).toBe(
+        runtime !== undefined && runtime !== 'bash'
+      )
+    }
+  )
 
   it('renders the Allow button with the conversation copy for the session scope by default', () => {
     const html = renderControls()
@@ -439,6 +506,8 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('Save to Literature Inbox?')
     expect(html).toContain('Corrective Retrieval Augmented Generation')
     expect(html).toContain('1 reference')
+    expect(html).not.toContain('Pending review:')
+    expect(html).not.toContain('Open Inbox')
     expect(html).not.toContain('open-science-library')
     expect(html).not.toContain('rawMetadata')
     expect(html).not.toContain('provider-secret')
@@ -536,7 +605,7 @@ describe('PermissionApprovalControls', () => {
     )
 
     expect(html).toContain('Artifact save</span>')
-    expect(html).not.toContain('Open Science Artifacts / Write Artifact File')
+    expect(html).not.toContain('Open-Science Artifacts / Write Artifact File')
     expect(html).toContain('report.md')
   })
 

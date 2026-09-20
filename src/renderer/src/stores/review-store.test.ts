@@ -53,6 +53,39 @@ describe('review store', () => {
     useReviewStore.setState(createInitialReviewState())
   })
 
+  it('ignores a delayed push after newer loaded or pushed data', () => {
+    const newer = makeReview({ updatedAt: 2001, lifecycle: 'complete' })
+    useReviewStore.getState().handleReviewUpdate({ review: newer })
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: makeReview({ updatedAt: 2000, lifecycle: 'running' }) })
+    expect(useReviewStore.getState().getReviewsForSession(newer.sessionId)[0]?.lifecycle).toBe(
+      'complete'
+    )
+  })
+
+  it('retains an unverified history marker across pushes and clears it on successful retry', async () => {
+    const unverified = makeReview({ verificationUnavailable: true })
+    const getForSession = vi
+      .fn()
+      .mockResolvedValueOnce([unverified])
+      .mockResolvedValueOnce([makeReview({ stale: false, verificationUnavailable: false })])
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+    expect(
+      useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
+    ).toMatchObject({ verificationUnavailable: true, outcome: 'pass' })
+    useReviewStore.getState().handleReviewUpdate({ review: makeReview({ updatedAt: 2000 }) })
+    expect(
+      useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
+        .verificationUnavailable
+    ).toBe(true)
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+    expect(
+      useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
+    ).toMatchObject({ verificationUnavailable: false, stale: false, updatedAt: 2000 })
+  })
+
   it('selects every Review Run by audited anchor with root fallback and deterministic history order', () => {
     const reviews = [
       makeReview({

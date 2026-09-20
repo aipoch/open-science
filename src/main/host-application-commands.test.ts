@@ -30,7 +30,9 @@ const HOST_CAPABILITIES = [
   'remote-access',
   'reviewer',
   'storage',
-  'update'
+  'update',
+  'local-models',
+  'pdf-structure'
 ] as const
 
 const remoteSnapshot: RemoteAccessSnapshot = {
@@ -56,6 +58,33 @@ const remoteSnapshot: RemoteAccessSnapshot = {
 const updateStatus: UpdateStatus = { state: 'idle', current: '1.0.0' }
 
 const createDependencies = (): HostApplicationCommandDependencies => ({
+  pdfStructure: {
+    readCached: vi.fn(async () => undefined),
+    parse: vi.fn(async () => ({
+      schemaVersion: 1 as const,
+      extractionId: '00000000-0000-4000-8000-000000000001',
+      engineFingerprint: 'a'.repeat(64),
+      sourceChecksum: 'b'.repeat(64),
+      sourceSizeBytes: 10,
+      requestedPages: [1],
+      processedPages: [1],
+      pageCount: 1,
+      pages: [{ page: 1, width: 10, height: 10, rotation: 0 as const }],
+      elements: [],
+      thumbnails: [],
+      navigation: [],
+      issues: []
+    })),
+    cancel: vi.fn(),
+    readThumbnail: vi.fn(),
+    clearCache: vi.fn(async () => ({ removedBytes: 0, retainedEntries: 0 }))
+  },
+  localModels: {
+    getSnapshot: vi.fn(),
+    install: vi.fn(),
+    cancel: vi.fn(),
+    remove: vi.fn()
+  },
   cli: {
     getStatus: vi.fn(async () => ({
       installed: false,
@@ -115,7 +144,8 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     disable: vi.fn(async () => remoteSnapshot),
     approve: vi.fn(async () => remoteSnapshot),
     reject: vi.fn(() => remoteSnapshot),
-    revoke: vi.fn(async () => remoteSnapshot)
+    revoke: vi.fn(async () => remoteSnapshot),
+    revokeBrowsers: vi.fn(async () => remoteSnapshot)
   } as unknown as HostApplicationCommandDependencies['remoteAccess'],
   reviewer: {
     run: vi.fn(async () => ({ started: true })),
@@ -163,7 +193,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     dismissLegacyMovePrompt: vi.fn(async () => undefined)
   },
   update: {
-    getAppInfo: vi.fn(() => ({ name: 'Open Science', version: '1.0.0', copyright: 'Aipoch' })),
+    getAppInfo: vi.fn(() => ({ name: 'Open-Science', version: '1.0.0', copyright: 'Aipoch' })),
     getStatus: vi.fn(() => updateStatus),
     check: vi.fn(async () => updateStatus),
     download: vi.fn(async () => updateStatus),
@@ -196,7 +226,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 56 Electron request channels in their existing capability groups', () => {
+  it('defines the exact 66 Electron request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -216,7 +246,7 @@ describe('Host application commands', () => {
       }
     })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(56)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(66)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -232,7 +262,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(56)
+    expect(router.dispatcher.commandNames()).toHaveLength(66)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -329,6 +359,10 @@ describe('Host application commands', () => {
       invocation([{ browserId: 'browser-1' }])
     )
     await router.dispatcher.invoke(
+      hostApplicationCommands.remoteAccess.revokeBrowsers,
+      invocation([{ browserIds: ['browser-1', 'browser-2'] }])
+    )
+    await router.dispatcher.invoke(
       hostApplicationCommands.remoteAccess.setMode,
       invocation([{ mode: 'remoteit' }])
     )
@@ -397,6 +431,9 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(hostApplicationCommands.update.getAppInfo, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.update.getStatus, invocation([]))
 
+    for (const command of Object.values(hostApplicationCommands.localModels)) {
+      await router.dispatcher.invoke(command, invocation([]))
+    }
     expect(dependencies.localFs.listDir).toHaveBeenCalledWith('/data')
     expect(dependencies.localFs.readPreview).toHaveBeenCalledWith(previewRequest)
     expect(dependencies.notifications.takePendingOpenSession).toHaveBeenCalledWith(7)
@@ -431,6 +468,37 @@ describe('Host application commands', () => {
     expect(dependencies.update.apply).toHaveBeenCalledWith({ relaunch: false })
     expect(dependencies.update.download).toHaveBeenCalledWith({ nonInteractive: true })
 
+    const pdfRequest = {
+      attachmentVersionId: 'version-1',
+      page: 1,
+      requestId: '00000000-0000-4000-8000-000000000001'
+    }
+    const imageRequest = {
+      attachmentVersionId: 'version-1',
+      page: 1,
+      extractionId: '00000000-0000-4000-8000-000000000001',
+      thumbnailId: 'image-1'
+    }
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.readCached,
+      invocation([{ attachmentVersionId: 'version-1', page: 1 }])
+    )
+    const parseInvocation = invocation([pdfRequest] as const)
+    await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.parse, parseInvocation)
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.cancel,
+      invocation(['00000000-0000-4000-8000-000000000001'])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.pdfStructure.readThumbnail,
+      invocation([imageRequest])
+    )
+    await router.dispatcher.invoke(hostApplicationCommands.pdfStructure.clearCache, invocation([]))
+    expect(dependencies.pdfStructure.parse).toHaveBeenCalledWith(
+      pdfRequest,
+      parseInvocation.callerContext,
+      parseInvocation.callerLease
+    )
     const ownerMethods = Object.values(dependencies).flatMap((owner) => Object.values(owner))
     expect(
       ownerMethods.filter(vi.isMockFunction).every((method) => method.mock.calls.length === 1)
@@ -481,6 +549,19 @@ describe('Host application commands', () => {
     const previewRequest = { path: '/data/result.txt', encoding: 'utf8' as const }
     const parent = { parent: '/target' }
     const argsByChannel: Readonly<Record<string, readonly unknown[]>> = {
+      'pdf-structure:read-cached': [{ attachmentVersionId: 'v1', page: 1 }],
+      'pdf-structure:parse': [
+        { attachmentVersionId: 'v1', page: 1, requestId: '00000000-0000-4000-8000-000000000001' }
+      ],
+      'pdf-structure:cancel': ['00000000-0000-4000-8000-000000000001'],
+      'pdf-structure:read-thumbnail': [
+        {
+          attachmentVersionId: 'v1',
+          page: 1,
+          extractionId: '00000000-0000-4000-8000-000000000001',
+          thumbnailId: 'image-1'
+        }
+      ],
       'storage:accept-missing-data-root': [],
       'storage:ack-data-root-handoff-flush': [{ requestId: 'flush-1', status: 'completed' }],
       'local-fs:grant-root': [{ path: '/data', access: 'ro' }],
@@ -510,7 +591,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(30)
+    expect(localOnlyChannels).toHaveLength(39)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(
@@ -613,7 +694,7 @@ describe('Host application commands', () => {
         invocation([approval], ordinaryRemote)
       )
     ).rejects.toThrow(
-      'Pairing can only be managed from the Open Science desktop app or an approved browser.'
+      'Pairing can only be managed from the Open-Science desktop app or an approved browser.'
     )
     await expect(
       router.dispatcher.invoke(
@@ -623,12 +704,41 @@ describe('Host application commands', () => {
     ).resolves.toBe(remoteSnapshot)
     expect(dependencies.remoteAccess.approve).toHaveBeenCalledWith(approval, false, true)
 
+    const batch = { browserIds: ['browser-1', 'browser-2'] }
+    for (const caller of [desktop, currentManager]) {
+      await router.dispatcher.invoke(
+        hostApplicationCommands.remoteAccess.revokeBrowsers,
+        invocation([batch], caller)
+      )
+    }
+    expect(dependencies.remoteAccess.revokeBrowsers).toHaveBeenNthCalledWith(
+      1,
+      batch.browserIds,
+      true,
+      true
+    )
+    expect(dependencies.remoteAccess.revokeBrowsers).toHaveBeenNthCalledWith(
+      2,
+      batch.browserIds,
+      false,
+      true
+    )
+    for (const caller of [localWeb, ordinaryRemote, staleManager]) {
+      await expect(
+        router.dispatcher.invoke(
+          hostApplicationCommands.remoteAccess.revokeBrowsers,
+          invocation([batch], caller)
+        )
+      ).rejects.toThrow()
+    }
+    expect(dependencies.remoteAccess.revokeBrowsers).toHaveBeenCalledTimes(2)
+
     await expect(
       router.dispatcher.invoke(
         hostApplicationCommands.remoteAccess.detect,
         invocation([], currentManager)
       )
-    ).rejects.toThrow('This action must be approved from the Open Science desktop app.')
+    ).rejects.toThrow('This action must be approved from the Open-Science desktop app.')
     await expect(
       router.dispatcher.invoke(
         hostApplicationCommands.remoteAccess.probe,
@@ -651,6 +761,10 @@ describe('Host application commands', () => {
       ['remote-access:get-snapshot', [{}]],
       ['remote-access:reject', [undefined]],
       ['remote-access:revoke-browser', [undefined]],
+      ['remote-access:revoke-browsers', [undefined]],
+      ['remote-access:revoke-browsers', [{ browserIds: [] }]],
+      ['remote-access:revoke-browsers', [{ browserIds: [''] }]],
+      ['remote-access:revoke-browsers', [{ browserIds: ['id'], extra: true }]],
       ['remote-access:set-mode', [{ mode: 'invalid' }]]
     ]
 
@@ -667,6 +781,7 @@ describe('Host application commands', () => {
     expect(dependencies.remoteAccess.snapshot).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.reject).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.revoke).not.toHaveBeenCalled()
+    expect(dependencies.remoteAccess.revokeBrowsers).not.toHaveBeenCalled()
     expect(dependencies.remoteAccess.setMode).not.toHaveBeenCalled()
   })
 

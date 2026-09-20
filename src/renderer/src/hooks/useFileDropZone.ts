@@ -35,6 +35,23 @@ const useFileDropZone = ({ enabled, onFiles }: UseFileDropZoneOptions): UseFileD
     setIsDragging(false)
   }, [enabled])
 
+  useEffect(() => {
+    if (!isDragging) return
+    // A parent may claim a package drop during capture, before this zone's onDrop runs.
+    const clearDrag = (): void => {
+      dragDepthRef.current = 0
+      setIsDragging(false)
+    }
+    document.addEventListener('drop', clearDrag, true)
+    document.addEventListener('dragend', clearDrag, true)
+    window.addEventListener('blur', clearDrag)
+    return () => {
+      document.removeEventListener('drop', clearDrag, true)
+      document.removeEventListener('dragend', clearDrag, true)
+      window.removeEventListener('blur', clearDrag)
+    }
+  }, [isDragging])
+
   const handleDragEnter = useCallback(
     (event: React.DragEvent<HTMLElement>): void => {
       if (!enabled || !isFileDrag(event)) return

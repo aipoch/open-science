@@ -39,11 +39,13 @@ describe('NotebookNetworkProtectionBanner', () => {
 
     expect(container.textContent).toContain('Network protection on')
     expect(container.textContent).toContain(
-      'Notebook sessions and package downloads can access only approved domains.'
+      'Notebook allows approved domains and restricted public HTTPS reads. GET and HEAD still send URLs; approved domains allow sending data.'
     )
     expect(
-      container.querySelector('[data-testid="notebook-network-protection-banner"]')?.className
-    ).toContain('bg-bg-10')
+      container
+        .querySelector('[data-testid="notebook-network-protection-banner"]')
+        ?.getAttribute('data-notice-inline')
+    ).toBe('true')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button')?.click()

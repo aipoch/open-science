@@ -1,7 +1,7 @@
-import { createReadStream, createWriteStream, rmSync } from 'node:fs'
-import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
+import { constants, createReadStream, createWriteStream, rmSync, type Stats } from 'node:fs'
+import { mkdtemp, open, realpath, rm, stat, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { pathToFileURL } from 'node:url'
@@ -10,7 +10,6 @@ import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { isPathWithin } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
 import { createLogger, errorLogFields } from '../logger'
@@ -85,19 +84,37 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
     connectionGeneration: number,
     sessionId: string,
     sourcePath: string,
-    sourceSize: number
+    sourceInfo: Stats,
+    validateSource: () => Promise<void>
   ): Promise<string> {
     const generation = this.generation
     const sessionGeneration = this.sessionGenerations.get(sessionId) ?? 0
     const connectionProjectionGeneration = this.connectionGenerations.get(connectionGeneration) ?? 0
     const scopeKey = this.scopeKey(connectionGeneration, sessionId)
     const sessionBytes = this.bytesByScope.get(scopeKey) ?? 0
-    if (sourceSize > this.maxSessionBytes - sessionBytes) {
+    if (sourceInfo.size > this.maxSessionBytes - sessionBytes) {
       throw new Error('Read-only linked-folder snapshots exceed the Session storage limit.')
     }
     let copiedBytes = 0
     let directory: string | undefined
+    let sourceHandle: FileHandle | undefined
+    const assertUnchanged = (current: Stats): void => {
+      if (
+        !current.isFile() ||
+        current.dev !== sourceInfo.dev ||
+        current.ino !== sourceInfo.ino ||
+        current.size !== sourceInfo.size ||
+        current.mtimeMs !== sourceInfo.mtimeMs ||
+        current.ctimeMs !== sourceInfo.ctimeMs
+      ) {
+        throw new Error('Linked-folder file changed while preparing its snapshot.')
+      }
+    }
     try {
+      sourceHandle = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+      assertUnchanged(await sourceHandle.stat())
+      await validateSource()
+      assertUnchanged(await stat(sourcePath))
       directory = await mkdtemp(join(tmpdir(), 'open-science-linked-ro-'))
       if (
         !this.isCurrent(
@@ -120,7 +137,7 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
 
       const snapshotPath = join(directory, basename(sourcePath))
       await pipeline(
-        createReadStream(sourcePath),
+        createReadStream(sourcePath, { fd: sourceHandle.fd, autoClose: false }),
         new Transform({
           transform: (chunk: Buffer, _encoding, callback) => {
             if (
@@ -149,6 +166,8 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
         }),
         createWriteStream(snapshotPath, { flags: 'wx' })
       )
+      assertUnchanged(await sourceHandle.stat())
+      await validateSource()
       if (
         !this.isCurrent(
           connectionGeneration,
@@ -181,6 +200,8 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
       }
       this.deleteScopeIfEmpty(scopeKey)
       throw error
+    } finally {
+      await sourceHandle?.close()
     }
   }
 
@@ -473,7 +494,12 @@ export const createManagedFileReferenceResolver = (dependencies: {
           realpath(root.path),
           realpath(join(root.path, reference.relativePath))
         ])
-        if (!isPathWithin(resolvedFile, resolvedRoot)) {
+        const relativeFile = relative(resolvedRoot, resolvedFile)
+        if (
+          isAbsolute(relativeFile) ||
+          relativeFile === '..' ||
+          relativeFile.startsWith(`..${sep}`)
+        ) {
           throw new Error('Linked-folder reference escapes the granted folder.')
         }
         const fileInfo = await stat(resolvedFile)
@@ -485,7 +511,21 @@ export const createManagedFileReferenceResolver = (dependencies: {
                   connectionGeneration,
                   sessionId,
                   resolvedFile,
-                  fileInfo.size
+                  fileInfo,
+                  async () => {
+                    const current = await dependencies.grantedRoots!.resolveRoot(reference.rootId)
+                    if (
+                      !current ||
+                      current.path !== root.path ||
+                      current.access !== root.access ||
+                      (await realpath(root.path)) !== resolvedRoot ||
+                      (await realpath(resolvedFile)) !== resolvedFile
+                    ) {
+                      throw new Error(
+                        'Linked-folder reference changed while preparing its snapshot.'
+                      )
+                    }
+                  }
                 )
               : resolvedFile,
           name: reference.name,

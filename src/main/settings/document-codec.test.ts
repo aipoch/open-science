@@ -7,6 +7,24 @@ import { sanitizeSettings } from './document-codec'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 
 describe('settings document codec', () => {
+  it('round-trips library consent without converting historical booleans to library grants', () => {
+    const input = {
+      notebookRuntimeEnablement: {
+        r: {
+          enabled: {},
+          installAuthorized: { current: true, historical: true },
+          installLibraries: { current: '/user/R/library', invalid: 42, empty: '' }
+        }
+      }
+    }
+    const document = sanitizeSettings(input)
+    expect(document.notebookRuntimeEnablement?.r).toEqual({
+      enabled: {},
+      installAuthorized: { current: true, historical: true },
+      installLibraries: { current: '/user/R/library' }
+    })
+    expect(sanitizeSettings(JSON.parse(JSON.stringify(document)))).toEqual(document)
+  })
   it('exposes one pure document boundary', async () => {
     expect(Object.keys(await import('./document-codec')).sort()).toEqual([
       'sanitizeSessionDetailsModel',
@@ -84,6 +102,9 @@ describe('settings document codec', () => {
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       notebookRuntimes: { python: { source: 'managed' } },
       agentEnvironmentCreationEnabled: false,
+      localShellRuntime: 'powershell',
+      wslSelection: { distro: ' Ubuntu-24.04 ', user: ' scientist ' },
+      activatedWslSelection: { distro: ' Ubuntu-22.04 ', user: ' active-user ' },
       defaultPermissionProfile: 'ask',
       dataRoot,
       unknown: true
@@ -100,6 +121,9 @@ describe('settings document codec', () => {
       },
       computeGrants: [{ projectId: 'p1', operation: 'download', providerId: 'c1' }],
       agentEnvironmentCreationEnabled: false,
+      localShellRuntime: 'powershell',
+      wslSelection: { distro: 'Ubuntu-24.04', user: 'scientist' },
+      activatedWslSelection: { distro: 'Ubuntu-22.04', user: 'active-user' },
       defaultPermissionProfile: 'ask',
       dataRoot
     })
@@ -120,6 +144,26 @@ describe('settings document codec', () => {
     expect(
       sanitizeSettings({ providers: [], agentEnvironmentCreationEnabled: 'false' })
     ).not.toHaveProperty('agentEnvironmentCreationEnabled')
+  })
+
+  it('drops an unknown Local Shell runtime instead of silently selecting a backend', () => {
+    expect(sanitizeSettings({ providers: [], localShellRuntime: 'cmd' })).not.toHaveProperty(
+      'localShellRuntime'
+    )
+  })
+
+  it('does not promote a legacy WSL candidate into an activated execution profile', () => {
+    const settings = sanitizeSettings({
+      providers: [],
+      localShellRuntime: 'wsl2-bash',
+      wslSelection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+
+    expect(settings).toMatchObject({
+      localShellRuntime: 'wsl2-bash',
+      wslSelection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+    expect(settings).not.toHaveProperty('activatedWslSelection')
   })
 })
 

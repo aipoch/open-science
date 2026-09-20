@@ -86,7 +86,7 @@ describe('Remote Compute Skill document', () => {
     )
 
     expect(doc).toContain('configured execution mode')
-    expect(doc).toContain('~/.openscience/environments/<name>.sh')
+    expect(doc).toContain('~/.open-science/environments/<name>.sh')
     expect(doc).toContain('Compute Environment Setup')
     expect(doc).toMatch(/prepare exact setup, repair, and removal instructions/)
     expect(doc).toMatch(/user-managed activation after they apply the plan/)
@@ -107,7 +107,7 @@ describe('Remote Compute Skill document', () => {
     expect(doc).toContain('configured for Slurm')
     expect(doc).toContain('user-managed durable resources')
     expect(doc).toContain('must not execute commands that create, replace, or remove')
-    expect(doc).toContain('do not submit that installation through Open Science')
+    expect(doc).toContain('do not submit that installation through Open-Science')
     expect(doc).not.toContain('Stage that file as a normal job input')
     expect(doc).toMatch(/matching idempotent\s+removal command/)
     expect(doc).toContain(
@@ -147,6 +147,14 @@ describe('Remote Compute Skill document', () => {
       expect(doc).toContain('timeoutSeconds')
       expect(doc).toContain('attachJob')
       expect(doc).toContain('job_id')
+      expect(doc).toContain('Retain the exact returned `job_id`')
+      expect(doc).toMatch(/\.status\(\)` or `\.result\(\)/u)
+      expect(doc).toContain('non-blocking')
+      expect(doc).toContain('follow-up was `suppressed`')
+      expect(doc).toContain('`committed`')
+      expect(doc).toContain('later analysis turn')
+      expect(doc).not.toMatch(/peek once|query once|result read once|do not poll|never poll/i)
+      expect(doc).not.toContain('wait_for_notification')
       expect(doc).not.toMatch(/\b(?:submit_job|dst_filename|timeout_seconds|attach_job)\b/)
     }
   })

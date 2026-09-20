@@ -1,0 +1,29 @@
+{
+  "ownerPaths": [
+    "src/renderer/web/api-installer.test.ts",
+    "src/renderer/web/api-installer.ts",
+    "src/renderer/web/api-map.generated.test.ts",
+    "src/renderer/web/bootstrap.test.ts",
+    "src/renderer/web/bootstrap.ts",
+    "src/renderer/web/index.html",
+    "src/renderer/web/raw-imports.d.ts",
+    "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+  ],
+  "interfacePaths": ["src/renderer/web/api-installer.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/renderer/web/api-installer.test.ts",
+      "src/renderer/web/api-map.generated.test.ts",
+      "src/renderer/web/bootstrap.test.ts",
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

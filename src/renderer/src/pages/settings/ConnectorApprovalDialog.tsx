@@ -1,4 +1,5 @@
-import { AlertTriangle, ShieldAlert } from 'lucide-react'
+import { ErrorNotice } from '@/components/error-notice'
+import { ShieldAlert } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -101,11 +102,14 @@ export function ConnectorApprovalDialog({
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
-            'z-[60] w-[min(440px,calc(100vw-2rem))] overscroll-contain p-0'
+            'z-[60] max-h-[calc(100dvh-2rem)] w-[min(440px,calc(100vw-2rem))] overflow-y-auto overscroll-contain p-0'
           )}
         >
           <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
-            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
+            <ShieldAlert
+              className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+              aria-hidden="true"
+            />
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>
                 {t('Allow external request?')}
@@ -124,7 +128,9 @@ export function ConnectorApprovalDialog({
             <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Connector')}</span>
-                <span className="min-w-0 truncate font-medium text-foreground">{displayName}</span>
+                <span className="min-w-0 break-words font-medium text-foreground [overflow-wrap:anywhere]">
+                  {displayName}
+                </span>
               </div>
               {request.connectorName ? (
                 <div className="flex gap-2">
@@ -158,7 +164,9 @@ export function ConnectorApprovalDialog({
               ) : null}
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Tool')}</span>
-                <span className="min-w-0 truncate font-mono text-foreground">{request.method}</span>
+                <span className="min-w-0 break-all font-mono text-foreground">
+                  {request.method}
+                </span>
               </div>
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Args')}</span>
@@ -190,13 +198,13 @@ export function ConnectorApprovalDialog({
               ) : null}
             </div>
             {responseErrorRequestId === request.id ? (
-              <div
+              <ErrorNotice
+                inline
                 role="alert"
-                className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-              >
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{t('Could not submit this approval. Try again.')}</span>
-              </div>
+                tone="amber"
+                className="mt-3"
+                description={t('Could not submit this approval. Try again.')}
+              />
             ) : null}
           </div>
 

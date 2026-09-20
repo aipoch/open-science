@@ -3,18 +3,25 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type FieldHelpProps = {
   content: ReactNode
+  delayDuration?: number
+  contentClassName?: string
 }
 
 // Keeps field guidance compact and consistent while callers retain ownership of the help content.
-const FieldHelp = ({ content }: FieldHelpProps): React.JSX.Element => {
+const FieldHelp = ({
+  content,
+  delayDuration = 200,
+  contentClassName
+}: FieldHelpProps): React.JSX.Element => {
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider delayDuration={delayDuration}>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -31,7 +38,10 @@ const FieldHelp = ({ content }: FieldHelpProps): React.JSX.Element => {
         <TooltipContent
           side="top"
           sideOffset={6}
-          className="max-w-[280px] px-3 py-2 text-xs leading-5 whitespace-normal"
+          className={cn(
+            'max-w-[280px] px-3 py-2 text-xs leading-5 whitespace-normal',
+            contentClassName
+          )}
         >
           {content}
         </TooltipContent>

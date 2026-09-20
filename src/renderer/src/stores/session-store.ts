@@ -29,8 +29,10 @@ import {
 export {
   createInitialSessionState,
   getExternallyHydratedSessionAuthority,
+  hydrateSession,
   isExternallyHydratedSession,
   toPersistedSession,
+  type ElicitationEditDraft,
   type ActiveRun,
   type ChatMessage,
   type ChatMessageRole,

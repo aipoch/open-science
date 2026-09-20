@@ -43,6 +43,7 @@ type ResizablePanelState = 'open' | 'collapsed'
 type PanelAnimationDirection = 'opening' | 'closing'
 
 type AnimatedResizablePanelOptions = {
+  enabled?: boolean
   panelState: ResizablePanelState
   defaultOpenSize: number
   minOpenSize: number
@@ -61,6 +62,7 @@ type AnimatedResizablePanel = {
 
 // Owns the imperative animation lifecycle shared by the two workspace side panels.
 const useAnimatedResizablePanel = ({
+  enabled = true,
   panelState,
   defaultOpenSize,
   minOpenSize,
@@ -195,6 +197,12 @@ const useAnimatedResizablePanel = ({
 
   // Synchronize restored state on first layout without introducing an entrance animation.
   useLayoutEffect(() => {
+    if (!enabled) {
+      animationRef.current?.stop()
+      if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current)
+      animationDirectionRef.current = null
+      return
+    }
     const shouldAnimate = hasSyncedInitialSizeRef.current
     hasSyncedInitialSizeRef.current = true
 
@@ -206,7 +214,7 @@ const useAnimatedResizablePanel = ({
     animatePanelSize(Math.max(lastOpenSizeRef.current, minOpenSize), 'opening', {
       animate: shouldAnimate
     })
-  }, [animatePanelSize, minOpenSize, panelState, requestVersion])
+  }, [animatePanelSize, enabled, minOpenSize, panelState, requestVersion])
 
   useEffect(
     () => () => {
@@ -316,6 +324,7 @@ const useWorkspacePanelLayout = (
     previewPort.state === 'collapsed' ? PANEL_COLLAPSED_SIZE_CSS : PREVIEW_PANEL_DEFAULT_SIZE_CSS
   )
   const preview = useAnimatedResizablePanel({
+    enabled: !isMobile,
     panelState: previewPort.state,
     defaultOpenSize: PREVIEW_PANEL_DEFAULT_SIZE,
     minOpenSize: PREVIEW_PANEL_MIN_OPEN_SIZE,
@@ -630,32 +639,31 @@ const WorkspacePanelLayout = ({
                   preview.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
               />
-
-              <PreviewPanel
-                panelRef={preview.panelRef}
-                defaultSize={preview.defaultSize}
-                minSize={preview.minSize}
-                onResize={preview.onResize}
-                restoredPlanResponder={restoredPlanResponder}
-                {...previewAnnotations}
-                onPdfContextError={onPdfContextError}
-              />
             </>
           ) : null}
+          <PreviewPanel
+            isMobile={isMobile}
+            panelRef={preview.panelRef}
+            defaultSize={preview.defaultSize}
+            minSize={preview.minSize}
+            onResize={preview.onResize}
+            restoredPlanResponder={restoredPlanResponder}
+            {...previewAnnotations}
+            onPdfContextError={onPdfContextError}
+          >
+            <MobilePreviewSheet
+              isMobile={isMobile}
+              open={isPreviewPresentationActive && preview.state === 'open'}
+              onClose={preview.collapse}
+              restoredPlanResponder={restoredPlanResponder}
+              {...previewAnnotations}
+              onPdfContextError={onPdfContextError}
+            />
+          </PreviewPanel>
         </ResizablePanelGroup>
         {!isMobile && hasPreviewItems ? preview.toggleButton : null}
         {!isMobile && sidebar.state === 'collapsed' ? sidebar.toggleButton : null}
       </div>
-
-      {isMobile ? (
-        <MobilePreviewSheet
-          open={isPreviewPresentationActive && preview.state === 'open'}
-          onClose={preview.collapse}
-          restoredPlanResponder={restoredPlanResponder}
-          {...previewAnnotations}
-          onPdfContextError={onPdfContextError}
-        />
-      ) : null}
     </>
   )
 }

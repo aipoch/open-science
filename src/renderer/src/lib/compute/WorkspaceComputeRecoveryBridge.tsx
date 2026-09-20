@@ -25,7 +25,7 @@ const WorkspaceComputeRecoveryBridge = ({
     <SessionPersistenceAlert
       title={t('Remote job recovery needs attention')}
       message={t(
-        'Open Science could not check saved remote jobs. Retry to restore pending result analysis.'
+        'Open-Science could not check saved remote jobs. Retry to restore pending result analysis.'
       )}
       onRetry={recovery.retry}
     />

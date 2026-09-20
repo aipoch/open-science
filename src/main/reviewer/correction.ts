@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
+import { ReviewerCorrectionContextChangedError } from './correction-context'
 import type { ReviewCheck } from '../../shared/reviewer'
 import type { AgentTurnProvenanceContext } from '../../shared/elicitation'
 
@@ -41,12 +42,15 @@ export type ReviewerCorrectionRequest = Readonly<{
   causeReviewId: string
   checks: readonly ReviewCheck[]
   provenanceContext: AgentTurnProvenanceContext
+  abortSignal?: AbortSignal
+  onPromptAdmitted?: () => Promise<AgentTurnProvenanceContext>
 }>
 
 export type ReviewerCorrectionResult =
   | Readonly<{ status: 'skipped'; reason: 'no-open-checks' }>
   | Readonly<{ status: 'completed'; promptMessageId: string }>
   | Readonly<{ status: 'failed'; error: string }>
+  | Readonly<{ status: 'context_changed'; reason: ReviewerCorrectionContextChangedError['reason'] }>
 
 export class ReviewerCorrectionOwner {
   constructor(
@@ -82,6 +86,7 @@ export class ReviewerCorrectionOwner {
     })
 
     try {
+      input.abortSignal?.throwIfAborted()
       await this.options.acpRuntime.sendApplicationPrompt(
         { sessionId: input.sessionId, text, provenanceContext },
         {
@@ -89,7 +94,17 @@ export class ReviewerCorrectionOwner {
           feature: 'reviewer',
           purpose: 'correction',
           causeReviewId: input.causeReviewId
-        }
+        },
+        ...(input.onPromptAdmitted
+          ? [
+              {
+                onPromptAdmitted: async () => ({
+                  ...(await input.onPromptAdmitted!()),
+                  promptMessageId
+                })
+              }
+            ]
+          : [])
       )
       log.info('Reviewer Correction turn complete', {
         sessionId: input.sessionId,
@@ -97,6 +112,9 @@ export class ReviewerCorrectionOwner {
       })
       return { status: 'completed', promptMessageId }
     } catch (error) {
+      if (error instanceof ReviewerCorrectionContextChangedError) {
+        return { status: 'context_changed', reason: error.reason }
+      }
       const errorMessage = error instanceof Error ? error.message : String(error)
       log.error('Reviewer Correction application turn failed', {
         sessionId: input.sessionId,

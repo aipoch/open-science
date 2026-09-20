@@ -116,6 +116,6 @@ test('re-enters with a trusted browser after the Electron app restarts', async (
   const reentered = await remoteRequest('/api/bootstrap', sessionCookie)
   expect(reentered.status).toBe(200)
   expect(JSON.parse(reentered.body)).toMatchObject({
-    appName: expect.stringContaining('Open Science')
+    appName: expect.stringContaining('Open-Science')
   })
 })

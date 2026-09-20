@@ -17,6 +17,7 @@ import type { SessionCapabilityPolicy } from './session-capability-owner'
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
 type AcpTurnSkillHooks = Readonly<{
+  preparedSkillIds?: readonly string[]
   needForceLoad: (ids: string[]) => Promise<string[]>
   namesForIds: (ids: string[]) => Promise<string[]>
   descriptorsForIds?: (
@@ -75,11 +76,12 @@ const codeBuddySkillRuntimeRoot = (
 type TurnSkillHandle = Readonly<{
   reloadDecision: Readonly<{ kind: 'continue' | 'reload' }>
   prepareProvider: (input: ProviderPreparationInput) => Promise<ProviderPreparation>
-  close: (outcome: TurnSkillOutcome) => void
+  close: (outcome: TurnSkillOutcome, options?: { reload?: boolean }) => void
 }>
 type Authorization = {
   outcome?: TurnSkillOutcome
   selectedSkillIds: readonly string[]
+  forcedSkillIds?: readonly string[]
   scope?: EffectiveSpecialistSkills
 }
 class AcpTurnSkillOwner {
@@ -112,6 +114,9 @@ class AcpTurnSkillOwner {
           throw new Error(`Skill "${rejected}" is not available to the active specialist.`)
         }
       }
+      const runtimeSkillIds = [
+        ...new Set([...selected, ...(scope?.kind === 'specialist' ? scope.skillIds : [])])
+      ]
       const create = (disabled: string[]): TurnSkillHandle => {
         if (scope?.kind === 'main') {
           const rejected = selected.find((id) => disabled.includes(id))
@@ -119,20 +124,22 @@ class AcpTurnSkillOwner {
             throw new Error(`Skill "${rejected}" is not available to Main Agent.`)
           }
         }
+        disabled = disabled.filter((id) => !this.options.skills?.preparedSkillIds?.includes(id))
         const needsReload = disabled.length > 0 && !input.signal?.aborted
         const state: Authorization = {
           selectedSkillIds: selected,
+          forcedSkillIds: Object.freeze([...disabled]),
           ...(scope ? { scope } : {})
         }
         if (needsReload) this.forced = state
         return Object.freeze({
           reloadDecision: Object.freeze({ kind: needsReload ? 'reload' : 'continue' }),
           prepareProvider: (providerInput) => this.prepareProvider(state, providerInput),
-          close: (outcome) => this.close(state, outcome)
+          close: (outcome, options) => this.close(state, outcome, options?.reload ?? true)
         })
       }
-      return this.options.skills && selected.length > 0
-        ? this.options.skills.needForceLoad([...selected]).then(create)
+      return this.options.skills && runtimeSkillIds.length > 0
+        ? this.options.skills.needForceLoad(runtimeSkillIds).then(create)
         : create([])
     }
     const role = input.role ?? 'primary'
@@ -151,7 +158,7 @@ class AcpTurnSkillOwner {
   }
   backendPreparation(): Readonly<{ forcedSkillIds: readonly string[] }> {
     return Object.freeze({
-      forcedSkillIds: Object.freeze([...(this.forced?.selectedSkillIds ?? [])])
+      forcedSkillIds: Object.freeze([...(this.forced?.forcedSkillIds ?? [])])
     })
   }
   // Mid-turn inject must not force-load disabled Skills: that reconnects the session. Main still
@@ -220,12 +227,12 @@ class AcpTurnSkillOwner {
       }
     )
   }
-  private close(state: Authorization, outcome: TurnSkillOutcome): void {
+  private close(state: Authorization, outcome: TurnSkillOutcome, reload: boolean): void {
     if (state.outcome) return
     state.outcome = outcome
     if (this.forced !== state) return
     this.forced = undefined
-    this.options.requestSkillsReload()
+    if (reload) this.options.requestSkillsReload()
   }
   private async prepareProvider(
     state: Authorization,
@@ -267,7 +274,7 @@ class AcpTurnSkillOwner {
       input.frameworkId === 'codebuddy'
         ? [
             '<open_science_codebuddy_skill_route>',
-            'This turn replaces every earlier CodeBuddy Skill route. The exact Skill documents listed below are already loaded by Open Science for this turn.',
+            'This turn replaces every earlier CodeBuddy Skill route. The exact Skill documents listed below are already loaded by Open-Science for this turn.',
             ...(codeBuddySkillNames.length > 0
               ? [
                   'Follow these documents before any Notebook or Connector call. Do not call `mcp__skills__load_skill`; the documents are already loaded.',

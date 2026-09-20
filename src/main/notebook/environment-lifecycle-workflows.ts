@@ -37,6 +37,7 @@ type NotebookEnvironmentLifecycleDeps = {
   root: string
   platform?: NodeJS.Platform
   projectProgress: (progress: ProvisionProgress) => void
+  recoveryStatus?: () => import('../../shared/notebook-env').NotebookRecoveryStatus
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
   onRepairStarting?: (
@@ -44,6 +45,7 @@ type NotebookEnvironmentLifecycleDeps = {
     target: ExplicitRuntimeRepairTarget
   ) => Promise<void> | void
   onRepairCompleted?: (language: NotebookLanguage) => Promise<void> | void
+  revokeRuntimeAccess?: (language: NotebookLanguage) => Promise<void>
 }
 
 const RUNTIME_UNAVAILABLE_MESSAGE =
@@ -72,11 +74,15 @@ const createUnavailableLifecycle = (
   deps: NotebookEnvironmentLifecycleDeps
 ): NotebookEnvironmentLifecycle => ({
   status: () =>
-    Promise.resolve({
-      pythonReady: false,
-      rReady: false,
-      version: DEFAULT_ENV_VERSION,
-      provisioning: false
+    withDataRootWrite(async () => {
+      await deps.waitForRecovery?.()
+      return {
+        pythonReady: false,
+        rReady: false,
+        version: DEFAULT_ENV_VERSION,
+        provisioning: false,
+        ...(deps.recoveryStatus ? { recovery: deps.recoveryStatus() } : {})
+      }
     }),
   provision: async (language, operationId) =>
     runUnavailableOperation(deps, 'provision', parseNotebookLanguage(language), operationId),
@@ -99,7 +105,8 @@ const createNotebookEnvironmentLifecycle = (
   const status = (): Promise<ProvisionStatus> =>
     withDataRootWrite(async () => {
       if (deps.waitForRecovery) await deps.waitForRecovery()
-      return provisioner.status()
+      const status = await provisioner.status()
+      return { ...status, ...(deps.recoveryStatus ? { recovery: deps.recoveryStatus() } : {}) }
     })
 
   const provision = async (language: NotebookLanguage, operationId?: string): Promise<void> => {
@@ -148,13 +155,16 @@ const createNotebookEnvironmentLifecycle = (
           if (deps.waitForRecovery) await deps.waitForRecovery()
           await provisioner.repair(parsedLanguage, report, {
             force: true,
-            onStarting: deps.onRepairStarting
-              ? () =>
-                  deps.onRepairStarting?.(
-                    parsedLanguage,
-                    explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
-                  )
-              : undefined,
+            onStarting:
+              deps.onRepairStarting || deps.revokeRuntimeAccess
+                ? async () => {
+                    await deps.onRepairStarting?.(
+                      parsedLanguage,
+                      explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
+                    )
+                    await deps.revokeRuntimeAccess?.(parsedLanguage)
+                  }
+                : undefined,
             onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
           })
         }),

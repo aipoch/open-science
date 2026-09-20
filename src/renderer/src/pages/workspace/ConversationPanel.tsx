@@ -1,3 +1,11 @@
+import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
+import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import { SessionInfoPopover } from './SessionInfoPopover'
+import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
+import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { UnavailablePlanNotice } from './session-plan/UnavailablePlanNotice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
@@ -19,6 +27,7 @@ import type {
 } from '../../../../shared/acp'
 import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
+import type { JobSummary } from '../../../../shared/compute'
 import type {
   PermissionProfileId,
   SessionPermissionProfileState
@@ -44,12 +53,14 @@ import {
   GitBranch,
   Image as ImageIcon,
   Loader2,
+  LockKeyhole,
   Link2,
   ListChecks,
   Menu,
   MessageCircleMore,
   PanelRight,
   Plus,
+  RotateCcw,
   ScanEye,
   Square,
   X
@@ -64,9 +75,9 @@ import {
 } from '../../../../shared/annotations'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { sessionPackageImportAvailable } from '@/components/session-package-import-menu-model'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
-import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { Button } from '@/components/ui/button'
 import { ResizablePanel } from '@/components/ui/resizable'
 import {
@@ -85,7 +96,6 @@ import {
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
-import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
@@ -104,6 +114,9 @@ import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
+import { BackgroundTasksChip } from './BackgroundTasksChip'
+import { SessionBackgroundActivity } from './SessionBackgroundActivity'
+import { useSessionBackgroundTasks } from './use-session-background-tasks'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
 import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
@@ -136,13 +149,14 @@ import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { projectSessionSubagents } from './subagent-release-projection'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
-import { SideChatPanel } from './SideChatPanel'
-import { hasMainConversation, type SideChatController } from './use-side-chat-controller'
+import { type SideChatController } from './use-side-chat-controller'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { getAvatarColor } from '../settings/specialist-icons'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
+import { BookmarksPopover } from './bookmarks/BookmarksPopover'
+import { useBookmarks } from './bookmarks/bookmark-context'
 
 const localizeVisionRunFailure = (
   error: string | null | undefined,
@@ -371,6 +385,10 @@ type ConversationPanelSaveAsSkill = {
   request: () => void
 }
 
+type ConversationPanelWslSetup = {
+  start: () => Promise<boolean>
+}
+
 type ConversationPanelWorkflows = {
   artifactFinalization: {
     running: boolean
@@ -378,12 +396,17 @@ type ConversationPanelWorkflows = {
   }
   review: ConversationPanelReview
   saveAsSkill: ConversationPanelSaveAsSkill
+  wslSetup: ConversationPanelWslSetup
 }
 
 type ConversationPanelSessionTools = {
+  togglePin?: (session: ChatSession) => void
+  editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
-  openNotebook: (notebook: NotebookSessionReference) => void
+  openNotebook: (notebook: NotebookSessionReference, runId?: string) => void
   openJobs: (sessionId: string) => void
+  openJob?: (job: JobSummary) => void
+  openSession?: (sessionId: string) => void
 }
 
 type ConversationPanelSubagents = {
@@ -429,8 +452,14 @@ const ConversationPanel = ({
   subagents
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const { total: bookmarkCount, loadError: bookmarkLoadError } = useBookmarks()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
     view
+  const sourceSession = useSessionStore((state) =>
+    state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
+  )
+  const sourceSessionNumber = sourceSession?.number
+  const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
       doc: draftDoc,
@@ -442,10 +471,12 @@ const ConversationPanel = ({
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
+      isWslSetupDraft,
       caretRequest,
       readingContext: pdfContext
     },
     actions: {
+      discardWslSetupDraft,
       changeDoc: onDraftDocChange,
       addAnnotation: onAddAnnotation,
       updateAnnotationNote: onUpdateAnnotationNote,
@@ -454,6 +485,7 @@ const ConversationPanel = ({
       stageFiles: onStageAttachmentFiles,
       stagePastedText: onStagePastedText,
       cancelTransfer: onCancelAttachmentTransfer,
+      retryTransfer: onRetryAttachmentTransfer,
       removeAttachment: onRemoveAttachment,
       restorePastedText: onRestorePastedText,
       undo: onUndo,
@@ -467,6 +499,14 @@ const ConversationPanel = ({
   } = composer
   // Stable identities across re-renders: the transcript memo compares these callbacks, so an
   // inline closure would re-render every message on each composer state change.
+  const annotationSourceId = `main:${activeSession?.projectId}:${activeSession?.id}:${composerFocusKey ?? 'composer'}`
+  const annotationDrop = useAnnotationDrop({
+    targetId: annotationSourceId,
+    projectId: activeSession?.projectId ?? '',
+    parentSessionId: activeSession?.id ?? '',
+    disabled: !canEditDraft || !activeSession,
+    receive: ({ annotation }) => !onAddAnnotation(annotation)
+  })
   const handleAddTranscriptAnnotation = useCallback(
     (annotation: TextAnnotation): AnnotationValidationError | undefined => {
       const error = onAddAnnotation(annotation)
@@ -519,14 +559,7 @@ const ConversationPanel = ({
     queue: messageQueue,
     optimisticMessage
   } = conversation
-  const {
-    view: sideChat,
-    send: onSendSideChat,
-    retryHydration: onRetrySideChatHydration,
-    setDraft: onSideChatDraftChange,
-    cancel: onCancelSideChat,
-    close: onCloseSideChat
-  } = sideChatController
+  const { retryHydration: onRetrySideChatHydration } = sideChatController
 
   const {
     isPreviewPanelCollapsed,
@@ -587,7 +620,12 @@ const ConversationPanel = ({
     running: isSavingAsSkill,
     request: onSaveAsSkill
   } = saveAsSkill
-  const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
+  const {
+    notebookReference,
+    openNotebook: onOpenNotebook,
+    openJobs: onOpenJobList,
+    openJob: onOpenJob
+  } = sessionTools
   const { unavailable: subagentUnavailable, stop: onStopSubagents } = subagents
   const specialistId = activeSession
     ? specialist.view.specialist.barrierInFlight
@@ -622,6 +660,7 @@ const ConversationPanel = ({
     () => new Map<string, StopSubmissionState>()
   )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
+  const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
@@ -699,9 +738,17 @@ const ConversationPanel = ({
 
   const handleStopSubagents = (): void => submitStop(activeSession?.id, onStopSubagents)
 
-  // Unconditional hook: check if the active session has any jobs (running or finished).
-  const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
-  const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
+  // Unconditional hook: one shared data source for the background-task strip chip and
+  // the expandable ledger. Compute Jobs stay observable before the Notebook exists.
+  const backgroundTasks = useSessionBackgroundTasks(
+    activeSession?.id,
+    activeSession?.projectId,
+    notebookReference
+  )
+  const backgroundTasksVisible =
+    activeSession !== undefined &&
+    (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
+  const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
   const activeBranchPlan = selectActiveBranchPlan(activeSession)
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
@@ -850,7 +897,9 @@ const ConversationPanel = ({
   const hasPendingPermission = blockingInteraction === 'permission'
   const hasPendingCredential = blockingInteraction === 'credential'
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
-  const ordinaryComposerBlocked = Boolean(sideChat || blockingInteraction)
+  const packageOperation = usePackageOperationStore((state) => state.operation)
+  const packageLocked = sessionExportLocked(packageOperation, activeSession)
+  const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
   const rootTurnBusy = Boolean(
     blockingInteraction ||
     actionability?.activity === 'running' ||
@@ -878,8 +927,32 @@ const ConversationPanel = ({
   })
 
   // Submits the current doc, passing the ids of any skills picked as inline chips.
+  const handleWslSetupCommand = async (): Promise<void> => {
+    if (!canEditDraft) return
+    try {
+      const status = await window.api.settings.getWsl2BashPreviewStatus()
+      if (!status.available) {
+        onSetComposerError(
+          t('WSL2 setup is unavailable on this system ({{reason}}).', {
+            reason: status.reason
+          })
+        )
+        return
+      }
+      if (!(await workflows.wslSetup.start())) {
+        onSetComposerError(t('Open-Science could not open the WSL2 setup conversation.'))
+      }
+    } catch {
+      onSetComposerError(t('Open-Science could not open the WSL2 setup conversation.'))
+    }
+  }
+
   const handleSubmit = (): void => {
     if (!canEditDraft || !effectiveCanSend) return
+    if (docToText(draftDoc).trim() === '/setup-wsl') {
+      void handleWslSetupCommand()
+      return
+    }
     onSendMessage(docToSkillIds(draftDoc))
   }
 
@@ -940,31 +1013,72 @@ const ConversationPanel = ({
   )
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
-  const canStartSideChat =
-    Boolean(activeSession) &&
-    hasMainConversation(activeSession) &&
-    actionability?.actions.startSideChat.allowed !== false &&
-    canEditDraft &&
-    hasSideChatDraft &&
-    attachments.length === 0 &&
-    attachmentTransfers.length === 0 &&
-    !sideChatDisabledReason
+  const openSideChatReason =
+    sideChatController.openDisabledReason ??
+    sideChatBlockMessage(sideChatBlock({ action: 'open', parent: activeSession }), t)
+  const sendSideChatReason =
+    sideChatDisabledReason ??
+    sideChatBlockMessage(
+      sideChatBlock({
+        action: 'send',
+        parent: activeSession,
+        hasAttachments: attachments.length > 0 || attachmentTransfers.length > 0,
+        hasContent: hasSideChatDraft
+      }),
+      t
+    )
+  const canOpenSideChat = !openSideChatReason && Boolean(sideChatController.createDraft)
+  const canStartSideChat = !sendSideChatReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
+  const canOpenSendOptions =
+    canPlanFirst ||
+    canOpenSideChat ||
+    canStartSideChat ||
+    canRetrySideChatHydration ||
+    (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
     onPlanFirst(docToSkillIds(draftDoc))
   }
 
+  const sendsSideChatDraft = hasSideChatDraft && canStartSideChat
+  const sideChatHint =
+    openSideChatReason ??
+    (sendsSideChatDraft
+      ? t('Send draft to Side chat')
+      : t('Opens an empty Side chat; keeps your draft.'))
   const handleSideChat = (): void => {
-    if (canStartSideChat) onStartSideChat()
-    else onRetrySideChatHydration?.()
+    if (!canOpenSideChat) return
+    if (sendsSideChatDraft) onStartSideChat()
+    else sideChatController.createDraft?.()
   }
-
-  const handleCloseSideChat = (): void => {
-    onCloseSideChat()
-    setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
-  }
+  const sideChatMenuItems = (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuItem
+            data-testid="menu-side-chat"
+            aria-disabled={!canOpenSideChat}
+            className="h-8 whitespace-nowrap aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [@media(pointer:coarse)]:min-h-11"
+            onSelect={(event) => {
+              if (!canOpenSideChat) event.preventDefault()
+              else handleSideChat()
+            }}
+          >
+            <MessageCircleMore className="mr-2 size-4 shrink-0 text-text-300" aria-hidden="true" />
+            {t('New side chat')}
+          </DropdownMenuItem>
+        </TooltipTrigger>
+        <TooltipContent side="left">{sideChatHint}</TooltipContent>
+      </Tooltip>
+      {canRetrySideChatHydration ? (
+        <DropdownMenuItem data-testid="menu-retry-side-chat" onSelect={onRetrySideChatHydration}>
+          {t('Retry Side chat restore')}
+        </DropdownMenuItem>
+      ) : null}
+    </>
+  )
 
   // Converts the hidden file input selection into the shared staging callback.
   const handleAttachmentInputChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -1047,8 +1161,19 @@ const ConversationPanel = ({
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
-          <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
-            {activeSession?.title ?? t('New conversation')}
+          <h1 className="min-w-0 flex-1 text-[13px] font-semibold text-text-000">
+            {activeSession ? (
+              <SessionInfoPopover
+                key={activeSession.id}
+                session={activeSession}
+                sourceSession={sourceSession}
+                onOpenSession={sessionTools.openSession}
+                onEdit={sessionTools.editSession}
+                onTogglePin={sessionTools.togglePin}
+              />
+            ) : (
+              <span className="block truncate">{t('New conversation')}</span>
+            )}
           </h1>
           <NotificationBell className="md:hidden" />
           <button
@@ -1066,13 +1191,34 @@ const ConversationPanel = ({
             <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
           </button>
         </header>
+        <PackageOperationIndicator />
 
         {activeSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
         ) : (
-          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
+          <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
             <WorkspaceMessageScroller
               activeSession={activeSession}
+              forkSourceContent={
+                activeSession?.branchSource && sessionTools.openSession ? (
+                  <div className="mb-2 flex items-center gap-2 text-xs">
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                    <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() =>
+                        sessionTools.openSession?.(activeSession.branchSource!.sessionId)
+                      }
+                    >
+                      {sourceSessionNumber !== undefined
+                        ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+                        : t('Continued from chat')}
+                    </button>
+                    <span className="h-px flex-1 bg-border" aria-hidden="true" />
+                  </div>
+                ) : null
+              }
               credentialPending={pendingCredentialRequest !== undefined}
               visiblePermissionPending={pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
@@ -1081,13 +1227,14 @@ const ConversationPanel = ({
               onSendEditedMessage={onSendEditedMessage}
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
-              pendingElicitations={sideChat ? [] : sessionPendingElicitations}
+              pendingElicitations={sessionPendingElicitations}
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
               annotations={annotations}
               onAddAnnotation={handleAddTranscriptAnnotation}
               onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
+              onRemoveAnnotation={onRemoveAnnotation}
               onAnnotationError={handleTranscriptAnnotationError}
             />
           </WorkspaceMessageEditStateProvider>
@@ -1107,15 +1254,15 @@ const ConversationPanel = ({
             {/* Runtime and session errors stay near the composer so recovery is visible. */}
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
-                {!sideChat && conversation.planProjectionRecoveryError && activeSession ? (
+                {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
                     key={`${activeSession.id}:${String(activeSession.runtimeContext?.revision)}`}
                     session={activeSession}
                   />
                 ) : null}
-                {composerError ? (
+                {composerError && composerError !== actionError ? (
                   <div role="alert" className="mb-2">
-                    <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
+                    <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
                 ) : null}
                 {composerError && composerErrorDetail ? (
@@ -1123,7 +1270,7 @@ const ConversationPanel = ({
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {!sideChat && activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
+                {activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
@@ -1210,7 +1357,7 @@ const ConversationPanel = ({
                   />
                 ) : null}
 
-                {!sideChat && activeSession && delegatedQuestion ? (
+                {activeSession && delegatedQuestion ? (
                   <WorkspaceDelegatedQuestionCard
                     key={delegatedQuestion.requestId}
                     projectId={activeSession.projectId}
@@ -1222,7 +1369,7 @@ const ConversationPanel = ({
 
                 {/* Delegated permission cards stay in the transcript; the root card owns the
                     resizable composer surface below. Side chat hides both main interaction lanes. */}
-                {!sideChat && pendingPermissions.some((request) => request.delegated) ? (
+                {pendingPermissions.some((request) => request.delegated) ? (
                   <PermissionApprovalControls
                     requests={pendingPermissions.filter((request) => request.delegated)}
                     onRespond={onRespondToPermission}
@@ -1239,12 +1386,29 @@ const ConversationPanel = ({
                   />
                 ) : null}
 
+                {/* The expanded ledger opens above the strip; the strip (Notebook entry, chip,
+                    message queue) stays in place. */}
+                {backgroundTasksExpanded && activeSession ? (
+                  <SessionBackgroundActivity
+                    sessionId={activeSession.id}
+                    projectId={activeSession.projectId}
+                    notebook={notebookReference}
+                    runs={backgroundTasks.runs}
+                    jobs={backgroundTasks.jobs}
+                    now={backgroundTasks.now}
+                    onOpenNotebook={onOpenNotebook}
+                    onOpenComputeJob={onOpenJob ?? ((job) => onOpenJobList(job.session_id))}
+                    onOpenJobList={onOpenJobList}
+                  />
+                ) : null}
+
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
                 {notebookReference ||
                 messageQueue.items.length > 0 ||
-                hasAnyJobs ||
+                backgroundTasksVisible ||
                 hasSubagents ||
+                hasBookmarkEntry ||
                 (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
                   <div
                     aria-hidden={ordinaryComposerBlocked || undefined}
@@ -1258,7 +1422,7 @@ const ConversationPanel = ({
                     }
                     className={cn(
                       'flex px-2',
-                      notebookReference || messageQueue.items.length > 0
+                      notebookReference || messageQueue.items.length > 0 || hasBookmarkEntry
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card',
                       ordinaryComposerBlocked && 'invisible pointer-events-none'
@@ -1283,6 +1447,7 @@ const ConversationPanel = ({
                       />
                     ) : null}
                     <SubagentsBar session={activeSession} permissions={pendingPermissions} />
+                    {activeSession ? <BookmarksPopover /> : null}
                     {notebookReference ? (
                       <button
                         type="button"
@@ -1296,12 +1461,12 @@ const ConversationPanel = ({
                       </button>
                     ) : null}
                     <div className="flex-1" />
-                    {hasAnyJobs && activeSession ? (
-                      <RemoteJobBadge
-                        sessionId={activeSession.id}
-                        onOpenJobList={
-                          onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined
-                        }
+                    {backgroundTasksVisible && activeSession ? (
+                      <BackgroundTasksChip
+                        summary={backgroundTasks.summary}
+                        now={backgroundTasks.now}
+                        expanded={backgroundTasksExpanded}
+                        onToggle={() => setBackgroundTasksExpanded((expanded) => !expanded)}
                       />
                     ) : null}
                     <ComposerMessageQueueTrigger
@@ -1318,7 +1483,7 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (sideChat ||
+                      (packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
                         specialistUnavailable) &&
@@ -1326,23 +1491,18 @@ const ConversationPanel = ({
                     )}
                   />
 
-                  {!sideChat && activeSession && specialistUnavailable ? (
-                    <div
+                  {activeSession && specialistUnavailable ? (
+                    <InlineNotice
                       role="status"
                       aria-live="polite"
                       data-testid="specialist-unavailable-notice"
-                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-warning-100/50 bg-warning-100/10 px-3 py-2"
+                      className="relative z-10 mb-2"
                     >
-                      <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-warning-900"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-warning-900">
+                        <div className="text-sm font-medium text-foreground">
                           {t('This Specialist is no longer available')}
                         </div>
-                        <div className="text-[11px] leading-4 text-text-100">
+                        <div className="text-sm leading-6 text-muted-foreground">
                           {t('Choose another Specialist before sending a message.')}{' '}
                           {t('Your draft is preserved.')}
                         </div>
@@ -1351,70 +1511,51 @@ const ConversationPanel = ({
                         type="button"
                         variant="outline"
                         size="xs"
-                        className="ml-auto border-warning-100/50 bg-transparent text-warning-900 hover:bg-warning-100/20 hover:text-warning-900"
+                        className="mt-2"
                         onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
                       >
                         {t('Choose Specialist')}
                       </Button>
-                    </div>
+                    </InlineNotice>
                   ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
-                  {!sideChat && reconfigureError ? (
-                    <div
-                      className="relative z-10 mb-2 flex items-start gap-2.5 rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5"
-                      role="alert"
-                      data-testid="reconfigure-error-banner"
-                    >
-                      <AlertTriangle
-                        className="mt-0.5 size-3.5 shrink-0 text-red-400"
-                        strokeWidth={2}
-                        aria-hidden="true"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium leading-5 text-red-300">
-                          {reconfigureError.committed
+                  {reconfigureError ? (
+                    <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
+                      <ErrorNotice
+                        role="alert"
+                        title={
+                          reconfigureError.committed
                             ? t('Specialist switch is pending for {{name}}', {
                                 name: reconfigureError.specialistName
                               })
                             : t('Could not switch to {{name}}', {
                                 name: reconfigureError.specialistName
-                              })}
-                        </div>
-                        <div className="text-[11px] leading-4 text-red-400/80">
-                          {reconfigureError.committed
+                              })
+                        }
+                        description={
+                          reconfigureError.committed
                             ? t(
                                 'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
                               )
                             : t(
                                 'The agent session could not be reconfigured. Your draft has been preserved.'
-                              )}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            onClick={onReconfigureRetry}
-                            className="flex h-6 items-center rounded px-2 text-[11px] font-medium text-red-300 hover:bg-red-500/15 border border-red-500/30"
-                          >
+                              )
+                        }
+                      >
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" onClick={onReconfigureRetry}>
                             {t('Retry')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={onReconfigureChooseOther}
-                            className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
-                          >
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={onReconfigureChooseOther}>
                             {t('Choose another specialist')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={onReconfigureUseNone}
-                            className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
-                          >
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={onReconfigureUseNone}>
                             {t('Use None (Main Agent)')}
-                          </button>
+                          </Button>
                         </div>
-                      </div>
+                      </ErrorNotice>
                     </div>
                   ) : null}
 
@@ -1423,49 +1564,7 @@ const ConversationPanel = ({
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
                     >
-                      {sideChat ? (
-                        <SideChatPanel
-                          view={sideChat}
-                          onSend={onSendSideChat}
-                          onDraftChange={onSideChatDraftChange}
-                          onCancel={onCancelSideChat}
-                          onClose={handleCloseSideChat}
-                          controls={
-                            <ComposerAgentControlsMenu
-                              profile={permissionProfile}
-                              profileState={permissionProfileState}
-                              grants={permissionGrants}
-                              autoReviewEnabled={autoReviewEnabled}
-                              memoryEnabled={memoryEnabled}
-                              delegationEnabled={delegationEnabled}
-                              delegationPending={delegationPending}
-                              delegationHasLiveAttempts={delegationHasLiveAttempts}
-                              delegationReadOnly={!canChangeDelegation}
-                              delegationDisabledReason={delegationDisabledReason}
-                              memoryDisabledReason={memoryDisabledReason}
-                              readOnly
-                              permissionProfileReadOnly
-                              grantActionsReadOnly
-                              autoReviewDisabled
-                              enabledComputeHosts={enabledComputeHosts}
-                              selectedComputeHosts={selectedComputeHosts}
-                              onComputeHostEnabledChange={onComputeHostEnabledChange}
-                              onComputeHostSelectedChange={onComputeHostSelectedChange}
-                              onProfileChange={onPermissionProfileChange}
-                              onAutoReviewChange={onAutoReviewToggle}
-                              onMemoryChange={onMemoryToggle}
-                              onDelegationChange={onDelegationToggle}
-                              onRevokeGrant={onRevokePermissionGrant}
-                              onClearGrants={onClearPermissionGrants}
-                              showSpecialist={activeSession !== undefined}
-                              specialistId={specialistId}
-                              specialistUnavailable={specialistUnavailable}
-                              specialistReadOnly
-                              onSpecialistChange={onSpecialistChange}
-                            />
-                          }
-                        />
-                      ) : hasPendingPermission ? (
+                      {hasPendingPermission ? (
                         <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
                           <PermissionApprovalControls
                             requests={rootPermissionRequests}
@@ -1500,6 +1599,26 @@ const ConversationPanel = ({
                             request={pendingElicitationRequest}
                             embedded
                             onRespond={onRespondToElicitation}
+                            editDraft={
+                              pendingElicitationActivity
+                                ? activeSession?.elicitationEditDrafts?.[
+                                    pendingElicitationActivity.id
+                                  ]
+                                : undefined
+                            }
+                            onEditDraftChange={
+                              activeSession &&
+                              pendingElicitationActivity &&
+                              pendingElicitationRequest
+                                ? (draft) =>
+                                    setElicitationEditDraft(
+                                      activeSession.id,
+                                      pendingElicitationActivity.id,
+                                      pendingElicitationRequest.requestId,
+                                      draft
+                                    )
+                                : undefined
+                            }
                             onDraftChange={(answers: ElicitationAnswer[]) => {
                               if (!activeSession || !pendingElicitationActivity) return
                               setElicitationDraftAnswers(
@@ -1529,1059 +1648,1196 @@ const ConversationPanel = ({
                   {/* The ordinary composer keeps this lane's geometry while a blocking interaction
                       overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
                   <TooltipProvider delayDuration={200}>
-                    <form
-                      aria-hidden={ordinaryComposerBlocked || undefined}
-                      data-testid="ordinary-composer-form"
-                      inert={ordinaryComposerBlocked || undefined}
-                      className={cn(
-                        'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                        ordinaryComposerBlocked && 'invisible pointer-events-none'
-                      )}
-                      data-specialist-color={specialistComposerColor}
-                      onSubmit={(event) => event.preventDefault()}
-                      {...dropZoneProps}
-                    >
-                      {specialistComposerColor && selectedSpecialist ? (
-                        <span
-                          key={selectedSpecialist.id}
-                          className="composer-specialist-color-in"
-                          style={{ borderColor: specialistComposerColor }}
-                          aria-hidden="true"
-                        />
-                      ) : null}
-                      {/* File-drag overlay is scoped to the composer input card only. */}
-                      {isDragging ? (
-                        <FileDropOverlay
-                          label={t('Drop files to attach')}
-                          className="rounded-2xl"
-                        />
-                      ) : null}
-                      {pdfContext.bindings.length > 0 ? (
-                        <div
-                          data-testid="pdf-context-bar"
-                          className="-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1"
-                        >
-                          {activeSession ? (
-                            <ReadingContextPicker
-                              projectId={activeSession.projectId}
-                              linkedSources={pdfContext.bindings.flatMap((binding) =>
-                                'sourceKind' in binding
-                                  ? [
-                                      {
-                                        sourceKind: binding.sourceKind,
-                                        sourceFileId: binding.sourceFileId,
-                                        sourceVersionId: binding.sourceVersionId
-                                      }
-                                    ]
-                                  : []
-                              )}
-                              atLimit={pdfContext.bindings.length >= MAX_SESSION_PDF_CONTEXTS}
-                              onSelect={linkReadingContext}
-                            >
-                              <button
-                                type="button"
-                                disabled={pdfContext.isPending}
-                                aria-label={t('Choose PDFs for Reading')}
-                                className={cn(
-                                  'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
-                                  composerInteractiveTransitionClassName
+                    {packageLocked ? (
+                      <section
+                        className="relative z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 py-4 text-muted-foreground"
+                        aria-label={t('Session export in progress')}
+                      >
+                        <LockKeyhole className="size-4 shrink-0" aria-hidden="true" />
+                        <p className="text-sm">
+                          {packageOperation?.kind === 'fork'
+                            ? t('Temporarily read-only during fork')
+                            : t('Temporarily read-only during export')}
+                        </p>
+                      </section>
+                    ) : activeSession?.packageOrigin ? (
+                      <section
+                        className="relative z-10 rounded-xl border border-border bg-muted/50 px-4 py-3"
+                        aria-label={t('Imported research history')}
+                      >
+                        <p className="text-sm font-medium text-foreground">
+                          {t('Imported research history')}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t('Imported on {{date}}', {
+                            date: new Date(activeSession.packageOrigin.importedAt).toLocaleString()
+                          })}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {t(
+                            'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
+                          )}
+                        </p>
+                        {sessionForkAvailable() ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => {
+                              void forkSession(activeSession)
+                            }}
+                          >
+                            <GitBranch className="size-4" aria-hidden="true" />
+                            {t('Fork to continue')}
+                          </Button>
+                        ) : null}
+                        <details className="mt-2 text-xs leading-5 text-muted-foreground">
+                          <summary className="cursor-pointer">{t('Package source')}</summary>
+                          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                            <dt>{t('Source project')}</dt>
+                            <dd className="break-all font-mono">
+                              {activeSession.packageOrigin.sourceProjectId}
+                            </dd>
+                            <dt>{t('Source Session')}</dt>
+                            <dd className="break-all font-mono">
+                              {activeSession.packageOrigin.sourceSessionId}
+                            </dd>
+                          </dl>
+                          <p className="mt-1">
+                            {t(
+                              'Original evidence is retained separately; local references and evidence hashes are derived during import.'
+                            )}
+                          </p>
+                        </details>
+                        {activeSession.packageOrigin.excludedFiles?.length ? (
+                          <details className="mt-2 text-xs text-muted-foreground">
+                            <summary className="cursor-pointer">
+                              {t('Not included in this package')}
+                            </summary>
+                            <ul className="mt-1 max-h-36 list-disc overflow-y-auto pl-4">
+                              {[
+                                ...new Set(
+                                  activeSession.packageOrigin.excludedFiles.map(
+                                    (file) => file.filename
+                                  )
+                                )
+                              ].map((filename) => (
+                                <li key={filename}>{filename}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : null}
+                      </section>
+                    ) : (
+                      <form
+                        aria-hidden={ordinaryComposerBlocked || undefined}
+                        data-testid="ordinary-composer-form"
+                        inert={ordinaryComposerBlocked || undefined}
+                        className={cn(
+                          'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
+                          ordinaryComposerBlocked && 'invisible pointer-events-none'
+                        )}
+                        data-specialist-color={specialistComposerColor}
+                        onSubmit={(event) => event.preventDefault()}
+                        {...dropZoneProps}
+                        {...annotationDrop.props}
+                      >
+                        {annotationDrop.over ? (
+                          <div className="rounded-md border border-primary px-2 py-1 text-xs text-text-200">
+                            {t('Add to main conversation')}
+                          </div>
+                        ) : null}
+                        {annotationDrop.error ? (
+                          <p role="alert" className="text-xs text-danger-000">
+                            {t(
+                              'Could not move this annotation. It may have changed or the target is full.'
+                            )}
+                          </p>
+                        ) : null}
+                        {specialistComposerColor && selectedSpecialist ? (
+                          <span
+                            key={selectedSpecialist.id}
+                            className="composer-specialist-color-in"
+                            style={{ borderColor: specialistComposerColor }}
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                        {/* File-drag overlay is scoped to the composer input card only. */}
+                        {isDragging ? (
+                          <FileDropOverlay
+                            label={
+                              sessionPackageImportAvailable()
+                                ? t('Drop files')
+                                : t('Drop files to attach')
+                            }
+                            className="rounded-2xl"
+                          />
+                        ) : null}
+                        {pdfContext.bindings.length > 0 ? (
+                          <div
+                            data-testid="pdf-context-bar"
+                            className="-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1"
+                          >
+                            {activeSession ? (
+                              <ReadingContextPicker
+                                projectId={activeSession.projectId}
+                                linkedSources={pdfContext.bindings.flatMap((binding) =>
+                                  'sourceKind' in binding
+                                    ? [
+                                        {
+                                          sourceKind: binding.sourceKind,
+                                          sourceFileId: binding.sourceFileId,
+                                          sourceVersionId: binding.sourceVersionId
+                                        }
+                                      ]
+                                    : []
                                 )}
+                                atLimit={pdfContext.bindings.length >= MAX_SESSION_PDF_CONTEXTS}
+                                onSelect={linkReadingContext}
                               >
+                                <button
+                                  type="button"
+                                  disabled={pdfContext.isPending}
+                                  aria-label={t('Choose PDFs for Reading')}
+                                  className={cn(
+                                    'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                    composerInteractiveTransitionClassName
+                                  )}
+                                >
+                                  <Link2
+                                    className="size-4 shrink-0 text-primary"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                  {t('Reading')}
+                                  <ChevronDown
+                                    className="size-3 shrink-0 text-text-300"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </ReadingContextPicker>
+                            ) : (
+                              <>
                                 <Link2
                                   className="size-4 shrink-0 text-primary"
                                   strokeWidth={2}
                                   aria-hidden="true"
                                 />
-                                {t('Reading')}
-                                <ChevronDown
-                                  className="size-3 shrink-0 text-text-300"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                              </button>
-                            </ReadingContextPicker>
-                          ) : (
-                            <>
-                              <Link2
-                                className="size-4 shrink-0 text-primary"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
-                                {t('Reading')}
-                              </span>
-                            </>
-                          )}
-                          <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                            <TooltipProvider delayDuration={300}>
-                              {pdfContext.bindings.map((binding) => {
-                                const pending = pdfContext.pendingBindingId === binding.bindingId
-                                return (
-                                  <span
-                                    key={binding.bindingId}
-                                    className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
-                                  >
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <button
-                                          type="button"
-                                          className={cn(
-                                            'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
-                                            composerInteractiveTransitionClassName
-                                          )}
-                                          aria-label={t('Open PDF context {{name}}', {
-                                            name: binding.name
-                                          })}
-                                          onClick={() => openReadingContext(binding.bindingId)}
-                                        >
-                                          <ExtensionPreservingFileName
-                                            name={binding.name}
-                                            className="min-w-0 text-[12px] font-medium leading-4"
-                                          />
-                                        </button>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {t(
-                                          'Linked to this conversation. The Agent reads only the pages needed for your question.'
-                                        )}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <button
-                                          type="button"
-                                          className={attachmentRemoveButtonClassName}
-                                          disabled={pending || pdfContext.isPending}
-                                          aria-label={t('Remove PDF context {{name}}', {
-                                            name: binding.name
-                                          })}
-                                          onClick={() => unlinkReadingContext(binding.bindingId)}
-                                        >
-                                          {pending ? (
-                                            <Loader2
-                                              className="size-3.5 animate-spin"
-                                              strokeWidth={2}
-                                              aria-hidden="true"
-                                            />
-                                          ) : (
-                                            <X
-                                              className="size-3.5"
-                                              strokeWidth={2.2}
-                                              aria-hidden="true"
-                                            />
-                                          )}
-                                        </button>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {t('Remove PDF context {{name}}', { name: binding.name })}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </span>
-                                )
-                              })}
-                            </TooltipProvider>
-                          </div>
-                        </div>
-                      ) : null}
-                      {pdfContext.automaticAttachmentCount > 0 ? (
-                        <div
-                          data-testid="automatic-reading-suggestion"
-                          className={cn(
-                            '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
-                            pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
-                          )}
-                        >
-                          <Link2
-                            className="size-4 shrink-0 text-primary"
-                            strokeWidth={2}
-                            aria-hidden="true"
-                          />
-                          <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
-                            {t('Reading')}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-text-300">
-                            {t('{{count}} PDFs will be linked when sent', {
-                              count: pdfContext.automaticAttachmentCount,
-                              defaultValue_one: '{{count}} PDF will be linked when sent'
-                            })}
-                          </span>
-                          <TooltipProvider delayDuration={800}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  aria-label={t('Keep as attachments')}
-                                  onClick={dismissAutomaticReading}
-                                  className={cn(
-                                    'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
-                                    composerInteractiveTransitionClassName
-                                  )}
-                                >
-                                  <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">{t('Keep as attachments')}</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
-                      ) : null}
-                      <ComposerMessageQueueContent
-                        {...messageQueue}
-                        expanded={messageQueueExpanded}
-                      />
-                      {composer.view.queuedEdit ? (
-                        <div className="flex items-center justify-between gap-2 text-xs text-text-300">
-                          <span>
-                            {composer.view.queuedEdit.revisionMessageId
-                              ? t('Editing a historical revision')
-                              : t('Editing a queued message')}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={composer.actions.cancelQueuedEdit}
-                            className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            disabled={!canEditDraft}
-                          >
-                            {t('Exit queued editing')}
-                          </button>
-                        </div>
-                      ) : null}
-                      <AnnotationDraftCards
-                        annotations={annotations}
-                        disabled={!canEditDraft}
-                        onReveal={requestAnnotationReveal}
-                        onUpdateNote={(id, note) => {
-                          const error = onUpdateAnnotationNote(id, note)
-                          if (error) onSetComposerError(annotationValidationMessage(error, t))
-                          else onSetComposerError(null)
-                          return error
-                        }}
-                        onRemove={(id) => {
-                          onRemoveAnnotation(id)
-                          const validation = validateAnnotations(
-                            annotations.filter((annotation) => annotation.id !== id),
-                            docToText(draftDoc)
-                          )
-                          onSetComposerError(
-                            validation ? annotationValidationMessage(validation, t) : null
-                          )
-                        }}
-                      />
-                      <div className="flex flex-col gap-2">
-                        {attachments.length > 0 || attachmentTransfers.length > 0 ? (
-                          <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
-                            {/* Composer attachments remain removable until the prompt is submitted. */}
-                            {attachments.map((attachment) => {
-                              const AttachmentIcon = attachment.mimeType?.startsWith('image/')
-                                ? ImageIcon
-                                : FileText
-                              const attachmentName = attachment.originalName || attachment.name
-                              const pastedText = pastedTextByAttachmentId.get(attachment.id)
-
-                              return (
-                                <div
-                                  key={attachment.id}
-                                  id={
-                                    pastedText
-                                      ? pastedTextAttachmentDomId(pastedText.id)
-                                      : undefined
-                                  }
-                                  data-pasted-text-attachment={pastedText ? 'true' : undefined}
-                                  data-state={pastedText ? 'success' : undefined}
-                                  className={attachmentChipClassName}
-                                >
-                                  <AttachmentIcon
-                                    className="size-4 shrink-0 text-text-300"
-                                    strokeWidth={2}
-                                    aria-hidden="true"
-                                  />
-                                  {pastedText ? (
-                                    <button
-                                      type="button"
-                                      className={pastedTextRestoreButtonClassName}
-                                      disabled={!canEditDraft}
-                                      onClick={() => onRestorePastedText(pastedText.id)}
-                                    >
-                                      <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
-                                        {pastedTextPreviewName(pastedText.text)}
-                                      </span>
-                                      <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
-                                        {t('Show in text field')}
-                                        <ChevronRight
-                                          className="size-3 shrink-0"
-                                          strokeWidth={2}
-                                          aria-hidden="true"
-                                        />
-                                      </span>
-                                    </button>
-                                  ) : (
-                                    <div className="min-w-0 flex-1">
-                                      <ExtensionPreservingFileName
-                                        name={attachmentName}
-                                        className="text-[12px] leading-4"
-                                      />
-                                      <div className="truncate text-[11px] leading-3 text-text-300">
-                                        {formatAttachmentSize(attachment.size)}
-                                      </div>
-                                    </div>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className={attachmentRemoveButtonClassName}
-                                    disabled={!canEditDraft}
-                                    aria-label={t('Remove attachment {{name}}', {
-                                      name: attachmentName
-                                    })}
-                                    onClick={() => handleRemoveAttachment(attachment)}
-                                  >
-                                    <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                                  </button>
-                                </div>
-                              )
-                            })}
-                            {attachmentTransfers.map((transfer) => {
-                              const AttachmentIcon = transfer.mimeType?.startsWith('image/')
-                                ? ImageIcon
-                                : FileText
-                              const percent =
-                                transfer.totalBytes === 0
-                                  ? 100
-                                  : Math.min(
-                                      100,
-                                      Math.round(
-                                        (transfer.receivedBytes / transfer.totalBytes) * 100
-                                      )
-                                    )
-                              const statusLabel =
-                                transfer.status === 'queued'
-                                  ? t('Queued')
-                                  : transfer.status === 'cancelling'
-                                    ? t('Cancelling…')
-                                    : transfer.status === 'error'
-                                      ? transfer.error || t('Upload failed')
-                                      : t('{{percent}}% of {{size}}', {
-                                          percent,
-                                          size: formatAttachmentSize(transfer.totalBytes)
-                                        })
-                              const pastedText = transfer.pastedTextId
-                                ? pastedTextById.get(transfer.pastedTextId)
-                                : undefined
-
-                              return (
-                                <div
-                                  key={transfer.transferId}
-                                  id={
-                                    pastedText
-                                      ? pastedTextAttachmentDomId(pastedText.id)
-                                      : undefined
-                                  }
-                                  data-pasted-text-attachment={pastedText ? 'true' : undefined}
-                                  data-state={pastedText ? transfer.status : undefined}
-                                  className={attachmentChipClassName}
-                                >
-                                  <AttachmentIcon
-                                    className="size-4 shrink-0 text-text-300"
-                                    strokeWidth={2}
-                                    aria-hidden="true"
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    {pastedText ? (
-                                      <div className="truncate text-[12px] leading-4">
-                                        {pastedTextPreviewName(pastedText.text)}
-                                      </div>
-                                    ) : (
-                                      <ExtensionPreservingFileName
-                                        name={transfer.name}
-                                        className="text-[12px] leading-4"
-                                      />
-                                    )}
-                                    <div
-                                      className={`truncate text-[11px] leading-3 ${
-                                        transfer.status === 'error'
-                                          ? 'text-red-600'
-                                          : 'text-text-300'
-                                      }`}
-                                      title={statusLabel}
-                                    >
-                                      {statusLabel}
-                                    </div>
-                                    {transfer.status === 'uploading' ? (
-                                      <div
-                                        className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
-                                        role="progressbar"
-                                        aria-label={t('Uploading {{name}}', {
-                                          name: transfer.name
-                                        })}
-                                        aria-valuemin={0}
-                                        aria-valuemax={100}
-                                        aria-valuenow={percent}
-                                      >
-                                        <div
-                                          className="h-full rounded-full bg-primary transition-[width]"
-                                          style={{ width: `${percent}%` }}
-                                        />
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className={attachmentRemoveButtonClassName}
-                                    disabled={!canEditDraft || transfer.status === 'cancelling'}
-                                    aria-label={t(
-                                      transfer.status === 'error'
-                                        ? 'Remove failed attachment {{name}}'
-                                        : 'Cancel attachment {{name}}',
-                                      { name: transfer.name }
-                                    )}
-                                    onClick={() => handleCancelAttachmentTransfer(transfer)}
-                                  >
-                                    <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                                  </button>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        ) : null}
-
-                        <div className="relative min-w-0 flex-1">
-                          {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
-                          <ComposerEditor
-                            doc={draftDoc}
-                            onDocChange={onValidatedDraftDocChange}
-                            onSubmit={handleSubmit}
-                            onPaste={handleMessageDraftPaste}
-                            onLongTextPaste={onStagePastedText}
-                            onLocatePastedText={handleLocatePastedText}
-                            onUndo={onUndo}
-                            onRedo={onRedo}
-                            disabled={!canEditDraft}
-                            placeholder={t(
-                              'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
-                              {
-                                shortcut: globalSearchShortcut
-                              }
+                                <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
+                                  {t('Reading')}
+                                </span>
+                              </>
                             )}
-                            ariaLabel={t('Ask anything')}
-                            allowedSkillIds={allowedSkillIds}
-                            isHistoryBrowsing={isHistoryBrowsing}
-                            historyStatus={historyStatus}
-                            onNavigateHistory={onNavigateHistory}
-                            mentionPreviewContext={
-                              activeSession
-                                ? {
-                                    sessionId: activeSession.id,
-                                    projectId: activeSession.projectId
-                                  }
-                                : undefined
-                            }
-                            focusRequest={ordinaryComposerBlocked ? undefined : composerFocusKey}
-                            restoreFocusRequest={
-                              ordinaryComposerBlocked ? undefined : composerRestoreFocusRequest
-                            }
-                            caretRequest={ordinaryComposerBlocked ? undefined : caretRequest}
-                          />
-                        </div>
-
-                        <div className="@container/composer flex items-center gap-1">
-                          {/* The + button opens a dropdown for attachments and session actions. */}
-                          <DropdownMenu>
-                            <>
-                              <Tooltip>
-                                {/* Radix opens tooltips on focus as well as hover, and a dropdown
-                                  close returns programmatic focus to the trigger — which would
-                                  re-open the tooltip with the pointer elsewhere. Only real keyboard
-                                  focus (":focus-visible") may open it (radix-ui/primitives#2248). */}
-                                <TooltipTrigger
-                                  asChild
-                                  onFocus={(event) => {
-                                    if (!event.currentTarget.matches(':focus-visible')) {
-                                      event.preventDefault()
-                                    }
-                                  }}
-                                >
-                                  <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                      disabled={
-                                        isUploadingAttachments ||
-                                        (!canEditDraft && !activeBranchPlan && !activeSession)
-                                      }
-                                      className={composerIconButtonClassName}
-                                      aria-label={
-                                        activeBranchPlan
-                                          ? t(
-                                              'Add attachment, save as skill, view context window, view plan, or request review'
-                                            )
-                                          : t(
-                                              'Add attachment, save as skill, view context window, or request review'
-                                            )
-                                      }
-                                      data-testid="composer-plus-trigger"
+                            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                              <TooltipProvider delayDuration={300}>
+                                {pdfContext.bindings.map((binding) => {
+                                  const pending = pdfContext.pendingBindingId === binding.bindingId
+                                  return (
+                                    <span
+                                      key={binding.bindingId}
+                                      className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
                                     >
-                                      <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  {activeBranchPlan
-                                    ? t(
-                                        'Add attachment, save as skill, view context window, view plan, or request review'
-                                      )
-                                    : t(
-                                        'Add attachment, save as skill, view context window, or request review'
-                                      )}
-                                </TooltipContent>
-                              </Tooltip>
-                            </>
-                            <DropdownMenuContent side="top" align="start" className="w-56">
-                              <>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <DropdownMenuItem
-                                      data-testid="menu-attach-files"
-                                      disabled={!canEditDraft || isUploadingAttachments}
-                                      onSelect={() => fileInputRef.current?.click()}
-                                    >
-                                      <FileText
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      <span className="flex-1">{t('Attach files')}</span>
-                                      <CircleHelp
-                                        className="size-3.5 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                    </DropdownMenuItem>
-                                  </TooltipTrigger>
-                                  <TooltipContent
-                                    side="right"
-                                    className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
-                                    data-testid="attachment-limits"
-                                  >
-                                    {attachmentLimitsText(t)}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </>
-                              <div
-                                className={cn(
-                                  'px-2 py-1.5 text-[11px] leading-4 text-text-300',
-                                  canEditDraft && !isUploadingAttachments
-                                    ? 'hidden [@media(pointer:coarse)]:block'
-                                    : 'block'
-                                )}
-                                data-testid="attachment-limits-touch"
-                              >
-                                {attachmentLimitsText(t)}
-                              </div>
-                              <ComposerYourFilesMenu
-                                onInsertFileReference={handleInsertFileReference}
-                              />
-                              <DropdownMenuSeparator />
-                              {activeSession && activeBranchPlan ? (
-                                <>
-                                  <DropdownMenuItem
-                                    data-testid="menu-view-plan"
-                                    onSelect={() => {
-                                      usePreviewWorkbenchStore
-                                        .getState()
-                                        .upsertAndActivateItem(
-                                          createSessionPlanPreviewItem(
-                                            activeSession.id,
-                                            activeSession.projectId,
-                                            activeBranchPlan.artifactVersionId
-                                          )
-                                        )
-                                    }}
-                                  >
-                                    <BookOpen
-                                      className="mr-2 size-4 text-text-300"
-                                      aria-hidden="true"
-                                    />
-                                    <span className="flex-1">{t('View plan')}</span>
-                                    <span className="text-[11px] text-text-300">
-                                      {activeBranchPlan.counts.completed}/
-                                      {activeBranchPlan.counts.steps}
-                                    </span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                </>
-                              ) : null}
-                              <DropdownMenuItem
-                                data-testid="menu-request-review"
-                                disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}
-                                aria-busy={isReviewing || undefined}
-                                onSelect={() => {
-                                  if (canEditDraft && !isRequestReviewDisabled && !isReviewing) {
-                                    onRequestReview()
-                                  }
-                                }}
-                                className="items-center gap-2"
-                              >
-                                {isReviewing ? (
-                                  <Loader2
-                                    className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
-                                    strokeWidth={2}
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <ScanEye
-                                    className="size-4 shrink-0 text-text-200"
-                                    strokeWidth={2}
-                                    aria-hidden="true"
-                                  />
-                                )}
-                                <span className="text-[13px] font-medium leading-5">
-                                  {isReviewing ? t('Reviewing…') : t('Request review')}
-                                </span>
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <DropdownMenuItem
-                                      data-testid="menu-save-as-skill"
-                                      aria-disabled={isSaveAsSkillDisabled}
-                                      aria-busy={isSavingAsSkill}
-                                      onSelect={(event) => {
-                                        if (isSaveAsSkillDisabled) {
-                                          event.preventDefault()
-                                          return
-                                        }
-                                        onSaveAsSkill()
-                                      }}
-                                      className={cn(
-                                        'items-center gap-2',
-                                        isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
-                                      )}
-                                    >
-                                      {isSavingAsSkill ? (
-                                        <Loader2
-                                          className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
-                                          strokeWidth={2}
-                                          aria-hidden="true"
-                                        />
-                                      ) : (
-                                        <BookMarked
-                                          className="size-4 shrink-0 text-text-200"
-                                          strokeWidth={2}
-                                          aria-hidden="true"
-                                        />
-                                      )}
-                                      <span className="text-[13px] font-medium leading-5">
-                                        {isSavingAsSkill
-                                          ? t('Saving as skill…')
-                                          : t('Save as skill')}
-                                      </span>
-                                    </DropdownMenuItem>
-                                  </TooltipTrigger>
-                                  {saveAsSkillDisabledReason ? (
-                                    <TooltipContent
-                                      side="right"
-                                      className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
-                                    >
-                                      {saveAsSkillDisabledReason}
-                                    </TooltipContent>
-                                  ) : null}
-                                </Tooltip>
-                              </>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                data-testid="menu-context-window"
-                                disabled={!activeSession}
-                                onSelect={() => {
-                                  if (activeSession) setIsContextWindowOpen(true)
-                                }}
-                              >
-                                <ChartNoAxesCombined
-                                  className="mr-2 size-4 text-text-300"
-                                  aria-hidden="true"
-                                />
-                                {t('Context window')}
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                          {/* The native picker is hidden because the composer button carries the UI. */}
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            multiple
-                            className="hidden"
-                            tabIndex={-1}
-                            onChange={handleAttachmentInputChange}
-                          />
-
-                          <ComposerAgentControlsMenu
-                            profile={permissionProfile}
-                            profileState={permissionProfileState}
-                            grants={permissionGrants}
-                            autoReviewEnabled={autoReviewEnabled}
-                            memoryEnabled={memoryEnabled}
-                            delegationEnabled={delegationEnabled}
-                            delegationPending={delegationPending}
-                            delegationHasLiveAttempts={delegationHasLiveAttempts}
-                            delegationDisabledReason={delegationDisabledReason}
-                            memoryDisabledReason={memoryDisabledReason}
-                            readOnly={!canChangeAgentControls}
-                            autoReviewReadOnly={!canChangeAutoReview}
-                            memoryReadOnly={!canChangeMemory}
-                            delegationReadOnly={!canChangeDelegation}
-                            permissionProfileReadOnly={!canChangePermissionProfile}
-                            grantActionsReadOnly={false}
-                            autoReviewDisabled={!canEditDraft}
-                            enabledComputeHosts={enabledComputeHosts}
-                            selectedComputeHosts={selectedComputeHosts}
-                            onComputeHostEnabledChange={onComputeHostEnabledChange}
-                            onComputeHostSelectedChange={onComputeHostSelectedChange}
-                            onProfileChange={onPermissionProfileChange}
-                            onAutoReviewChange={onAutoReviewToggle}
-                            onMemoryChange={onMemoryToggle}
-                            onDelegationChange={onDelegationToggle}
-                            onRevokeGrant={onRevokePermissionGrant}
-                            onClearGrants={onClearPermissionGrants}
-                            showSpecialist={
-                              // Show for new conversations when a change handler is provided,
-                              // or for any existing session (so the user can always switch).
-                              (!activeSession && onSpecialistChange !== undefined) ||
-                              activeSession !== undefined
-                            }
-                            specialistId={specialistId}
-                            specialistUnavailable={specialistUnavailable}
-                            specialistReadOnly={!canChangeSpecialist}
-                            onSpecialistChange={onSpecialistChange}
-                            openRequest={agentControlsOpenRequest}
-                            computeOpenRequest={computeControlsOpenRequest}
-                          />
-
-                          <ComposerSpecialistPicker
-                            selectedId={specialistId}
-                            readOnly={!canChangeSpecialist}
-                            onChange={onSpecialistChange}
-                          />
-
-                          <ComposerComputeTargetIndicator
-                            targetProviderIds={selectedComputeHosts}
-                            onOpenTarget={() =>
-                              setComputeControlsOpenRequest((request) => request + 1)
-                            }
-                            onOpenSettings={openSettingsToComputeHost}
-                          />
-
-                          {/* Compatibility indicator for an explicit user selection while a turn is
-                            running. Approved SDK switches are represented by the durable lifecycle
-                            row and never wait for another user message. */}
-                          {specialistHasPendingSwitch ? (
-                            <span
-                              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
-                              data-testid="specialist-pending-switch-chip"
-                              aria-label={t('Specialist switch pending')}
-                            >
-                              {t('Switching in this turn')}
-                            </span>
-                          ) : null}
-
-                          <div className="flex-1" />
-
-                          {/* Context-window usage for the active session (renders nothing when the
-                            framework doesn't report usage). Sits with the model it pertains to. */}
-                          <ComposerContextUsage
-                            contextUsage={contextUsage}
-                            canCompact={canCompactContext}
-                            compacting={activeSession?.compacting === true}
-                            compactDisabledReason={compactContextDisabledReason}
-                            onCompact={onCompactContext}
-                          />
-
-                          {/* Model/provider switcher; hides itself unless more than one is configured.
-                            Grouped on the right with Send, mirroring the reference composer layout. */}
-                          <ComposerModelPicker
-                            configuration={modelConfiguration}
-                            unavailable={modelUnavailable}
-                            includeAllClaudeSubscriptions={activeSession !== undefined}
-                            onChange={changeModelConfiguration}
-                          />
-
-                          {rootTurnBusy ? (
-                            // Running sessions expose cancel instead of send to prevent overlapping turns.
-                            // Detached children can outlive a wait=false Main turn, so their durable
-                            // running aggregate keeps the same root cascade reachable after Main settles.
-                            // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
-                            // in a separate ACP session), so fixLoopActive keeps the cancel affordance
-                            // reachable across the whole loop, not just the agent-fix running turn.
-                            <div
-                              data-testid="composer-running-control-slot"
-                              className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
-                            >
-                              <button
-                                type="button"
-                                onClick={handleSubmit}
-                                disabled={!effectiveCanSend || submitMode !== 'queue'}
-                                className={composerIconButtonClassName}
-                                aria-label={t('Add message to queue')}
-                                data-testid="composer-queue-submit"
-                              >
-                                <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleStop}
-                                disabled={isStopping}
-                                className={composerCancelButtonClassName}
-                                aria-label={
-                                  isStopping ? t('Stopping run and subagents') : t('Cancel run')
-                                }
-                              >
-                                {isStopping ? (
-                                  <Loader2
-                                    className="size-3.5 animate-spin"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <Square
-                                    className="size-3.5"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                )}
-                              </button>
-                              {stopError ? (
-                                <span className="sr-only" role="alert">
-                                  {stopError}
-                                </span>
-                              ) : null}
-                              <DropdownMenu>
-                                <>
-                                  <Tooltip>
-                                    <TooltipTrigger
-                                      asChild
-                                      onFocus={(event) => {
-                                        if (
-                                          !(event.target instanceof Element) ||
-                                          !event.target.matches(':focus-visible')
-                                        ) {
-                                          event.preventDefault()
-                                        }
-                                      }}
-                                    >
-                                      <span className="inline-flex">
-                                        <DropdownMenuTrigger asChild>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
                                           <button
                                             type="button"
-                                            className={composerIconButtonClassName}
-                                            disabled={
-                                              !canStartSideChat && !canRetrySideChatHydration
-                                            }
-                                            aria-label={t('More send options')}
-                                            data-testid="running-side-chat-menu-trigger"
+                                            className={cn(
+                                              'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                              composerInteractiveTransitionClassName
+                                            )}
+                                            aria-label={t('Open PDF context {{name}}', {
+                                              name: binding.name
+                                            })}
+                                            onClick={() => openReadingContext(binding.bindingId)}
                                           >
-                                            <ChevronDown className="size-3.5" aria-hidden="true" />
+                                            <ExtensionPreservingFileName
+                                              name={binding.name}
+                                              className="min-w-0 text-[12px] font-medium leading-4"
+                                            />
                                           </button>
-                                        </DropdownMenuTrigger>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      {sideChatDisabledReason ?? t('More send options')}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </>
-                                <DropdownMenuContent side="top" align="end" className="w-64">
-                                  <DropdownMenuItem
-                                    data-testid="menu-side-chat"
-                                    disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                    onSelect={handleSideChat}
-                                    title={sideChatDisabledReason}
-                                  >
-                                    <MessageCircleMore
-                                      className="mr-2 size-4 text-text-300"
-                                      aria-hidden="true"
-                                    />
-                                    <span>
-                                      {canRetrySideChatHydration
-                                        ? t('Retry Side chat restore')
-                                        : t('Side chat')}
-                                      {sideChatDisabledReason ? (
-                                        <span className="block text-[11px] text-text-300">
-                                          {sideChatDisabledReason}
-                                        </span>
-                                      ) : null}
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {t(
+                                            'Linked to this conversation. The Agent reads only the pages needed for your question.'
+                                          )}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={attachmentRemoveButtonClassName}
+                                            disabled={pending || pdfContext.isPending}
+                                            aria-label={t('Remove PDF context {{name}}', {
+                                              name: binding.name
+                                            })}
+                                            onClick={() => unlinkReadingContext(binding.bindingId)}
+                                          >
+                                            {pending ? (
+                                              <Loader2
+                                                className="size-3.5 animate-spin"
+                                                strokeWidth={2}
+                                                aria-hidden="true"
+                                              />
+                                            ) : (
+                                              <X
+                                                className="size-3.5"
+                                                strokeWidth={2.2}
+                                                aria-hidden="true"
+                                              />
+                                            )}
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {t('Remove PDF context {{name}}', { name: binding.name })}
+                                        </TooltipContent>
+                                      </Tooltip>
                                     </span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                                  )
+                                })}
+                              </TooltipProvider>
                             </div>
-                          ) : (
-                            <>
-                              <div
-                                role="group"
-                                aria-label={t('Send message options')}
-                                className={cn(
-                                  'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
-                                  !effectiveCanSend && 'opacity-50'
-                                )}
-                              >
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={handleSubmit}
-                                      disabled={!effectiveCanSend}
-                                      className={composerSplitSendPrimaryButtonClassName}
-                                      aria-label={t('Send message')}
-                                    >
-                                      <ArrowUp
-                                        className="size-4"
-                                        strokeWidth={2.2}
-                                        aria-hidden="true"
-                                      />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top">{t('Send message')}</TooltipContent>
-                                </Tooltip>
-                                <DropdownMenu>
-                                  <Tooltip>
-                                    {/* Same focus guard as the + trigger: a dropdown close returns
-                                      programmatic focus, which must not re-open the tooltip. */}
-                                    <TooltipTrigger
-                                      asChild
-                                      onFocus={(event) => {
-                                        if (!event.currentTarget.matches(':focus-visible')) {
-                                          event.preventDefault()
-                                        }
-                                      }}
-                                    >
-                                      <DropdownMenuTrigger asChild>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          disabled={
-                                            !canPlanFirst &&
-                                            !canStartSideChat &&
-                                            !canRetrySideChatHydration &&
-                                            (!effectiveCanSend ||
-                                              !onBranchInNewSession ||
-                                              !canBranchInNewSession)
-                                          }
-                                          className={composerSplitSendMenuButtonClassName}
-                                          aria-label={t('More send options')}
-                                          aria-haspopup="menu"
-                                          data-testid="branch-send-menu-trigger"
-                                        >
-                                          <ChevronDown
-                                            className="size-3.5"
-                                            strokeWidth={2.2}
-                                            aria-hidden="true"
-                                          />
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      {t('More send options')}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                  <DropdownMenuContent side="top" align="end" className="w-56">
-                                    <DropdownMenuItem
-                                      data-testid="menu-plan-first"
-                                      disabled={!canPlanFirst}
-                                      onSelect={handlePlanFirst}
-                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                    >
-                                      <ListChecks
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      {t('Plan first')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      data-testid="menu-side-chat"
-                                      disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                      onSelect={handleSideChat}
-                                      title={sideChatDisabledReason}
-                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                    >
-                                      <MessageCircleMore
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      <span>
-                                        {canRetrySideChatHydration
-                                          ? t('Retry Side chat restore')
-                                          : t('Side chat')}
-                                        {sideChatDisabledReason ? (
-                                          <span className="block text-[11px] text-text-300">
-                                            {sideChatDisabledReason}
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      data-testid="menu-branch-in-new-session"
-                                      disabled={
-                                        !effectiveCanSend ||
-                                        !onBranchInNewSession ||
-                                        !canBranchInNewSession
-                                      }
-                                      onSelect={handleBranchInNewSession}
-                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                    >
-                                      <GitBranch
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      {t('Branch in new session')}
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            </>
-                          )}
-                          {hasRunningSubagents && !rootTurnBusy ? (
-                            <>
+                          </div>
+                        ) : null}
+                        {pdfContext.automaticAttachmentCount > 0 ? (
+                          <div
+                            data-testid="automatic-reading-suggestion"
+                            className={cn(
+                              '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
+                              pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
+                            )}
+                          >
+                            <Link2
+                              className="size-4 shrink-0 text-primary"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                            <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
+                              {t('Reading')}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-text-300">
+                              {t('{{count}} PDFs will be linked when sent', {
+                                count: pdfContext.automaticAttachmentCount,
+                                defaultValue_one: '{{count}} PDF will be linked when sent'
+                              })}
+                            </span>
+                            <TooltipProvider delayDuration={800}>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button
                                     type="button"
-                                    onClick={handleStopSubagents}
-                                    disabled={isStopping}
-                                    className={composerCancelButtonClassName}
-                                    aria-label={
-                                      isStopping ? t('Stopping subagents') : t('Stop subagents')
-                                    }
+                                    aria-label={t('Keep as attachments')}
+                                    onClick={dismissAutomaticReading}
+                                    className={cn(
+                                      'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                      composerInteractiveTransitionClassName
+                                    )}
                                   >
-                                    {isStopping ? (
-                                      <Loader2
-                                        className="size-3.5 animate-spin"
-                                        aria-hidden="true"
-                                      />
+                                    <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  {t('Keep as attachments')}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        ) : null}
+                        <ComposerMessageQueueContent
+                          {...messageQueue}
+                          expanded={messageQueueExpanded}
+                        />
+                        {isWslSetupDraft || activeSession?.wslSetup === true ? (
+                          <div
+                            className="flex items-center justify-between gap-3 rounded-lg border border-status-info-accent/30 bg-status-info-surface px-3 py-2 text-xs text-status-info-foreground"
+                            data-testid="wsl-setup-conversation-actions"
+                          >
+                            <span>
+                              {isWslSetupDraft
+                                ? t(
+                                    'This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.'
+                                  )
+                                : t('This is a guided WSL2 setup conversation.')}
+                            </span>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {isWslSetupDraft ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={discardWslSetupDraft}
+                                >
+                                  {t('Discard setup draft')}
+                                </Button>
+                              ) : null}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  useSettingsStore.getState().openSettingsToPanel('runtimes')
+                                }
+                              >
+                                {t('Check and activate in Settings')}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {composer.view.queuedEdit ? (
+                          <div className="flex items-center justify-between gap-2 text-xs text-text-300">
+                            <span>
+                              {composer.view.queuedEdit.revisionMessageId
+                                ? t('Editing a historical revision')
+                                : t('Editing a queued message')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={composer.actions.cancelQueuedEdit}
+                              className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              disabled={!canEditDraft}
+                            >
+                              {t('Exit queued editing')}
+                            </button>
+                          </div>
+                        ) : null}
+                        <AnnotationTransferSource
+                          sourceId={annotationSourceId}
+                          projectId={activeSession?.projectId ?? ''}
+                          parentSessionId={activeSession?.id ?? ''}
+                          annotations={annotations}
+                          disabled={Boolean(openSideChatReason)}
+                          onRemove={onRemoveAnnotation}
+                        >
+                          <AnnotationDraftCards
+                            annotations={annotations}
+                            disabled={!canEditDraft}
+                            onReveal={requestAnnotationReveal}
+                            onUpdateNote={(id, note) => {
+                              const error = onUpdateAnnotationNote(id, note)
+                              if (error) onSetComposerError(annotationValidationMessage(error, t))
+                              else onSetComposerError(null)
+                              return error
+                            }}
+                            onRemove={(id) => {
+                              onRemoveAnnotation(id)
+                              const validation = validateAnnotations(
+                                annotations.filter((annotation) => annotation.id !== id),
+                                docToText(draftDoc)
+                              )
+                              onSetComposerError(
+                                validation ? annotationValidationMessage(validation, t) : null
+                              )
+                            }}
+                          />
+                        </AnnotationTransferSource>
+                        <div className="flex flex-col gap-2">
+                          {attachments.length > 0 || attachmentTransfers.length > 0 ? (
+                            <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
+                              {/* Composer attachments remain removable until the prompt is submitted. */}
+                              {attachments.map((attachment) => {
+                                const AttachmentIcon = attachment.mimeType?.startsWith('image/')
+                                  ? ImageIcon
+                                  : FileText
+                                const attachmentName = attachment.originalName || attachment.name
+                                const pastedText = pastedTextByAttachmentId.get(attachment.id)
+
+                                return (
+                                  <div
+                                    key={attachment.id}
+                                    id={
+                                      pastedText
+                                        ? pastedTextAttachmentDomId(pastedText.id)
+                                        : undefined
+                                    }
+                                    data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                    data-state={pastedText ? 'success' : undefined}
+                                    className={attachmentChipClassName}
+                                  >
+                                    <AttachmentIcon
+                                      className="size-4 shrink-0 text-text-300"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                    {pastedText ? (
+                                      <button
+                                        type="button"
+                                        className={pastedTextRestoreButtonClassName}
+                                        disabled={!canEditDraft}
+                                        onClick={() => onRestorePastedText(pastedText.id)}
+                                      >
+                                        <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
+                                          {pastedTextPreviewName(pastedText.text)}
+                                        </span>
+                                        <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
+                                          {t('Show in text field')}
+                                          <ChevronRight
+                                            className="size-3 shrink-0"
+                                            strokeWidth={2}
+                                            aria-hidden="true"
+                                          />
+                                        </span>
+                                      </button>
                                     ) : (
-                                      <Square
+                                      <div className="min-w-0 flex-1">
+                                        <ExtensionPreservingFileName
+                                          name={attachmentName}
+                                          className="text-[12px] leading-4"
+                                        />
+                                        <div className="truncate text-[11px] leading-3 text-text-300">
+                                          {formatAttachmentSize(attachment.size)}
+                                        </div>
+                                      </div>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className={attachmentRemoveButtonClassName}
+                                      disabled={!canEditDraft}
+                                      aria-label={t('Remove attachment {{name}}', {
+                                        name: attachmentName
+                                      })}
+                                      onClick={() => handleRemoveAttachment(attachment)}
+                                    >
+                                      <X
                                         className="size-3.5"
                                         strokeWidth={2.2}
                                         aria-hidden="true"
                                       />
-                                    )}
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  {isStopping ? t('Stopping subagents') : t('Stop subagents')}
-                                </TooltipContent>
-                              </Tooltip>
-                            </>
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                              {attachmentTransfers.map((transfer) => {
+                                const AttachmentIcon = transfer.mimeType?.startsWith('image/')
+                                  ? ImageIcon
+                                  : FileText
+                                const percent =
+                                  transfer.totalBytes === 0
+                                    ? 100
+                                    : Math.min(
+                                        100,
+                                        Math.round(
+                                          (transfer.receivedBytes / transfer.totalBytes) * 100
+                                        )
+                                      )
+                                const statusLabel =
+                                  transfer.status === 'queued'
+                                    ? t('Queued')
+                                    : transfer.status === 'cancelling'
+                                      ? t('Cancelling…')
+                                      : transfer.status === 'error'
+                                        ? transfer.error || t('Upload failed')
+                                        : t('{{percent}}% of {{size}}', {
+                                            percent,
+                                            size: formatAttachmentSize(transfer.totalBytes)
+                                          })
+                                const pastedText = transfer.pastedTextId
+                                  ? pastedTextById.get(transfer.pastedTextId)
+                                  : undefined
+
+                                return (
+                                  <div
+                                    key={transfer.transferId}
+                                    id={
+                                      pastedText
+                                        ? pastedTextAttachmentDomId(pastedText.id)
+                                        : undefined
+                                    }
+                                    data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                    data-state={pastedText ? transfer.status : undefined}
+                                    className={attachmentChipClassName}
+                                  >
+                                    <AttachmentIcon
+                                      className="size-4 shrink-0 text-text-300"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      {pastedText ? (
+                                        <div className="truncate text-[12px] leading-4">
+                                          {pastedTextPreviewName(pastedText.text)}
+                                        </div>
+                                      ) : (
+                                        <ExtensionPreservingFileName
+                                          name={transfer.name}
+                                          className="text-[12px] leading-4"
+                                        />
+                                      )}
+                                      <div
+                                        className={`truncate text-[11px] leading-3 ${
+                                          transfer.status === 'error'
+                                            ? 'text-red-600'
+                                            : 'text-text-300'
+                                        }`}
+                                        title={transfer.errorDetail ?? statusLabel}
+                                      >
+                                        {statusLabel}
+                                      </div>
+                                      {transfer.status === 'uploading' ? (
+                                        <div
+                                          className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
+                                          role="progressbar"
+                                          aria-label={t('Uploading {{name}}', {
+                                            name: transfer.name
+                                          })}
+                                          aria-valuemin={0}
+                                          aria-valuemax={100}
+                                          aria-valuenow={percent}
+                                        >
+                                          <div
+                                            className="h-full rounded-full bg-primary transition-[width]"
+                                            style={{ width: `${percent}%` }}
+                                          />
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    {transfer.canRetry ? (
+                                      <button
+                                        type="button"
+                                        className={attachmentRemoveButtonClassName}
+                                        disabled={!canEditDraft}
+                                        aria-label={t('Retry attachment {{name}}', {
+                                          name: transfer.name
+                                        })}
+                                        onClick={() => onRetryAttachmentTransfer(transfer)}
+                                      >
+                                        <RotateCcw className="size-3.5" aria-hidden="true" />
+                                      </button>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      className={attachmentRemoveButtonClassName}
+                                      disabled={!canEditDraft || transfer.status === 'cancelling'}
+                                      aria-label={t(
+                                        transfer.status === 'error'
+                                          ? 'Remove failed attachment {{name}}'
+                                          : 'Cancel attachment {{name}}',
+                                        { name: transfer.name }
+                                      )}
+                                      onClick={() => handleCancelAttachmentTransfer(transfer)}
+                                    >
+                                      <X
+                                        className="size-3.5"
+                                        strokeWidth={2.2}
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                            </div>
                           ) : null}
-                          {stopError ? (
-                            <span
-                              className="max-w-48 truncate text-[11px] text-danger-000"
-                              role="alert"
-                              title={stopError}
-                            >
-                              {stopError}
-                            </span>
-                          ) : null}
+
+                          <div className="relative min-w-0 flex-1">
+                            {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
+                            <ComposerEditor
+                              doc={draftDoc}
+                              onDocChange={onValidatedDraftDocChange}
+                              onSubmit={handleSubmit}
+                              onPaste={handleMessageDraftPaste}
+                              onLongTextPaste={onStagePastedText}
+                              onLocatePastedText={handleLocatePastedText}
+                              onUndo={onUndo}
+                              onRedo={onRedo}
+                              disabled={!canEditDraft}
+                              placeholder={t(
+                                'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
+                                {
+                                  shortcut: globalSearchShortcut
+                                }
+                              )}
+                              ariaLabel={t('Ask anything')}
+                              allowedSkillIds={allowedSkillIds}
+                              onSelectWslSetup={() => void handleWslSetupCommand()}
+                              isHistoryBrowsing={isHistoryBrowsing}
+                              historyStatus={historyStatus}
+                              onNavigateHistory={onNavigateHistory}
+                              mentionPreviewContext={
+                                activeSession
+                                  ? {
+                                      sessionId: activeSession.id,
+                                      projectId: activeSession.projectId
+                                    }
+                                  : undefined
+                              }
+                              focusRequest={composerFocusKey}
+                              restoreFocusRequest={composerRestoreFocusRequest}
+                              caretRequest={ordinaryComposerBlocked ? undefined : caretRequest}
+                            />
+                          </div>
+
+                          <div className="@container/composer flex items-center gap-1">
+                            {/* The + button opens a dropdown for attachments and session actions. */}
+                            <DropdownMenu>
+                              <>
+                                <Tooltip>
+                                  {/* Radix opens tooltips on focus as well as hover, and a dropdown
+                                  close returns programmatic focus to the trigger — which would
+                                  re-open the tooltip with the pointer elsewhere. Only real keyboard
+                                  focus (":focus-visible") may open it (radix-ui/primitives#2248). */}
+                                  <TooltipTrigger
+                                    asChild
+                                    onFocus={(event) => {
+                                      if (!event.currentTarget.matches(':focus-visible')) {
+                                        event.preventDefault()
+                                      }
+                                    }}
+                                  >
+                                    <DropdownMenuTrigger asChild>
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          isUploadingAttachments ||
+                                          (!canEditDraft && !activeBranchPlan && !activeSession)
+                                        }
+                                        className={composerIconButtonClassName}
+                                        aria-label={
+                                          activeBranchPlan
+                                            ? t(
+                                                'Add attachment, save as skill, view context window, view plan, or request review'
+                                              )
+                                            : t(
+                                                'Add attachment, save as skill, view context window, or request review'
+                                              )
+                                        }
+                                        data-testid="composer-plus-trigger"
+                                      >
+                                        <Plus
+                                          className="size-4"
+                                          strokeWidth={2}
+                                          aria-hidden="true"
+                                        />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    {activeBranchPlan
+                                      ? t(
+                                          'Add attachment, save as skill, view context window, view plan, or request review'
+                                        )
+                                      : t(
+                                          'Add attachment, save as skill, view context window, or request review'
+                                        )}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </>
+                              <DropdownMenuContent side="top" align="start" className="w-56">
+                                <>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <DropdownMenuItem
+                                        data-testid="menu-attach-files"
+                                        disabled={!canEditDraft || isUploadingAttachments}
+                                        onSelect={() => fileInputRef.current?.click()}
+                                      >
+                                        <FileText
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        <span className="flex-1">{t('Attach files')}</span>
+                                        <CircleHelp
+                                          className="size-3.5 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                      </DropdownMenuItem>
+                                    </TooltipTrigger>
+                                    <TooltipContent
+                                      side="right"
+                                      className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
+                                      data-testid="attachment-limits"
+                                    >
+                                      {attachmentLimitsText(t)}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </>
+                                <div
+                                  className={cn(
+                                    'px-2 py-1.5 text-[11px] leading-4 text-text-300',
+                                    canEditDraft && !isUploadingAttachments
+                                      ? 'hidden [@media(pointer:coarse)]:block'
+                                      : 'block'
+                                  )}
+                                  data-testid="attachment-limits-touch"
+                                >
+                                  {attachmentLimitsText(t)}
+                                </div>
+                                <ComposerYourFilesMenu
+                                  onInsertFileReference={handleInsertFileReference}
+                                />
+                                <DropdownMenuSeparator />
+                                {activeSession && activeBranchPlan ? (
+                                  <>
+                                    <DropdownMenuItem
+                                      data-testid="menu-view-plan"
+                                      onSelect={() => {
+                                        usePreviewWorkbenchStore
+                                          .getState()
+                                          .upsertAndActivateItem(
+                                            createSessionPlanPreviewItem(
+                                              activeSession.id,
+                                              activeSession.projectId,
+                                              activeBranchPlan.artifactVersionId
+                                            )
+                                          )
+                                      }}
+                                    >
+                                      <BookOpen
+                                        className="mr-2 size-4 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                      <span className="flex-1">{t('View plan')}</span>
+                                      <span className="text-[11px] text-text-300">
+                                        {activeBranchPlan.counts.completed}/
+                                        {activeBranchPlan.counts.steps}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                  </>
+                                ) : null}
+                                <DropdownMenuItem
+                                  data-testid="menu-request-review"
+                                  disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}
+                                  aria-busy={isReviewing || undefined}
+                                  onSelect={() => {
+                                    if (canEditDraft && !isRequestReviewDisabled && !isReviewing) {
+                                      onRequestReview()
+                                    }
+                                  }}
+                                  className="items-center gap-2"
+                                >
+                                  {isReviewing ? (
+                                    <Loader2
+                                      className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <ScanEye
+                                      className="size-4 shrink-0 text-text-200"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                  <span className="text-[13px] font-medium leading-5">
+                                    {isReviewing ? t('Reviewing…') : t('Request review')}
+                                  </span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <DropdownMenuItem
+                                        data-testid="menu-save-as-skill"
+                                        aria-disabled={isSaveAsSkillDisabled}
+                                        aria-busy={isSavingAsSkill}
+                                        onSelect={(event) => {
+                                          if (isSaveAsSkillDisabled) {
+                                            event.preventDefault()
+                                            return
+                                          }
+                                          onSaveAsSkill()
+                                        }}
+                                        className={cn(
+                                          'items-center gap-2',
+                                          isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
+                                        )}
+                                      >
+                                        {isSavingAsSkill ? (
+                                          <Loader2
+                                            className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                            strokeWidth={2}
+                                            aria-hidden="true"
+                                          />
+                                        ) : (
+                                          <BookMarked
+                                            className="size-4 shrink-0 text-text-200"
+                                            strokeWidth={2}
+                                            aria-hidden="true"
+                                          />
+                                        )}
+                                        <span className="text-[13px] font-medium leading-5">
+                                          {isSavingAsSkill
+                                            ? t('Saving as skill…')
+                                            : t('Save as skill')}
+                                        </span>
+                                      </DropdownMenuItem>
+                                    </TooltipTrigger>
+                                    {saveAsSkillDisabledReason ? (
+                                      <TooltipContent
+                                        side="right"
+                                        className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
+                                      >
+                                        {saveAsSkillDisabledReason}
+                                      </TooltipContent>
+                                    ) : null}
+                                  </Tooltip>
+                                </>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  data-testid="menu-context-window"
+                                  disabled={!activeSession}
+                                  onSelect={() => {
+                                    if (activeSession) setIsContextWindowOpen(true)
+                                  }}
+                                >
+                                  <ChartNoAxesCombined
+                                    className="mr-2 size-4 text-text-300"
+                                    aria-hidden="true"
+                                  />
+                                  {t('Context window')}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            {/* The native picker is hidden because the composer button carries the UI. */}
+                            <input
+                              ref={fileInputRef}
+                              type="file"
+                              multiple
+                              className="hidden"
+                              tabIndex={-1}
+                              onChange={handleAttachmentInputChange}
+                            />
+
+                            <ComposerAgentControlsMenu
+                              profile={permissionProfile}
+                              profileState={permissionProfileState}
+                              grants={permissionGrants}
+                              autoReviewEnabled={autoReviewEnabled}
+                              memoryEnabled={memoryEnabled}
+                              delegationEnabled={delegationEnabled}
+                              delegationPending={delegationPending}
+                              delegationHasLiveAttempts={delegationHasLiveAttempts}
+                              delegationDisabledReason={delegationDisabledReason}
+                              memoryDisabledReason={memoryDisabledReason}
+                              readOnly={!canChangeAgentControls}
+                              autoReviewReadOnly={!canChangeAutoReview}
+                              memoryReadOnly={!canChangeMemory}
+                              delegationReadOnly={!canChangeDelegation}
+                              permissionProfileReadOnly={!canChangePermissionProfile}
+                              grantActionsReadOnly={false}
+                              autoReviewDisabled={!canEditDraft}
+                              enabledComputeHosts={enabledComputeHosts}
+                              selectedComputeHosts={selectedComputeHosts}
+                              onComputeHostEnabledChange={onComputeHostEnabledChange}
+                              onComputeHostSelectedChange={onComputeHostSelectedChange}
+                              onProfileChange={onPermissionProfileChange}
+                              onAutoReviewChange={onAutoReviewToggle}
+                              onMemoryChange={onMemoryToggle}
+                              onDelegationChange={onDelegationToggle}
+                              onRevokeGrant={onRevokePermissionGrant}
+                              onClearGrants={onClearPermissionGrants}
+                              showSpecialist={
+                                // Show for new conversations when a change handler is provided,
+                                // or for any existing session (so the user can always switch).
+                                (!activeSession && onSpecialistChange !== undefined) ||
+                                activeSession !== undefined
+                              }
+                              specialistId={specialistId}
+                              specialistUnavailable={specialistUnavailable}
+                              specialistReadOnly={!canChangeSpecialist}
+                              onSpecialistChange={onSpecialistChange}
+                              openRequest={agentControlsOpenRequest}
+                              computeOpenRequest={computeControlsOpenRequest}
+                            />
+
+                            <ComposerSpecialistPicker
+                              selectedId={specialistId}
+                              readOnly={!canChangeSpecialist}
+                              onChange={onSpecialistChange}
+                            />
+
+                            <ComposerComputeTargetIndicator
+                              targetProviderIds={selectedComputeHosts}
+                              onOpenTarget={() =>
+                                setComputeControlsOpenRequest((request) => request + 1)
+                              }
+                              onOpenSettings={openSettingsToComputeHost}
+                            />
+
+                            {/* Compatibility indicator for an explicit user selection while a turn is
+                            running. Approved SDK switches are represented by the durable lifecycle
+                            row and never wait for another user message. */}
+                            {specialistHasPendingSwitch ? (
+                              <span
+                                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
+                                data-testid="specialist-pending-switch-chip"
+                                aria-label={t('Specialist switch pending')}
+                              >
+                                {t('Switching in this turn')}
+                              </span>
+                            ) : null}
+
+                            <div className="flex-1" />
+
+                            {/* Context-window usage for the active session (renders nothing when the
+                            framework doesn't report usage). Sits with the model it pertains to. */}
+                            <ComposerContextUsage
+                              contextUsage={contextUsage}
+                              canCompact={canCompactContext}
+                              compacting={activeSession?.compacting === true}
+                              compactDisabledReason={compactContextDisabledReason}
+                              onCompact={onCompactContext}
+                            />
+
+                            {/* Model/provider switcher; hides itself unless more than one is configured.
+                            Grouped on the right with Send, mirroring the reference composer layout. */}
+                            <ComposerModelPicker
+                              configuration={modelConfiguration}
+                              unavailable={modelUnavailable}
+                              includeAllClaudeSubscriptions={activeSession !== undefined}
+                              onChange={changeModelConfiguration}
+                            />
+
+                            {rootTurnBusy ? (
+                              // Running sessions expose cancel instead of send to prevent overlapping turns.
+                              // Detached children can outlive a wait=false Main turn, so their durable
+                              // running aggregate keeps the same root cascade reachable after Main settles.
+                              // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
+                              // in a separate ACP session), so fixLoopActive keeps the cancel affordance
+                              // reachable across the whole loop, not just the agent-fix running turn.
+                              <div
+                                data-testid="composer-running-control-slot"
+                                className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={handleSubmit}
+                                  disabled={!effectiveCanSend || submitMode !== 'queue'}
+                                  className={composerIconButtonClassName}
+                                  aria-label={t('Add message to queue')}
+                                  data-testid="composer-queue-submit"
+                                >
+                                  <ArrowUp
+                                    className="size-4"
+                                    strokeWidth={2.2}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleStop}
+                                  disabled={isStopping}
+                                  className={composerCancelButtonClassName}
+                                  aria-label={
+                                    isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                                  }
+                                >
+                                  {isStopping ? (
+                                    <Loader2
+                                      className="size-3.5 animate-spin"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <Square
+                                      className="size-3.5"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                </button>
+                                {stopError ? (
+                                  <span className="sr-only" role="alert">
+                                    {stopError}
+                                  </span>
+                                ) : null}
+                                <DropdownMenu>
+                                  <>
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        asChild
+                                        onFocus={(event) => {
+                                          if (
+                                            !(event.target instanceof Element) ||
+                                            !event.target.matches(':focus-visible')
+                                          ) {
+                                            event.preventDefault()
+                                          }
+                                        }}
+                                      >
+                                        <span className="inline-flex">
+                                          <DropdownMenuTrigger asChild>
+                                            <button
+                                              type="button"
+                                              className={composerIconButtonClassName}
+                                              disabled={
+                                                !canOpenSideChat &&
+                                                !canStartSideChat &&
+                                                !canRetrySideChatHydration
+                                              }
+                                              aria-label={t('More send options')}
+                                              data-testid="running-side-chat-menu-trigger"
+                                            >
+                                              <ChevronDown
+                                                className="size-3.5"
+                                                aria-hidden="true"
+                                              />
+                                            </button>
+                                          </DropdownMenuTrigger>
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">
+                                        {sideChatDisabledReason ?? t('More send options')}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </>
+                                  <DropdownMenuContent side="top" align="end" className="w-64">
+                                    {sideChatMenuItems}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            ) : (
+                              <>
+                                <div
+                                  role="group"
+                                  aria-label={t('Send message options')}
+                                  className={cn(
+                                    'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
+                                    !effectiveCanSend && !canOpenSendOptions && 'opacity-50'
+                                  )}
+                                >
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={handleSubmit}
+                                        disabled={!effectiveCanSend}
+                                        className={cn(
+                                          composerSplitSendPrimaryButtonClassName,
+                                          canOpenSendOptions && 'disabled:opacity-50'
+                                        )}
+                                        aria-label={t('Send message')}
+                                      >
+                                        <ArrowUp
+                                          className="size-4"
+                                          strokeWidth={2.2}
+                                          aria-hidden="true"
+                                        />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">{t('Send message')}</TooltipContent>
+                                  </Tooltip>
+                                  <DropdownMenu>
+                                    <Tooltip>
+                                      {/* Same focus guard as the + trigger: a dropdown close returns
+                                      programmatic focus, which must not re-open the tooltip. */}
+                                      <TooltipTrigger
+                                        asChild
+                                        onFocus={(event) => {
+                                          if (!event.currentTarget.matches(':focus-visible')) {
+                                            event.preventDefault()
+                                          }
+                                        }}
+                                      >
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            disabled={!canOpenSendOptions}
+                                            className={cn(
+                                              composerSplitSendMenuButtonClassName,
+                                              effectiveCanSend && 'disabled:opacity-50'
+                                            )}
+                                            aria-label={t('More send options')}
+                                            aria-haspopup="menu"
+                                            data-testid="branch-send-menu-trigger"
+                                          >
+                                            <ChevronDown
+                                              className="size-3.5"
+                                              strokeWidth={2.2}
+                                              aria-hidden="true"
+                                            />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">
+                                        {t('More send options')}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <DropdownMenuContent side="top" align="end" className="w-56">
+                                      <DropdownMenuItem
+                                        data-testid="menu-plan-first"
+                                        disabled={!canPlanFirst}
+                                        onSelect={handlePlanFirst}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <ListChecks
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Plan first')}
+                                      </DropdownMenuItem>
+                                      {sideChatMenuItems}
+                                      <DropdownMenuItem
+                                        data-testid="menu-branch-in-new-session"
+                                        disabled={
+                                          !effectiveCanSend ||
+                                          !onBranchInNewSession ||
+                                          !canBranchInNewSession
+                                        }
+                                        onSelect={handleBranchInNewSession}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <GitBranch
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Branch in new session')}
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </>
+                            )}
+                            {hasRunningSubagents && !rootTurnBusy ? (
+                              <>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={handleStopSubagents}
+                                      disabled={isStopping}
+                                      className={composerCancelButtonClassName}
+                                      aria-label={
+                                        isStopping ? t('Stopping subagents') : t('Stop subagents')
+                                      }
+                                    >
+                                      {isStopping ? (
+                                        <Loader2
+                                          className="size-3.5 animate-spin"
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <Square
+                                          className="size-3.5"
+                                          strokeWidth={2.2}
+                                          aria-hidden="true"
+                                        />
+                                      )}
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {isStopping ? t('Stopping subagents') : t('Stop subagents')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </>
+                            ) : null}
+                            {stopError ? (
+                              <span
+                                className="max-w-48 whitespace-normal [overflow-wrap:anywhere] text-[11px] text-danger-000"
+                                role="alert"
+                                title={stopError}
+                              >
+                                {stopError}
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    </form>
+                      </form>
+                    )}
                   </TooltipProvider>
                 </div>
               </div>

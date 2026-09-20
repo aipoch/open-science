@@ -1,0 +1,274 @@
+import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parsePowerShellSearchCommands } from './powershell-search-parser'
+import { NotebookShellProcessAdapter } from './shell-process'
+import { assertShellSearchScope } from './shell-search-scope'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+
+vi.mock('./powershell-search-parser', () => ({ parsePowerShellSearchCommands: vi.fn() }))
+
+// Portable contract fixtures for host admission; the Windows suite separately runs the OS parser.
+describe('PowerShell search admission contract', () => {
+  let root: string
+  let cwd: string
+  beforeEach(async () => {
+    vi.mocked(parsePowerShellSearchCommands).mockReset()
+    root = await mkdtemp(join(tmpdir(), 'powershell-search-scope-'))
+    cwd = join(root, 'workspace')
+    await mkdir(cwd)
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it.each([
+    { name: 'Get-ChildItem', arguments: ['-LiteralPath', '..', '-Recurse'] },
+    { name: 'gci', arguments: ['-Path', null, '-Recurse'] },
+    { name: 'dir', arguments: ['../outside', '-Recurse'] },
+    { name: 'where.exe', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'C:\\Windows\\System32\\where.exe', arguments: ['/r', '..', 'chart.png'] },
+    { name: './where', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'where.exe', arguments: ['chart.png'] },
+    { name: 'where', arguments: ['/r', '..', 'chart.png'] },
+    { name: 'rg.exe', arguments: ['--ignore-file', '../outside/ignore', 'needle', '.'] },
+    { name: 'rg.exe', arguments: ['-f', 'C:patterns', '.'] },
+    { name: 'Get-ChildItem', arguments: ['HKLM:\\', '-Recurse'] },
+    { name: 'Get-ChildItem', arguments: ['C:..', '-Recurse'] },
+    { name: 'Get-ChildItem', arguments: ['FileSystem::C:\\', '-Recurse'] },
+    { name: 'cmd.exe', arguments: ['/c', 'dir /s C:\\'] },
+    {
+      name: 'Start-Process',
+      arguments: ['powershell.exe', '-ArgumentList', '-Command', 'gci C:\\', '-Wait']
+    },
+    { name: 'saps', arguments: ['powershell.exe'] },
+    { name: 'start', arguments: ['powershell.exe'] },
+    {
+      name: 'New-Item',
+      arguments: ['-ItemType', 'SymbolicLink', '-Path', './escape', '-Target', 'C:\\']
+    },
+    { name: 'ni', arguments: ['-Type', 'Junction', '-Path', './escape', '-Target', 'C:\\'] },
+    { name: 'New-Item', arguments: ['Alias:x', '-Value', 'Get-ChildItem'] },
+    { name: 'ni', arguments: ['Alias:x', '-Value', 'Get-ChildItem'] },
+    { name: 'Microsoft.PowerShell.Management\\Set-Item', arguments: ['Function:x', null] },
+    { name: 'si', arguments: [null, 'Get-ChildItem'] },
+    { name: 'Copy-Item', arguments: ['Alias:gci', 'Alias:x'] },
+    { name: 'Remove-Item', arguments: ['Microsoft.PowerShell.Core\\Alias::where'] },
+    { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '..'] },
+    { name: null, arguments: ['..'] }
+  ])('rejects $name before starting the workload', async (entry) => {
+    vi.mocked(parsePowerShellSearchCommands).mockResolvedValue([entry])
+    const wrap = vi.fn().mockRejectedValue(new Error('must not reach sandbox'))
+    const adapter = new NotebookShellProcessAdapter('win32', { wrap })
+    await expect(
+      adapter.prepare({
+        command: 'fixture source',
+        cwd,
+        handoffDir: cwd,
+        runtimeRoot: root,
+        environment: {},
+        sessionId: 's',
+        projectId: 'p'
+      })
+    ).rejects.toThrow(/search scope denied/i)
+    expect(wrap).not.toHaveBeenCalled()
+  })
+
+  it('checks literal scoped paths and preserves normal commands', async () => {
+    vi.mocked(parsePowerShellSearchCommands).mockResolvedValue([
+      { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '-Recurse', '-Filter', '*.png'] },
+      { name: 'where', arguments: ['Name', '-like', '*.csv'] },
+      { name: 'WHERE', arguments: [null] },
+      { name: 'where.exe', arguments: ['/r', '.', 'chart.png'] },
+      { name: 'rg.exe', arguments: ['--ignore-file=./ignore', 'needle', '.'] },
+      { name: 'New-Item', arguments: ['./data', '-ItemType', 'Directory'] },
+      { name: 'Set-Item', arguments: ['./note.txt', '-Value', 'ordinary text'] },
+      { name: 'Write-Output', arguments: ['documentation containing find /'] }
+    ])
+    const sentinel = new Error('stopped before workload')
+    const wrap = vi.fn().mockRejectedValue(sentinel)
+    const adapter = new NotebookShellProcessAdapter('win32', { wrap })
+    await expect(
+      adapter.prepare({
+        command: 'fixture source',
+        cwd,
+        handoffDir: cwd,
+        runtimeRoot: root,
+        environment: {},
+        sessionId: 's',
+        projectId: 'p'
+      })
+    ).rejects.toBe(sentinel)
+    expect(wrap).toHaveBeenCalledOnce()
+  })
+})
+
+describe('assertShellSearchScope with granted roots', () => {
+  let root: string
+  let cwd: string
+  let grantedDir: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'granted-roots-test-'))
+    cwd = join(root, 'workspace')
+    grantedDir = join(root, 'granted')
+    await mkdir(cwd)
+    await mkdir(grantedDir)
+  })
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('allows search in granted root directory with absolute path', async () => {
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+    await expect(
+      assertShellSearchScope(`ls ${grantedDir}`, cwd, grantedRoots)
+    ).resolves.toBeUndefined()
+  })
+
+  it('allows search in subdirectory of granted root with absolute path', async () => {
+    const subdir = join(grantedDir, 'subdir')
+    await mkdir(subdir)
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+    await expect(
+      assertShellSearchScope(`find ${subdir} -name "*.txt"`, cwd, grantedRoots)
+    ).resolves.toBeUndefined()
+  })
+
+  it('denies search outside both cwd and granted roots with absolute path', async () => {
+    const outside = join(root, 'outside')
+    await mkdir(outside)
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+    // Use platform='linux' to force bash parsing on all platforms
+    await expect(
+      assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots, 'linux')
+    ).rejects.toThrow(/outside the session cwd/)
+  })
+
+  it('allows search with rw access granted root with absolute path', async () => {
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'rw' }
+    ]
+    await expect(
+      assertShellSearchScope(`grep -r pattern ${grantedDir}`, cwd, grantedRoots)
+    ).resolves.toBeUndefined()
+  })
+
+  it('handles granted root that does not exist gracefully', async () => {
+    const nonexistent = join(root, 'nonexistent')
+    const outside = join(root, 'outside')
+    await mkdir(outside)
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: nonexistent, name: 'Nonexistent', access: 'ro' }
+    ]
+    // Should not crash, should still deny access to outside
+    // Use platform='linux' to force bash parsing on all platforms
+    await expect(
+      assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots, 'linux')
+    ).rejects.toThrow(/outside the session cwd/)
+  })
+
+  it('allows search when multiple granted roots exist with absolute paths', async () => {
+    const granted2 = join(root, 'granted2')
+    await mkdir(granted2)
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted1', access: 'ro' },
+      { id: 'root-2', path: granted2, name: 'Granted2', access: 'rw' }
+    ]
+    await expect(
+      assertShellSearchScope(`ls ${grantedDir}`, cwd, grantedRoots)
+    ).resolves.toBeUndefined()
+    await expect(
+      assertShellSearchScope(`ls ${granted2}`, cwd, grantedRoots)
+    ).resolves.toBeUndefined()
+  })
+
+  it('still allows search in session cwd', async () => {
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+    await expect(assertShellSearchScope('ls .', cwd, grantedRoots)).resolves.toBeUndefined()
+  })
+
+  it('allows search in cwd subdirectory with granted roots present', async () => {
+    const cwdSub = join(cwd, 'subdir')
+    await mkdir(cwdSub)
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+    ]
+    await expect(
+      assertShellSearchScope('find ./subdir -type f', cwd, grantedRoots)
+    ).resolves.toBeUndefined()
+  })
+
+  it.skipIf(process.platform !== 'win32' || !process.env.OPEN_SCIENCE_WSL_DISTRO)(
+    'maps WSL2 guest paths to Windows host paths before validation',
+    async () => {
+      // Simulate WSL2 scenario on Windows: granted root is C:\data, command uses /mnt/c/data
+      const root = await mkdtemp(join(tmpdir(), 'wsl2-test-'))
+      const cwd = join(root, 'workspace')
+      const grantedDir = join(root, 'granted')
+      await mkdir(cwd)
+      await mkdir(grantedDir)
+
+      const grantedRoots: GrantedLocalRoot[] = [
+        { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+      ]
+
+      // Simulate the path as it would appear in WSL2 bash command
+      // On Windows, grantedDir might be C:\...\granted, but in WSL2 it's /mnt/c/.../granted
+      const wsl2Path = grantedDir
+        .replace(/^([A-Z]):\\/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
+        .replace(/\\/g, '/')
+
+      // Should work with WSL2 runtime binding
+      await expect(
+        assertShellSearchScope(`ls ${wsl2Path}`, cwd, grantedRoots, 'linux', undefined, {
+          kind: 'wsl2-bash'
+        })
+      ).resolves.toBeUndefined()
+
+      // Test that /mnt/c (drive root without path) is rejected unless granted
+      await expect(
+        assertShellSearchScope(`ls /mnt/c`, cwd, grantedRoots, 'linux', undefined, {
+          kind: 'wsl2-bash'
+        })
+      ).rejects.toThrow(/outside the session cwd/)
+    }
+  )
+
+  it.skipIf(process.platform !== 'win32' || !process.env.OPEN_SCIENCE_WSL_DISTRO)(
+    'maps WSL2 guest paths in cd commands before validation',
+    async () => {
+      // Test that cd /mnt/c/... && find . works correctly
+      const root = await mkdtemp(join(tmpdir(), 'wsl2-cd-test-'))
+      const cwd = join(root, 'workspace')
+      const grantedDir = join(root, 'granted')
+      await mkdir(cwd)
+      await mkdir(grantedDir)
+
+      const grantedRoots: GrantedLocalRoot[] = [
+        { id: 'root-1', path: grantedDir, name: 'Granted', access: 'ro' }
+      ]
+
+      const wsl2Path = grantedDir
+        .replace(/^([A-Z]):\\/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
+        .replace(/\\/g, '/')
+
+      // Should work: cd to WSL2 path then search relative
+      await expect(
+        assertShellSearchScope(`cd ${wsl2Path} && find .`, cwd, grantedRoots, 'linux', undefined, {
+          kind: 'wsl2-bash'
+        })
+      ).resolves.toBeUndefined()
+    }
+  )
+})

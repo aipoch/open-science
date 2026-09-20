@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
+import { installManagedCodex, managedCodexBinary } from './managed-codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { warnLogSpy } = vi.hoisted(() => ({
@@ -372,6 +373,28 @@ describe('codex-detect: real ACP initialize smoke', () => {
     })
     // The smoke reaped the tree cleanly, so it must not emit the degraded-reap warning.
     expect(warnLogSpy).not.toHaveBeenCalled()
+  })
+
+  it('holds installation admission through an unconfirmed detection tree teardown', async () => {
+    const started = Promise.withResolvers<void>()
+    const cleanup = Promise.withResolvers<{ reaped: boolean }>()
+    terminateProcessTreeSpy.mockImplementation(() => {
+      started.resolve()
+      return cleanup.promise
+    })
+    const adapterPath = await writeFakeAdapter('admission-adapter.js', { protocolVersion: 1 })
+    const detection = runAcpInitializeSmoke(process.platform)(adapterPath, {
+      codexPath: managedCodexBinary(tempRoot)
+    })
+    await started.promise
+    const options = { dataRoot: tempRoot, installId: 'update', onEvent: vi.fn(), registries: [] }
+    try {
+      expect((await installManagedCodex(options)).result.error).toContain('Codex is in use')
+    } finally {
+      cleanup.resolve({ reaped: false })
+      await detection
+    }
+    expect((await installManagedCodex(options)).result.error).toContain('Codex is in use')
   })
 
   it('still reports the adapter as ready but warns when the process tree is only partially reaped', async () => {

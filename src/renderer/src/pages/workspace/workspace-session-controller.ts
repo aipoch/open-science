@@ -17,6 +17,7 @@ import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
+import type { JobSummary } from '../../../../shared/compute'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { projectSessionActionability, useSessionStore } from '@/stores/session-store'
@@ -85,7 +86,7 @@ type WorkspaceSessionController = {
       downloadArtifacts: ChatSession | null
       notebook: ChatSession | null
       exportConversation: ChatSession | null
-      jobList: { open: boolean; sessionId: string }
+      jobList: { open: boolean; sessionId: string; initialJob?: JobSummary }
     }
     exportError: string | null
     deletingIds: ReadonlySet<string>
@@ -119,6 +120,7 @@ type WorkspaceSessionController = {
     openNotebook: (session: ChatSession | null) => void
     closeNotebook: () => void
     openJobList: (sessionId: string) => void
+    openJob: (job: JobSummary) => void
     closeJobList: () => void
     selectSpecialist: (specialistId: string | undefined) => void
     retrySpecialistSelection: () => boolean
@@ -192,7 +194,11 @@ const useWorkspaceSessionController = ({
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
   const [exportConversationDialog, setExportConversationDialog] = useState<ChatSession | null>(null)
   const exportConversationIntentRef = useRef(0)
-  const [jobListDialog, setJobListDialog] = useState({ open: false, sessionId: '' })
+  const [jobListDialog, setJobListDialog] = useState<{
+    open: boolean
+    sessionId: string
+    initialJob?: JobSummary
+  }>({ open: false, sessionId: '' })
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const deletingIdsRef = useRef(new Set<string>())
   const [archivingIds, setArchivingIds] = useState<ReadonlySet<string>>(new Set())
@@ -686,6 +692,8 @@ const useWorkspaceSessionController = ({
       openNotebook: setNotebookDialog,
       closeNotebook: () => setNotebookDialog(null),
       openJobList: (sessionId: string) => setJobListDialog({ open: true, sessionId }),
+      openJob: (job: JobSummary) =>
+        setJobListDialog({ open: true, sessionId: job.session_id, initialJob: job }),
       closeJobList: () => setJobListDialog((current) => ({ ...current, open: false })),
       selectSpecialist,
       retrySpecialistSelection: () =>

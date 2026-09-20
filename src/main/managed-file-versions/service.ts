@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isImportedResearchSession } from '../storage/session-package-state'
 import {
   parseVersionHistoryCursor,
   versionHistoryPage,
@@ -41,6 +42,18 @@ import {
 import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenance-canonical'
 import { normalizeArtifactFilename } from '../artifacts/provenance-version-writer'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
+
+export type ArtifactProducerInputScope = {
+  appSessionId: string
+  artifactRunId: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+  // Host-owned liveness check; never deserialize this capability from an RPC request.
+  assertActive: () => void
+}
 
 const COMPLETE_STATE = { artifact: 'finalized', upload: 'ready' } as const
 const STORAGE_COLLISION_MAX_ATTEMPTS = 16
@@ -255,6 +268,14 @@ class ManagedFileVersionService {
     assertSafeStorageSegment(request.projectId, 'project id')
     assertSafeStorageSegment(request.sessionId, 'session id')
     assertSafeStorageSegment(request.sourceFileId, 'legacy artifact id')
+    if (
+      await isImportedResearchSession(
+        this.options.storageRoot,
+        request.projectId,
+        request.sessionId
+      )
+    )
+      operationError('PROJECT_NOT_WRITABLE', 'Imported research history is read-only.')
     if (!(request.content instanceof Uint8Array)) {
       operationError('INVALID_REQUEST', 'Legacy Artifact content must be bytes.')
     }
@@ -572,6 +593,53 @@ class ManagedFileVersionService {
     )
   }
 
+  async openProducerVersion(
+    projectId: string,
+    versionId: string,
+    scope: ArtifactProducerInputScope
+  ): Promise<ManagedFileReadLease | undefined> {
+    scope.assertActive()
+    const { assertActive, appSessionId } = scope
+    const owner = {
+      artifactRunId: scope.artifactRunId,
+      rootFrameId: scope.rootFrameId,
+      agentFrameId: scope.agentFrameId,
+      messageBranchId: scope.messageBranchId,
+      runtimeSegmentId: scope.runtimeSegmentId,
+      promptMessageId: scope.promptMessageId
+    }
+    if (
+      [projectId, versionId, appSessionId, ...Object.values(owner)].some(
+        (value) => typeof value !== 'string' || !value.length
+      )
+    )
+      return undefined
+    const client = await this.options.getClient()
+    const version = await client.artifactVersion.findFirst({
+      where: {
+        id: versionId,
+        ...owner,
+        originKind: 'agent_generated',
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId, sessionId: appSessionId } }
+      },
+      select: { artifactId: true }
+    })
+    assertActive()
+    if (!version) return undefined
+    const lease = await this.openUnpublishedVersion(
+      { source: 'artifact', projectId, fileId: version.artifactId },
+      versionId
+    )
+    try {
+      assertActive()
+      return lease
+    } catch (error) {
+      await lease.close()
+      throw error
+    }
+  }
+
   async diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult> {
     return this.diffVersion(request, request.versionId, request.requestId)
   }
@@ -603,9 +671,19 @@ class ManagedFileVersionService {
       const after = await this.readTextForDiff(selected)
       assertNotCancelled()
       active.workerStarted = true
-      const lines = await this.diffTaskRunner.run({ requestId, before, after })
+      const lines = await this.diffTaskRunner.run({
+        requestId,
+        before: before.text,
+        after: after.text
+      })
       assertNotCancelled()
-      return { baseVersionId: ownedBaseVersionId, selectedVersionId: selected.version.id, lines }
+      return {
+        baseVersionId: ownedBaseVersionId,
+        selectedVersionId: selected.version.id,
+        lines,
+        baseFormat: { hasUtf8Bom: before.format.hasUtf8Bom },
+        selectedFormat: { hasUtf8Bom: after.format.hasUtf8Bom }
+      }
     } finally {
       if (this.activeDiffs.get(requestId) === active) {
         this.activeDiffs.delete(requestId)
@@ -1112,6 +1190,14 @@ class ManagedFileVersionService {
     client: PrismaClient | Prisma.TransactionClient,
     logicalFile: ManagedLogicalFile
   ): Promise<void> {
+    if (
+      await isImportedResearchSession(
+        this.options.storageRoot,
+        logicalFile.projectId,
+        logicalFile.sessionId
+      )
+    )
+      operationError('PROJECT_NOT_WRITABLE', 'Imported research history is read-only.')
     const [project, deleting, origin, sync, projection] = await Promise.all([
       client.project.findUnique({
         where: { id: logicalFile.projectId },
@@ -1167,6 +1253,14 @@ class ManagedFileVersionService {
   private async writeUnavailableReason(
     logicalFile: ManagedLogicalFile
   ): Promise<'PROJECT_NOT_WRITABLE' | 'FILE_DELETED' | undefined> {
+    if (
+      await isImportedResearchSession(
+        this.options.storageRoot,
+        logicalFile.projectId,
+        logicalFile.sessionId
+      )
+    )
+      return 'PROJECT_NOT_WRITABLE'
     const client = await this.options.getClient()
     const [project, deleting, origin, sync, projection] = await Promise.all([
       client.project.findUnique({
@@ -1403,7 +1497,9 @@ class ManagedFileVersionService {
     }
   }
 
-  private async readTextForDiff(resolved: ResolvedManagedFileVersion): Promise<string> {
+  private async readTextForDiff(
+    resolved: ResolvedManagedFileVersion
+  ): Promise<Extract<ReturnType<typeof inspectManagedTextEditEligibility>, { editable: true }>> {
     if (resolved.version.sizeBytes > BigInt(MANAGED_DIFF_MAX_INPUT_BYTES)) {
       operationError('DIFF_INPUT_LIMIT_EXCEEDED', 'Managed file exceeds the diff input limit.')
     }
@@ -1414,7 +1510,7 @@ class ManagedFileVersionService {
       }
       operationError(eligibility.reason, 'Managed file is not eligible for text diff.')
     }
-    return (eligibility as Extract<typeof eligibility, { editable: true }>).text
+    return eligibility as Extract<typeof eligibility, { editable: true }>
   }
 
   private async verifyResolvedVersion(resolved: ResolvedManagedFileVersion): Promise<void> {

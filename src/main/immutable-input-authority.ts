@@ -6,6 +6,7 @@ import { join, sep } from 'node:path'
 import type { NotebookRunInputFile } from '../shared/notebook'
 import { ManagedFileVersionError } from './managed-file-versions/error'
 import type {
+  ArtifactProducerInputScope,
   ManagedFileReadLease,
   ManagedFileVersionService
 } from './managed-file-versions/service'
@@ -16,6 +17,7 @@ type ResolveImmutableInputVersionRequest = {
   sourceKind: NotebookRunInputFile['sourceKind']
   inputFileVersionId: string
   expectedSourceFileId?: string
+  producerScope?: ArtifactProducerInputScope
 }
 
 type StageImmutableInputVersionRequest = ResolveImmutableInputVersionRequest & {
@@ -32,7 +34,7 @@ type StageLatestImmutableInputRequest = {
 type ImmutableInputAuthorityOptions = {
   storageRoot: string
   managedFileVersions: Pick<ManagedFileVersionService, 'openVersion'> &
-    Partial<Pick<ManagedFileVersionService, 'openLatest'>>
+    Partial<Pick<ManagedFileVersionService, 'openLatest' | 'openProducerVersion'>>
 }
 
 type ImmutableInputVersionValidation =
@@ -115,6 +117,7 @@ class ImmutableInputAuthority {
     if (!lease) return undefined
     try {
       await lease.verifyUnchanged()
+      request.producerScope?.assertActive()
       return toNotebookInput(request.sourceKind, lease)
     } finally {
       await lease.close()
@@ -123,32 +126,39 @@ class ImmutableInputAuthority {
 
   async validateVersion(
     projectId: string,
-    input: NotebookRunInputFile
+    input: NotebookRunInputFile,
+    producerScope?: ArtifactProducerInputScope
   ): Promise<ImmutableInputVersionValidation> {
     if (input.sourceProjectId !== projectId) return { state: 'project-mismatch' }
     const lease = await this.openRequestedVersion({
       projectId,
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId,
-      expectedSourceFileId: input.sourceFileId
+      expectedSourceFileId: input.sourceFileId,
+      producerScope
     })
     if (!lease) return { state: 'unavailable' }
     try {
       const current = toNotebookInput(input.sourceKind, lease)
       if (!matchesVersionIdentity(current, input)) return { state: 'identity-mismatch' }
       await lease.verifyUnchanged()
+      producerScope?.assertActive()
       return { state: 'available', input: current }
     } finally {
       await lease.close()
     }
   }
 
-  async openContent(input: NotebookRunInputFile): Promise<ImmutableInputContentLease> {
+  async openContent(
+    input: NotebookRunInputFile,
+    producerScope?: ArtifactProducerInputScope
+  ): Promise<ImmutableInputContentLease> {
     const lease = await this.openRequestedVersion({
       projectId: input.sourceProjectId,
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId,
-      expectedSourceFileId: input.sourceFileId
+      expectedSourceFileId: input.sourceFileId,
+      producerScope
     })
     if (!lease) throw new Error('Notebook input Version is unavailable.')
     try {
@@ -156,6 +166,7 @@ class ImmutableInputAuthority {
         throw new Error('Notebook input identity no longer matches its immutable Version.')
       }
       await lease.verifyUnchanged()
+      producerScope?.assertActive()
       return lease
     } catch (error) {
       await lease.close().catch(() => undefined)
@@ -205,17 +216,24 @@ class ImmutableInputAuthority {
     return this.runStaging(target.path, () => this.stageLease(input, lease, target))
   }
 
-  async stageContent(input: NotebookRunInputFile, targetSessionId: string): Promise<string> {
+  async stageContent(
+    input: NotebookRunInputFile,
+    targetSessionId: string,
+    producerScope?: ArtifactProducerInputScope
+  ): Promise<string> {
     const target = this.stagingTarget(
       input.sourceProjectId,
       targetSessionId,
       input.sourceKind,
       input.inputFileVersionId
     )
-    return this.runStaging(target.path, async () => {
-      const lease = await this.openContent(input)
+    producerScope?.assertActive()
+    const path = await this.runStaging(target.path, async () => {
+      const lease = await this.openContent(input, producerScope)
       return this.stageLease(input, lease, target)
     })
+    producerScope?.assertActive()
+    return path
   }
 
   private async runStaging(target: string, start: () => Promise<string>): Promise<string> {
@@ -334,16 +352,37 @@ class ImmutableInputAuthority {
   private async openRequestedVersion(
     request: ResolveImmutableInputVersionRequest
   ): Promise<ManagedFileReadLease | undefined> {
-    if (!request.expectedSourceFileId) return undefined
+    request.producerScope?.assertActive()
+    if (request.expectedSourceFileId) {
+      try {
+        return await this.options.managedFileVersions.openVersion(
+          {
+            source: sourceFor(request.sourceKind),
+            projectId: request.projectId,
+            fileId: request.expectedSourceFileId
+          },
+          request.inputFileVersionId
+        )
+      } catch (error) {
+        if (!isUnavailableVersionError(error)) throw error
+      }
+    }
+    if (request.sourceKind !== 'artifact-version' || !request.producerScope) return undefined
     try {
-      return await this.options.managedFileVersions.openVersion(
-        {
-          source: sourceFor(request.sourceKind),
-          projectId: request.projectId,
-          fileId: request.expectedSourceFileId
-        },
-        request.inputFileVersionId
+      const lease = await this.options.managedFileVersions.openProducerVersion?.(
+        request.projectId,
+        request.inputFileVersionId,
+        request.producerScope
       )
+      if (
+        lease &&
+        request.expectedSourceFileId &&
+        lease.logicalFile.id !== request.expectedSourceFileId
+      ) {
+        await lease.close()
+        return undefined
+      }
+      return lease
     } catch (error) {
       if (isUnavailableVersionError(error)) return undefined
       throw error

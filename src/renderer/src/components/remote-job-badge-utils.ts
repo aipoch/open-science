@@ -1,5 +1,9 @@
 import type { JobSummary } from '../../../shared/compute'
 
+export const isJobElapsedLive = (job: JobSummary): boolean =>
+  job.cancellation_status !== 'cancelled' &&
+  (job.status === 'running' || job.status === 'submitted')
+
 // Formats elapsed milliseconds as "Xm Ys" (e.g. "3m 33s") or "Xs" for under a minute.
 export const formatDuration = (ms: number): string => {
   const totalSecs = Math.max(0, Math.floor(ms / 1000))

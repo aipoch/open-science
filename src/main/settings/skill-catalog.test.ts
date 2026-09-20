@@ -14,11 +14,22 @@ vi.mock('electron', () => ({
 }))
 
 import { SkillRegistry } from '../skills/registry'
+import { AcpTurnSkillOwner } from '../acp/turn-skill-owner'
+import { loadSkillDocument } from '../skills/runtime-mcp-server'
 import type { FetchLike } from '../skills/github-import'
-import type { UserSkillRepository } from '../skills/user-skill-repository'
-import { SPECIALIST_PACKAGE_SKILL_METADATA } from '../skills/specialist-package-adapter'
+import { UserSkillRepository } from '../skills/user-skill-repository'
+import {
+  SPECIALIST_PACKAGE_SKILL_METADATA,
+  UserSkillSpecialistPackageAdapter
+} from '../skills/specialist-package-adapter'
+import { SpecialistRepository } from '../specialist/repository'
+import { SPECIALISTS_FILE_VERSION } from '../specialist/types'
 import { SettingsRepository } from './repository'
+import { SettingsDocumentStore } from './document-store'
 import { SkillCatalogModule } from './skill-catalog'
+import { marketplaceContentDigest, type MarketplacePackage } from '../skills/marketplace-package'
+import { sha256 } from '../skills/marketplace-protocol'
+import { marketplaceEntry } from '../../shared/__fixtures__/skill-marketplace'
 
 const roots: string[] = []
 const catalogStorageRoots = new WeakMap<SkillCatalogModule, string>()
@@ -56,6 +67,7 @@ const createCatalog = async (includeInternal = false): Promise<SkillCatalogModul
                 name: 'Skill Creator',
                 source: 'featured',
                 exposure: 'internal',
+                activationPolicy: 'always-on',
                 updatedAt: '2026-08-09T00:00:00.000Z'
               }
             ]
@@ -79,6 +91,293 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it.each(['fresh conversation', 'existing Main conversation', 'explicit chip control'])(
+    'loads a Main-disabled Specialist Skill in a %s',
+    async (scenario) => {
+      const catalog = await createCatalog()
+      await catalog.createSkill({
+        name: 'methods-section-writer',
+        description: 'Write methods.',
+        body: 'METHODS_DOCUMENT_SENTINEL'
+      })
+      const skillId = 'personal-methods-section-writer'
+      await catalog.setSkillEnabled({ id: skillId, enabled: false })
+      await catalog.setSkillEnabled({ id: 'demo', enabled: false })
+      const runtimeRoot = join(catalogStorageRoots.get(catalog)!, 'codex-subscription')
+      const owner = new AcpTurnSkillOwner({
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: [skillId],
+          frameworkNames: ['methods-section-writer'],
+          missingSkillIds: []
+        }),
+        skills: {
+          needForceLoad: (ids) => catalog.skillsNeedingForceLoad(ids),
+          namesForIds: (ids) => catalog.skillNudgeNamesForIds(ids)
+        },
+        requestSkillsReload: () => {}
+      })
+      const prepare = (): Promise<void> =>
+        catalog.materializeSkills(
+          runtimeRoot,
+          ['demo', skillId],
+          new Set(owner.backendPreparation().forcedSkillIds)
+        )
+      if (scenario === 'existing Main conversation') {
+        const main = await owner.authorize({})
+        await prepare()
+        main.close('completed')
+      }
+      const specialist = await owner.authorize({
+        specialistId: 'auto-research-specialist',
+        ...(scenario === 'explicit chip control' ? { selectedSkillIds: [skillId] } : {})
+      })
+      try {
+        await prepare()
+        await expect(
+          loadSkillDocument(
+            {
+              root: runtimeRoot,
+              skillsDirectory: join(runtimeRoot, 'skills'),
+              allowedNames: new Set(['methods-section-writer'])
+            },
+            'methods-section-writer'
+          )
+        ).resolves.toContain('METHODS_DOCUMENT_SENTINEL')
+        await expect(
+          loadSkillDocument(
+            { root: runtimeRoot, skillsDirectory: join(runtimeRoot, 'skills') },
+            'demo'
+          )
+        ).rejects.toThrow('Unknown skill: demo')
+        expect((await catalog.listSkills()).find((skill) => skill.id === skillId)?.enabled).toBe(
+          false
+        )
+      } finally {
+        specialist.close('completed')
+        // Remove read-only generated packages through the existing materializer.
+        await catalog.materializeSkills(runtimeRoot, ['demo', skillId])
+      }
+      expect(owner.backendPreparation().forcedSkillIds).toEqual([])
+      await prepare()
+      await expect(
+        loadSkillDocument(
+          { root: runtimeRoot, skillsDirectory: join(runtimeRoot, 'skills') },
+          'methods-section-writer'
+        )
+      ).rejects.toThrow('Unknown skill: methods-section-writer')
+      await expect(owner.authorize({ selectedSkillIds: [skillId] })).rejects.toThrow(
+        `Skill "${skillId}" is not available to Main Agent.`
+      )
+    }
+  )
+
+  it('holds Specialist relationships and Main Agent enablement stable through promotion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'marketplace-impact-lock-'))
+    roots.push(root)
+    const adapter = new UserSkillSpecialistPackageAdapter(root)
+    const settingsStore = new SettingsDocumentStore(root)
+    const settings = new SettingsRepository(settingsStore, (operation) =>
+      adapter.runMutationExclusive(operation)
+    )
+    const specialists = new SpecialistRepository(root)
+    const initial = new UserSkillRepository(root)
+    await initial.createPersonal({ name: 'example', description: 'Shared', body: 'original' })
+    let promoted!: () => void
+    let release!: () => void
+    const ready = new Promise<void>((resolve) => {
+      promoted = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const repo = new UserSkillRepository(root, undefined, async () => {
+      promoted()
+      await gate
+    })
+    const files = [
+      {
+        relativePath: 'SKILL.md',
+        content: Buffer.from('---\nname: example\ndescription: Shared\n---\nUpdated')
+      }
+    ]
+    const pkg: MarketplacePackage = {
+      files,
+      receipt: {
+        marketplace: 'openscience-skills',
+        id: 'example',
+        version: '1.0.0',
+        snapshotId: 'a'.repeat(64),
+        revision: 'b'.repeat(64),
+        descriptorSha256: 'c'.repeat(64),
+        artifactSha256: 'd'.repeat(64),
+        contentSha256: marketplaceContentDigest(files)
+      }
+    }
+    const impact = async (): Promise<{
+      mainEnabled: boolean
+      specialists: { id: string; name: string }[]
+    }> => ({
+      mainEnabled: !(await settings.getSettings()).disabledSkillIds?.includes('personal-example'),
+      specialists: (await specialists.getAll()).specialists.map((item) => ({
+        id: item.id,
+        name: item.name
+      }))
+    })
+    const preview = await repo.previewMarketplaceUpdate(pkg, [], impact)
+    const updating = repo.installMarketplace(pkg, null, [], preview.token, impact, (operation) =>
+      specialists.withReadLock(operation)
+    )
+    await ready
+    // Observe the protected write entry points rather than eventual filesystem completion.
+    const specialistRead = vi.spyOn(specialists, 'getAllWithIntegrity')
+    const settingsMutation = vi.spyOn(settingsStore, 'mutate')
+    let specialistWritten = false,
+      settingsWritten = false
+    const specialistWrite = specialists
+      .replaceAll({ version: SPECIALISTS_FILE_VERSION, specialists: [] })
+      .then(() => {
+        specialistWritten = true
+      })
+    const settingsWrite = settings.setSkillEnabled('personal-example', false).then(() => {
+      settingsWritten = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(specialistRead).not.toHaveBeenCalled()
+    expect(settingsMutation).not.toHaveBeenCalled()
+    expect(specialistWritten).toBe(false)
+    expect(settingsWritten).toBe(false)
+    release()
+    await updating
+    await Promise.all([specialistWrite, settingsWrite])
+    expect(specialistWritten).toBe(true)
+    expect(settingsWritten).toBe(true)
+    expect(specialistRead).toHaveBeenCalled()
+    expect(settingsMutation).toHaveBeenCalledExactlyOnceWith(expect.any(Function))
+    specialistRead.mockRestore()
+    settingsMutation.mockRestore()
+    expect(await initial.body('personal-example')).toContain('Updated')
+  })
+
+  it('projects name conflicts without hashing absent Marketplace entries', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'personal-example', description: 'Mine', body: 'Keep me' })
+    const imported = join(userSkillSourceDir(catalog, 'imported'), 'different-directory')
+    await mkdir(imported, { recursive: true })
+    await writeFile(
+      join(imported, 'SKILL.md'),
+      '---\nname: imported-example\ndescription: Mine\n---\nKeep me'
+    )
+    const conflicts = [
+      'demo',
+      'personal-example',
+      'different-directory',
+      'a'.repeat(65),
+      'os-example',
+      'mcp-example'
+    ]
+    const verify = vi.spyOn(catalog, 'marketplaceInstallation')
+    expect(
+      await catalog.marketplaceInstallations(
+        [...conflicts, 'absent', 'imported-example'].map((id) => ({ ...marketplaceEntry, id }))
+      )
+    ).toEqual({
+      demo: { kind: 'conflict', reason: 'name-taken' },
+      'personal-example': {
+        kind: 'conflict',
+        reason: 'name-taken',
+        localSkillId: 'personal-personal-example'
+      },
+      'different-directory': {
+        kind: 'conflict',
+        reason: 'name-taken',
+        localSkillId: 'imported-different-directory'
+      },
+      ['a'.repeat(65)]: { kind: 'conflict', reason: 'invalid-name' },
+      'os-example': { kind: 'conflict', reason: 'invalid-name' },
+      'mcp-example': { kind: 'conflict', reason: 'invalid-name' }
+    })
+    // Legacy frontmatter is display metadata; the directory is the invocation name.
+    expect(verify).toHaveBeenCalledTimes(2)
+    expect(verify).toHaveBeenCalledWith(
+      'different-directory',
+      marketplaceEntry.version,
+      ['demo'],
+      expect.any(Array)
+    )
+  })
+  it.each([true, false])('preserves Marketplace enablement (%s)', async (enabled) => {
+    const catalog = await createCatalog()
+    const packageFor = (version: string): MarketplacePackage => {
+      const files = [
+        {
+          relativePath: 'SKILL.md',
+          content: Buffer.from(`---\nname: market-example\ndescription: Example\n---\n${version}\n`)
+        }
+      ]
+      return {
+        files,
+        receipt: {
+          marketplace: 'openscience-skills',
+          id: 'market-example',
+          version,
+          snapshotId: 'a'.repeat(64),
+          revision: 'b'.repeat(64),
+          descriptorSha256: sha256(Buffer.from(version)),
+          artifactSha256: 'c'.repeat(64),
+          contentSha256: marketplaceContentDigest(files)
+        }
+      }
+    }
+    const installed = await catalog.installMarketplace(packageFor('1.0.0'), null)
+    expect((await catalog.listSkills()).find((skill) => skill.id === installed.id)?.enabled).toBe(
+      true
+    )
+    await catalog.setSkillEnabled({ id: installed.id, enabled })
+    const updated = await catalog.installMarketplace(packageFor('1.1.0'), '1.0.0')
+    expect(updated.id).toBe(installed.id)
+    expect((await catalog.listSkills()).find((skill) => skill.id === installed.id)).toMatchObject({
+      name: 'market-example',
+      source: 'imported',
+      enabled
+    })
+    expect(await catalog.marketplaceInstallation('market-example', '1.1.0')).toEqual({
+      kind: 'installed',
+      version: '1.1.0',
+      canUpdate: false,
+      localSkillId: installed.id
+    })
+    const entries = [
+      { ...marketplaceEntry, id: 'market-example', version: '1.2.0' },
+      ...Array.from({ length: 584 }, (_, index) => ({
+        ...marketplaceEntry,
+        id: `absent-${index}`
+      }))
+    ]
+    const verify = vi.spyOn(catalog, 'marketplaceInstallation')
+    expect(await catalog.marketplaceInstallations(entries)).toEqual({
+      'market-example': {
+        kind: 'installed',
+        version: '1.1.0',
+        canUpdate: true,
+        localSkillId: installed.id
+      }
+    })
+    expect(verify).toHaveBeenCalledTimes(1)
+    await writeFile(
+      join(userSkillSourceDir(catalog, 'imported'), 'market-example', 'SKILL.md'),
+      'local edit'
+    )
+    expect(await catalog.marketplaceInstallations(entries)).toEqual({
+      'market-example': {
+        kind: 'conflict',
+        reason: 'local-content-changed',
+        localSkillId: 'imported-market-example'
+      }
+    })
+    await catalog.deleteSkill({ id: installed.id })
+    expect(await catalog.marketplaceInstallations(entries)).toEqual({})
+  })
   it('lists bundled Specialist dependencies without consulting user Skills', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)
@@ -372,6 +671,8 @@ describe('SkillCatalogModule', () => {
       await expect(
         readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')
       ).resolves.toContain('demo body')
+      await catalog.deleteSkill({ id: 'demo', source })
+      await expect(readFile(join(userDir, 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' })
       await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
     }
   )
@@ -420,6 +721,7 @@ describe('SkillCatalogModule', () => {
   it('surfaces every duplicate user Skill id in the Settings catalog', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)
+    const deleteSkill = vi.fn()
     const catalog = new SkillCatalogModule({
       repository: new SettingsRepository(storageRoot),
       storageRoot,
@@ -444,7 +746,8 @@ describe('SkillCatalogModule', () => {
             updatedAt: '2026-03-01T00:00:00.000Z',
             sourceDir: storageRoot
           }
-        ]
+        ],
+        delete: deleteSkill
       } as unknown as UserSkillRepository
     })
 
@@ -460,6 +763,18 @@ describe('SkillCatalogModule', () => {
       ])
     )
     expect(new Set(skills.map((skill) => skill.catalogEntryKey)).size).toBe(2)
+
+    await catalog.deleteSkill({
+      id: 'shared-sidecar-id',
+      source: 'personal',
+      directoryName: 'personal-copy'
+    })
+    expect(deleteSkill).toHaveBeenCalledWith(
+      'shared-sidecar-id',
+      'personal',
+      'personal-copy',
+      undefined
+    )
   })
 
   it('ignores an unsafe Personal sidecar id instead of materializing outside the Skills root', async () => {
@@ -523,6 +838,146 @@ describe('SkillCatalogModule', () => {
     ).resolves.toContain('internal body')
     await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
     await chmod(join(runtimeRoot, 'skills', 'os-skill-creator'), 0o755)
+  })
+
+  it('keeps activation policy independent from internal exposure', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-internal-policy-'))
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'settings-internal-policy-source-'))
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-internal-policy-runtime-'))
+    roots.push(storageRoot, sourceRoot, runtimeRoot)
+    await writeFile(
+      join(sourceRoot, 'SKILL.md'),
+      '---\nname: optional-helper\ndescription: Optional helper.\n---\n\nOptional body.'
+    )
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['optional-helper'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: {
+        list: async () => [
+          {
+            id: 'optional-helper',
+            name: 'optional-helper',
+            displayName: 'Optional Helper',
+            description: 'Optional helper.',
+            source: 'featured' as const,
+            updatedAt: '2026-01-01',
+            sourceDir: sourceRoot,
+            exposure: 'internal' as const,
+            activationPolicy: 'user-controlled' as const
+          }
+        ]
+      } as unknown as SkillRegistry
+    })
+
+    await catalog.materializeSkills(runtimeRoot, ['optional-helper'])
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-optional-helper', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps a required Customize Skill enabled and materialized under stale disabled state', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-required-skill-'))
+    const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-required-bundle-'))
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-required-runtime-'))
+    roots.push(storageRoot, bundleRoot, runtimeRoot)
+    await mkdir(join(bundleRoot, 'customize'), { recursive: true })
+    await writeFile(
+      join(bundleRoot, 'customize', 'SKILL.md'),
+      '---\nname: customize\ndescription: Customize Open-Science.\n---\n\nCustomize body.'
+    )
+    await writeFile(
+      join(bundleRoot, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          {
+            id: 'customize',
+            name: 'Customize',
+            source: 'featured',
+            activationPolicy: 'always-on',
+            updatedAt: '2026-08-12T00:00:00.000Z'
+          }
+        ]
+      })
+    )
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['customize'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: new SkillRegistry(bundleRoot)
+    })
+
+    await expect(catalog.listSkills()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'customize',
+        enabled: true,
+        activationPolicy: 'always-on'
+      })
+    ])
+    await expect(catalog.skillsNeedingForceLoad(['customize'])).resolves.toEqual([])
+    await catalog.materializeSkills(join(runtimeRoot, '.claude'), ['customize'], new Set(), {
+      directoryLayout: 'agent-facing'
+    })
+    await expect(
+      readFile(join(runtimeRoot, '.claude', 'skills', 'customize', 'SKILL.md'), 'utf8')
+    ).resolves.toContain('Customize body.')
+    await expect(loadSkillDocument({ root: runtimeRoot }, 'customize')).resolves.toContain(
+      'Customize body.'
+    )
+    await catalog.createSkill({ name: 'personal', description: 'Personal.', body: '# Personal' })
+    await expect(catalog.setSkillEnabled({ id: 'customize', enabled: false })).rejects.toThrow(
+      'Application-required Skill cannot be disabled: customize'
+    )
+    await expect(
+      catalog.setSkillsEnabled({ ids: ['personal-personal', 'customize'], enabled: false })
+    ).rejects.toThrow('Application-required Skill cannot be disabled: customize')
+    expect(
+      (await catalog.listSkills()).find((skill) => skill.id === 'personal-personal')?.enabled
+    ).toBe(true)
+    await chmod(join(runtimeRoot, '.claude', 'skills', 'customize'), 0o755)
+  })
+
+  it('does not let user Skill metadata self-promote to always-on', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-user-policy-'))
+    roots.push(storageRoot)
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [], disabledSkillIds: ['personal-demo'] })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+      userSkills: {
+        list: async () => [
+          {
+            id: 'personal-demo',
+            name: 'demo',
+            displayName: 'Demo',
+            description: 'Demo.',
+            source: 'personal' as const,
+            activationPolicy: 'always-on' as const,
+            updatedAt: '2026-01-01',
+            sourceDir: storageRoot
+          }
+        ]
+      } as unknown as UserSkillRepository
+    })
+
+    await expect(catalog.listSkills()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'personal-demo',
+        enabled: false,
+        activationPolicy: 'user-controlled'
+      })
+    ])
   })
 
   it('verifies before replacing a saved token and keeps the old token on failure', async () => {
@@ -831,6 +1286,9 @@ describe('SkillCatalogModule', () => {
     expect(
       (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
     ).toEqual(['demo'])
+    await expect(catalog.deleteSkill({ id: 'demo' })).rejects.toThrow(
+      'Built-in Skills cannot be deleted.'
+    )
   })
 
   it.each(['personal', 'imported'] as const)(

@@ -14,8 +14,12 @@ const acceptAcpRuntimeSnapshotRevision = (
   return true
 }
 
-const resetAcpRuntimeSnapshotRevisionForTests = (): void => {
+const resetAcpRuntimeSnapshotRevision = (): void => {
   latestRevision = undefined
 }
 
-export { acceptAcpRuntimeSnapshotRevision, resetAcpRuntimeSnapshotRevisionForTests }
+export {
+  acceptAcpRuntimeSnapshotRevision,
+  resetAcpRuntimeSnapshotRevision,
+  resetAcpRuntimeSnapshotRevision as resetAcpRuntimeSnapshotRevisionForTests
+}

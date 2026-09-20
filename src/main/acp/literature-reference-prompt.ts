@@ -1,3 +1,4 @@
+import { MAX_COMPOSER_ATTACHMENTS } from '../../shared/uploads'
 import type {
   LiteratureReference,
   LiteratureScopeReference,
@@ -11,7 +12,7 @@ const referencesFromParts = (parts: readonly MessagePart[] | undefined): Literat
     if (part.type !== 'literature' || seen.has(part.itemId)) continue
     seen.add(part.itemId)
     references.push(part)
-    if (references.length === 10) break
+    if (references.length === MAX_COMPOSER_ATTACHMENTS) break
   }
   return references
 }
@@ -25,7 +26,7 @@ const scopesFromParts = (parts: readonly MessagePart[] | undefined): LiteratureS
     if (seen.has(identity)) continue
     seen.add(identity)
     scopes.push(part)
-    if (scopes.length === 5) break
+    if (scopes.length === MAX_COMPOSER_ATTACHMENTS) break
   }
   return scopes
 }
@@ -63,10 +64,11 @@ export const buildLiteratureReferencePrompt = (
         ]
       : []),
     'For a literature synthesis or review, begin with metadata and abstract previews without asking the user to choose a processing mode. When previews are insufficient, use read_library_abstract with the same scope and either one itemId or a batch of up to five itemIds; do not batch-read every search result. When a conclusion needs full-text support and the item has a PDF attachment, use read_library_pdf with that itemId, a focused query, and the same scope. It returns bounded passages with page numbers; do not read every PDF merely because it is available.',
+    'Library itemId and linked-PDF documentId are not interchangeable. The list_pdf_elements and read_pdf_element tools cover only PDFs explicitly linked to this message, not every Library search result or attachment. Call list_pdf_elements with a linked documentId, or {} for a single linked PDF; call read_pdf_element with the exact elementRef returned by listing. read_library_pdf provides prose evidence, not verified table cells or images; state when a requested visual conclusion lacks evidence.',
     'When the user requests acquiring a PDF, use acquire_pdf with a supported search-result ref or bibliographic candidate. It discovers an open-access PDF or accepts an explicit public HTTPS PDF URL. The PDF and record are staged in Inbox for user acceptance; pending-review does not mean added to Library. Do not use local paths, private-network URLs, or sign-in bypasses.',
     'When the user requests citations or a named citation style for Markdown, plain text, or chat output, call format_references with the exact itemIds and requested style, then use the returned citation strings verbatim. Do not format references from metadata yourself. A short passage citing selected records needs citations but is not a corpus-coverage review; include corpus in write_artifact_file only when the output makes a reviewed-corpus or coverage claim.',
-    'When creating a DOCX with citations, write semantic {{cite:itemId}} markers at the exact citation positions and one optional {{bibliography}} marker. Save the DOCX first, then call format_citation_document; it attaches the finished file itself, so do not call write_artifact_file afterward. Open Science resolves metadata, renders the selected CSL style, embeds Zotero-compatible Word Fields, and attaches checksum-bound citation provenance. Do not construct workspace paths, Zotero fields, or copy full metadata into a tool call yourself.',
-    'When creating a LaTeX manuscript, write semantic {{cite:itemId}} markers at the exact citation positions and one optional {{bibliography}} marker. Use BibLaTeX with \\addbibresource{references.bib}, save the UTF-8 .tex file first, then call prepare_latex_bundle; it attaches the finished file itself, so do not call write_artifact_file afterward. Open Science replaces the markers with stable \\cite{key} commands and packages the source, references.bib, and revision mapping for Overleaf. Do not construct workspace paths or hand-write BibTeX metadata.',
+    'When creating a DOCX with citations, write semantic {{cite:itemId}} markers at the exact citation positions and one optional {{bibliography}} marker. Save the DOCX first, then call format_citation_document; it attaches the finished file itself, so do not call write_artifact_file afterward. Open-Science resolves metadata, renders the selected CSL style, embeds Zotero-compatible Word Fields, and attaches checksum-bound citation provenance. Do not construct workspace paths, Zotero fields, or copy full metadata into a tool call yourself.',
+    'When creating a LaTeX manuscript, write semantic {{cite:itemId}} markers at the exact citation positions and one optional {{bibliography}} marker. Use BibLaTeX with \\addbibresource{references.bib}, save the UTF-8 .tex file first, then call prepare_latex_bundle; it attaches the finished file itself, so do not call write_artifact_file afterward. Open-Science replaces the markers with stable \\cite{key} commands and packages the source, references.bib, and revision mapping for Overleaf. Do not construct workspace paths or hand-write BibTeX metadata.',
     'For a non-DOCX literature review artifact, pass the complete reviewed corpus as itemIds plus candidateCount. For citations, pass citationId and itemId; do not repeat metadataRevision. The app records search_library and read_library_pdf calls, supplies current item revisions, derives searchedCount, fullTextCount, abstractOnlyCount, and unprocessedCount from work actually completed this turn, then freezes the item revisions and capture time.'
   ].join('\n')
 }

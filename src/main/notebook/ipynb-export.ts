@@ -60,7 +60,7 @@ type IpynbNotebook = {
     }
     open_science: {
       sessionId: string
-      // Open Science export metadata uses the immutable Project id.
+      // Open-Science export metadata uses the immutable Project id.
       projectId: string
       artifactSessionId?: string
       appVersion?: string

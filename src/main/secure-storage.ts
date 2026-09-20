@@ -1,5 +1,6 @@
 import { safeStorage } from 'electron'
 import { platform } from 'node:os'
+import { credentialCipher } from './credential-identity/runtime'
 
 interface SecureStorageCipher {
   isEncryptionAvailable(): boolean
@@ -8,8 +9,17 @@ interface SecureStorageCipher {
   decryptString(value: Buffer): string
 }
 
+// All application secret operations share the bootstrap-selected process cipher.
+const protectedSafeStorage: SecureStorageCipher = {
+  isEncryptionAvailable: () => credentialCipher(safeStorage).isEncryptionAvailable(),
+  getSelectedStorageBackend: () =>
+    credentialCipher(safeStorage).getSelectedStorageBackend?.() ?? 'unknown',
+  encryptString: (value) => credentialCipher(safeStorage).encryptString(value),
+  decryptString: (value) => credentialCipher(safeStorage).decryptString(value)
+}
+
 const isSecureStorageAvailable = (
-  cipher: SecureStorageCipher = safeStorage,
+  cipher: SecureStorageCipher = protectedSafeStorage,
   currentPlatform: NodeJS.Platform = platform()
 ): boolean => {
   try {
@@ -20,5 +30,5 @@ const isSecureStorageAvailable = (
   }
 }
 
-export { isSecureStorageAvailable }
+export { isSecureStorageAvailable, protectedSafeStorage }
 export type { SecureStorageCipher }

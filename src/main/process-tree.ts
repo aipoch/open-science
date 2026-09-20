@@ -1,5 +1,10 @@
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { readFile, readdir } from 'node:fs/promises'
+
+import type { DarwinProcessIdentity, DarwinProcessTable } from '@aipoch/process-tree-native'
 
 // Optional sink for kill-path diagnostics; callers with a logger pass one, tests and the notebook path
 // omit it. Kept minimal so process-tree stays free of the Electron logger's import graph.
@@ -16,16 +21,95 @@ type OwnedPosixProcessGroup = Readonly<{
   id: number
 }>
 
+type PosixProcessIdentity = Readonly<{
+  pid: number
+  ppid: number
+  pgid: number
+  sid: number
+  birthToken: string | undefined
+  parentBirthToken: string | undefined
+  birthOrder: string | undefined
+}>
+
+type PosixProcessTable = Readonly<{
+  processes: Map<number, PosixProcessIdentity>
+  complete: boolean
+}>
+
+type PosixProcessTracker = {
+  leaderPid: number
+  // undefined until the first complete sample, null once that sample proves the leader was already
+  // absent. Null is permanent: a later process with the same pid is an unowned replacement.
+  leaderIdentity: PosixProcessIdentity | null | undefined
+  identities: Map<number, PosixProcessIdentity>
+  complete: boolean
+  ownershipToken: string | undefined
+}
+
+export type PosixProcessTreeOwnership = Readonly<{
+  env: NodeJS.ProcessEnv | undefined
+  token: string | undefined
+}>
+
+const PROCESS_TREE_OWNERSHIP_ENV = 'OPEN_SCIENCE_PROCESS_TREE_ID'
+
+export const createPosixProcessTreeOwnership = (
+  env: NodeJS.ProcessEnv | undefined,
+  platform: NodeJS.Platform = process.platform
+): PosixProcessTreeOwnership => {
+  if (platform !== 'darwin' && platform !== 'linux') return { env, token: undefined }
+  assertProcessTreeSupport(platform)
+  const token = randomUUID()
+  return { env: { ...(env ?? process.env), [PROCESS_TREE_OWNERSHIP_ENV]: token }, token }
+}
+
 // A detached POSIX child is the leader of a private process group whose stable id is its spawn pid.
 // Keep that ownership receipt on the child handle so teardown can still address the group after the
 // leader exits and its descendants are reparented. Unregistered children retain PPID-tree teardown.
 const ownedPosixProcessGroups = new WeakMap<ChildProcess, OwnedPosixProcessGroup>()
+const trackedPosixProcessTrees = new WeakMap<ChildProcess, PosixProcessTracker>()
+const activePosixProcessTrackers = new Set<PosixProcessTracker>()
+let ownershipSampleTimer: NodeJS.Timeout | undefined
+let ownershipSampling: Promise<PosixProcessTable> | undefined
+let ownershipResampleRequested = false
+let ownershipSampleBurstDeadline = 0
 
 export const registerOwnedPosixProcessGroup = (child: ChildProcess): void => {
   const groupId = child.pid
   if (groupId === undefined || !Number.isSafeInteger(groupId) || groupId <= 0) return
   ownedPosixProcessGroups.set(child, { kind: 'owned-posix-process-group', id: groupId })
 }
+
+// File replacement must wait for confirmed tree teardown, not the adapter's close event.
+const processTreeReapCallbacks = new WeakMap<ChildProcess, () => void>()
+export const onProcessTreeReaped = (child: ChildProcess, callback: () => void): void => {
+  processTreeReapCallbacks.set(child, callback)
+}
+
+// Delegated receipts must settle before physical resource owners release files or install leases.
+const processTreeOwnership = new WeakMap<
+  ChildProcess,
+  {
+    terminate?: () => Promise<ProcessTreeKillResult>
+    settled(result: ProcessTreeKillResult): void
+  }
+>()
+export const registerProcessTreeOwnership = (
+  child: ChildProcess,
+  ownership: {
+    terminate?: () => Promise<ProcessTreeKillResult>
+    settled(result: ProcessTreeKillResult): void
+  }
+): void => {
+  if (processTreeOwnership.has(child))
+    throw new Error('Process tree already has an ownership record.')
+  processTreeOwnership.set(child, ownership)
+}
+
+export const capturePosixProcessTreeIdentity = (
+  child: ChildProcess
+): PosixProcessIdentity | undefined =>
+  trackedPosixProcessTrees.get(child)?.leaderIdentity ?? undefined
 
 // Upper bound for awaiting a direct child's real exit (POSIX) or taskkill's own completion (Windows).
 // Bounded so a wedged process can never hang app teardown; the caller (before-quit) also time-bounds
@@ -36,6 +120,14 @@ const TERMINATE_GRACE_MS = 3_000
 // kernel-level unkillable (uninterruptible sleep) we cannot do anything about — don't wait the full grace.
 const SIGKILL_GRACE_MS = 1_000
 const PROCESS_GROUP_POLL_MS = 25
+const PROCESS_OWNERSHIP_SAMPLE_MS = 250
+const PROCESS_OWNERSHIP_BURST_SAMPLE_MS = 10
+const PROCESS_OWNERSHIP_BURST_MS = 250
+// XNU increments p_uniqueid for every fork/spawn/vfork. A normal member of a freshly spawned
+// private group is therefore close to its leader in this order. Reusing the dead leader's numeric
+// pid as a new session id requires substantial allocator churn; keep a deliberately small window
+// and fail closed outside it unless the inherited ownership marker independently proves the link.
+const DARWIN_SAME_GROUP_BIRTH_ORDER_WINDOW = 10_000n
 
 // Signals the direct child, tolerating an already-exited process or a handle with no pid. Skips a child
 // already signaled so a first, graceful pass is a no-op on retry; escalation uses forceKillChild instead.
@@ -91,6 +183,11 @@ const isProcessGroupAlive = (groupId: number): boolean => {
     return (error as NodeJS.ErrnoException).code !== 'ESRCH'
   }
 }
+
+// Durable kernel recovery addresses a previously-owned detached group by its persisted group id,
+// without a live ChildProcess handle from the crashed application instance.
+export const isOwnedPosixProcessGroupAlive = (groupId: number): boolean =>
+  Number.isSafeInteger(groupId) && groupId > 0 && isProcessGroupAlive(groupId)
 
 const signalProcessGroup = (groupId: number, signal: NodeJS.Signals): void => {
   try {
@@ -154,11 +251,544 @@ const waitForExit = (child: ChildProcess, ms: number): Promise<boolean> =>
 
 type DescendantSnapshot = { pids: number[]; complete: boolean }
 
-// Descendant discovery on POSIX. Node's child.kill() signals only the immediate child, so a
-// grandchild (conda, the claude CLI, a package manager) would otherwise be orphaned exactly as it would
-// on Windows without taskkill /T. `ps -A -o pid=,ppid=` is available on both macOS (BSD) and Linux
-// (procps). A failed snapshot is marked incomplete: we still kill the direct child, but MUST NOT report
-// the whole tree reaped when we could not enumerate it.
+const parseLinuxProcStat = (stat: string): PosixProcessIdentity | undefined => {
+  const commandEnd = stat.lastIndexOf(')')
+  if (commandEnd < 0) return undefined
+  const pid = Number(stat.slice(0, stat.indexOf(' ')))
+  const fields = stat
+    .slice(commandEnd + 1)
+    .trim()
+    .split(/\s+/u)
+  const ppid = Number(fields[1])
+  const pgid = Number(fields[2])
+  const sid = Number(fields[3])
+  const starttime = fields[19]
+  if (
+    ![pid, ppid, pgid, sid].every(Number.isSafeInteger) ||
+    pid <= 0 ||
+    starttime === undefined ||
+    !/^\d+$/u.test(starttime)
+  ) {
+    return undefined
+  }
+  return {
+    pid,
+    ppid,
+    pgid,
+    sid,
+    birthToken: `linux-proc-starttime:${starttime}`,
+    parentBirthToken: undefined,
+    birthOrder: undefined
+  }
+}
+
+const captureSpawnedLinuxLeader = (leaderPid: number): PosixProcessIdentity | null => {
+  try {
+    const identity = parseLinuxProcStat(readFileSync(`/proc/${leaderPid}/stat`, 'utf8'))
+    if (
+      identity?.pid !== leaderPid ||
+      identity.ppid !== process.pid ||
+      identity.pgid !== leaderPid ||
+      identity.sid !== leaderPid
+    ) {
+      return null
+    }
+    return identity
+  } catch {
+    return null
+  }
+}
+
+// Linux exposes a kernel-maintained process birth token in /proc/<pid>/stat field 22. Unlike ps
+// lstart, starttime is measured in clock ticks since boot, so two process epochs that reuse one pid
+// within the same wall-clock second remain distinguishable.
+const collectLinuxProcessTable = async (): Promise<PosixProcessTable> => {
+  let entries: string[]
+  try {
+    entries = await readdir('/proc')
+  } catch {
+    return { processes: new Map(), complete: false }
+  }
+
+  let complete = true
+  const processes = new Map<number, PosixProcessIdentity>()
+  await Promise.all(
+    entries
+      .filter((entry) => /^\d+$/u.test(entry))
+      .map(async (entry) => {
+        try {
+          const identity = parseLinuxProcStat(await readFile(`/proc/${entry}/stat`, 'utf8'))
+          if (identity) processes.set(identity.pid, identity)
+          else complete = false
+        } catch (error) {
+          // A process disappearing between readdir and readFile is normal churn and cannot survive
+          // teardown. Linux procfs reports that race as either ENOENT or ESRCH. Any other read
+          // failure makes the ownership snapshot incomplete.
+          const code = (error as NodeJS.ErrnoException).code
+          if (code !== 'ENOENT' && code !== 'ESRCH') complete = false
+        }
+      })
+  )
+  return { processes, complete: complete && processes.size > 0 }
+}
+
+type DarwinProcessBinding = Readonly<{
+  getDarwinProcess: (pid: number) => DarwinProcessIdentity | null
+  getDarwinEnvironmentValue: (pid: number, name: string) => string | false | null
+  listDarwinProcesses: () => DarwinProcessTable | null
+}>
+
+let darwinProcessBinding: DarwinProcessBinding | undefined
+
+export class ProcessTreeUnavailableError extends Error {
+  readonly code = 'PROCESS_TREE_UNAVAILABLE'
+
+  constructor(cause: unknown) {
+    super(
+      'PROCESS_TREE_UNAVAILABLE: macOS process ownership is unavailable; no command was started. ' +
+        (cause instanceof Error ? cause.message : String(cause)),
+      { cause }
+    )
+    this.name = 'ProcessTreeUnavailableError'
+  }
+}
+
+const requireDarwinProcessBinding = (): DarwinProcessBinding => {
+  if (darwinProcessBinding) return darwinProcessBinding
+  // Cache only a successfully loaded, compatible binding. A failed preparation owns no child or
+  // cleanup debt and a subsequent request may retry after the installation has been repaired.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- Native Node-API binding.
+  const binding = require('@aipoch/process-tree-native') as DarwinProcessBinding
+  if (
+    typeof binding.getDarwinProcess !== 'function' ||
+    typeof binding.listDarwinProcesses !== 'function' ||
+    typeof binding.getDarwinEnvironmentValue !== 'function'
+  ) {
+    throw new Error('The macOS process ownership module is incompatible.')
+  }
+  darwinProcessBinding = binding
+  return binding
+}
+
+/** Admission belongs to the process owner, shared by development and packaged execution. */
+export const assertProcessTreeSupport = (platform: NodeJS.Platform = process.platform): void => {
+  if (platform !== 'darwin' || process.platform !== 'darwin') return
+  try {
+    const binding = requireDarwinProcessBinding()
+    const identity = binding.getDarwinProcess(process.pid)
+    if (
+      !identity ||
+      identity.pid !== process.pid ||
+      !identity.uniqueId ||
+      identity.uniqueId === '0'
+    ) {
+      throw new Error(
+        'The macOS process ownership module cannot read the current process identity.'
+      )
+    }
+    const table = binding.listDarwinProcesses()
+    if (
+      !table?.complete ||
+      !table.processes.some(
+        (entry) => entry.pid === identity.pid && entry.uniqueId === identity.uniqueId
+      )
+    ) {
+      throw new Error(
+        'The macOS process ownership module cannot obtain a complete process snapshot.'
+      )
+    }
+  } catch (error) {
+    throw new ProcessTreeUnavailableError(error)
+  }
+}
+
+const loadDarwinProcessBinding = (): DarwinProcessBinding | null => {
+  try {
+    return requireDarwinProcessBinding()
+  } catch {
+    // Teardown still fails closed for children created by legacy callers without admission.
+    return null
+  }
+}
+
+const normalizeDarwinProcess = (identity: DarwinProcessIdentity): PosixProcessIdentity => ({
+  pid: identity.pid,
+  ppid: identity.ppid,
+  pgid: identity.pgid,
+  sid: identity.sid,
+  birthToken: `darwin-proc-uniqueid:${identity.uniqueId}`,
+  parentBirthToken: `darwin-proc-uniqueid:${identity.parentUniqueId}`,
+  birthOrder: identity.uniqueId
+})
+
+const captureSpawnedDarwinLeader = (leaderPid: number): PosixProcessIdentity | null => {
+  const identity = loadDarwinProcessBinding()?.getDarwinProcess(leaderPid)
+  if (!identity) return null
+  const normalized = normalizeDarwinProcess(identity)
+  if (
+    normalized.ppid !== process.pid ||
+    normalized.pgid !== leaderPid ||
+    normalized.sid !== leaderPid
+  ) {
+    return null
+  }
+  return normalized
+}
+
+const collectDarwinProcessTable = (): PosixProcessTable => {
+  const table = loadDarwinProcessBinding()?.listDarwinProcesses()
+  if (!table) return { processes: new Map(), complete: false }
+  return {
+    processes: new Map(
+      table.processes.map((identity) => {
+        const normalized = normalizeDarwinProcess(identity)
+        return [normalized.pid, normalized]
+      })
+    ),
+    complete: table.complete
+  }
+}
+
+// Other POSIX platforms provide topology through ps, but not a collision-resistant process birth
+// token. Keep the topology available for diagnostics while marking the table incomplete so tracked
+// teardown fails closed instead of signaling a pid based on a second-resolution timestamp.
+const collectPortablePosixProcessTable = (): Promise<PosixProcessTable> =>
+  new Promise<PosixProcessTable>((resolve) => {
+    let ps: ChildProcess
+    try {
+      ps = spawn('ps', ['-A', '-o', 'pid=,ppid=,pgid=,sid='], { windowsHide: true })
+    } catch {
+      resolve({ processes: new Map(), complete: false })
+      return
+    }
+
+    let out = ''
+    let settled = false
+    const finish = (table: PosixProcessTable): void => {
+      if (settled) return
+      settled = true
+      resolve(table)
+    }
+    const timer = setTimeout(() => {
+      try {
+        ps.kill()
+      } catch {
+        // The sampler may already have exited.
+      }
+      finish({ processes: new Map(), complete: false })
+    }, TERMINATE_GRACE_MS)
+    timer.unref?.()
+
+    ps.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString()
+    })
+    ps.on('error', () => {
+      clearTimeout(timer)
+      finish({ processes: new Map(), complete: false })
+    })
+    ps.on('close', (code) => {
+      clearTimeout(timer)
+      if (code !== 0) {
+        finish({ processes: new Map(), complete: false })
+        return
+      }
+      const processes = new Map<number, PosixProcessIdentity>()
+      for (const line of out.split('\n')) {
+        const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/u)
+        if (!match) continue
+        const [, pidText, ppidText, pgidText, sidText] = match
+        const pid = Number(pidText)
+        const ppid = Number(ppidText)
+        const pgid = Number(pgidText)
+        const sid = Number(sidText)
+        if (![pid, ppid, pgid, sid].every(Number.isSafeInteger) || pid <= 0) continue
+        processes.set(pid, {
+          pid,
+          ppid,
+          pgid,
+          sid,
+          birthToken: undefined,
+          parentBirthToken: undefined,
+          birthOrder: undefined
+        })
+      }
+      finish({ processes, complete: false })
+    })
+  })
+
+const collectPosixProcessTable = (): Promise<PosixProcessTable> => {
+  if (process.platform === 'linux') return collectLinuxProcessTable()
+  if (process.platform === 'darwin') return Promise.resolve(collectDarwinProcessTable())
+  return collectPortablePosixProcessTable()
+}
+
+const samePosixIdentity = (
+  expected: PosixProcessIdentity,
+  actual: PosixProcessIdentity | undefined
+): boolean =>
+  actual !== undefined &&
+  expected.birthToken !== undefined &&
+  actual.birthToken !== undefined &&
+  actual.pid === expected.pid &&
+  actual.birthToken === expected.birthToken
+
+const ownsRecordedLinuxLeaderGroup = (
+  tracker: PosixProcessTracker,
+  table: PosixProcessTable
+): boolean => {
+  if (process.platform !== 'linux') return false
+  const leader = tracker.leaderIdentity
+  if (!leader || !table.complete) return false
+  const currentLeader = table.processes.get(tracker.leaderPid)
+  if (currentLeader) return samePosixIdentity(leader, currentLeader)
+  // Preserve the established Linux group-receipt behavior. Darwin does not use this numeric-only
+  // fallback because a later session can reuse the dead leader's pid/group id.
+  return [...table.processes.values()].some(
+    ({ pgid, sid }) => pgid === tracker.leaderPid && sid === tracker.leaderPid
+  )
+}
+
+const captureTrackedDescendants = (
+  tracker: PosixProcessTracker,
+  table: PosixProcessTable
+): void => {
+  tracker.complete &&= table.complete
+  if (!table.complete) return
+  if (tracker.leaderIdentity === null) return
+  const children = new Map<number, PosixProcessIdentity[]>()
+  const childrenByParentBirth = new Map<string, PosixProcessIdentity[]>()
+  for (const process of table.processes.values()) {
+    const siblings = children.get(process.ppid) ?? []
+    siblings.push(process)
+    children.set(process.ppid, siblings)
+    if (process.parentBirthToken) {
+      const historicalSiblings = childrenByParentBirth.get(process.parentBirthToken) ?? []
+      historicalSiblings.push(process)
+      childrenByParentBirth.set(process.parentBirthToken, historicalSiblings)
+    }
+  }
+  const observedLeader = table.processes.get(tracker.leaderPid)
+  if (tracker.leaderIdentity === undefined) {
+    if (observedLeader === undefined) {
+      tracker.complete = false
+      tracker.leaderIdentity = null
+      return
+    }
+    tracker.leaderIdentity = observedLeader
+    tracker.identities.set(tracker.leaderPid, observedLeader)
+  }
+  const roots = new Set<number>()
+  if (samePosixIdentity(tracker.leaderIdentity, observedLeader)) roots.add(tracker.leaderPid)
+  for (const identity of tracker.identities.values()) {
+    if (identity.pid === tracker.leaderPid) continue
+    if (samePosixIdentity(identity, table.processes.get(identity.pid))) roots.add(identity.pid)
+  }
+  const stack = [...roots]
+  const visited = new Set<number>()
+  while (stack.length > 0) {
+    const pid = stack.pop() as number
+    if (visited.has(pid)) continue
+    visited.add(pid)
+    const identity = table.processes.get(pid)
+    if (pid === tracker.leaderPid && !samePosixIdentity(tracker.leaderIdentity, identity)) continue
+    if (identity && pid !== tracker.leaderPid) tracker.identities.set(pid, identity)
+    const historicalChildren = identity?.birthToken
+      ? (childrenByParentBirth.get(identity.birthToken) ?? [])
+      : []
+    for (const child of [...(children.get(pid) ?? []), ...historicalChildren]) {
+      if (child.pid === tracker.leaderPid && !samePosixIdentity(tracker.leaderIdentity, child)) {
+        continue
+      }
+      tracker.identities.set(child.pid, child)
+      stack.push(child.pid)
+    }
+  }
+  // Darwin retains an exact unique id for a process's original parent after reparenting. Walk from
+  // every identity previously proven to belong to this tree so a detached child remains attributable
+  // even when both its direct parent and the original leader have exited before the final sample.
+  const birthStack = [...tracker.identities.values()]
+    .map(({ birthToken }) => birthToken)
+    .filter((birthToken): birthToken is string => birthToken !== undefined)
+  const visitedBirthTokens = new Set<string>()
+  while (birthStack.length > 0) {
+    const birthToken = birthStack.pop() as string
+    if (visitedBirthTokens.has(birthToken)) continue
+    visitedBirthTokens.add(birthToken)
+    for (const child of childrenByParentBirth.get(birthToken) ?? []) {
+      tracker.identities.set(child.pid, child)
+      if (child.birthToken) birthStack.push(child.birthToken)
+    }
+  }
+  if (process.platform === 'linux' && tracker.ownershipToken) {
+    // A child can create a new session and lose its parent before the first sample. Its inherited
+    // command marker survives that transition. Validate the kernel birth identity again after
+    // reading environ so PID reuse cannot transfer ownership to a replacement process.
+    const expectedEntry = Buffer.from(
+      PROCESS_TREE_OWNERSHIP_ENV + '=' + tracker.ownershipToken + '\0'
+    )
+    for (const candidate of table.processes.values()) {
+      if (tracker.identities.has(candidate.pid)) continue
+      try {
+        const environment = readFileSync('/proc/' + candidate.pid + '/environ')
+        const offset = environment.indexOf(expectedEntry)
+        if (offset < 0 || (offset > 0 && environment[offset - 1] !== 0)) continue
+        const current = parseLinuxProcStat(readFileSync('/proc/' + candidate.pid + '/stat', 'utf8'))
+        if (samePosixIdentity(candidate, current)) tracker.identities.set(candidate.pid, candidate)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        // Other users' environments are inaccessible; no ownership is inferred from their PIDs.
+        if (!['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes(code ?? '')) tracker.complete = false
+      }
+    }
+  }
+  if (process.platform === 'darwin' && tracker.ownershipToken) {
+    const binding = loadDarwinProcessBinding()
+    const leaderBirthOrder = tracker.leaderIdentity.birthOrder
+      ? BigInt(tracker.leaderIdentity.birthOrder)
+      : undefined
+    for (const candidate of table.processes.values()) {
+      if (
+        leaderBirthOrder === undefined ||
+        candidate.birthOrder === undefined ||
+        tracker.identities.has(candidate.pid)
+      ) {
+        continue
+      }
+      const candidateBirthOrder = BigInt(candidate.birthOrder)
+      if (candidateBirthOrder <= leaderBirthOrder) continue
+
+      const sameLeaderGroup =
+        candidate.pgid === tracker.leaderPid && candidate.sid === tracker.leaderPid
+      const orphanedSessionLeader =
+        candidate.ppid === 1 && candidate.pgid === candidate.pid && candidate.sid === candidate.pid
+      if (!sameLeaderGroup && !orphanedSessionLeader) continue
+
+      // KERN_PROCARGS2 omits inherited environment entries for some Apple system executables such
+      // as /bin/sleep. An immediately-created member of the leader's private group still has two
+      // independent receipts: the group/session ids and a nearby monotonic process generation.
+      if (
+        sameLeaderGroup &&
+        candidateBirthOrder - leaderBirthOrder <= DARWIN_SAME_GROUP_BIRTH_ORDER_WINDOW
+      ) {
+        tracker.identities.set(candidate.pid, candidate)
+        continue
+      }
+
+      if (!binding) {
+        tracker.complete = false
+        continue
+      }
+      const ownershipToken = binding.getDarwinEnvironmentValue(
+        candidate.pid,
+        PROCESS_TREE_OWNERSHIP_ENV
+      )
+      if (ownershipToken === null) {
+        tracker.complete = false
+        continue
+      }
+      if (ownershipToken === tracker.ownershipToken) {
+        // The random spawn-time marker is inherited across exec and reparenting. It supplies a real
+        // ownership link when every intermediary disappeared between topology samples; the unique id
+        // still guards the later signal against PID reuse.
+        tracker.identities.set(candidate.pid, candidate)
+      } else if (sameLeaderGroup) {
+        // This may be a long-lived owned member whose environment is unavailable, or a later group
+        // that reused the leader's numeric id. Do not signal an ambiguous process or claim success.
+        tracker.complete = false
+      }
+    }
+  }
+}
+
+const sampleActiveProcessTrees = async (): Promise<PosixProcessTable> => {
+  if (ownershipSampling) return ownershipSampling
+  const trackers = [...activePosixProcessTrackers]
+  const sampling = collectPosixProcessTable().then((table) => {
+    for (const tracker of trackers) captureTrackedDescendants(tracker, table)
+    return table
+  })
+  ownershipSampling = sampling
+  try {
+    return await sampling
+  } finally {
+    if (ownershipSampling === sampling) {
+      ownershipSampling = undefined
+      if (ownershipResampleRequested) {
+        ownershipResampleRequested = false
+        if (activePosixProcessTrackers.size > 0) {
+          void sampleActiveProcessTrees().finally(scheduleTrackedProcessSample)
+        }
+      }
+    }
+  }
+}
+
+const scheduleTrackedProcessSample = (): void => {
+  if (activePosixProcessTrackers.size === 0 || ownershipSampleTimer) return
+  const delay =
+    process.platform === 'darwin' && Date.now() < ownershipSampleBurstDeadline
+      ? PROCESS_OWNERSHIP_BURST_SAMPLE_MS
+      : PROCESS_OWNERSHIP_SAMPLE_MS
+  ownershipSampleTimer = setTimeout(() => {
+    ownershipSampleTimer = undefined
+    void sampleActiveProcessTrees().finally(scheduleTrackedProcessSample)
+  }, delay)
+  ownershipSampleTimer.unref?.()
+}
+
+export const trackOwnedPosixProcessTree = (child: ChildProcess, ownershipToken?: string): void => {
+  if (trackedPosixProcessTrees.has(child)) return
+  registerOwnedPosixProcessGroup(child)
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return
+  const leaderPid = child.pid
+  if (leaderPid === undefined || !Number.isSafeInteger(leaderPid) || leaderPid <= 0) return
+  const leaderIdentity =
+    process.platform === 'linux'
+      ? captureSpawnedLinuxLeader(leaderPid)
+      : captureSpawnedDarwinLeader(leaderPid)
+  const tracker: PosixProcessTracker = {
+    leaderPid,
+    // Pin the direct child's kernel birth identity in the same synchronous turn as spawn. If this
+    // exact receipt cannot be proven, null permanently forbids a later table scan from adopting a
+    // replacement that happens to reuse the pid.
+    leaderIdentity,
+    identities: leaderIdentity ? new Map([[leaderPid, leaderIdentity]]) : new Map(),
+    complete: true,
+    ownershipToken
+  }
+  trackedPosixProcessTrees.set(child, tracker)
+  activePosixProcessTrackers.add(tracker)
+  if (process.platform === 'darwin') {
+    ownershipSampleBurstDeadline = Math.max(
+      ownershipSampleBurstDeadline,
+      Date.now() + PROCESS_OWNERSHIP_BURST_MS
+    )
+    if (ownershipSampleTimer) {
+      clearTimeout(ownershipSampleTimer)
+      ownershipSampleTimer = undefined
+    }
+  }
+  if (ownershipSampling) ownershipResampleRequested = true
+  void sampleActiveProcessTrees().finally(scheduleTrackedProcessSample)
+}
+
+const stopTrackedProcessTree = async (tracker: PosixProcessTracker): Promise<PosixProcessTable> => {
+  if (ownershipSampling) await ownershipSampling
+  activePosixProcessTrackers.delete(tracker)
+  if (activePosixProcessTrackers.size === 0 && ownershipSampleTimer) {
+    clearTimeout(ownershipSampleTimer)
+    ownershipSampleTimer = undefined
+  }
+  const finalSample = await collectPosixProcessTable()
+  captureTrackedDescendants(tracker, finalSample)
+  return finalSample
+}
+
+// Legacy descendant discovery for untracked POSIX children. Node's child.kill() signals only the
+// immediate child, so a grandchild (conda, the claude CLI, a package manager) would otherwise be
+// orphaned exactly as it would on Windows without taskkill /T. A failed ps snapshot is marked
+// incomplete: we still kill the direct child, but MUST NOT report the whole tree reaped when we could
+// not enumerate it.
 const collectDescendantPids = (rootPid: number): Promise<DescendantSnapshot> =>
   new Promise<DescendantSnapshot>((resolve) => {
     let ps: ChildProcess
@@ -303,9 +933,11 @@ const terminatePosixTree = async (
   signal: NodeJS.Signals | undefined,
   log: ProcessTreeLogger | undefined
 ): Promise<ProcessTreeKillResult> => {
+  // Node leaves pid undefined when spawn fails; no process (or descendant) was created.
+  // Its error/close events may already have fired before cleanup starts.
+  if (child.pid === undefined) return { reaped: true }
   const gracefulSignal = signal ?? 'SIGTERM'
-  const snapshot =
-    child.pid === undefined ? { pids: [], complete: true } : await collectDescendantPids(child.pid)
+  const snapshot = await collectDescendantPids(child.pid)
   const descendants = snapshot.pids
 
   signalPids(descendants, gracefulSignal)
@@ -316,7 +948,6 @@ const terminatePosixTree = async (
 
   if (exited && survivors.length === 0) return { reaped: snapshot.complete }
 
-  let childExited = exited
   if (survivors.length > 0) {
     log?.error(
       `process tree left ${survivors.length} descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
@@ -328,12 +959,17 @@ const terminatePosixTree = async (
       `process ${child.pid ?? '(no pid)'} did not exit after ${gracefulSignal}; escalating to SIGKILL`
     )
     forceKillChild(child)
-    childExited = await waitForExit(child, SIGKILL_GRACE_MS)
   }
 
-  // Re-check after SIGKILL: reaped only if the direct child exited and no descendant is still alive.
+  // SIGKILL delivery is asynchronous. Give descendants the same bounded exit grace even when the
+  // direct child exited first; an immediate probe can otherwise report a successfully stopped tree
+  // as unconfirmed. Wait concurrently so the whole forced pass still has one grace period.
+  const [childExited, descendantsExited] = await Promise.all([
+    exited ? true : waitForExit(child, SIGKILL_GRACE_MS),
+    waitForPidsExit(descendants, SIGKILL_GRACE_MS)
+  ])
   return {
-    reaped: snapshot.complete && childExited && descendants.filter(isProcessAlive).length === 0
+    reaped: snapshot.complete && childExited && descendantsExited
   }
 }
 
@@ -378,21 +1014,534 @@ const terminateOwnedPosixProcessGroup = async (
   return { reaped: snapshot.complete && forcedExit.every(Boolean) }
 }
 
+export const terminateOwnedPosixProcessGroupById = (
+  groupId: number,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<ProcessTreeKillResult> =>
+  Number.isSafeInteger(groupId) && groupId > 0
+    ? terminateOwnedPosixProcessGroup(
+        { kind: 'owned-posix-process-group', id: groupId },
+        signal,
+        log
+      )
+    : Promise.resolve({ reaped: false })
+
+// Scan the process table for any process carrying the given ownership marker in its environment.
+// Returns the list of pids found. An incomplete scan (permission denied, /proc unreadable) returns
+// undefined to signal that descendants cannot be ruled out.
+const scanForOwnedDescendants = async (
+  marker: string,
+  spawnedAt?: number
+): Promise<number[] | undefined> => {
+  if (!marker || typeof marker !== 'string') return []
+  const found: number[] = []
+
+  try {
+    if (process.platform === 'linux') {
+      // Read /proc/[pid]/environ for all processes. A setuid descendant can inherit the marker but
+      // run as a different UID, making its environment unreadable. To avoid incorrectly clearing
+      // ownership, we must check: (1) same-UID processes (direct descendants), and (2) processes
+      // we cannot inspect that might be setuid descendants. Use PPID to identify potential descendants.
+      // Also use process start time to exclude processes that existed before our spawn time.
+      const { readdirSync, readFileSync, statSync } = await import('node:fs')
+      const procs = readdirSync('/proc').filter((name) => /^\d+$/.test(name))
+      const ourUid = process.getuid?.()
+
+      // System boot time in seconds since epoch (needed to convert process start time)
+      let bootTime: number | undefined
+      if (spawnedAt !== undefined) {
+        try {
+          const uptime = readFileSync('/proc/uptime', 'utf8')
+          const uptimeSeconds = parseFloat(uptime.split(' ')[0])
+          bootTime = Date.now() / 1000 - uptimeSeconds
+        } catch {
+          // Cannot determine boot time - fail closed (cannot filter by time)
+        }
+      }
+
+      // Build PPID map to identify potential descendants
+      const ppidMap = new Map<number, number>() // pid -> ppid
+      const startTimeMap = new Map<number, number>() // pid -> start time (ms since epoch)
+      for (const pidStr of procs) {
+        try {
+          const stat = readFileSync(`/proc/${pidStr}/stat`, 'utf8')
+          // stat format: pid (comm) state ppid ... starttime(jiffies)
+          // starttime is field 22 (0-indexed: 21)
+          const match = stat.match(/^\d+ \(.+\) \S+ (\d+)/)
+          if (match) {
+            ppidMap.set(parseInt(pidStr, 10), parseInt(match[1], 10))
+          }
+          // Extract starttime (field 22, 1-indexed)
+          const fields = stat.split(')')
+          if (fields.length >= 2) {
+            const afterComm = fields[1].trim().split(/\s+/)
+            if (afterComm.length >= 20 && bootTime !== undefined) {
+              const starttimeJiffies = parseInt(afterComm[19], 10) // 0-indexed field 21
+              const clockTick = 100 // USER_HZ, typically 100 on Linux
+              const startTimeSec = bootTime + starttimeJiffies / clockTick
+              startTimeMap.set(parseInt(pidStr, 10), startTimeSec * 1000) // Convert to ms
+            }
+          }
+        } catch {
+          // Ignore processes that disappear or are unreadable
+        }
+      }
+
+      // Helper: check if pid could be a descendant of any same-UID process. Returns true if we
+      // cannot rule it out (fail closed). A setuid descendant may be reparented to PID 1 after
+      // its same-UID parent exits, making PPID-based tracing inconclusive.
+      const couldBeDescendant = (pid: number): boolean => {
+        // If we have a spawn time and this process started before it, definitely not our descendant
+        if (spawnedAt !== undefined && startTimeMap.has(pid)) {
+          const processStart = startTimeMap.get(pid)!
+          if (processStart < spawnedAt) {
+            return false // Process existed before we spawned anything
+          }
+        }
+
+        const visited = new Set<number>()
+        let current: number | undefined = pid
+        let foundSameUid = false
+
+        while (current !== undefined && !visited.has(current)) {
+          visited.add(current)
+
+          // If we reach a same-UID process, this could be a descendant
+          try {
+            const stat = statSync(`/proc/${current}`)
+            if (ourUid !== undefined && stat.uid === ourUid) {
+              foundSameUid = true
+              break
+            }
+          } catch {
+            // Cannot determine UID - assume could be relevant (fail closed)
+            return true
+          }
+
+          current = ppidMap.get(current)
+
+          // Reached PID 1 or orphaned (no PPID entry) without finding same-UID ancestor.
+          // This could be a setuid descendant that was reparented after its parent exited.
+          if (current === undefined || current === 1) {
+            break
+          }
+        }
+
+        // If we found a same-UID ancestor, definitely could be a descendant
+        if (foundSameUid) return true
+
+        // Otherwise: reached init/orphaned without same-UID ancestor. This could be:
+        // 1. Unrelated system process (should ignore, but only if it existed before our spawn)
+        // 2. Setuid descendant that was reparented (should block)
+        // Even if we have a start time showing the process started after our spawn, we cannot
+        // rule out case 2. A setuid descendant would start after our spawn, inherit the marker,
+        // then become inaccessible. Fail closed: treat as potentially relevant.
+        return true
+      }
+
+      let hadRelevantPermissionDenied = false
+      let hadSuspiciousMarkerAbsence = false
+      for (const pidStr of procs) {
+        try {
+          const environ = readFileSync(`/proc/${pidStr}/environ`, 'utf8')
+          // environ is null-separated key=value pairs
+          if (environ.includes(`OPEN_SCIENCE_PROCESS_TREE_ID=${marker}`)) {
+            found.push(parseInt(pidStr, 10))
+          } else {
+            // Successfully read environ but marker not found. If this process could be our
+            // descendant, it may have cleared its environment (e.g., via exec with env -i).
+            // Treat this as suspicious - we cannot safely clear ownership.
+            const pid = parseInt(pidStr, 10)
+            if (couldBeDescendant(pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
+          }
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code
+          // ENOENT/ESRCH are benign (process exited between readdir and readFile).
+          if (code === 'ENOENT' || code === 'ESRCH') continue
+
+          // Permission denied: check if this process could be a setuid descendant
+          const pid = parseInt(pidStr, 10)
+          if (couldBeDescendant(pid)) {
+            hadRelevantPermissionDenied = true
+          }
+        }
+      }
+      // If we hit permission errors for potential descendants, or found potential descendants
+      // without the marker (suspicious environment clearing), the scan is incomplete
+      if ((hadRelevantPermissionDenied || hadSuspiciousMarkerAbsence) && found.length === 0) {
+        return undefined
+      }
+      return found
+    } else if (process.platform === 'darwin') {
+      // Use native binding to read process environments reliably. The binding reads via
+      // KERN_PROCARGS2 sysctl, which may omit inherited environment for some Apple system
+      // executables, but is more complete than ps e (which truncates long environments).
+      try {
+        const binding = requireDarwinProcessBinding()
+        const table = binding.listDarwinProcesses()
+        if (!table) return undefined // Failed to list processes
+
+        // If the process list itself is incomplete (table.complete === false), we cannot prove
+        // absence even if all listed processes lack the marker: an omitted descendant may exist.
+        if (!table.complete) return undefined
+
+        // Build parent chain map and filter out processes that existed before spawn time
+        const ppidMap = new Map<number, number>()
+        const potentialDescendants = new Set<number>()
+        const ourUid = process.getuid?.()
+
+        for (const proc of table.processes) {
+          ppidMap.set(proc.pid, proc.ppid)
+
+          // If we have spawn time, filter by uniqueId (which encodes process start time on macOS)
+          if (spawnedAt !== undefined) {
+            // On macOS, uniqueId from KERN_PROCARGS2 contains creation timestamp info.
+            // For now, we'll use a simpler heuristic: check PPID chains to see if the process
+            // could be related to same-UID processes. A more sophisticated implementation would
+            // parse the uniqueId timestamp.
+            // TODO: Parse uniqueId for precise start time filtering
+          }
+        }
+
+        // Helper: determine if a process could be our descendant by checking PPID chains
+        const couldBeDescendant = (pid: number): boolean => {
+          const visited = new Set<number>()
+          let current: number | undefined = pid
+
+          while (current !== undefined && current !== 0 && current !== 1 && !visited.has(current)) {
+            visited.add(current)
+
+            // Check if current process is same-UID by attempting to get its identity
+            // (native binding will fail for different-UID system processes)
+            const identity = binding.getDarwinProcess(current)
+            if (identity === null) {
+              // Cannot read this process - could be system process or permission denied
+              // If we can't determine, assume it could be relevant (fail closed)
+              return true
+            }
+
+            // If this process is same-UID (we can read it), mark it as potential ancestor
+            if (ourUid !== undefined) {
+              // On macOS, if we can read the process via getDarwinProcess, it's likely same-UID
+              // or accessible. A same-UID ancestor means this could be our descendant.
+              potentialDescendants.add(pid)
+              return true
+            }
+
+            current = ppidMap.get(current)
+          }
+
+          // Reached init (1) or orphaned without finding same-UID ancestor
+          return false
+        }
+
+        let hadIncomplete = false
+        let hadSuspiciousMarkerAbsence = false
+
+        for (const proc of table.processes) {
+          const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
+          if (value === null) {
+            // null means we couldn't read the environment (system process, permission denied, etc.)
+            // Only treat as incomplete if this could be our descendant
+            if (couldBeDescendant(proc.pid)) {
+              hadIncomplete = true
+            }
+            continue
+          }
+          if (value === false) {
+            // false means the environment variable was not found. If this process could be our
+            // descendant, it may have cleared its environment. Treat this as suspicious.
+            if (couldBeDescendant(proc.pid)) {
+              hadSuspiciousMarkerAbsence = true
+            }
+            continue
+          }
+          if (value === marker) {
+            found.push(proc.pid)
+          }
+        }
+
+        // If we had incomplete reads or suspicious marker absence for potential descendants,
+        // and found nothing, we cannot prove absence
+        if ((hadIncomplete || hadSuspiciousMarkerAbsence) && found.length === 0) return undefined
+        return found
+      } catch {
+        // Binding unavailable or failed — cannot prove absence
+        return undefined
+      }
+    }
+  } catch {
+    // Any unexpected error means the scan is unreliable
+    return undefined
+  }
+  return []
+}
+
+// Outcome of proving a persisted POSIX leader receipt from a later application instance:
+// 'gone' is positive proof that the recorded tree no longer exists, 'blocked' retains ownership.
+export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
+
+// Cold recovery for a leader recorded by a previous, crashed application instance. There is no
+// ChildProcess handle and no live tracker, so the only admissible evidence is the kernel's own
+// birth identity for the recorded pid, read from a COMPLETE process snapshot.
+//
+// 'gone' is returned only when positive proof exists that neither the leader nor its detached
+// process group nor any marker-attributed descendants remain alive:
+//   - the recorded pid is absent or reused (birth token differs) AND the owned group (kill -0)
+//     is also gone AND (if marker provided) no process in the system carries that marker, or
+//   - the exact leader is still alive, we terminate its group, and the confirmation snapshot
+//     shows neither the leader pid nor the group exists.
+// If the leader is gone but the group is still alive the receipt stays blocked — a leaderless
+// group cannot be safely tied back to the receipt (matches notebook shell-process-ownership).
+// If a marker scan is incomplete (permission denied) the receipt also stays blocked.
+// Everything else that cannot be fully proven also stays blocked.
+export const proveRecordedPosixLeaderGone = async (
+  leader: { pid: number; birthToken?: string },
+  marker?: string,
+  spawnedAt?: number,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<PosixLeaderRecoveryOutcome> => {
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return 'blocked'
+  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return 'blocked'
+  // Without a recorded birth token any pid match would be a guess, and pid absence alone cannot
+  // rule out a descendant that outlived the leader. Retain the receipt instead.
+  if (leader.birthToken === undefined) return 'blocked'
+  const recorded: PosixProcessIdentity = {
+    pid: leader.pid,
+    ppid: 0,
+    pgid: leader.pid,
+    sid: leader.pid,
+    birthToken: leader.birthToken,
+    parentBirthToken: undefined,
+    birthOrder: undefined
+  }
+  const snapshot = await collectPosixProcessTable()
+  // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
+  if (!snapshot.complete) return 'blocked'
+  if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
+    // The leader pid is absent or reused by an unrelated process. This is cold recovery: the tree
+    // disappeared outside of our control. Before declaring the tree gone, verify the owned group
+    // (kill -0 against -pid) is also absent. If the group is still alive but the leader is gone,
+    // the numeric group id may have been reused — never signal a group that cannot be tied back
+    // to the recorded identity. (Mirrors notebook shell-ownership.)
+    if (isProcessGroupAlive(leader.pid)) return 'blocked'
+
+    // Leader and its original group are both gone. If we have an ownership marker, scan the process
+    // table for any descendants that may have escaped to a new session but still carry the marker.
+    //
+    // Security model: marker-based tracking provides practical ownership proof but lacks the
+    // authoritative guarantees of OS lifecycle handles (Windows Job objects). Theoretical attack:
+    // a descendant could exec() itself with a cleaned environment, removing the marker from
+    // /proc/[pid]/environ. However:
+    //   1. Reboot proof (checked upstream) handles the cold-start case definitively
+    //   2. Our spawned delegation backends don't exec() themselves
+    //   3. Same-UID scope limits the attack surface
+    //   4. The documented contract explicitly permits this approach
+    //
+    // Alternative (always block without reboot proof) would make workspaces unusable after clean
+    // process termination, contradicting the recovery contract and practical requirements.
+    if (marker) {
+      const descendants = await scanForOwnedDescendants(marker, spawnedAt)
+      // undefined means incomplete scan (permission denied for same-UID process, binding failed)
+      if (descendants === undefined) return 'blocked'
+      // Found descendants with marker → definitely blocked
+      if (descendants.length > 0) return 'blocked'
+      // Complete same-UID scan with no marker found → sufficient proof per documented contract
+    }
+
+    // Leader and group confirmed absent, and complete marker scan found nothing (if marker provided)
+    return 'gone'
+  }
+  // The exact recorded leader is still alive. Before signaling, verify it is still a process
+  // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group
+  // id we recorded may have been reused by an unrelated group; fail closed in that case.
+  const liveLeader = snapshot.processes.get(leader.pid)
+  if (!liveLeader || liveLeader.pgid !== leader.pid) {
+    // Leader exists but is no longer a group leader, or pgid was reused. Cannot safely signal.
+    return 'blocked'
+  }
+  // Its detached group is still addressable by the persisted id, so terminate it and require
+  // confirmed exit before releasing ownership.
+  const result = await terminateOwnedPosixProcessGroup(
+    { kind: 'owned-posix-process-group', id: leader.pid },
+    signal,
+    log
+  )
+  if (!result.reaped) return 'blocked'
+  const confirmation = await collectPosixProcessTable()
+  if (!confirmation.complete) return 'blocked'
+  // Leader and group are confirmed gone. Before returning 'gone', scan for escaped descendants
+  // that may have daemonized into a new session before teardown but still carry the marker.
+  // In the live-teardown path (we actively signaled the group), a clean marker scan after
+  // successful termination provides sufficient proof: we killed the recorded group and no
+  // marked descendants remain visible.
+  if (marker) {
+    const descendants = await scanForOwnedDescendants(marker, spawnedAt)
+    if (descendants === undefined) return 'blocked' // incomplete scan
+    if (descendants.length > 0) return 'blocked' // found escaped descendants
+    // Clean scan after live teardown: sufficient proof
+  }
+  // No marker or clean scan: leader confirmation as final check
+  return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ? 'blocked' : 'gone'
+}
+
+const terminateTrackedPosixProcessTree = async (
+  child: ChildProcess,
+  tracker: PosixProcessTracker,
+  signal: NodeJS.Signals | undefined,
+  log: ProcessTreeLogger | undefined
+): Promise<ProcessTreeKillResult> => {
+  const gracefulSignal = signal ?? 'SIGTERM'
+  const finalSample = await stopTrackedProcessTree(tracker)
+  const unsupportedPlatform = process.platform !== 'linux' && process.platform !== 'darwin'
+  const unusableLinuxSnapshot = process.platform === 'linux' && !finalSample.complete
+  if (unsupportedPlatform || unusableLinuxSnapshot || tracker.leaderIdentity === null) {
+    // A missing Darwin receipt still retains the explicit group as a best-effort cleanup path, but
+    // it cannot prove that a descendant did not escape the group.
+    if (process.platform === 'darwin') {
+      const ownedGroup = ownedPosixProcessGroups.get(child)
+      if (ownedGroup) {
+        await terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
+        return { reaped: false }
+      }
+    }
+    killDirectChild(child, gracefulSignal)
+    if (!(await waitForExit(child, TERMINATE_GRACE_MS))) {
+      log?.error(
+        `process ${child.pid ?? '(no pid)'} did not exit after ${gracefulSignal}; escalating to SIGKILL`
+      )
+      forceKillChild(child)
+      await waitForExit(child, SIGKILL_GRACE_MS)
+    }
+    return { reaped: false }
+  }
+  const live = [...tracker.identities.values()].filter((identity) =>
+    samePosixIdentity(identity, finalSample.processes.get(identity.pid))
+  )
+  const ownedGroups = (identities: readonly PosixProcessIdentity[]): Set<number> =>
+    new Set([
+      ...identities
+        .filter(({ pid, pgid, sid }) => pgid === tracker.leaderPid || (pid === pgid && pid === sid))
+        .map(({ pgid }) => pgid)
+    ])
+  const gracefulGroups = ownedGroups(live)
+  if (ownsRecordedLinuxLeaderGroup(tracker, finalSample)) {
+    gracefulGroups.add(tracker.leaderPid)
+  }
+  for (const pgid of gracefulGroups) {
+    signalProcessGroup(pgid, gracefulSignal)
+  }
+  signalPids(
+    live.map(({ pid }) => pid),
+    gracefulSignal
+  )
+  const gracefulExit = await Promise.all([
+    waitForPidsExit(
+      live.map(({ pid }) => pid),
+      TERMINATE_GRACE_MS
+    ),
+    ...[...gracefulGroups].map((pgid) => waitForProcessGroupExit(pgid, TERMINATE_GRACE_MS))
+  ])
+  if (gracefulExit.every(Boolean)) return { reaped: tracker.complete && finalSample.complete }
+
+  const beforeForce = await collectPosixProcessTable()
+  const survivors = live.filter((identity) =>
+    samePosixIdentity(identity, beforeForce.processes.get(identity.pid))
+  )
+  const forcedGroups = ownedGroups(survivors)
+  if (ownsRecordedLinuxLeaderGroup(tracker, beforeForce)) {
+    forcedGroups.add(tracker.leaderPid)
+  }
+  if (survivors.length > 0) {
+    log?.error(
+      `owned process tree left ${survivors.length} exact descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
+    )
+    signalPids(
+      survivors.map(({ pid }) => pid),
+      'SIGKILL'
+    )
+  }
+  for (const pgid of forcedGroups) signalProcessGroup(pgid, 'SIGKILL')
+  const forcedExit = await Promise.all([
+    waitForPidsExit(
+      survivors.map(({ pid }) => pid),
+      SIGKILL_GRACE_MS
+    ),
+    ...[...forcedGroups].map((pgid) => waitForProcessGroupExit(pgid, SIGKILL_GRACE_MS))
+  ])
+  return {
+    reaped:
+      tracker.complete && finalSample.complete && beforeForce.complete && forcedExit.every(Boolean)
+  }
+}
+
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually
 // exit — escalating to SIGKILL anything still alive. On Windows the tree is reaped with taskkill /T /F
 // (with a direct-kill fallback); on POSIX descendants are found via `ps`, signaled, and SIGKILL-escalated.
 // Returns { reaped } so a caller that must guarantee released handles can tell a clean tree teardown
 // from a degraded fallback. This never rejects: any failure resolves (reaped:false) so a kill can never
 // surface into the caller (before-quit -> app.exit).
-export const terminateProcessTree = async (
+const terminateProcessTreeOnce = async (
   child: ChildProcess,
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<ProcessTreeKillResult> => {
-  if (process.platform === 'win32') {
-    return terminateWindowsTree(child, signal, log)
-  }
+  const trackedTree = trackedPosixProcessTrees.get(child)
   const ownedGroup = ownedPosixProcessGroups.get(child)
-  if (ownedGroup) return terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
-  return terminatePosixTree(child, signal, log)
+  const ownership = processTreeOwnership.get(child)
+  let result: ProcessTreeKillResult
+  try {
+    result = await (ownership?.terminate
+      ? ownership.terminate()
+      : process.platform === 'win32'
+        ? terminateWindowsTree(child, signal, log)
+        : trackedTree
+          ? terminateTrackedPosixProcessTree(child, trackedTree, signal, log)
+          : ownedGroup
+            ? terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
+            : terminatePosixTree(child, signal, log))
+  } catch (error) {
+    log?.error('Process tree teardown failed', error)
+    result = { reaped: false }
+  }
+  try {
+    ownership?.settled(result)
+  } catch (error) {
+    log?.error('Process ownership receipt could not be settled', error)
+    return { reaped: false }
+  }
+  if (result.reaped) {
+    processTreeOwnership.delete(child)
+    const callback = processTreeReapCallbacks.get(child)
+    processTreeReapCallbacks.delete(child)
+    callback?.()
+  }
+  return result
+}
+
+const processTreeTerminations = new WeakMap<ChildProcess, Promise<ProcessTreeKillResult>>()
+export const terminateProcessTree = (
+  child: ChildProcess,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<ProcessTreeKillResult> => {
+  const existing = processTreeTerminations.get(child)
+  if (existing) return existing
+  const pending = terminateProcessTreeOnce(child, signal, log).then(
+    (result) => {
+      if (!result.reaped && processTreeTerminations.get(child) === pending)
+        processTreeTerminations.delete(child)
+      return result
+    },
+    (error: unknown) => {
+      if (processTreeTerminations.get(child) === pending) processTreeTerminations.delete(child)
+      throw error
+    }
+  )
+  processTreeTerminations.set(child, pending)
+  return pending
 }

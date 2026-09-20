@@ -457,7 +457,7 @@ export class ComputeJobRepository {
     })
   }
 
-  // Observational projection for renderer lists and concurrency status. Unlike lifecycle scans,
+  // Observational projection for renderer lists. Unlike lifecycle scans,
   // this retains quarantined/needs-attention rows so users can inspect durable state safely.
   async findBySession(sessionId: string, statuses?: string[]): Promise<ComputeJob[]> {
     const client = await this.getClient()
@@ -468,6 +468,39 @@ export class ComputeJobRepository {
       },
       include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'desc' }
+    })
+    return rows.map(this.toJob)
+  }
+
+  // Status reads never need sensitive job bodies or cancellation operation payloads.
+  async findSessionConcurrencyJobs(
+    sessionId: string
+  ): Promise<Pick<ComputeJob, 'status' | 'provider_id'>[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: { sessionId },
+      select: { status: true, providerId: true }
+    })
+    return rows.map((row) => ({ status: asStatus(row.status), provider_id: row.providerId }))
+  }
+
+  async findProjectOverview(projectId: string, since: Date): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: {
+        projectId,
+        OR: [
+          { status: { in: ['queued', 'submitted', 'running'] } },
+          { operations: { some: { kind: 'cancel', phase: 'active' } } },
+          {
+            status: { in: ['success', 'failed', 'timeout', 'error'] },
+            OR: [{ finishedAt: { gte: since } }, { finishedAt: null, createdAt: { gte: since } }]
+          }
+        ]
+      },
+      include: { operations: { where: { kind: 'cancel' } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200
     })
     return rows.map(this.toJob)
   }

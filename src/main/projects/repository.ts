@@ -11,6 +11,7 @@ import { PROJECT_NAME_MAX_LENGTH } from '../../shared/projects'
 import { projectSessionDefaultsSchema } from '../../shared/session-configuration'
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
+import { isSessionPackagePending } from '../storage/session-package-state'
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
@@ -22,6 +23,7 @@ type ProjectClient = Pick<
   | 'project'
   | 'projectDeletionIntent'
   | 'projectPreviewState'
+  | 'bookmark'
   | 'visionEvidence'
   | 'memoryEntry'
   | 'memorySettings'
@@ -84,7 +86,14 @@ type ProjectClientProvider = () => Promise<ProjectClient>
 
 // Owns Project reads/writes. The client is resolved lazily per call so schema-ensure failures can recover.
 class ProjectRepository {
-  constructor(private readonly getClient: ProjectClientProvider) {}
+  constructor(
+    private readonly getClient: ProjectClientProvider,
+    private readonly configRoot?: string
+  ) {}
+
+  private pending(id: string): Promise<boolean> {
+    return this.configRoot ? isSessionPackagePending(this.configRoot, id) : Promise.resolve(false)
+  }
 
   // Lists projects most-recently-updated first for the home screen.
   async list(): Promise<Project[]> {
@@ -98,11 +107,15 @@ class ProjectRepository {
     })
     const deletingProjectIds = new Set(deletionIntents.map(({ projectId }) => projectId))
 
-    return rows.filter(({ id }) => !deletingProjectIds.has(id)).map(toProject)
+    const pending = await Promise.all(rows.map(({ id }) => this.pending(id)))
+    return rows
+      .filter(({ id }, index) => !deletingProjectIds.has(id) && !pending[index])
+      .map(toProject)
   }
 
   // Returns a single project or null when it no longer exists.
   async get(id: string): Promise<Project | null> {
+    if (await this.pending(id)) return null
     const client = await this.getClient()
     const row = await client.project.findUnique({ where: { id } })
 
@@ -110,6 +123,7 @@ class ProjectRepository {
   }
 
   async exists(id: string): Promise<boolean> {
+    if (await this.pending(id)) return false
     const client = await this.getClient()
     const row = await client.project.findUnique({
       where: { id },
@@ -272,7 +286,9 @@ class ProjectRepository {
         transaction as unknown as Prisma.TransactionClient,
         'PRAGMA secure_delete = ON'
       )
+      await transaction.projectLiterature.deleteMany({ where: { projectId: id } })
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
+      await transaction.bookmark.deleteMany({ where: { projectId: id } })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
       const deletedMemory = await transaction.memoryEntry.deleteMany({ where: { projectId: id } })
       const memoryChange =

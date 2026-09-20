@@ -40,10 +40,10 @@ describe('cell execution input', () => {
       }
       const executions: NotebookExecutionRequest[] = []
       if (blockedAt === 'persistence') {
-        const appendRun = repository.appendRun.bind(repository)
-        vi.spyOn(repository, 'appendRun').mockImplementation(async (...args) => {
+        const appendOrGetRun = repository.appendOrGetRun.bind(repository)
+        vi.spyOn(repository, 'appendOrGetRun').mockImplementation(async (...args) => {
           await hold()
-          return appendRun(...args)
+          return appendOrGetRun(...args)
         })
       }
       const service = new NotebookRuntimeService({

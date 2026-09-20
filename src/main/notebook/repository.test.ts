@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookRunRepository, getNotebookSessionRoot } from './repository'
+import {
+  NotebookRunRepository,
+  NotebookRunSubmissionConflictError,
+  getNotebookSessionRoot
+} from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
 import { getNotebookInputRoot } from './input-staging'
 
@@ -16,6 +20,23 @@ const createStorageRoot = async (): Promise<string> => {
   return storageRoot
 }
 
+const admittedRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
+  runId: 'run-1',
+  submissionIdentity: 'submission-1',
+  submissionFingerprint: 'a'.repeat(64),
+  cellId: 'cell-1',
+  source: 'agent',
+  kernelKind: 'python',
+  script: 'print(1)',
+  status: 'queued',
+  startedAt: 1,
+  text: { stdout: '', stderr: '', traceback: '', plain: [] },
+  outputs: [],
+  artifacts: [],
+  workingFiles: [],
+  ...overrides
+})
+
 afterEach(async () => {
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
@@ -24,6 +45,319 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('resolves a provisional root Frame without reading it as a child Frame lane', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'canonical-session'
+    const provisionalRootFrameId = 'root-frame-pending-session-1'
+    const rootLane = createRootNotebookLane(projectId, sessionId, provisionalRootFrameId)
+    await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane: rootLane
+    })
+    await repository.appendOrGetRun({
+      projectId,
+      sessionId,
+      lane: rootLane,
+      run: admittedRun({
+        runId: 'run-root',
+        executionMode: 'background',
+        rootFrameId: provisionalRootFrameId,
+        agentFrameId: provisionalRootFrameId
+      })
+    })
+
+    await expect(
+      repository.findOwnedRun(projectId, sessionId, provisionalRootFrameId, {
+        runId: 'run-root'
+      })
+    ).resolves.toMatchObject({ run: { runId: 'run-root' } })
+    await expect(
+      repository.findOwnedRun(projectId, sessionId, 'child-frame', { runId: 'run-root' })
+    ).resolves.toBeUndefined()
+  })
+
+  it('atomically returns the canonical Run for a repeated submission', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+
+    const first = await repository.appendOrGetRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun()
+    })
+    const repeated = await repository.appendOrGetRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun({ runId: 'run-that-must-not-be-created' })
+    })
+
+    expect(first.admitted).toBe(true)
+    expect(repeated).toMatchObject({ admitted: false, run: { runId: 'run-1' } })
+    expect(repeated.document.runs).toHaveLength(1)
+  })
+
+  it('rejects reuse of a submission identity with a different fingerprint', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendOrGetRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun()
+    })
+
+    await expect(
+      repository.appendOrGetRun({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane,
+        run: admittedRun({ runId: 'run-2', submissionFingerprint: 'b'.repeat(64) })
+      })
+    ).rejects.toMatchObject({
+      name: 'NotebookRunSubmissionConflictError',
+      code: 'NOTEBOOK_RUN_SUBMISSION_CONFLICT'
+    } satisfies Partial<NotebookRunSubmissionConflictError>)
+  })
+
+  it('uses expected-state transitions and never overwrites a terminal Run', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendOrGetRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun()
+    })
+
+    const running = await repository.transitionRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun({ status: 'running' }),
+      expectedStatus: 'queued'
+    })
+    const completed = await repository.transitionRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun({ status: 'completed', endedAt: 2 }),
+      expectedStatus: 'running'
+    })
+    const lateCancellation = await repository.transitionRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun({ status: 'cancelled', endedAt: 3 }),
+      expectedStatus: 'running'
+    })
+
+    expect(running.transitioned).toBe(true)
+    expect(completed.transitioned).toBe(true)
+    expect(lateCancellation).toMatchObject({
+      transitioned: false,
+      run: { status: 'completed', endedAt: 2 }
+    })
+  })
+
+  it('repairs a durable terminal outcome after the canonical terminal write fails', async () => {
+    const root = await createStorageRoot()
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const repository = new NotebookRunRepository(root)
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendOrGetRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun()
+    })
+    await repository.transitionRun({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: admittedRun({ status: 'running' }),
+      expectedStatus: 'queued'
+    })
+
+    const transition = repository.transitionRun.bind(repository)
+    let failCanonicalWrite = true
+    repository.transitionRun = async (request) => {
+      if (failCanonicalWrite) {
+        failCanonicalWrite = false
+        throw new Error('injected canonical write failure')
+      }
+      return transition(request)
+    }
+    await expect(
+      repository.commitTerminalRun({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane,
+        run: admittedRun({ status: 'completed', endedAt: 2 }),
+        expectedStatus: 'running'
+      })
+    ).rejects.toThrow('injected canonical write failure')
+
+    await new NotebookRunRepository(root).recoverAllRunLifecycles()
+
+    const recovered = await new NotebookRunRepository(root).findExisting(
+      'default-project',
+      'session-1'
+    )
+    expect(recovered?.runs[0]).toMatchObject({ status: 'completed', endedAt: 2 })
+  })
+
+  it('globally interrupts stale admitted Runs without opening their Sessions', async () => {
+    const root = await createStorageRoot()
+    const priorRepository = new NotebookRunRepository(root)
+    const rootLane = createRootNotebookLane(
+      'default-project',
+      'root-session',
+      'root-frame-root-session'
+    )
+    const frameLane = createFrameNotebookLane('default-project', 'frame-session', 'frame-1')
+    for (const [sessionId, lane] of [
+      ['root-session', rootLane],
+      ['frame-session', frameLane]
+    ] as const) {
+      await priorRepository.loadOrCreate({
+        projectId: 'default-project',
+        sessionId,
+        workspaceCwd: '/workspace',
+        lane
+      })
+      await priorRepository.appendOrGetRun({
+        projectId: 'default-project',
+        sessionId,
+        lane,
+        run: admittedRun({
+          runId: `run-${sessionId}`,
+          submissionIdentity: `submission-${sessionId}`,
+          executionMode: 'background'
+        })
+      })
+    }
+
+    const recoveredDeliveries = await new NotebookRunRepository(root).recoverAllRunLifecycles()
+
+    const recoveredRoot = await new NotebookRunRepository(root).findExisting(
+      'default-project',
+      'root-session'
+    )
+    const recoveredFrame = await new NotebookRunRepository(root).readSessionDocuments(
+      'default-project',
+      'frame-session'
+    )
+    expect(recoveredRoot?.runs[0]).toMatchObject({
+      status: 'interrupted',
+      interruptionReason: 'app-terminated'
+    })
+    expect(recoveredFrame[0]?.runs[0]).toMatchObject({
+      status: 'interrupted',
+      interruptionReason: 'app-terminated'
+    })
+    expect(recoveredDeliveries).toEqual([
+      {
+        projectId: 'default-project',
+        sessionId: 'frame-session',
+        run: expect.objectContaining({
+          runId: 'run-frame-session',
+          status: 'interrupted',
+          interruptionReason: 'app-terminated'
+        })
+      },
+      {
+        projectId: 'default-project',
+        sessionId: 'root-session',
+        run: expect.objectContaining({
+          runId: 'run-root-session',
+          status: 'interrupted',
+          interruptionReason: 'app-terminated'
+        })
+      }
+    ])
+  })
+
+  it('replays every durable terminal background Run even after its terminal fact is gone', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane(
+      'default-project',
+      'terminal-background',
+      'root-frame-terminal-background'
+    )
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'terminal-background',
+      workspaceCwd: '/workspace',
+      lane
+    })
+    const queued = admittedRun({ executionMode: 'background' })
+    await repository.appendOrGetRun({
+      projectId: 'default-project',
+      sessionId: 'terminal-background',
+      lane,
+      run: queued
+    })
+    await repository.transitionRun({
+      projectId: 'default-project',
+      sessionId: 'terminal-background',
+      lane,
+      expectedStatus: 'queued',
+      run: { ...queued, status: 'running' }
+    })
+    await repository.commitTerminalRun({
+      projectId: 'default-project',
+      sessionId: 'terminal-background',
+      lane,
+      expectedStatus: 'running',
+      run: { ...queued, status: 'completed', endedAt: 2 }
+    })
+
+    const firstStartup = await new NotebookRunRepository(root).recoverAllRunLifecycles()
+    const secondStartup = await new NotebookRunRepository(root).recoverAllRunLifecycles()
+
+    expect(firstStartup).toEqual([
+      {
+        projectId: 'default-project',
+        sessionId: 'terminal-background',
+        run: expect.objectContaining({ runId: 'run-1', status: 'completed' })
+      }
+    ])
+    expect(secondStartup).toEqual(firstStartup)
+  })
+
   it('recovers a valid historical run.json temp when the primary is missing', async () => {
     const root = await createStorageRoot()
     const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')

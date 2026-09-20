@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -14,6 +14,9 @@ import {
   environmentFromProcess,
   loadSkillDocument
 } from './runtime-mcp-server'
+
+import { SkillRegistry } from './registry'
+import { ClaudeCodeSkillMaterializer } from './materializer'
 
 const roots: string[] = []
 
@@ -63,7 +66,147 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-describe('Claude Skill runtime MCP loader', () => {
+describe('Skill runtime MCP loader', () => {
+  it.each([
+    'self-awareness',
+    'skill-creator',
+    'customize',
+    'env-management',
+    'compute-env-setup',
+    'remote-compute-ssh',
+    'literature-review'
+  ])('loads the bundled %s package by its public name through Codex MCP', async (name) => {
+    const root = await mkdtemp(join(tmpdir(), 'bundled-codex-skill-'))
+    roots.push(root)
+    const skill = (await new SkillRegistry(resolve('resources/skills')).list()).find(
+      (entry) => entry.name === name
+    )
+    expect(skill).toBeDefined()
+    await new ClaudeCodeSkillMaterializer().sync(root, [skill!])
+    const server = await createSkillRuntimeMcpServer({
+      root,
+      skillsDirectory: join(root, 'skills')
+    })
+    const client = new Client({ name: 'bundled-codex-loader-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: LOAD_SKILL_TOOL_NAME,
+        arguments: { skill: name }
+      })
+      expect(result, JSON.stringify(result)).not.toHaveProperty('isError', true)
+      expect(JSON.stringify(result.content)).toContain(`name: ${name}`)
+      expect(JSON.stringify(await client.listTools())).toContain(name)
+    } finally {
+      await client.close()
+      await server.close()
+      // The real materializer makes package directories read-only on POSIX.
+      const writable = async (directory: string): Promise<void> => {
+        await chmod(directory, 0o755)
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          if (entry.isDirectory()) await writable(join(directory, entry.name))
+        }
+      }
+      await writable(root)
+    }
+  })
+
+  it('rejects catalogs outside the runtime root and linked catalog directories', async () => {
+    const root = await seedProjection()
+    const outside = await seedProjection('outside-skill')
+    await expect(
+      loadSkillDocument(
+        { root, skillsDirectory: join(outside, '.claude', 'skills') },
+        'outside-skill'
+      )
+    ).rejects.toThrow()
+    const linkedCatalog = join(root, 'skills')
+    await symlink(
+      join(outside, '.claude', 'skills'),
+      linkedCatalog,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await expect(
+      loadSkillDocument({ root, skillsDirectory: linkedCatalog }, 'outside-skill')
+    ).rejects.toThrow()
+  })
+
+  it('loads the Codex directory through the same scoped MCP boundary', async () => {
+    const root = await seedProjection()
+    const skillsDirectory = join(root, 'skills')
+    await mkdir(join(skillsDirectory, 'mcp-genomes'), { recursive: true })
+    await writeFile(
+      join(skillsDirectory, 'mcp-genomes', 'SKILL.md'),
+      '---\nname: mcp-genomes\ndescription: Query genomes.\n---\nGENOMES_BODY\n'
+    )
+    const environment = { root, skillsDirectory, allowedNames: new Set(['mcp-genomes']) }
+    const server = await createSkillRuntimeMcpServer(environment)
+    const client = new Client({ name: 'codex-loader-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      expect(JSON.stringify(await client.listTools())).toContain('mcp-genomes')
+      expect(
+        JSON.stringify(
+          await client.callTool({ name: LOAD_SKILL_TOOL_NAME, arguments: { skill: 'mcp-genomes' } })
+        )
+      ).toContain('GENOMES_BODY')
+      expect(
+        await client.callTool({
+          name: LOAD_SKILL_TOOL_NAME,
+          arguments: { skill: 'fixture-review' }
+        })
+      ).toMatchObject({ isError: true })
+      expect(
+        await client.callTool({
+          name: LOAD_SKILL_TOOL_NAME,
+          arguments: { skill: '../fixture-review' }
+        })
+      ).toMatchObject({ isError: true })
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('resolves a canonical Skill name from a namespaced Codex projection', async () => {
+    const root = await seedProjection()
+    const skillsDirectory = join(root, 'skills')
+    const canonicalName = 'crypto-research-design'
+    const projectedDirectory = 'os-personal-crypto-research-design'
+    await mkdir(join(skillsDirectory, projectedDirectory), { recursive: true })
+    await writeFile(
+      join(skillsDirectory, projectedDirectory, 'SKILL.md'),
+      `---\nname: ${canonicalName}\ndescription: Imported research design.\n---\nCANONICAL_BODY\n`
+    )
+
+    const server = await createSkillRuntimeMcpServer({
+      root,
+      skillsDirectory,
+      allowedNames: new Set([canonicalName])
+    })
+    const client = new Client({ name: 'codex-namespaced-loader-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      expect(JSON.stringify(await client.listTools())).toContain(canonicalName)
+      expect(
+        JSON.stringify(
+          await client.callTool({
+            name: LOAD_SKILL_TOOL_NAME,
+            arguments: { skill: canonicalName }
+          })
+        )
+      ).toContain('CANONICAL_BODY')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
   it('advertises projected Skills to Claude without application metadata', async () => {
     const root = await seedProjection('fixture-data-summary')
     await seedSkill(root, 'fixture-diagram-renderer', 'Render synthetic diagrams for tests.')
@@ -162,7 +305,11 @@ describe('Claude Skill runtime MCP loader', () => {
       join(outside, 'SKILL.md'),
       '---\nname: linked-skill\ndescription: Must stay hidden too.\n---\n'
     )
-    await symlink(outside, join(root, '.claude', 'skills', 'linked-skill'))
+    await symlink(
+      outside,
+      join(root, '.claude', 'skills', 'linked-skill'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
 
     const tools = await listRuntimeTools(root)
     const inputSchema = JSON.stringify(
@@ -261,7 +408,11 @@ describe('Claude Skill runtime MCP loader', () => {
     roots.push(outside)
     await writeFile(join(outside, 'SKILL.md'), 'outside')
     const linkedName = 'linked-skill'
-    await symlink(outside, join(root, '.claude', 'skills', linkedName))
+    await symlink(
+      outside,
+      join(root, '.claude', 'skills', linkedName),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
     await expect(loadSkillDocument({ root }, linkedName)).rejects.toThrow(
       'Unknown skill: linked-skill'
     )

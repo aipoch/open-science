@@ -1736,6 +1736,33 @@ describe('HomePage activity overview', () => {
     expect(recentRow?.textContent?.match(/Live analysis/g)).toHaveLength(1)
   })
 
+  it('shows loading until the first project list resolves, then shows the empty state', async () => {
+    let resolve!: (projects: Project[]) => void
+    window.api.projects = {
+      list: vi.fn(
+        () =>
+          new Promise<Project[]>((done) => {
+            resolve = done
+          })
+      )
+    } as never
+    const load = useProjectStore.getState().loadProjects()
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    const section = container.querySelector('[aria-label="Projects"]')!
+    expect.soft(section.textContent).not.toContain('No projects yet.')
+    expect.soft(section.querySelector('[role="status"]')?.textContent).toBe('Loading…')
+    await act(async () => {
+      resolve([])
+      await load
+    })
+    expect(section.textContent).toContain('No projects yet. Create one to get started.')
+    expect(section.querySelector('[role="status"]')).toBeNull()
+  })
+
   it('offers a Retry action when loading Projects fails', async () => {
     const loadProjects = vi.fn().mockResolvedValue(undefined)
     useProjectStore.setState({
@@ -1756,11 +1783,155 @@ describe('HomePage activity overview', () => {
     )
     expect(retry).toBeDefined()
     expect(container.querySelector('[role="alert"] p')?.textContent).toBe(
-      'Open Science could not load projects. Retry to continue.'
+      'Open-Science could not load projects. Retry to continue.'
     )
     expect(container.textContent).not.toContain('database is locked')
 
     await act(async () => retry?.click())
     expect(loadProjects).toHaveBeenCalledOnce()
+  })
+})
+
+describe('HomePage recent session ordering', () => {
+  const rows = (): HTMLButtonElement[] =>
+    Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[aria-label="Recent sessions"] button')
+    )
+  const titles = (): string[] => rows().map((row) => row.title)
+  const renderHome = async (hasCompleteSessionCatalog = true): Promise<void> => {
+    await act(async () =>
+      root.render(
+        <HomePage
+          canDeleteProjects
+          hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+          onOpenGlobalSearch={vi.fn()}
+        />
+      )
+    )
+  }
+  const setSessions = async (sessions: ChatSession[]): Promise<void> => {
+    await act(async () => useSessionStore.setState({ sessions }))
+  }
+
+  beforeEach(() => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+  })
+
+  it('refreshes concurrent output in place, preserving focused rows, and resorts on a new visit', async () => {
+    const first = session('first', 'First analysis', 'running', 200)
+    const second = session('second', 'Second analysis', 'running', 100)
+    await setSessions([second, first])
+    await renderHome()
+    const [firstRow, secondRow] = rows()
+    await act(async () => secondRow.focus())
+
+    await setSessions([first, { ...second, title: 'Updated second analysis', updatedAt: 300 }])
+    expect(titles()).toEqual(['First analysis', 'Updated second analysis'])
+    expect(rows()[0]).toBe(firstRow)
+    expect(rows()[1]).toBe(secondRow)
+    expect(document.activeElement).toBe(secondRow)
+
+    await setSessions([
+      { ...second, title: 'Updated second analysis', updatedAt: 500 },
+      { ...first, title: 'Updated first analysis', updatedAt: 400, status: 'idle' }
+    ])
+    expect(titles()).toEqual(['Updated first analysis', 'Updated second analysis'])
+    expect(document.activeElement).toBe(secondRow)
+
+    await act(async () => root.render(null))
+    await renderHome()
+    expect(titles()).toEqual(['Updated second analysis', 'Updated first analysis'])
+  })
+
+  it('does not evict visible sessions for new or forked sessions and appends the newest replacement', async () => {
+    const initial = Array.from({ length: 6 }, (_, i) =>
+      session(`session-${i}`, `Analysis ${i}`, 'idle', 600 - i)
+    )
+    await setSessions(initial)
+    await renderHome()
+    const originalRows = rows()
+    const created = session('created', 'New analysis', 'idle', 900)
+    const forked = session('forked', 'Forked analysis', 'idle', 1000)
+    await setSessions([created, forked, ...initial])
+    expect(titles()).toEqual(initial.slice(0, 5).map((candidate) => candidate.title))
+    expect(rows()).toEqual(originalRows)
+
+    await setSessions([created, forked, ...initial.filter(({ id }) => id !== 'session-1')])
+    expect(titles()).toEqual([
+      'Analysis 0',
+      'Analysis 2',
+      'Analysis 3',
+      'Analysis 4',
+      'Forked analysis'
+    ])
+    expect(rows()[1]).toBe(originalRows[2])
+  })
+
+  it('removes archived sessions and projects while preserving survivors and appending replacements', async () => {
+    const otherProject = { ...project, id: 'project-2', name: 'Other project' }
+    useProjectStore.setState({ projects: [project, otherProject] })
+    const initial = Array.from({ length: 7 }, (_, i) => ({
+      ...session(`session-${i}`, `Analysis ${i}`, 'idle', 700 - i),
+      projectId: i === 1 ? otherProject.id : project.id
+    }))
+    await setSessions(initial)
+    await renderHome()
+    const archived = initial.map((candidate) =>
+      candidate.id === 'session-0' ? { ...candidate, archivedAt: 800 } : candidate
+    )
+    await setSessions(archived)
+    expect(titles()).toEqual(['Analysis 1', 'Analysis 2', 'Analysis 3', 'Analysis 4', 'Analysis 5'])
+    await act(async () =>
+      useProjectStore.setState({ projects: [project, { ...otherProject, archivedAt: 900 }] })
+    )
+    expect(titles()).toEqual(['Analysis 2', 'Analysis 3', 'Analysis 4', 'Analysis 5', 'Analysis 6'])
+  })
+
+  it('appends restored and promoted pending sessions without moving existing rows', async () => {
+    const existing = session('existing', 'Existing analysis', 'idle', 100)
+    const archived = { ...session('restored', 'Restored analysis', 'idle', 300), archivedAt: 400 }
+    const pending = { ...session('pending', 'Pending analysis', 'running', 500), isPending: true }
+    await setSessions([existing, archived, pending])
+    await renderHome()
+    expect(titles()).toEqual(['Existing analysis'])
+    await setSessions([existing, { ...archived, archivedAt: undefined }, pending])
+    expect(titles()).toEqual(['Existing analysis', 'Restored analysis'])
+    await setSessions([
+      existing,
+      { ...archived, archivedAt: undefined },
+      { ...pending, id: 'durable', isPending: false }
+    ])
+    expect(titles()).toEqual(['Existing analysis', 'Restored analysis', 'Pending analysis'])
+  })
+
+  it('initializes from the complete catalog rather than locking a partial load', async () => {
+    const older = session('older', 'Older analysis', 'idle', 100)
+    const newer = session('newer', 'Newer analysis', 'idle', 200)
+    await setSessions([older])
+    await renderHome(false)
+    const olderRow = rows()[0]
+    await setSessions([older, newer])
+    expect(titles()).toEqual(['Older analysis', 'Newer analysis'])
+    await setSessions([{ ...older, updatedAt: 300 }, newer])
+    await setSessions([
+      { ...older, updatedAt: 300 },
+      { ...newer, updatedAt: 400 }
+    ])
+    expect(titles()).toEqual(['Older analysis', 'Newer analysis'])
+    expect(rows()[0]).toBe(olderRow)
+    await renderHome()
+    expect(titles()).toEqual(['Newer analysis', 'Older analysis'])
+  })
+
+  it('preserves the visit order across an incomplete catalog refresh', async () => {
+    const first = session('first', 'First analysis', 'idle', 200)
+    const second = session('second', 'Second analysis', 'idle', 100)
+    await setSessions([first, second])
+    await renderHome()
+    await renderHome(false)
+    await setSessions([{ ...second, updatedAt: 300 }])
+    await setSessions([first, { ...second, updatedAt: 300 }])
+    await renderHome()
+    expect(titles()).toEqual(['First analysis', 'Second analysis'])
   })
 })

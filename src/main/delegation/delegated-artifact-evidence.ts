@@ -32,6 +32,7 @@ const createDelegatedArtifactEvidence = (
   async open(scope) {
     const handle = await options.turns.openExecution({
       executionId: scope.executionId,
+      workspaceCwd: scope.workspaceCwd,
       appSessionId: scope.session.sessionId,
       artifactStorageSessionId: options.artifactStorageSessionId(scope.session),
       projectId: scope.session.projectId,

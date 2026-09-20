@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   createWhiteIsZeroGrayscaleAlphaTiff,
+  createSampleTiff,
   DEFLATE_RGB_TIFF,
   decodeTiffFixture,
   LZW_GRAYSCALE_16_TIFF,
@@ -258,5 +259,118 @@ describe('TIFF preview decoding', () => {
     new DataView(bigTiff).setUint16(2, 43, true)
 
     expect(() => decodeTiffPage(bigTiff, 0)).toThrow('Invalid TIFF header')
+  })
+})
+
+describe('TIFF sample interpretation', () => {
+  it.each([
+    { samples: [200, 0], components: 2, photometric: 1, expected: [200, 200, 200, 255] },
+    { samples: [255, 0, 0, 0], components: 4, photometric: 2, expected: [255, 0, 0, 255] }
+  ])('keeps unspecified extra samples opaque: $components components', (input) => {
+    const page = decodeTiffPage(createSampleTiff({ ...input, extraSample: 0 }), 0)
+    expect(Array.from(page.rgba)).toEqual(input.expected)
+  })
+
+  it.each([1, 2])('preserves declared integer alpha, ExtraSamples=%s', (extraSample) => {
+    const page = decodeTiffPage(
+      createSampleTiff({
+        samples: [extraSample === 1 ? 64 : 128, 128],
+        extraSample
+      }),
+      0
+    )
+    expect(Array.from(page.rgba)).toEqual([128, 128, 128, 128])
+  })
+
+  it.each([0, 0.5])(
+    'rejects associated Float32 alpha %s before returning corrupted pixels',
+    (alpha) => {
+      const straight = decodeTiffPage(createSampleTiff({ samples: [0.5, 0.5], floating: true }), 0)
+      expect(Array.from(straight.rgba)).toEqual([128, 128, 128, 128])
+      expect(() =>
+        decodeTiffPage(
+          createSampleTiff({
+            samples: [0.5 * alpha, alpha],
+            floating: true,
+            extraSample: 1
+          }),
+          0
+        )
+      ).toThrow('Unsupported TIFF floating-point associated alpha layout')
+    }
+  )
+
+  it('keeps an undeclared extra channel opaque', () => {
+    const data = renameClassicTiffTag(createSampleTiff({ samples: [200, 0] }), 338, 65000)
+    expect(Array.from(decodeTiffPage(data, 0).rgba)).toEqual([200, 200, 200, 255])
+  })
+
+  it('ignores unspecified extra data in WhiteIsZero images', () => {
+    const page = decodeTiffPage(
+      createSampleTiff({
+        samples: [55, 0],
+        photometric: 0,
+        extraSample: 0
+      }),
+      0
+    )
+    expect(Array.from(page.rgba)).toEqual([200, 200, 200, 255])
+  })
+
+  it('rejects unknown extra-sample meanings', () => {
+    expect(() =>
+      decodeTiffPage(
+        createSampleTiff({
+          samples: [200, 0],
+          extraSample: 3
+        }),
+        0
+      )
+    ).toThrow('Unsupported TIFF extra sample layout')
+  })
+
+  it('renders zero integer associated alpha as transparent', () => {
+    const page = decodeTiffPage(createSampleTiff({ samples: [0, 0], extraSample: 1 }), 0)
+    expect(Array.from(page.rgba)).toEqual([0, 0, 0, 0])
+  })
+
+  it('keeps Float32 extra data opaque without changing intensity mapping', () => {
+    const page = decodeTiffPage(
+      createSampleTiff({
+        samples: [10, 1000, 20, 2000],
+        floating: true,
+        extraSample: 0
+      }),
+      0
+    )
+    expect(Array.from(page.rgba)).toEqual([0, 0, 0, 255, 255, 255, 255, 255])
+    expect(page.displayRange).toEqual({ minimum: 10, maximum: 20 })
+  })
+
+  it('discloses the intensity range when different Float32 pages look identical', () => {
+    const low = decodeTiffPage(
+      createSampleTiff({
+        samples: [10, 20],
+        components: 1,
+        floating: true,
+        extraSample: 0
+      }),
+      0
+    )
+    const high = decodeTiffPage(
+      createSampleTiff({
+        samples: [100, 200],
+        components: 1,
+        floating: true,
+        extraSample: 0
+      }),
+      0
+    )
+    expect(Array.from(low.rgba)).toEqual([0, 0, 0, 255, 255, 255, 255, 255])
+    expect(Array.from(high.rgba)).toEqual(Array.from(low.rgba))
+    expect(low).toMatchObject({ sampleFormat: 3, bitsPerSample: 32, autoContrast: true })
+    expect(resizeDecodedTiffPage(low, 1).displayRange).toEqual({ minimum: 10, maximum: 20 })
+    expect(low).toHaveProperty('displayRange', { minimum: 10, maximum: 20 })
+    expect(high).toHaveProperty('displayRange', { minimum: 100, maximum: 200 })
   })
 })

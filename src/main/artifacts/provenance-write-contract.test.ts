@@ -13,6 +13,7 @@ import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import { NotebookRuntimeService, type NotebookExecutionResult } from '../notebook/runtime-service'
+import { buildAgentResultContinuationPrompt } from '../background-result-delivery/continuation'
 import {
   beginComputeJobFileEvidence,
   publishComputeJobFileEvidence,
@@ -63,6 +64,8 @@ const canonicalize = (value: unknown): unknown => {
 }
 
 const PUBLIC_METHODS = [
+  'saveVersion',
+  'withSessionMutation',
   'writeAppGeneratedVersion',
   'createVersion',
   'reserveWrite',
@@ -75,6 +78,7 @@ const PUBLIC_METHODS = [
   'activateFinalizedRun',
   'listRunVersions',
   'recordLiteratureSearch',
+  'recordLiteratureAbstractRead',
   'recordLiteraturePdfRead',
   'prepareProjectReconciliation',
   'reconcileSession',
@@ -385,6 +389,7 @@ const appendNotebookRun = async (
     filename: string
     payload: string
     ownsSource: boolean
+    laneAgentFrameId?: string
     inputFiles?: NotebookRunInputFile[]
     provenanceContext?: Partial<
       Pick<
@@ -394,7 +399,11 @@ const appendNotebookRun = async (
     >
   }
 ): Promise<{ path: string; sizeBytes: number; mtimeMs: number }> => {
-  const lane = createFrameNotebookLane('project-1', 'session-1', provenanceGraph.agentFrameId)
+  const lane = createFrameNotebookLane(
+    'project-1',
+    'session-1',
+    input.laneAgentFrameId ?? provenanceGraph.agentFrameId
+  )
   const document = await value.notebookRepository.loadOrCreate({
     projectId: 'project-1',
     sessionId: 'session-1',
@@ -684,6 +693,138 @@ describe('artifact provenance producer and source validation', () => {
     ).resolves.toMatchObject({ execution: { producerRunId: 'ancestor-producer-run' } })
   })
 
+  it('publishes a background Run from its automatic result continuation without rerunning', async () => {
+    const value = await fixture()
+    const originalPrompt = {
+      id: 'background-prompt',
+      role: 'user' as const,
+      content: 'Run the analysis in the background.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const originalReply = {
+      id: 'background-reply',
+      role: 'agent' as const,
+      content: 'The background Run was submitted.',
+      status: 'complete' as const,
+      responseToMessageId: originalPrompt.id,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const originalMessages = [originalPrompt, originalReply]
+    const originalSession: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Background analysis',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: originalMessages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: originalMessages,
+        frameworkId: 'opencode',
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const continuation = buildAgentResultContinuationPrompt(originalSession, {
+      sessionId: 'session-1',
+      text: 'Background execution outcomes are now available.',
+      continuationMessageId: 'delivery-prompt'
+    })
+    const context = continuation.provenanceContext!
+    const observation = await appendNotebookRun(value, {
+      runId: 'background-producer-run',
+      filename: 'background-result.png',
+      payload: 'background producer bytes',
+      ownsSource: true,
+      laneAgentFrameId: context.agentFrameId,
+      provenanceContext: {
+        rootFrameId: context.rootFrameId,
+        agentFrameId: context.agentFrameId,
+        messageBranchId: context.messageBranchId,
+        runtimeSegmentId: context.runtimeSegmentId,
+        promptMessageId: originalPrompt.id
+      }
+    })
+    await value.stagePng('background producer bytes', 'background-result.png')
+
+    const deliveryPrompt = {
+      id: context.promptMessageId,
+      role: 'user' as const,
+      content: continuation.text,
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const deliveryReply = {
+      id: 'delivery-reply',
+      role: 'agent' as const,
+      content: 'Published background-result.png.',
+      status: 'complete' as const,
+      responseToMessageId: deliveryPrompt.id,
+      eventIds: [],
+      createdAt: 4,
+      updatedAt: 4
+    }
+    const messages = [...originalMessages, deliveryPrompt, deliveryReply]
+    const durableSession: PersistedChatSession = {
+      ...originalSession,
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages,
+        frameworkId: 'opencode',
+        createdAt: 1,
+        updatedAt: 4
+      }),
+      updatedAt: 4
+    }
+    const repository = new ArtifactProvenanceRepository({
+      ...value.repositoryOptions,
+      loadSession: async () => durableSession
+    })
+    const version = await repository.createVersion(
+      createArtifactVersionRequest({
+        filename: 'background-result.png',
+        writeOperationId: 'background-result-operation',
+        notebookSessionId: 'session-1',
+        producerRunId: 'background-producer-run',
+        sourceKind: 'localPath',
+        sourceFileObservation: observation,
+        ...context
+      })
+    )
+
+    await expect(
+      repository.finalizeRun({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactRunId: 'artifact-run-1',
+        artifactVersionIds: [version.versionId],
+        rootFrameId: context.rootFrameId!,
+        agentFrameId: context.agentFrameId!,
+        messageBranchId: context.messageBranchId!,
+        runtimeSegmentId: context.runtimeSegmentId!,
+        promptMessageId: context.promptMessageId,
+        messageId: 'delivery-reply'
+      })
+    ).resolves.toMatchObject([{ versionId: version.versionId }])
+    await expect(
+      value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    ).resolves.toMatchObject({
+      state: 'finalized',
+      messageId: 'delivery-reply',
+      producerRunId: 'background-producer-run'
+    })
+  })
+
   it('publishes a harvested Compute output from a later turn using its exact producer Run', async () => {
     const value = await fixture()
     const producerRunId = 'compute-submission-run'
@@ -736,13 +877,14 @@ describe('artifact provenance producer and source validation', () => {
     })
     await value.client.computeJob.createMany({
       data: Array.from({ length: 100 }, (_, index) => ({
-        id: `compute-job-noise-${String(index).padStart(3, '0')}`,
+        id: `compute-job-noise-${String(99 - index).padStart(3, '0')}`,
         providerId: 'ssh:test',
         shape: 'scheduler_cluster',
         executionMode: 'slurm',
         sessionId: 'session-1',
         projectId: 'project-1',
         status: 'success',
+        createdAt: new Date(1000),
         intent: 'unrelated output',
         command: 'true',
         commandHash: sha256('true'),
@@ -758,6 +900,7 @@ describe('artifact provenance producer and source validation', () => {
         sessionId: 'session-1',
         projectId: 'project-1',
         status: 'success',
+        createdAt: new Date(2000),
         intent: 'produce binary results',
         command: 'generate-results',
         commandHash: sha256('generate-results'),
@@ -853,6 +996,22 @@ describe('artifact provenance producer and source validation', () => {
     expect(JSON.parse(versionRow.evidenceJson)).toMatchObject({
       producer: { producer_run_id: producerRunId },
       compute_executions: expect.arrayContaining([expect.objectContaining({ activity_id: jobId })])
+    })
+    expect(
+      JSON.parse(versionRow.evidenceJson).compute_executions.map(
+        (activity: { activity_id: string }) => activity.activity_id
+      )
+    ).toEqual([
+      ...Array.from(
+        { length: 99 },
+        (_, index) => `compute-job-noise-${String(index).padStart(3, '0')}`
+      ),
+      jobId
+    ])
+    expect(JSON.parse(versionRow.executionSnapshotJson!)).toMatchObject({
+      provenanceGraph: {
+        reasonCodes: expect.arrayContaining(['history-truncated'])
+      }
     })
   })
 

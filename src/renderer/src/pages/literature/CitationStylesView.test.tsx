@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import type { LiteratureCitationStyleView } from '../../../../shared/literature'
@@ -188,6 +189,90 @@ it('imports, previews, and removes a custom CSL through the style manager', asyn
     view.rerender(<CitationStylesView {...props} styles={[]} />)
     expect(screen.queryByText('Test journal')).toBeNull()
     expect(screen.getByText('No imported styles')).not.toBeNull()
+  } finally {
+    window.api = previousApi
+  }
+})
+
+const styleA: LiteratureCitationStyleView = {
+  id: 'custom:' + 'a'.repeat(64),
+  title: 'Style A',
+  source: 'custom'
+}
+const styleB: LiteratureCitationStyleView = {
+  id: 'custom:' + 'b'.repeat(64),
+  title: 'Style B',
+  source: 'custom'
+}
+const StatefulStyleManager = ({
+  initial
+}: {
+  initial?: LiteratureCitationStyleView[]
+}): React.JSX.Element => {
+  const [styles, setStyles] = useState(initial)
+  return <CitationStylesView styles={styles} onStylesChange={setStyles} onBack={() => {}} />
+}
+const importFile = (): void => {
+  const file = new File(['CSL'], 'journal.csl', { type: 'application/xml' })
+  Object.defineProperty(file, 'text', { value: async () => 'CSL' })
+  fireEvent.change(screen.getByLabelText('Import CSL'), { target: { files: [file] } })
+}
+
+it('CS-03 shows an imported style while the initial list is still pending and ignores its late result', async () => {
+  const previousApi = window.api
+  let finishList!: (value: unknown) => void
+  const citationStyles = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishList = resolve
+        })
+    )
+    .mockResolvedValue({ styles: [styleB], changedStyleId: styleB.id })
+  window.api = { literature: { citationStyles } } as unknown as Window['api']
+  try {
+    render(<StatefulStyleManager />)
+    expect(screen.getByText('Loading citation styles…')).not.toBeNull()
+    await act(async () => importFile())
+    expect(citationStyles).toHaveBeenCalledWith({ kind: 'import', content: 'CSL' })
+    expect(screen.queryByText('Loading citation styles…')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Preview: Style B' })).not.toBeNull()
+    await act(async () => finishList({ styles: [] }))
+    expect(screen.getByRole('button', { name: 'Preview: Style B' })).not.toBeNull()
+  } finally {
+    window.api = previousApi
+  }
+})
+
+it('CS-04 prevents an import snapshot from restoring a deleted style', async () => {
+  const previousApi = window.api
+  let finishImport!: (value: unknown) => void
+  const citationStyles = vi.fn().mockImplementation((request) =>
+    request.kind === 'import'
+      ? new Promise((resolve) => {
+          finishImport = resolve
+        })
+      : Promise.resolve({ styles: [styleB], changedStyleId: styleA.id })
+  )
+  window.api = { literature: { citationStyles } } as unknown as Window['api']
+  try {
+    render(<StatefulStyleManager initial={[styleA]} />)
+    await act(async () => importFile())
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete Style A' })))
+    const deletedDuringImport = citationStyles.mock.calls.some(
+      ([request]) => request.kind === 'delete'
+    )
+    if (deletedDuringImport)
+      expect(screen.queryByRole('button', { name: 'Preview: Style A' })).toBeNull()
+    await act(async () => finishImport({ styles: [styleA, styleB], changedStyleId: styleB.id }))
+    // With a serialized UI, retry the delete once import finishes.
+    if (!deletedDuringImport) {
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete Style A' })))
+    }
+    expect(citationStyles).toHaveBeenCalledWith({ kind: 'delete', styleId: styleA.id })
+    expect(screen.queryByRole('button', { name: 'Preview: Style A' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Preview: Style B' })).not.toBeNull()
   } finally {
     window.api = previousApi
   }

@@ -22,10 +22,11 @@ const observeSelectionMutations = (range: Range, onMutate: () => void): (() => v
     observer.observe(target, options)
     observers.push(observer)
   }
-  observe(element, { childList: true, characterData: true, subtree: true })
+  const isolationAttributes = { attributes: true, attributeFilter: ['inert', 'aria-hidden'] }
+  observe(element, { childList: true, characterData: true, subtree: true, ...isolationAttributes })
   let ancestor = element.parentElement
   while (ancestor) {
-    observe(ancestor, { childList: true })
+    observe(ancestor, { childList: true, ...isolationAttributes })
     if (ancestor === document.body) break
     ancestor = ancestor.parentElement
   }

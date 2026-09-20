@@ -7,7 +7,7 @@ import { Check, ExternalLink, File, MoreHorizontal, RotateCw } from 'lucide-reac
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ActionToast } from '@/components/ActionToast'
+import { ErrorNotice } from '@/components/error-notice'
 import { ActionMenuItems } from '@/components/action-menu'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,7 +27,7 @@ export type LocalFileActionFailure = Readonly<{
   retry: () => void
 }>
 
-export const LocalFileActionErrorToast = ({
+export const LocalFileActionErrorNotice = ({
   failure,
   onDismiss
 }: {
@@ -37,15 +37,15 @@ export const LocalFileActionErrorToast = ({
   const { t } = useTranslation()
 
   return (
-    <ActionToast
-      title={failure.title}
-      detail={failure.detail}
-      actionLabel={t('Retry')}
-      dismissLabel={t('Close')}
-      onAction={failure.retry}
-      onDismiss={onDismiss}
-      testId="local-file-action-error-toast"
-    />
+    <div className="col-span-full min-w-0" data-testid="local-file-action-error-toast">
+      <ErrorNotice
+        role="alert"
+        title={failure.title}
+        description={failure.detail}
+        primaryButton={{ label: t('Retry'), onClick: failure.retry }}
+        dismissButton={{ label: t('Close'), onClick: onDismiss }}
+      />
+    </div>
   )
 }
 
@@ -88,7 +88,7 @@ export const LocalFileFallbackAction = ({
         <span>{t('Open')}</span>
       </Button>
       {failure ? (
-        <LocalFileActionErrorToast failure={failure} onDismiss={() => setFailure(undefined)} />
+        <LocalFileActionErrorNotice failure={failure} onDismiss={() => setFailure(undefined)} />
       ) : null}
     </>
   )

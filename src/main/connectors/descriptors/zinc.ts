@@ -13,7 +13,7 @@ import { withTimeoutSignal } from '../request-policy'
 const BASE_URL = 'https://cartblanche22.docking.org'
 const FILES_BASE_URL = 'https://files.docking.org/zinc22'
 const OUTPUT_FIELDS = 'zinc_id,smiles,tranche_name,catalogs'
-const USER_AGENT = 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+const USER_AGENT = 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
 
 // Overall submit->result budget (default/clamp mirrors upstream DEFAULT/MIN/MAX_TIMEOUT_S, pulled
 // in a bit under the MCP-style 60s transport ceiling that upstream targets).
@@ -292,7 +292,7 @@ async function poll(task: string, deadline: number, signal?: AbortSignal): Promi
     }
     if (Date.now() >= deadline) {
       throw new Error(
-        `ZINC task ${task} did not complete in time — the server is likely still computing. Re-poll ${BASE_URL}/search/result/${task} later, or retry with fewer ids or a larger timeout_s.`
+        `ZINC task ${task} did not complete within the polling deadline and may still be running. This Connector cannot resume polling an existing task. Preserve this task ID when reporting the unresolved result. Calling the search again creates a new task; a smaller query is new work and does not stop this task.`
       )
     }
     const wait = Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()))

@@ -40,7 +40,7 @@ type DelegatedWorkSessionRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
+  saveSession(session: PersistedChatSession): Promise<PersistedChatSession>
 }
 
 type SessionDelegatedWorkStoreOptions = {

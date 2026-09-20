@@ -45,6 +45,8 @@ const cancelDiffRequest: ManagedFileVersionCancelDiffRequest = { requestId: 'dif
 const diffResult: ManagedFileVersionDiffResult = {
   baseVersionId: 'version-1',
   selectedVersionId: 'version-2',
+  baseFormat: { hasUtf8Bom: true },
+  selectedFormat: { hasUtf8Bom: false },
   lines: [
     {
       kind: 'removed',
@@ -55,7 +57,8 @@ const diffResult: ManagedFileVersionDiffResult = {
       kind: 'added',
       newLineNumber: 1,
       segments: [{ kind: 'added', text: 'after' }]
-    }
+    },
+    { kind: 'omitted', oldLineNumber: 2, newLineNumber: 2, count: 20 }
   ]
 }
 const inspectResult: ManagedFileVersionInspectResult = {

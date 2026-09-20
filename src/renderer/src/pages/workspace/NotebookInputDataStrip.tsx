@@ -23,6 +23,8 @@ const collectInputs = (
 ): NotebookInputFileSummary[] => {
   const inputs = new Map<string, NotebookInputFileSummary>()
   for (const input of inputFiles) {
+    if (input.association !== 'resolver-accessed' && input.accessEvidence !== 'file-evidence')
+      continue
     const key = `${input.sourceKind}:${input.inputFileVersionId}`
     const existing = inputs.get(key)
     const publicInput = { ...input } as Partial<NotebookRunInputFile>
@@ -32,7 +34,11 @@ const collectInputs = (
       association:
         existing?.association === 'resolver-accessed' || input.association === 'resolver-accessed'
           ? 'resolver-accessed'
-          : 'turn-attached'
+          : 'turn-attached',
+      accessEvidence:
+        existing?.accessEvidence === 'resolver' || input.accessEvidence === 'resolver'
+          ? 'resolver'
+          : (existing?.accessEvidence ?? input.accessEvidence)
     })
   }
   return [...inputs.values()]
@@ -66,7 +72,7 @@ const NotebookInputDataStrip = ({
           key={`${input.sourceKind}:${input.inputFileVersionId}`}
           type="button"
           className="flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-bg-000 px-2 py-1 text-xs text-text-100 hover:bg-bg-200 hover:text-text-000"
-          title={`${input.filename} · ${formatByteSize(input.sizeBytes)} · ${input.association}`}
+          title={`${input.filename} · ${formatByteSize(input.sizeBytes)} · ${input.accessEvidence ?? input.association}`}
           onClick={() =>
             openPreview(
               createPreviewFileItem({

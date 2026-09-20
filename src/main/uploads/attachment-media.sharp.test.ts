@@ -148,3 +148,57 @@ describe('sharp image-processing adapter', () => {
     )
   })
 })
+
+it.each(['jpeg', 'png', 'webp'] as const)(
+  'removes EXIF from small %s without changing oriented pixels or original bytes',
+  async (format) => {
+    root = await mkdtemp(join(tmpdir(), 'model-image-privacy-'))
+    const path = join(root, `image.${format}`)
+    const original = await sharp({
+      create: {
+        width: 3,
+        height: 2,
+        channels: 4,
+        background: { r: 20, g: 100, b: 200, alpha: 0.5 }
+      }
+    })
+      .toFormat(format)
+      .withExif({ IFD0: { Artist: 'PRIVATE_AUTHOR_CANARY' } })
+      .withMetadata({ orientation: 6 })
+      .toBuffer()
+    await writeFile(path, original)
+    expect((await sharp(original).metadata()).exif).toBeDefined()
+    const result = await buildImageContentData(path, `image/${format}`, original.length)
+    const output = Buffer.from(result.data, 'base64')
+    expect((await sharp(output).metadata()).exif).toBeUndefined()
+    expect((await sharp(output).metadata()).icc).toBeUndefined()
+    expect(await sharp(output).ensureAlpha().raw().toBuffer()).toEqual(
+      await sharp(original).autoOrient().ensureAlpha().raw().toBuffer()
+    )
+    expect(await readFile(path)).toEqual(original)
+  }
+)
+
+it.each(['gif', 'webp'] as const)(
+  'preserves small %s animation while removing metadata',
+  async (format) => {
+    root = await mkdtemp(join(tmpdir(), 'model-animation-privacy-'))
+    const path = join(root, `image.${format}`)
+    const original = await sharp(Buffer.from([255, 0, 0, 0, 0, 255]), {
+      raw: { width: 1, height: 2, channels: 3, pageHeight: 1 }
+    })
+      .toFormat(format, { loop: 2, delay: [100, 200] })
+      .toBuffer()
+    await writeFile(path, original)
+    const result = await buildImageContentData(path, `image/${format}`, original.length)
+    const output = Buffer.from(result.data, 'base64')
+    expect(await sharp(output, { animated: true }).metadata()).toMatchObject({
+      pages: 2,
+      loop: 2,
+      delay: [100, 200]
+    })
+    expect(await sharp(output, { animated: true }).ensureAlpha().raw().toBuffer()).toEqual(
+      await sharp(original, { animated: true }).ensureAlpha().raw().toBuffer()
+    )
+  }
+)

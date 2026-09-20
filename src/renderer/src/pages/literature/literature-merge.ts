@@ -1,4 +1,10 @@
-import type { LiteratureItemInput, LiteratureItemView } from '../../../../shared/literature'
+import {
+  preferredLiteratureIdentifier,
+  normalizeLiteratureIdentifierValue,
+  normalizeLiteratureIdentifierPreferences,
+  type LiteratureItemInput,
+  type LiteratureItemView
+} from '../../../../shared/literature'
 
 export const mergeScalarFields = [
   'title',
@@ -112,13 +118,43 @@ export function buildLiteratureMergeItem(
     else Object.assign(merged, { [field]: value })
   }
   const seen = new Set<string>()
-  merged.identifiers = entries
-    .flatMap(({ item }) => item.identifiers)
-    .filter((identifier) => {
-      const key = `${identifier.scheme}:${identifier.value.trim().toLowerCase()}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+  const ordered = [
+    survivor,
+    ...entries.filter((entry) => entry.id !== survivorId).sort((a, b) => a.id.localeCompare(b.id))
+  ]
+  const preferred = new Map<
+    LiteratureItemInput['identifiers'][number]['scheme'],
+    LiteratureItemInput['identifiers'][number] | undefined
+  >(
+    ordered.flatMap(({ item }) =>
+      item.identifiers.map(({ scheme }) => [scheme, undefined] as const)
+    )
+  )
+  for (const scheme of preferred.keys()) {
+    const source = ordered.find(({ item }) =>
+      item.identifiers.some((identifier) => identifier.scheme === scheme)
+    )!
+    preferred.set(scheme, preferredLiteratureIdentifier(source.item.identifiers, scheme))
+  }
+  merged.identifiers = normalizeLiteratureIdentifierPreferences(
+    ordered
+      .flatMap(({ item }) =>
+        item.identifiers.map((identifier) => ({
+          ...identifier,
+          isPrimary:
+            normalizeLiteratureIdentifierValue(
+              identifier.scheme,
+              preferred.get(identifier.scheme)!.value
+            ).toLowerCase() ===
+            normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value).toLowerCase()
+        }))
+      )
+      .filter((identifier) => {
+        const key = `${identifier.scheme}:${normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value).toLowerCase()}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+  )
   return merged
 }

@@ -32,11 +32,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'literature',
     displayName: 'Literature Graph',
-    description:
-      'Scholarly literature graph — OpenAlex works/authors/venues/citations, arXiv metadata.',
+    description: 'Literature and research data via OpenAlex, arXiv, Crossref and DataCite.',
     useWhen:
-      'Use when exploring the scholarly literature graph — searching works/papers by topic with citation counts and authors, following a work’s citations or references, looking up authors (ORCID, h-index, institution) or a venue/journal, or searching arXiv preprints. Sourced from OpenAlex and arXiv.',
-    sources: ['OpenAlex', 'arXiv'],
+      'Use when exploring the scholarly literature graph — searching works/papers by topic with citation counts and authors, following a work’s citations or references, looking up authors (ORCID, h-index, institution) or a venue/journal, searching arXiv preprints, checking Crossref bibliographic metadata and deposited corrections/retractions, or discovering DataCite datasets/software and their publication relationships. Sourced from OpenAlex, arXiv, Crossref and DataCite.',
+    sources: ['OpenAlex', 'arXiv', 'Crossref', 'DataCite'],
     termsUrl: 'https://docs.openalex.org/additional-help/terms',
     requiresNcbi: false
   },
@@ -68,10 +67,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     displayName: 'Genes & Ontologies',
     aliases: ['MyGene', 'mygene.info', 'UniProt', 'gene information', 'gene annotation'],
     description:
-      'Gene/protein identity and ontology terms — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways.',
+      'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways and g:Profiler.',
     useWhen:
-      'Use when you need to resolve gene symbols/identifiers (mygene.info), fetch UniProt protein records, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), or map genes to Reactome pathways.',
-    sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome'],
+      'Use when you need to resolve gene symbols/identifiers (mygene.info), fetch UniProt protein records, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, or run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction.',
+    sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
   },
@@ -79,10 +78,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'genomes',
     displayName: 'Genomes',
     description:
-      'Genome annotation, variants, homology, sequence and browser tracks — Ensembl REST and the UCSC Genome Browser.',
+      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence and browser tracks — NCBI Datasets, Ensembl REST and the UCSC Genome Browser.',
     useWhen:
-      'Use when you need Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
-    sources: ['Ensembl', 'UCSC'],
+      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
+    sources: ['NCBI Datasets', 'Ensembl', 'UCSC'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
   },
@@ -223,10 +222,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'omics-archives',
     displayName: 'Omics Archives',
     description:
-      'Omics data archives — expression (ArrayExpress, GEO), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
+      'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
     useWhen:
-      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies and analyses in MGnify (MGYS, by free text or biome lineage); or proteomics projects and proteins in PRIDE Archive (PXD, by keyword/organism/instrument/disease, or protein↔project). Sourced from ArrayExpress, GEO, MetaboLights, MGnify and PRIDE.',
-    sources: ['ArrayExpress', 'GEO', 'MetaboLights', 'MGnify', 'PRIDE'],
+      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies and analyses in MGnify (MGYS, by free text or biome lineage); or proteomics projects and proteins in PRIDE Archive (PXD, by keyword/organism/instrument/disease, or protein↔project). Resolve ENA/INSDC study, experiment or sample accessions to sequencing runs and list archive-generated FASTQ URLs, sizes and MD5 checksums for a run (ENA); resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, MGnify and PRIDE.',
+    sources: ['ArrayExpress', 'GEO', 'ENA', 'MetaboLights', 'MGnify', 'PRIDE'],
     termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
     requiresNcbi: true
   },

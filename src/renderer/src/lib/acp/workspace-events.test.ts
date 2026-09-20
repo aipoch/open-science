@@ -23,17 +23,21 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
+import { buildWorkspaceHistoryReplay } from './history-preamble'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   applyWorkspaceRuntimeEvent,
+  applyWorkspaceRuntimeEventBatch,
   assembleReviewRunRequest,
   resumeAutoReviewsAfterQuitAbort,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
-  resetDeferredArtifactEventsForTests
+  resetDeferredArtifactEventsForTests,
+  scheduleCommittedRuntimeTranscriptAutoReview
 } from './workspace-events'
 import {
+  createWorkspaceRuntimeEventProcessor,
   resetWorkspaceRuntimeEventOwnerForTests,
   syncWorkspaceAgentFirstOutputState,
   syncWorkspacePermissionState
@@ -107,6 +111,32 @@ const pendingPlanProjection: ActivePlanProjection = {
   counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
 }
 
+const summarizeCurrentSession = (): ReturnType<typeof toPersistedSession> => {
+  const persisted = toPersistedSession(useSessionStore.getState().sessions[0])
+  useSessionStore.getState().hydrateSessionSummaries(
+    [
+      {
+        number: 1,
+        id: persisted.id,
+        projectId: persisted.projectId!,
+        title: persisted.title,
+        status: 'idle',
+        presentedStatus: 'idle',
+        pinned: false,
+        revision: 1,
+        activeMessageCount: persisted.messages.length,
+        artifactCount: 0,
+        filesRevision: 0,
+        createdAt: persisted.createdAt,
+        updatedAt: persisted.updatedAt,
+        needsStartupRecovery: false
+      }
+    ],
+    undefined
+  )
+  return persisted
+}
+
 describe('workspace runtime events', () => {
   // Rebuild the visible session before each adapter assertion.
   beforeEach(() => {
@@ -122,6 +152,271 @@ describe('workspace runtime events', () => {
       content: 'Summarize this',
       projectId: 'default-project'
     })
+  })
+
+  it.each(
+    (['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const).flatMap((target) =>
+      (['single', 'batch'] as const).map((path) => ({ target, path }))
+    )
+  )(
+    'loads a summarized $target session before applying a restored reply through the $path path',
+    async ({ target, path }) => {
+      const framework = target === 'codex-response' || target === 'codex-bridge' ? 'codex' : target
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({ ...session, agentFrameworkId: framework }))
+      }))
+      const persisted = summarizeCurrentSession()
+      const promptMessageId = persisted.messages[0].id
+      const loadOne = vi.fn().mockResolvedValue(persisted)
+      vi.stubGlobal('window', {
+        api: {
+          sessions: { loadOne, saveSession: vi.fn(async (session) => session) },
+          reviewer: { run: vi.fn() }
+        }
+      })
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const event = createEvent({
+          role: 'assistant',
+          messageId: 'restored-reply',
+          promptMessageId,
+          text: 'Main rendered the parked child question after branch restoration.'
+        })
+        if (path === 'single') await applyWorkspaceRuntimeEvent(event)
+        else await applyWorkspaceRuntimeEventBatch([event])
+        await applyWorkspaceRuntimeEvent(
+          createEvent({
+            id: 'restored-stop',
+            kind: 'stop',
+            text: 'end_turn',
+            promptMessageId
+          })
+        )
+        expect(errors).not.toHaveBeenCalled()
+        const current = useSessionStore.getState().sessions[0]
+        expect(current.contentLoaded).not.toBe(false)
+        expect(current.messages).toEqual([
+          expect.objectContaining({ id: promptMessageId }),
+          expect.objectContaining({
+            role: 'agent',
+            responseToMessageId: promptMessageId,
+            status: 'complete'
+          })
+        ])
+        expect(() => toPersistedSession(current)).not.toThrow()
+        expect(current.agentFrameworkId).toBe(framework)
+        const replay = buildWorkspaceHistoryReplay(current.messages, { target })
+        expect(replay?.historyPreamble).toContain('Summarize this')
+        expect(replay?.historyPreamble).toContain('Main rendered the parked child question')
+        expect(loadOne).toHaveBeenCalledOnce()
+      } finally {
+        errors.mockRestore()
+      }
+    }
+  )
+
+  it.each(['single', 'batch'] as const)(
+    'preserves snapshot prompt ownership while loading the first %s event',
+    async (path) => {
+      const persisted = summarizeCurrentSession()
+      let resolveRead!: (session: typeof persisted) => void
+      vi.stubGlobal('window', {
+        api: {
+          sessions: {
+            loadOne: vi.fn(
+              () =>
+                new Promise<typeof persisted>((resolve) => {
+                  resolveRead = resolve
+                })
+            )
+          }
+        }
+      })
+      syncWorkspaceAgentFirstOutputState([persisted.id])
+      const event = createEvent({
+        role: 'assistant',
+        messageId: 'silent-restored-reply',
+        promptMessageId: persisted.messages[0].id,
+        text: ''
+      })
+      const applying =
+        path === 'single'
+          ? applyWorkspaceRuntimeEvent(event)
+          : applyWorkspaceRuntimeEventBatch([event])
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        contentLoaded: false,
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true
+      })
+      resolveRead(persisted)
+      await applying
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true
+      })
+      syncWorkspaceAgentFirstOutputState([])
+      expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBeUndefined()
+      expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    }
+  )
+
+  it.each(['single', 'batch'] as const)(
+    'rejects a failed content read before the %s projection',
+    async (path) => {
+      const persisted = summarizeCurrentSession()
+      const initial = useSessionStore.getState()
+      const error = new Error('Session content read failed')
+      const loadOne = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(persisted)
+      vi.stubGlobal('window', { api: { sessions: { loadOne } } })
+      const event = createEvent({
+        role: 'assistant',
+        messageId: 'after-load',
+        promptMessageId: persisted.messages[0].id,
+        text: 'Restored output'
+      })
+      const apply = (): Promise<boolean> =>
+        path === 'single'
+          ? applyWorkspaceRuntimeEvent(event)
+          : applyWorkspaceRuntimeEventBatch([event])
+      await expect(apply()).rejects.toBe(error)
+      expect(useSessionStore.getState()).toBe(initial)
+      await apply()
+      expect(useSessionStore.getState().sessions[0].messages).toHaveLength(2)
+      expect(loadOne).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('does not fabricate a session graph when persisted content is missing', async () => {
+    summarizeCurrentSession()
+    const initial = useSessionStore.getState()
+    vi.stubGlobal('window', {
+      api: { sessions: { loadOne: vi.fn().mockResolvedValue(undefined) } }
+    })
+    await expect(
+      applyWorkspaceRuntimeEvent(createEvent({ kind: 'stop', text: 'end_turn' }))
+    ).rejects.toThrow('Session not found')
+    expect(useSessionStore.getState()).toBe(initial)
+  })
+
+  it('waits for content and keeps a newer concurrent hydration', async () => {
+    const persisted = summarizeCurrentSession()
+    let resolveRead!: (session: typeof persisted) => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<typeof persisted>((resolve) => {
+          resolveRead = resolve
+        })
+    )
+    vi.stubGlobal('window', { api: { sessions: { loadOne } } })
+    const event = createEvent({
+      role: 'assistant',
+      messageId: 'after-load',
+      promptMessageId: persisted.messages[0].id,
+      text: 'Restored output'
+    })
+    const applying = applyWorkspaceRuntimeEvent(event)
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([])
+    useSessionStore
+      .getState()
+      .upsertPersistedSession({ ...persisted, title: 'Newer title', revision: 2 })
+    resolveRead(persisted)
+    await applying
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Newer title',
+      revision: 2
+    })
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(2)
+    await applyWorkspaceRuntimeEvent(event)
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(2)
+    expect(loadOne).toHaveBeenCalledOnce()
+  })
+
+  it('does not resurrect a session removed while its content is loading', async () => {
+    const persisted = summarizeCurrentSession()
+    let resolveRead!: (session: typeof persisted) => void
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          loadOne: () =>
+            new Promise<typeof persisted>((resolve) => {
+              resolveRead = resolve
+            })
+        }
+      }
+    })
+    const applying = applyWorkspaceRuntimeEvent(
+      createEvent({ role: 'assistant', messageId: 'after-load', text: 'Restored output' })
+    )
+    useSessionStore.setState({ sessions: [] })
+    resolveRead(persisted)
+    await applying
+    expect(useSessionStore.getState().sessions).toEqual([])
+  })
+
+  it('keeps later events ordered during content loading without blocking another session', async () => {
+    const persisted = summarizeCurrentSession()
+    let resolveRead!: (session: typeof persisted) => void
+    const loadOne = vi.fn(
+      () =>
+        new Promise<typeof persisted>((resolve) => {
+          resolveRead = resolve
+        })
+    )
+    vi.stubGlobal('window', {
+      api: {
+        sessions: { loadOne, saveSession: vi.fn(async (session) => session) },
+        reviewer: { run: vi.fn() }
+      }
+    })
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'other-session', content: 'Other request' })
+    const owner = createWorkspaceRuntimeEventProcessor(applyWorkspaceRuntimeEvent, {
+      applyEventBatch: applyWorkspaceRuntimeEventBatch
+    })
+    const promptMessageId = persisted.messages[0].id
+    const first = createEvent({
+      id: 'first-restored',
+      role: 'assistant',
+      messageId: 'restored-stream',
+      promptMessageId,
+      text: 'First '
+    })
+    const pending = owner.processIncremental([first])
+    await vi.waitFor(() => expect(loadOne).toHaveBeenCalledOnce())
+    const later = owner.processIncremental([
+      createEvent({ ...first, id: 'later-restored', text: 'second' }),
+      createEvent({ id: 'restored-stop', kind: 'stop', text: 'end_turn', promptMessageId })
+    ])
+    await owner.processIncremental([
+      createEvent({
+        id: 'other-output',
+        sessionId: 'other-session',
+        role: 'assistant',
+        messageId: 'other-stream',
+        text: 'Independent reply'
+      })
+    ])
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.find(({ id }) => id === 'other-session')
+        ?.messages.at(-1)?.content
+    ).toBe('Independent reply')
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === persisted.id)?.messages
+    ).toEqual([])
+    resolveRead(persisted)
+    await Promise.all([pending, later])
+    await owner.processIncremental([first])
+    const current = useSessionStore.getState().sessions.find(({ id }) => id === persisted.id)!
+    expect(current.messages.at(-1)).toMatchObject({
+      content: 'First second',
+      status: 'complete',
+      responseToMessageId: promptMessageId
+    })
+    expect(current.messages).toHaveLength(2)
+    expect(loadOne).toHaveBeenCalledOnce()
   })
 
   it('applies assistant message events as streamed agent chunks', async () => {
@@ -1643,7 +1938,7 @@ describe('workspace runtime events', () => {
         toolCallId: 'tool-web-1',
         toolKind: 'fetch',
         providerToolName: 'WebSearch',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'pending',
         toolContent: [
           {
@@ -1679,7 +1974,7 @@ describe('workspace runtime events', () => {
         kind: 'tool',
         toolKind: 'fetch',
         providerToolName: 'WebSearch',
-        title: '"open science repositories"',
+        title: '"open-science repositories"',
         status: 'completed',
         createdAt: 10,
         updatedAt: 25,
@@ -3043,6 +3338,46 @@ describe('workspace runtime events', () => {
   })
 
   describe('auto-review gate on stop event', () => {
+    it.each([
+      ['renderer', 1, false],
+      ['task', 0, false],
+      ['renderer', 0, true]
+    ] as const)(
+      'dispatches a committed %s-owned review %i time(s), stale=%s',
+      async (owner, count, stale) => {
+        const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+        const saveSession = vi.fn(async (value) => value)
+        stubReviewerApi(reviewerRun, saveSession)
+        const store = useSessionStore.getState()
+        store.setAutoReviewEnabled('transport-session-1', true)
+        store.appendAgentMessageChunk({
+          sessionId: 'transport-session-1',
+          streamId: 'stream-1',
+          eventId: 'main-answer',
+          content: 'Analysis complete'
+        })
+        const previous = store.sessions[0]
+        const run = previous.activeRun!
+        store.finishRun('transport-session-1', undefined, run.promptMessageId)
+        const committed = {
+          ...toPersistedSession(useSessionStore.getState().sessions[0]),
+          runtimeTranscriptOwner: 'main' as const,
+          runtimeTranscriptLastRun: run,
+          runtimeTranscriptReviewOwner: { promptMessageId: run.promptMessageId, owner }
+        }
+
+        scheduleCommittedRuntimeTranscriptAutoReview(
+          stale ? { ...previous, revision: (committed.revision ?? 0) + 1 } : previous,
+          committed
+        )
+        await vi.runAllTimersAsync()
+
+        expect(reviewerRun).toHaveBeenCalledTimes(count)
+        expect(saveSession).not.toHaveBeenCalled()
+        vi.unstubAllGlobals()
+      }
+    )
+
     it('does not auto-review a turn that stopped for a durable user choice', async () => {
       const reviewerRun = vi.fn().mockResolvedValue({ started: true })
       const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
@@ -3813,6 +4148,62 @@ describe('workspace runtime events', () => {
         .getState()
         .sessions[0].artifacts?.find(({ id }) => id === nativePendingArtifact.id)
     ).toMatchObject({ isPublished: true })
+  })
+
+  it('projects a Main-owned Artifact receipt without renderer persistence or finalization', async () => {
+    const current = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [{ ...current, runtimeTranscriptOwner: 'main' }]
+    })
+    const published = createArtifactFile({
+      id: 'main-version-1',
+      artifactId: 'main-artifact-1',
+      versionId: 'main-version-1',
+      isPublished: true,
+      path: '/Users/example/.open-science/managed/main-version-1/result.txt'
+    })
+    const saveSession = vi.fn()
+    const reconcilePendingArtifacts = vi.fn()
+    const finalizeRunArtifacts = vi.fn()
+
+    await applyWorkspaceRuntimeEvent(
+      {
+        ...createEvent({
+          id: 'main-publication-event',
+          kind: 'artifact',
+          runId: 'main-run',
+          artifactClaimId: 'main-claim',
+          artifacts: [published]
+        }),
+        publicationOwner: 'main'
+      } as AcpRuntimeEvent,
+      { saveSession, reconcilePendingArtifacts, finalizeRunArtifacts }
+    )
+
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(reconcilePendingArtifacts).not.toHaveBeenCalled()
+    expect(finalizeRunArtifacts).not.toHaveBeenCalled()
+    expect(
+      useSessionStore.getState().sessions[0].artifacts?.find(({ id }) => id === published.versionId)
+    ).toMatchObject({ isPublished: true })
+  })
+
+  it('waits for the Main transcript receipt before settling a Main-owned stop', async () => {
+    const current = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [{ ...current, runtimeTranscriptOwner: 'main' }]
+    })
+    const saveSession = vi.fn()
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'main-stop', kind: 'stop' }), {
+      saveSession
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      runtimeTranscriptOwner: 'main',
+      status: 'running'
+    })
+    expect(saveSession).not.toHaveBeenCalled()
   })
 
   it('does not clear an artifact error owned by another event', async () => {

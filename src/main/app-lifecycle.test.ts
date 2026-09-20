@@ -154,6 +154,7 @@ const setup = (
     Pick<
       AppLifecycleDeps,
       | 'shutdownBackends'
+      | 'beforeExit'
       | 'prepareForQuit'
       | 'abortQuitPreparation'
       | 'flushSessionPersistence'
@@ -233,6 +234,7 @@ const setup = (
       onAppearanceChanged: overrides.onAppearanceChanged,
       platform: overrides.platform ?? 'linux',
       detectActiveSessions,
+      beforeExit: overrides.beforeExit,
       hasActiveReviewerWork: overrides.hasActiveReviewerWork ?? (() => false),
       getActiveSettingsInstallId:
         overrides.getActiveSettingsInstallId ??
@@ -268,6 +270,89 @@ const installWithCapturedOpts = (opts: {
 }
 
 describe('installAppLifecycle', () => {
+  it('reconfirms a replacement Settings install when app.quit synchronously reenters before-quit', async () => {
+    let activeInstallId = 'install-1'
+    const decisions: Array<(choice: CloseConfirmChoice) => void> = []
+    const confirmClose = vi.fn(
+      () => new Promise<CloseConfirmChoice>((resolve) => decisions.push(resolve))
+    )
+    const { app, quit, prepareForQuit, flushSessionPersistence, shutdownBackends } = setup({
+      getActiveSettingsInstallId: () => activeInstallId,
+      confirmClose
+    })
+    // Electron emits before-quit inside app.quit(), before the prior confirmation chain settles.
+    quit.mockImplementation(() => app.emit('before-quit'))
+
+    app.emit('before-quit')
+    expect(confirmClose).toHaveBeenCalledOnce()
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    // The old installation finishes and another starts while its warning is still open.
+    activeInstallId = 'install-2'
+    decisions[0]('quit')
+    await flush()
+
+    expect(quit).toHaveBeenCalledOnce()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+    // The completed dialog must also leave the replacement dialog's admission latch intact.
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledTimes(2)
+    decisions[1]('cancel')
+    await flush()
+
+    expect(prepareForQuit).not.toHaveBeenCalled()
+    expect(flushSessionPersistence).not.toHaveBeenCalled()
+    expect(shutdownBackends).not.toHaveBeenCalled()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it.each(['retry', 'force-quit'] as const)(
+    'rechecks installation work admitted during persistence %s confirmation',
+    async (choice) => {
+      let activeInstallId: string | undefined = undefined
+      const decisions: Array<(choice: CloseConfirmChoice) => void> = []
+      const confirmClose = vi.fn(
+        () => new Promise<CloseConfirmChoice>((resolve) => decisions.push(resolve))
+      )
+      const { app, quit, closeOpts, shutdownBackends, flushSessionPersistence } = setup({
+        getActiveSettingsInstallId: () => activeInstallId,
+        flushSessionPersistence: vi.fn(async () => 'timeout' as const),
+        confirmClose
+      })
+      quit.mockImplementation(() => app.emit('before-quit'))
+      closeOpts[0].requestQuit()
+      await flush()
+      expect(confirmClose).toHaveBeenLastCalledWith('persistence-failed', [])
+
+      activeInstallId = 'new-install'
+      decisions[0](choice)
+      await flush()
+      expect(confirmClose).toHaveBeenCalledTimes(2)
+      expect(confirmClose).toHaveBeenLastCalledWith('quit', [], true)
+      app.emit('before-quit')
+      await flush()
+      expect(confirmClose).toHaveBeenCalledTimes(2)
+      decisions[1]('cancel')
+      await flush()
+      expect(flushSessionPersistence).toHaveBeenCalledOnce()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
+
+  it('shuts down once when a synchronously reissued quit confirms the same installation', async () => {
+    const { app, quit, shutdownBackends, confirmClose } = setup({
+      getActiveSettingsInstallId: () => 'same-install'
+    })
+    quit.mockImplementation(() => app.emit('before-quit'))
+    app.emit('before-quit')
+    await flush()
+    expect(confirmClose).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+  })
+
   it('creates the first window and tray on install', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)
@@ -352,21 +437,44 @@ describe('installAppLifecycle', () => {
   it('runs an awaited backend teardown then exits on a normal quit', async () => {
     // Default confirmClose resolves 'quit'; a normal quit goes through the confirm gate first,
     // then the real Electron re-issues before-quit once requestQuit's quit() lands.
-    const { app, tray, shutdownBackends, quit } = setup()
+    const beforeExit = vi.fn()
+    const { app, tray, shutdownBackends, quit } = setup({ beforeExit })
 
     const event = app.emit('before-quit')
     expect(event.defaultPrevented).toBe(true)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting confirmation
+    expect(beforeExit).not.toHaveBeenCalled()
 
     await flush()
     expect(quit).toHaveBeenCalledTimes(1)
     expect(app.exit).not.toHaveBeenCalled() // still awaiting shutdown
+    expect(beforeExit).not.toHaveBeenCalled()
 
     app.emit('before-quit') // re-issued quit, now confirmed
     await flush()
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(tray?.destroy).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
+    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(beforeExit.mock.invocationCallOrder[0]).toBeLessThan(
+      app.exit.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('logs a failed exit handoff and still exits after teardown', async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    const beforeExit = vi.fn(async () => {
+      throw new Error('relaunch unavailable')
+    })
+    const { app, closeOpts, shutdownBackends } = setup({ beforeExit, log })
+    closeOpts[0].requestQuit()
+    app.emit('before-quit')
+    await flush()
+
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(beforeExit).toHaveBeenCalledOnce()
+    expect(log.error).toHaveBeenCalledWith('application exit handoff failed', expect.any(Object))
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
   })
 
   it('routes a system request through the existing shutdown owner', async () => {
@@ -819,7 +927,7 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it.each(['send-failed', 'timeout'] as const)(
+  it.each(['send-failed', 'timeout', 'renderer-failed'] as const)(
     'aborts ordinary quit and asks for consent when the renderer persistence preflight returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi.fn(async () => outcome)
@@ -859,30 +967,34 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('uses the current degraded shutdown only after the user explicitly chooses force quit', async () => {
-    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
-    const confirmClose = vi.fn(async () => 'force-quit' as never)
-    const { app, closeOpts, quit, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
-      flushSessionPersistence,
-      confirmClose
-    })
-    closeOpts[0].requestQuit()
+  it.each(['timeout', 'renderer-failed'] as const)(
+    'uses degraded shutdown for %s only after explicit force quit',
+    async (outcome) => {
+      const flushSessionPersistence = vi.fn(async () => outcome)
+      const confirmClose = vi.fn(async () => 'force-quit' as never)
+      const { app, closeOpts, quit, prepareForQuit, abortQuitPreparation, shutdownBackends } =
+        setup({
+          flushSessionPersistence,
+          confirmClose
+        })
+      closeOpts[0].requestQuit()
 
-    app.emit('before-quit')
-    await flush()
+      app.emit('before-quit')
+      await flush()
 
-    expect(quit).toHaveBeenCalledTimes(2)
-    expect(app.exit).not.toHaveBeenCalled()
+      expect(quit).toHaveBeenCalledTimes(2)
+      expect(app.exit).not.toHaveBeenCalled()
 
-    app.emit('before-quit')
-    await flush()
+      app.emit('before-quit')
+      await flush()
 
-    expect(flushSessionPersistence).toHaveBeenCalledTimes(3)
-    expect(prepareForQuit).toHaveBeenCalledOnce()
-    expect(abortQuitPreparation).toHaveBeenCalledOnce()
-    expect(shutdownBackends).toHaveBeenCalledOnce()
-    expect(app.exit).toHaveBeenCalledWith(0)
-  })
+      expect(flushSessionPersistence).toHaveBeenCalledTimes(3)
+      expect(prepareForQuit).toHaveBeenCalledOnce()
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(shutdownBackends).toHaveBeenCalledOnce()
+      expect(app.exit).toHaveBeenCalledWith(0)
+    }
+  )
 
   it('requires persistence consent again after delegated work interrupts a force-quit attempt', async () => {
     let active: ActiveSessionInfo[] = []
@@ -976,7 +1088,7 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it.each(['send-failed', 'timeout'] as const)(
+  it.each(['send-failed', 'timeout', 'renderer-failed'] as const)(
     'aborts ordinary quit and asks for consent when the terminal renderer flush returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi
@@ -1051,6 +1163,65 @@ describe('installAppLifecycle', () => {
     const { trayHandlers, quit } = setup()
     trayHandlers?.onQuit()
     expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores the same tray-hidden main window on macOS activate', () => {
+    const h = setup({ platform: 'darwin' })
+    const original = h.windows[0]
+    h.trayHandlers?.onHide()
+    expect(original.visible).toBe(false)
+    expect(h.isMainWindowHidden()).toBe(true)
+
+    h.app.emit('activate')
+
+    expect.soft(original.visible).toBe(true)
+    expect.soft(original.focused).toBe(true)
+    expect.soft(h.isMainWindowHidden()).toBe(false)
+    expect(h.windows).toHaveLength(1)
+    expect(h.getMainWindow()).toBe(original)
+    // Control: the existing Show action already restores this exact window.
+    h.trayHandlers?.onShow()
+    expect(original.visible).toBe(true)
+    expect(original.focused).toBe(true)
+  })
+
+  it('restores a minimized main window on macOS activate', () => {
+    const h = setup({ platform: 'darwin' })
+    h.windows[0].minimized = true
+    h.windows[0].visible = false
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(1)
+    expect(h.windows[0]).toMatchObject({ minimized: false, visible: true, focused: true })
+  })
+
+  it('does not create a main window on activation before headless mode opens one', () => {
+    const h = setup({ platform: 'darwin', createInitialWindow: false })
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(0)
+    h.trayHandlers?.onShow()
+    h.trayHandlers?.onHide()
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(1)
+    expect(h.windows[0].visible).toBe(true)
+  })
+
+  it('does not reopen a destroyed window during committed shutdown', async () => {
+    let finishPreparation!: () => void
+    const h = setup({
+      platform: 'darwin',
+      shutdownTrigger: () => 'system',
+      prepareForQuit: () =>
+        new Promise<void>((resolve) => {
+          finishPreparation = resolve
+        })
+    })
+    h.app.emit('before-quit')
+    await flush()
+    h.windows[0].destroyed = true
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(1)
+    finishPreparation()
+    await flush()
   })
 
   it('recreates a window on macOS activate when none are open', () => {
@@ -1247,24 +1418,25 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('before-quit with delegated work + blocked choice keeps the app alive without interruption', async () => {
-    const sessions: ActiveSessionInfo[] = [
-      { projectId: 'demo', sessionId: 's1', kind: 'delegated' }
-    ]
-    const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
-    const { app, shutdownBackends, quit } = setup({
-      detectActiveSessions: () => sessions,
-      confirmClose
-    })
+  it.each(['delegated', 'notebook'] as const)(
+    'before-quit with %s work + cancel keeps the app alive without interruption',
+    async (kind) => {
+      const sessions: ActiveSessionInfo[] = [{ projectId: 'demo', sessionId: 's1', kind }]
+      const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> => 'cancel')
+      const { app, shutdownBackends, quit } = setup({
+        detectActiveSessions: () => sessions,
+        confirmClose
+      })
 
-    app.emit('before-quit')
-    await flush()
+      app.emit('before-quit')
+      await flush()
 
-    expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
-    expect(quit).not.toHaveBeenCalled()
-    expect(shutdownBackends).not.toHaveBeenCalled()
-    expect(app.exit).not.toHaveBeenCalled()
-  })
+      expect(confirmClose).toHaveBeenCalledWith('quit', sessions)
+      expect(quit).not.toHaveBeenCalled()
+      expect(shutdownBackends).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
 
   const cancelSessions: ActiveSessionInfo[] = [
     { projectId: 'demo', sessionId: 's1', kind: 'agent' }

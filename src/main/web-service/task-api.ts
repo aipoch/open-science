@@ -1,6 +1,9 @@
+import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
+import type { CliLauncherStatus } from '../../shared/cli'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import type {
   FinalizeRunArtifactsRequest,
@@ -10,13 +13,28 @@ import type { Project } from '../../shared/projects'
 import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
-import type { SettingsSnapshot } from '../../shared/settings'
+import type {
+  AddCustomServerRequest,
+  UpdateCustomServerRequest,
+  ConnectorsSnapshot,
+  ConnectorDetailView,
+  CustomServerView,
+  CreateDeviceCredentialRequest,
+  UpdateDeviceCredentialRequest,
+  DeviceCredentialsSnapshot,
+  CreateDeviceCredentialResult,
+  ReadinessPreflight,
+  SkillView,
+  SettingsSnapshot
+} from '../../shared/settings'
 import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
   TaskProject,
   TaskAgentRouting,
+  TaskAgentRuntime,
+  TaskDoctorReport,
   TaskProjectSessionDefaults,
   TaskPlanResponseRequest,
   TaskRun,
@@ -95,6 +113,10 @@ class HeadlessTaskApi {
         save: async (session) => {
           return this.invoke('sessions:save-session', session) as Promise<PersistedChatSession>
         },
+        bindSession: (request) =>
+          this.invoke('sessions:bind-task-session', request) as Promise<PersistedChatSession>,
+        admitTurn: (request) =>
+          this.invoke('sessions:admit-task-turn', request) as Promise<PersistedChatSession>,
         stageCompletion: (request) =>
           this.invoke('sessions:stage-task-completion', request) as Promise<PersistedChatSession>,
         settleCompletion: (request) =>
@@ -135,6 +157,10 @@ class HeadlessTaskApi {
           this.withCurrentCaller(() => this.ports.agent.cancelPrompt(sessionId))
       },
       artifacts: {
+        resolveVersionDescriptors: (request) =>
+          this.invoke('artifacts:resolve-version-descriptors', request) as Promise<
+            ArtifactVersionDescriptor[]
+          >,
         finalizeRun: (request: FinalizeRunArtifactsRequest) =>
           this.invoke('artifacts:finalize-run', request) as Promise<FinalizeRunArtifactsResult>
       },
@@ -218,6 +244,109 @@ class HeadlessTaskApi {
     return this.runner.listProjects()
   }
 
+  async bootstrap(request: BootstrapRequest): Promise<BootstrapResult> {
+    this.requireLocalConnectorCaller()
+    return this.invoke('settings:bootstrap', request) as Promise<BootstrapResult>
+  }
+
+  async installCli(): Promise<CliLauncherStatus> {
+    this.requireLocalConnectorCaller()
+    return this.invoke('cli:install') as Promise<CliLauncherStatus>
+  }
+
+  async listRuntimes(): Promise<TaskAgentRuntime[]> {
+    const [preflight, settings] = await Promise.all([
+      this.invoke('settings:get-preflight') as Promise<ReadinessPreflight>,
+      this.invoke('settings:get-settings') as Promise<SettingsSnapshot>
+    ])
+    const readyByFramework = {
+      'claude-code': preflight.claudeReady,
+      opencode: preflight.opencodeReady,
+      codex: preflight.codexReady,
+      codebuddy: preflight.codebuddyReady
+    } as const
+    const runtimeByFramework = {
+      'claude-code': {
+        configured: Boolean(settings.claude.resolvedPath),
+        version: settings.claude.version,
+        managed: settings.claudeManaged
+      },
+      opencode: {
+        configured: Boolean(settings.opencode.resolvedPath),
+        version: settings.opencode.version,
+        managed: settings.opencodeManaged
+      },
+      codex: {
+        configured: Boolean(settings.codex.resolvedPath),
+        version: settings.codex.nativeVersion,
+        managed: settings.codexManaged && settings.codex.nativeManaged === true
+      },
+      codebuddy: {
+        configured: Boolean(settings.codebuddy.resolvedPath),
+        version: settings.codebuddy.version,
+        managed: settings.codebuddyManaged
+      }
+    } as const
+
+    return settings.agentFrameworks.map(({ id: framework }) => {
+      const runtime = runtimeByFramework[framework]
+      const status = readyByFramework[framework]
+        ? ('ready' as const)
+        : runtime.configured
+          ? ('not_ready' as const)
+          : ('missing' as const)
+      return {
+        framework,
+        status,
+        ...(runtime.version ? { version: runtime.version } : {}),
+        ...(runtime.configured
+          ? { source: runtime.managed ? ('managed' as const) : ('external' as const) }
+          : {})
+      }
+    })
+  }
+
+  async doctor(): Promise<TaskDoctorReport> {
+    const [preflight, skills, bootstrap] = await Promise.all([
+      this.invoke('settings:get-preflight') as Promise<ReadinessPreflight>,
+      this.invoke('settings:list-skills') as Promise<SkillView[]>,
+      this.invoke('settings:bootstrap', { action: 'status' }) as Promise<BootstrapResult>
+    ])
+    const { runtimeReadiness, providerReadiness } = preflight
+    const next: TaskDoctorReport['next'][number][] = []
+    if (runtimeReadiness.status !== 'ready') {
+      next.push({
+        code: `runtime_${runtimeReadiness.status}`,
+        ...(bootstrap.ok && bootstrap.next?.runtime ? { argv: bootstrap.next.runtime } : {})
+      })
+    }
+    if (providerReadiness.status !== 'ready') {
+      next.push({
+        code: `provider_${providerReadiness.status}`,
+        ...(bootstrap.ok && bootstrap.next?.provider ? { argv: bootstrap.next.provider } : {})
+      })
+    }
+    return {
+      ready: runtimeReadiness.status === 'ready' && providerReadiness.status === 'ready',
+      checks: {
+        daemon: { status: 'ready' },
+        runtime: {
+          status: runtimeReadiness.status,
+          framework: preflight.agentFrameworkId
+        },
+        provider: providerReadiness,
+        skills: {
+          status: 'ready',
+          enabled: skills
+            .filter((skill) => skill.enabled && skill.available !== false)
+            .map((skill) => skill.id)
+            .sort()
+        }
+      },
+      next
+    }
+  }
+
   createProject(request: CreateTaskProjectRequest): Promise<TaskProject> {
     return this.runner.createProject(request)
   }
@@ -254,6 +383,98 @@ class HeadlessTaskApi {
     request: UpdateProjectSessionDefaultsRequest
   ): Promise<TaskProjectSessionDefaults> {
     return this.runner.updateProjectSessionDefaults(projectId, request)
+  }
+
+  async listConnectors(): Promise<ConnectorsSnapshot> {
+    return this.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>
+  }
+
+  async getConnector(id: string): Promise<ConnectorDetailView | CustomServerView> {
+    const snapshot = await this.listConnectors()
+    const custom = snapshot.customServers.find((item) => item.id === id)
+    if (custom) return custom
+    if (!snapshot.connectors.some((item) => item.id === id)) {
+      throw new TaskRunnerError('invalid_request', 'Unknown Connector ID.')
+    }
+    return this.invoke('settings:get-connector-detail', id) as Promise<ConnectorDetailView>
+  }
+
+  async setConnectorEnabled(id: string, enabled: boolean): Promise<ConnectorsSnapshot> {
+    this.requireLocalConnectorCaller()
+    if (typeof enabled !== 'boolean')
+      throw new TaskRunnerError('invalid_request', 'enabled must be a boolean.')
+    const snapshot = await this.listConnectors()
+    const custom = snapshot.customServers.some((item) => item.id === id)
+    if (!custom && !snapshot.connectors.some((item) => item.id === id)) {
+      throw new TaskRunnerError('invalid_request', 'Unknown Connector ID.')
+    }
+    return this.connectorOperation(
+      custom ? 'settings:set-custom-server-enabled' : 'settings:set-connector-enabled',
+      { id, enabled }
+    )
+  }
+
+  addConnector(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    return this.connectorOperation('settings:add-custom-server', request)
+  }
+
+  updateConnector(
+    id: string,
+    request: Omit<UpdateCustomServerRequest, 'id'>
+  ): Promise<ConnectorsSnapshot> {
+    return this.connectorOperation('settings:update-custom-server', { ...request, id })
+  }
+
+  removeConnector(id: string): Promise<ConnectorsSnapshot> {
+    return this.connectorOperation('settings:remove-custom-server', { id })
+  }
+
+  testConnector(id: string): Promise<{ success: boolean; toolCount?: number; message: string }> {
+    return this.connectorOperation('settings:test-custom-server', { id })
+  }
+
+  listCredentials(): Promise<DeviceCredentialsSnapshot> {
+    return this.connectorOperation('settings:list-device-credentials')
+  }
+
+  createCredential(request: CreateDeviceCredentialRequest): Promise<CreateDeviceCredentialResult> {
+    return this.connectorOperation('settings:create-device-credential', request)
+  }
+
+  updateCredential(
+    id: string,
+    request: Omit<UpdateDeviceCredentialRequest, 'id'>
+  ): Promise<DeviceCredentialsSnapshot> {
+    return this.connectorOperation('settings:update-device-credential', { ...request, id })
+  }
+
+  private requireLocalConnectorCaller(): void {
+    if (this.currentCallerContext().location !== 'local') {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Connector and credential changes require a local connection.'
+      )
+    }
+  }
+
+  private async connectorOperation<Result>(channel: string, request?: unknown): Promise<Result> {
+    this.requireLocalConnectorCaller()
+    try {
+      return (await this.invoke(channel, ...(request === undefined ? [] : [request]))) as Result
+    } catch (error) {
+      // Provider errors can contain submitted credentials. Never forward their raw messages.
+      const message =
+        error instanceof Error &&
+        [
+          'Secure credential storage is unavailable. Unlock the system keychain and retry.',
+          'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+        ].includes(error.message)
+          ? error.message
+          : channel.includes('credential')
+            ? 'Credential operation failed. Check the input and system credential storage.'
+            : 'Connector operation failed. Check the ID, configuration, and credential bindings.'
+      throw new TaskRunnerError('invalid_configuration', message)
+    }
   }
 
   async getAgentRouting(): Promise<TaskAgentRouting> {

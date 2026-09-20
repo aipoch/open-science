@@ -9,6 +9,8 @@ import {
   NotebookDependencyAnalyzer,
   type NotebookDependencyInterpreter
 } from './dependency-analysis'
+import { analyzePythonSources } from './dependency-analysis-python'
+import { analyzeRSources } from './dependency-analysis-r'
 
 const unusedInterpreter = (kernelKind: 'python' | 'r'): NotebookDependencyInterpreter => ({
   command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
@@ -78,6 +80,139 @@ const projectScripts = async (
 }
 
 describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
+  it('invalidates transcript counts after their sample file vector is replaced', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'files <- c(A="inputs/A/quant.sf", B="inputs/B/quant.sf")',
+        'txi <- tximport::tximport(files, type="salmon", txOut=TRUE, dropInfReps=TRUE)',
+        'write.csv(txi$counts, "counts.csv")',
+        'files <- c(A="inputs/newA/quant.sf", B="inputs/B/quant.sf")'
+      ],
+      'open-science-transcript-inputs-'
+    )
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+    expect(projection.stalenessByRunId['run-3']).toMatchObject({ state: 'stale' })
+  })
+
+  it('tracks the transcript-to-gene mapping as an object dependency', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'mapping <- read.csv("inputs/map.csv")\nfiles <- c("inputs/A/quant.sf")',
+        'txi <- tximport::tximport(files, type="salmon", tx2gene=mapping, dropInfReps=TRUE)',
+        'mapping <- read.csv("inputs/new-map.csv")'
+      ],
+      'open-science-transcript-mapping-'
+    )
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+  })
+
+  it('invalidates a spectrum reader when its input path changes', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'from pyteomics import mgf\npath = "inputs/a.mgf"',
+        'reader = mgf.MGF(path)',
+        'path = "inputs/b.mgf"'
+      ],
+      'open-science-spectrum-inputs-'
+    )
+    expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+  })
+
+  it('keeps a deterministic Matplotlib tuple loop clear when only its labels are static', async () => {
+    const [facts] = await analyzePythonSources([
+      [
+        'import numpy as np, matplotlib',
+        'matplotlib.use("Agg")',
+        'import matplotlib.pyplot as plt',
+        'x = np.linspace(0, 2 * np.pi, 400)',
+        'for name, y, color in [("sin", np.sin(x), "tab:blue"), ("cos", np.cos(x), "tab:red")]:',
+        '    fig, ax = plt.subplots(figsize=(6, 3.5), dpi=150)',
+        '    ax.plot(x, y, color=color)',
+        '    ax.set_title(f"y = {name}(x)"); ax.set_xlabel("x"); ax.set_ylabel(f"{name}(x)")',
+        '    ax.axhline(0, color="gray", lw=0.5); ax.grid(alpha=0.3)',
+        '    fig.tight_layout(); fig.savefig(f"{name}.png"); plt.close(fig)',
+        'print("ok")'
+      ].join('\n')
+    ])
+
+    expect(facts?.state).toBe('available')
+  })
+
+  it.each([
+    ['zip', 'for name, y in zip(("sin", "cos"), (np.sin(x), np.cos(x))):'],
+    ['enumerate', 'for index, y in enumerate((np.sin(x), np.cos(x)), start=1):']
+  ])(
+    'keeps a deterministic Matplotlib %s loop clear when only output labels are static',
+    async (_name, loop) => {
+      const [facts] = await analyzePythonSources([
+        [
+          'import numpy as np',
+          'import matplotlib.pyplot as plt',
+          'x = np.linspace(0, 2 * np.pi, 400)',
+          loop,
+          '    fig, ax = plt.subplots()',
+          '    ax.plot(x, y)',
+          '    fig.savefig("plot.png")',
+          '    plt.close(fig)'
+        ].join('\n')
+      ])
+
+      expect(facts?.state).toBe('available')
+    }
+  )
+
+  it('keeps a deterministic Matplotlib dictionary loop clear when only keys are static', async () => {
+    const [facts] = await analyzePythonSources([
+      [
+        'import numpy as np',
+        'import matplotlib.pyplot as plt',
+        'x = np.linspace(0, 2 * np.pi, 400)',
+        'plots = {"sin": np.sin(x), "cos": np.cos(x)}',
+        'for name, y in plots.items():',
+        '    fig, ax = plt.subplots()',
+        '    ax.plot(x, y)',
+        '    fig.savefig(f"{name}.png")',
+        '    plt.close(fig)'
+      ].join('\n')
+    ])
+
+    expect(facts?.state).toBe('available')
+  })
+
+  it.each([
+    [
+      'named list values',
+      [
+        'x <- seq(0, 2 * pi, length.out = 400)',
+        'plots <- list(sin = sin(x), cos = cos(x))',
+        'for (name in names(plots)) {',
+        '  png(sprintf("%s.png", name))',
+        '  plot(x, plots[[name]], type = "l")',
+        '  dev.off()',
+        '}'
+      ].join('\n')
+    ],
+    [
+      'local computed assignments',
+      [
+        'x <- seq(0, 2 * pi, length.out = 400)',
+        'for (name in c("sin", "cos")) {',
+        '  y <- sin(x)',
+        '  png(sprintf("%s.png", name))',
+        '  plot(x, y, type = "l")',
+        '  dev.off()',
+        '}'
+      ].join('\n')
+    ]
+  ])('keeps a deterministic R loop with %s clear', async (_name, source) => {
+    const [facts] = await analyzeRSources([source])
+
+    expect(facts?.state).toBe('available')
+  })
+
   it('classifies a common base R read-clean-aggregate workflow as clear', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-base-analysis-'))
     temporaryRoots.push(storageRoot)
@@ -334,6 +469,58 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
+  it('classifies a standard-library compressed-file pipeline as clear', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        [
+          'import gzip',
+          "with gzip.open('measurements.csv.gz', 'rt') as stream:",
+          '    payload = stream.read()',
+          "with gzip.open('summary.txt.gz', 'wt') as stream:",
+          '    stream.write(payload)'
+        ].join('\n')
+      ],
+      'open-science-python-gzip-corpus-'
+    )
+
+    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it.each([
+    [
+      'temporary file',
+      "import tempfile\nwith tempfile.NamedTemporaryFile() as stream:\n    stream.write(b'data')"
+    ],
+    [
+      'SQLite connection',
+      "import sqlite3\nconnection = sqlite3.connect('results.sqlite')\nconnection.execute('select 1')"
+    ],
+    [
+      'DuckDB connection',
+      "import duckdb\nconnection = duckdb.connect('results.duckdb')\nconnection.sql('select 1')"
+    ]
+  ])('keeps a Python %s conservative', async (_label, script) => {
+    const [facts] = await analyzePythonSources([script])
+
+    expect(facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state'])
+    })
+  })
+
+  it('keeps an R DBI connection conservative', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        "connection <- DBI::dbConnect(RSQLite::SQLite(), 'results.sqlite')\nDBI::dbGetQuery(connection, 'select 1')"
+      ],
+      'open-science-r-dbi-corpus-'
+    )
+
+    expect(projection?.stalenessByRunId['run-1']).toMatchObject({ state: 'unknown' })
+  })
+
   it('classifies common pandas value-file readers as data frame reads', async () => {
     const projection = await projectScripts(
       'python',
@@ -510,6 +697,39 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
     expect(projection?.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
   })
+
+  it('keeps a copied SimpleITK array independent from its image', async () => {
+    const projection = await projectScripts(
+      'python',
+      [
+        'import SimpleITK as sitk\nimage = sitk.ReadImage("ct.nii.gz")',
+        'snapshot = image.GetSize()\nprint(snapshot)',
+        'data = sitk.GetArrayFromImage(image)',
+        'data.fill(0)'
+      ],
+      'open-science-simpleitk-array-copy-'
+    )
+    expect(projection?.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  })
+
+  it.each(['GetArrayFromImage', 'GetArrayViewFromImage'])(
+    'invalidates a dependent result after an image mutation through %s',
+    async (method) => {
+      const projection = await projectScripts(
+        'python',
+        [
+          'import SimpleITK as sitk\nimage = sitk.ReadImage("ct.nii.gz")',
+          `data = sitk.${method}(image)`,
+          'snapshot = data.mean()\nprint(snapshot)',
+          'image.SetPixel(0, 0, 1)'
+        ],
+        'open-science-simpleitk-array-input-'
+      )
+      expect(projection?.stalenessByRunId['run-3']).toMatchObject({
+        state: expect.stringMatching(/^(stale|unknown)$/u)
+      })
+    }
+  )
 
   it('keeps Nibabel cached data as a possible alias of the image', async () => {
     const projection = await projectScripts(
@@ -1717,6 +1937,52 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     )
 
     expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('classifies a common openxlsx workbook pipeline as clear', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        [
+          'book <- openxlsx::loadWorkbook("source.xlsx")',
+          'openxlsx::addWorksheet(book, "Analysis")',
+          'openxlsx::writeData(book, "Analysis", data.frame(value = c(1, 2, 3)))',
+          'openxlsx::saveWorkbook(book, "result.xlsx", overwrite = TRUE)'
+        ].join('\n')
+      ],
+      'open-science-r-openxlsx-pipeline-corpus-'
+    )
+
+    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  })
+
+  it('tracks openxlsx workbook mutations through aliases', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'book <- openxlsx::loadWorkbook("source.xlsx")',
+        'alias <- book',
+        'sheet_names <- names(book)\nprint(sheet_names)',
+        'openxlsx::addWorksheet(alias, "Analysis")'
+      ],
+      'open-science-r-openxlsx-reference-corpus-'
+    )
+
+    expect(projection?.stalenessByRunId['run-3']).toMatchObject({ state: 'stale' })
+    expect(projection?.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
+  })
+
+  it('does not trust a shadowed unqualified openxlsx mutator', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'book <- openxlsx::loadWorkbook("source.xlsx")',
+        'addWorksheet <- function(book, name) invisible(NULL)\naddWorksheet(book, "Analysis")'
+      ],
+      'open-science-r-shadowed-openxlsx-corpus-'
+    )
+
+    expect(projection?.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
   })
 
   it('keeps an attached readr table copy-on-modify across aliases', async () => {

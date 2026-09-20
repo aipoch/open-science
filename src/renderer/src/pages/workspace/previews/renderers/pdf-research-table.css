@@ -1,0 +1,76 @@
+/* Hallmark · component: research table · genre: editorial · theme: existing app tokens
+ * Quiet horizontal rules, grouped cells and tabular numerals; preserve source structure.
+ * Pre-emit critique: P4 H4 E4 S5 R5 V4. */
+
+.pdf-research-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border-top: 2px solid var(--color-primary);
+  border-bottom: 2px solid var(--color-border-300);
+  background: var(--color-bg-000);
+  scrollbar-width: thin;
+}
+
+.pdf-research-table-scroll:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.pdf-research-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--color-text-100);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.pdf-research-table td {
+  min-width: 6rem;
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--color-border-200);
+  vertical-align: top;
+  text-align: start;
+}
+
+.pdf-research-table tr:first-child > td {
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-000));
+  border-bottom-color: var(--color-border-300);
+  font-weight: 600;
+}
+
+.pdf-research-table td:first-child {
+  min-width: 10rem;
+}
+
+.pdf-research-table td[colspan]:not([colspan='1']) {
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-000));
+  font-weight: 600;
+  border-inline: 1px solid var(--color-border-200);
+}
+
+.pdf-research-table td[rowspan]:not([rowspan='1']) {
+  vertical-align: middle;
+  border-inline-end: 1px solid var(--color-border-200);
+}
+
+.pdf-research-table td[colspan]:not([colspan='1']):not(:first-child) {
+  text-align: center;
+}
+
+.pdf-research-table td[data-numeric] {
+  text-align: end;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .pdf-research-table tr:hover > td {
+    background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-000));
+  }
+}
+
+@media print {
+  .pdf-research-table-scroll {
+    overflow: visible;
+  }
+}

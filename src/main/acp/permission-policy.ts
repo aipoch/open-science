@@ -7,6 +7,7 @@ import type {
 } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { CommandShellDialect } from '../agent-framework/types'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
   ACTIVITY_GROUP_MCP_SERVER_NAME,
   isActivityGroupToolEvent
@@ -26,6 +27,8 @@ type PermissionPolicyContext = {
   permissionGrantSessionId?: string
   frameworkId?: AgentFrameworkId
   shellDialect?: CommandShellDialect
+  notebookShellRuntime?: ShellRuntimeBinding['kind']
+  notebookShellRuntimeQualifier?: string
   autoReviewStrategy?: PermissionAutoReviewStrategy
   cwd?: string
   // Canonical MCP server names, so framework-visible tools can resolve to stable policy identities.
@@ -159,6 +162,84 @@ const canConservativelyAutoApprove = (
 const resolveAllowOptionId = (params: RequestPermissionRequest): string | undefined =>
   params.options.find((option) => option.kind.toLowerCase() === 'allow_once')?.optionId
 
+// OpenCode's ACP codec maps only native webfetch to kind=fetch and omits tool-name metadata
+// (opencode/src/acp/{permission,tool}.ts). MCP tools map to other. Claude supplies WebFetch in
+// provider metadata. Do not infer native authority from a URL/title or from another framework's
+// generic fetch kind; Codex Responses/Bridge do not expose this native permission contract.
+const isNativeWebFetchCandidate = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (trustedMcpToolIdentity(params) || isMcpTool(params, context?.mcpServerNames ?? []))
+    return false
+  const name = extractProviderToolName(params.toolCall)
+  return (
+    (context?.frameworkId === 'opencode' &&
+      params.toolCall.kind === 'fetch' &&
+      (name === undefined || name === 'webfetch')) ||
+    (context?.frameworkId === 'claude-code' && name === 'WebFetch')
+  )
+}
+
+const isNativeWebFetchPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (
+    trustedNativeToolIdentity(params) !== `${context?.frameworkId}/webfetch` ||
+    !isNativeWebFetchCandidate(params, context)
+  )
+    return false
+  const input = params.toolCall.rawInput
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const url = (input as Record<string, unknown>).url
+  if (typeof url !== 'string') return false
+  try {
+    const parsed = new URL(url)
+    return ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password
+  } catch {
+    return false
+  }
+}
+
+// Claude ACP supplies WebSearch in the preceding tool_call metadata, but can omit it on
+// the root request_permission. OpenCode currently maps websearch to other without native
+// metadata; Codex Responses/Bridge expose no corresponding native approval contract.
+const isNativeWebSearchCandidate = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean =>
+  context?.frameworkId === 'claude-code' &&
+  !trustedMcpToolIdentity(params) &&
+  !isMcpTool(params, context.mcpServerNames ?? []) &&
+  extractProviderToolName(params.toolCall) === 'WebSearch'
+
+const isNativeWebSearchPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  if (
+    trustedNativeToolIdentity(params) !== 'claude-code/websearch' ||
+    !isNativeWebSearchCandidate(params, context)
+  )
+    return false
+  const input = params.toolCall.rawInput
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const values = input as Record<string, unknown>
+  return (
+    typeof values.query === 'string' &&
+    values.query.trim().length > 0 &&
+    Object.keys(values).every((key) =>
+      ['query', 'allowed_domains', 'blocked_domains'].includes(key)
+    ) &&
+    ['allowed_domains', 'blocked_domains'].every(
+      (key) =>
+        values[key] === undefined ||
+        (Array.isArray(values[key]) && values[key].every((domain) => typeof domain === 'string'))
+    )
+  )
+}
+
 // OpenCode's native Skill tool only reads an app-provisioned skill definition into the model's
 // context. It is framework plumbing rather than a user-authorizable side effect. Older OpenCode
 // sessions can still emit request_permission, so the runtime binds that request to a preceding native
@@ -247,6 +328,16 @@ const resolveAutomaticPermission = (
     return resolveAllowOptionId(params)
   }
 
+  // The app-owned loader only reads the current projection under its enforced Skill allowlist.
+  // A model-supplied title or argument must never claim this exception.
+  if (
+    context?.frameworkId === 'codex' &&
+    context.mcpServerNames?.includes('skills') &&
+    trustedMcpToolIdentity(params) === 'skills/load_skill'
+  ) {
+    return resolveAllowOptionId(params)
+  }
+
   // Saving an already-existing/inline result into the exact app-owned Artifact capability is part
   // of normal turn finalization. It cannot execute code or choose Project/Session ownership, so it
   // receives one call-scoped allow decision under every profile without showing an approval card.
@@ -278,6 +369,10 @@ const resolveAutomaticPermission = (
 }
 
 export {
+  isNativeWebSearchCandidate,
+  isNativeWebSearchPermission,
+  isNativeWebFetchCandidate,
+  isNativeWebFetchPermission,
   canConservativelyAutoApprove,
   isMcpToolName,
   isArtifactSaveTool,

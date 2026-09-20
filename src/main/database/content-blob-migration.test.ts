@@ -17,6 +17,7 @@ const createDatabaseBeforeLiteratureFoundation = async (client: PrismaClient): P
     'LiteratureCollection',
     'LiteratureSourceRecord',
     'LiteratureInboxPdf',
+    'LiteratureCandidateDiscovery',
     'LiteratureInboxCandidate',
     'LiteratureIdentifier',
     'LiteratureItemCreator',
@@ -32,6 +33,7 @@ const createDatabaseBeforeLiteratureFoundation = async (client: PrismaClient): P
   await client.$executeRawUnsafe('ALTER TABLE "UploadVersion" DROP COLUMN "contentBlobId"')
   await client.$executeRawUnsafe('ALTER TABLE "ArtifactVersion" DROP COLUMN "contentBlobId"')
   await client.$executeRawUnsafe('DROP TABLE "ContentBlob"')
+  await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
   await client.$executeRawUnsafe(
     `DELETE FROM "_open_science_migrations"
      WHERE "id" >= '0030_literature_foundation'`
@@ -64,6 +66,7 @@ describe('Content blob migration', () => {
         id
       )
     }
+    await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE "id" >= '0030_literature_foundation'`
     )
@@ -73,7 +76,16 @@ describe('Content blob migration', () => {
         '0030_literature_foundation',
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
-        '0033_compute_job_harvest_retry'
+        '0033_compute_job_harvest_retry',
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt',
+        '0040_literature_collection_revision',
+        '0041_bookmarks',
+        '0042_classification_usage'
       ]
     })
     await expect(
@@ -92,6 +104,7 @@ describe('Content blob migration', () => {
         await createDatabaseBeforeLiteratureFoundation(client)
       } else {
         await migrateApplicationDatabase(client)
+        await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
         await client.$executeRawUnsafe(
           schema === 'pre-ledger'
             ? 'DELETE FROM "_open_science_migrations"'
@@ -150,10 +163,19 @@ describe('Content blob migration', () => {
                 '0030_literature_foundation',
                 '0031_project_archive_revision',
                 '0032_permission_approval_summary',
-                '0033_compute_job_harvest_retry'
+                '0033_compute_job_harvest_retry',
+                '0034_background_result_delivery',
+                '0035_literature_pdf_provenance',
+                '0036_content_verification_observation',
+                '0037_literature_inbox_integrity',
+                '0038_literature_search_text',
+                '0039_literature_metadata_commit_receipt',
+                '0040_literature_collection_revision',
+                '0041_bookmarks',
+                '0042_classification_usage'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0033_compute_job_harvest_retry'
+        to: '0042_classification_usage'
       })
 
       await expect(
@@ -225,6 +247,7 @@ describe('Content blob migration', () => {
       const before = await readContent()
       // The fixture rewinds the ledger after changing data; discard its earlier recovery snapshot.
       await rm(`${databasePath}.before-0030_literature_foundation.backup`, { force: true })
+      await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
       await client.$executeRawUnsafe(
         `DELETE FROM "_open_science_migrations" WHERE "id" >= '0030_literature_foundation'`
       )

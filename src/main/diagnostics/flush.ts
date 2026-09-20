@@ -1,7 +1,11 @@
+import type { LogFlushResult } from '../logger'
+
+export type DiagnosticFlush = () => Promise<LogFlushResult | void>
+
 export type DiagnosticFlushOutcome = 'flushed' | 'failed' | 'timeout'
 
 export const flushDiagnosticsWithTimeout = async (
-  flush: () => Promise<void>,
+  flush: DiagnosticFlush,
   timeoutMs: number
 ): Promise<DiagnosticFlushOutcome> => {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -13,7 +17,7 @@ export const flushDiagnosticsWithTimeout = async (
     Promise.resolve()
       .then(flush)
       .then(
-        () => 'flushed' as const,
+        (result) => (result?.failed ? ('failed' as const) : ('flushed' as const)),
         () => 'failed' as const
       ),
     timeout

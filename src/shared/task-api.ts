@@ -14,9 +14,36 @@ import type { DelegationPolicy, PersistedSessionStatus } from './session-persist
 import type { ActivePlanProjection } from './session-plan/contract'
 import type {
   AgentFrameworkId,
+  ProviderReadinessReason,
+  ReadinessStatus,
   ReviewerModelConfiguration,
   SubagentModelConfiguration
 } from './settings'
+
+export type TaskAgentRuntime = Readonly<{
+  framework: AgentFrameworkId
+  status: ReadinessStatus
+  version?: string
+  source?: 'managed' | 'external'
+}>
+
+export type TaskDoctorReport = Readonly<{
+  ready: boolean
+  checks: Readonly<{
+    daemon: Readonly<{ status: 'ready' }>
+    runtime: Readonly<{ status: ReadinessStatus; framework: AgentFrameworkId }>
+    provider: Readonly<
+      { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+    >
+    skills: Readonly<{ status: 'ready'; enabled: string[] }>
+  }>
+  next: ReadonlyArray<
+    Readonly<{
+      code: 'runtime_missing' | 'runtime_not_ready' | 'provider_missing' | 'provider_not_ready'
+      argv?: readonly string[]
+    }>
+  >
+}>
 
 export const TASK_EVENT_STREAM_PROTOCOL_VERSION = 1 as const
 
@@ -163,6 +190,7 @@ export type TaskSessionConfiguration = Readonly<{
   }>
 }>
 
+/** Defaults for new Sessions created through Task automation (CLI/API), not desktop New drafts. */
 export type TaskProjectSessionDefaults = Readonly<{
   projectId: string
   updatedAt: number

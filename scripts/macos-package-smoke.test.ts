@@ -62,7 +62,7 @@ describe('macOS package smoke', () => {
   })
 
   it('authenticates the token-free readiness endpoint through the service state contract', async () => {
-    const output = 'Open Science Web: http://127.0.0.1:3210/'
+    const output = 'Open-Science Web: http://127.0.0.1:3210/'
     expect(parsePackagedAppEndpoint(output)).toEqual({ endpoint: 'http://127.0.0.1:3210' })
     await expect(
       authenticatePackagedAppEndpoint(output, ['/config'], {
@@ -89,27 +89,40 @@ describe('macOS package smoke', () => {
   it('requires the adaptive icon catalog and its legacy ICNS fallback', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-macos-app-'))
     roots.push(root)
-    const appBundle = join(root, 'Open Science.app')
+    const appBundle = join(root, 'Open-Science.app')
     const executableDirectory = join(appBundle, 'Contents', 'MacOS')
     const resources = join(appBundle, 'Contents', 'Resources')
     const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    const processTreeNative = join(
+      resources,
+      'app.asar.unpacked',
+      'node_modules',
+      '@aipoch',
+      'process-tree-native',
+      'build',
+      'Release',
+      'process_tree_native.node'
+    )
     await Promise.all([
       mkdir(executableDirectory, { recursive: true }),
       mkdir(resources, { recursive: true }),
-      mkdir(prismaClient, { recursive: true })
+      mkdir(prismaClient, { recursive: true }),
+      mkdir(join(processTreeNative, '..'), { recursive: true })
     ])
     await Promise.all([
-      writeFile(join(executableDirectory, 'Open Science'), ''),
+      writeFile(join(executableDirectory, 'Open-Science'), ''),
       writeFile(join(resources, 'app.asar'), ''),
       writeFile(join(resources, 'micromamba'), ''),
       writeFile(join(resources, 'Assets.car'), ''),
       writeFile(join(resources, 'icon.icns'), ''),
-      writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), '')
+      writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), ''),
+      writeFile(processTreeNative, '')
     ])
 
     await expect(assertPackagedResources(appBundle)).resolves.toEqual({
-      executable: join(executableDirectory, 'Open Science'),
-      micromamba: join(resources, 'micromamba')
+      executable: join(executableDirectory, 'Open-Science'),
+      micromamba: join(resources, 'micromamba'),
+      processTreeNative
     })
 
     await rm(join(resources, 'Assets.car'))

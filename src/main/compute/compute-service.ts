@@ -7,6 +7,7 @@ import type {
   ExecResult,
   JobResult,
   ProbeResult,
+  RetryComputeJobHarvestRequest,
   SubmitJobResult
 } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
@@ -48,6 +49,7 @@ export type {
 const log = createLogger('compute')
 
 export type ComputeServiceDependencies = Readonly<{
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void
   runner: SshRunner
   repository: ComputeHostRepository
   approvalBroker?: ComputeApprovalBroker
@@ -75,7 +77,7 @@ export class ComputeService {
   private readonly credentialVault?: Pick<CredentialVault, 'credentialStatus'>
   private readonly storageRoot?: string
 
-  constructor(dependencies: ComputeServiceDependencies) {
+  constructor(private readonly dependencies: ComputeServiceDependencies) {
     const {
       runner,
       repository,
@@ -120,6 +122,22 @@ export class ComputeService {
       operationRepository && jobRepository
         ? new ComputeJobCancellationOwner(operationRepository, jobRepository)
         : undefined
+  }
+
+  private harvestRetry?: (request: RetryComputeJobHarvestRequest) => Promise<void>
+
+  bindJobHarvestRetry(
+    retry: (request: RetryComputeJobHarvestRequest) => Promise<void>
+  ): () => void {
+    this.harvestRetry = retry
+    return () => {
+      if (this.harvestRetry === retry) this.harvestRetry = undefined
+    }
+  }
+
+  async retryJobHarvest(request: RetryComputeJobHarvestRequest): Promise<void> {
+    if (!this.harvestRetry) throw new Error('Compute recovery is unavailable.')
+    await this.harvestRetry(request)
   }
 
   async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
@@ -220,7 +238,12 @@ export class ComputeService {
     context: { sessionId: string; projectId: string; producerRunId?: string },
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
-    return this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
+    const release = this.dependencies.admitSessionWork?.(context.projectId, context.sessionId)
+    try {
+      return await this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
+    } finally {
+      release?.()
+    }
   }
 
   async getJobStatus(
@@ -284,8 +307,8 @@ export class ComputeService {
     this.jobWorkflow.handleJobUpdated(job)
   }
 
-  startQueueReconciliation = async (): Promise<void> => {
-    await this.concurrencyManager?.startQueueReconciliation()
+  startQueueReconciliation = async (options?: { retryFailedOnly?: boolean }): Promise<void> => {
+    await this.concurrencyManager?.startQueueReconciliation(options)
   }
 
   stopQueueReconciliation = async (): Promise<void> => {

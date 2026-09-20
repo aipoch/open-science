@@ -11,7 +11,7 @@ import {
 describe('runtime performance process snapshots', () => {
   it('parses portable POSIX process rows without retaining executable paths', () => {
     const processes = parsePosixProcessTable(`
-      10     1   2048  00:01:02 /Applications/Open Science (DEV).app/Contents/MacOS/Open Science (DEV)
+      10     1   2048  00:01:02 /Applications/Open-Science (DEV).app/Contents/MacOS/Open-Science (DEV)
       11    10   1024  01:02.50 /usr/local/bin/codex
       12    11    512  2-03:04:05 /usr/bin/python3.12
       invalid row

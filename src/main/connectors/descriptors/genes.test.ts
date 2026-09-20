@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { GENES_TOOLS } from './genes'
 
 // Integration: the aggregate "Genes & Ontologies" tool set. Per-tool behavior is covered in
-// genes-proteins.test.ts, genes-ontology.test.ts and genes-reactome.test.ts.
+// genes-proteins.test.ts, genes-ontology.test.ts, genes-reactome.test.ts and genes-gprofiler.test.ts.
 const EXPECTED_IDS = [
   'query_genes',
   'list_ontologies',
@@ -10,7 +10,9 @@ const EXPECTED_IDS = [
   'get_ontology_term',
   'get_go_annotations',
   'get_uniprot_entries',
-  'map_reactome_pathways'
+  'map_reactome_pathways',
+  'list_enrichment_sources',
+  'enrich_gene_set'
 ]
 
 describe('genes / aggregate', () => {

@@ -40,10 +40,24 @@ const useWorkspaceSessionDetailsController = (
   const [dialog, setDialog] = useState<SessionDetailsDialog | null>(null)
   const dialogIntentRef = useRef(0)
   const editDetails = (request: EditSessionDetailsRequest): Promise<PersistedChatSession> =>
-    window.api.sessions.editDetails(request).catch((error: unknown) => {
-      if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(request.sessionId)
-      throw error
-    })
+    window.api.sessions
+      .editDetails(request)
+      .then((persisted) => {
+        const store = useSessionStore.getState()
+        // A deletion event can arrive before this RPC receipt. An edit must not recreate its target.
+        if (
+          store.sessions.some(
+            (session) => session.id === persisted.id && session.projectId === persisted.projectId
+          )
+        ) {
+          store.upsertPersistedSession(persisted)
+        }
+        return persisted
+      })
+      .catch((error: unknown) => {
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(request.sessionId)
+        throw error
+      })
   const open = (session: ChatSession): void => {
     const intent = ++dialogIntentRef.current
     if (!isPersistenceReady) return
@@ -84,8 +98,7 @@ const useWorkspaceSessionDetailsController = (
     }
     setDialog((current) => (current ? { ...current, isSaving: true, error: null } : current))
     void editDetails(request)
-      .then((persisted) => {
-        useSessionStore.getState().upsertPersistedSession(persisted)
+      .then(() => {
         setDialog((current) =>
           intent === dialogIntentRef.current && current?.session.id === sessionId ? null : current
         )
@@ -124,10 +137,7 @@ const useWorkspaceSessionDetailsController = (
         expectedDescription: authoritative.description ?? '',
         title: trimmedTitle,
         description: authoritative.description ?? ''
-      }).then((persisted) => {
-        useSessionStore.getState().upsertPersistedSession(persisted)
-        return true
-      })
+      }).then(() => true)
     if (session.contentLoaded !== false) {
       return submit(session)
     }

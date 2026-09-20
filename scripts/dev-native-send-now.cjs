@@ -79,7 +79,7 @@ const printIdentity = (identity) => {
     `storage        ${identity.storageRoot}`,
     `userData       ${identity.userData}`,
     '',
-    'Fresh profile: not ~/OpenScience-DEV. Reconfigure Codex here; 1.6.2 installs on first use.',
+    'Fresh profile: not ~/Open-Science-DEV. Reconfigure Codex here; 1.6.2 installs on first use.',
     'Do not use `npm run dev` from the repo root — that is the old 0.60.0 host.',
     'Look for [acp] native follow-up injected|refused in this terminal after Send now.',
     '=======================================',

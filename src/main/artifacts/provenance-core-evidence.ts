@@ -38,7 +38,10 @@ const inputMatches = (
   evidence.size_bytes === Number(row.sizeBytes) &&
   evidence.checksum === row.checksum &&
   evidence.storage_key === row.storageKey &&
-  evidence.strongest_association === row.strongestAssociation
+  evidence.strongest_association === row.strongestAssociation &&
+  (evidence.access_evidence === undefined ||
+    evidence.access_evidence === 'resolver' ||
+    evidence.access_evidence === 'file-evidence')
 
 const validateArtifactCoreEvidence = (
   evidence: ArtifactVersionEvidence,

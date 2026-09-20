@@ -15,9 +15,24 @@ type SessionDeletionPersistence = {
   deleteSession(request: DeleteSessionRequest): Promise<void>
 }
 
+type SessionDeletionBackgroundResults = {
+  prepareSessionDeletion(projectId: string, sessionId: string): Promise<void>
+  commitSessionDeletion(projectId: string, sessionId: string): Promise<void>
+  abortSessionDeletion(projectId: string, sessionId: string): Promise<void>
+}
+
 type SessionDeletionOwnerOptions = {
   runtime: SessionDeletionRuntime
   persistence: SessionDeletionPersistence
+  backgroundResults?: SessionDeletionBackgroundResults
+  withStoppedWork?: (
+    request: DeleteSessionRequest,
+    operation: () => Promise<SessionDeletionResult>
+  ) => Promise<SessionDeletionResult>
+  withAdmission?: (
+    request: DeleteSessionRequest,
+    work: () => Promise<SessionDeletionResult>
+  ) => Promise<SessionDeletionResult>
   log?: Pick<Logger, 'warn'>
 }
 
@@ -31,12 +46,14 @@ type ActiveSessionDeletion = {
 class SessionDeletionOwner {
   private readonly runtime: SessionDeletionRuntime
   private readonly persistence: SessionDeletionPersistence
+  private readonly backgroundResults: SessionDeletionBackgroundResults | undefined
   private readonly log: Pick<Logger, 'warn'>
   private readonly activeBySessionId = new Map<string, ActiveSessionDeletion>()
 
-  constructor(options: SessionDeletionOwnerOptions) {
+  constructor(private readonly options: SessionDeletionOwnerOptions) {
     this.runtime = options.runtime
     this.persistence = options.persistence
+    this.backgroundResults = options.backgroundResults
     this.log = options.log ?? createLogger('session-deletion')
   }
 
@@ -56,7 +73,21 @@ class SessionDeletionOwner {
       })
     }
 
-    const promise = this.run(request).finally(() => {
+    const stopped = (): Promise<SessionDeletionResult> => {
+      const operation = (): Promise<SessionDeletionResult> => this.run(request)
+      return (
+        this.options.withStoppedWork
+          ? this.options.withStoppedWork(request, operation)
+          : operation()
+      ).catch((error: unknown): SessionDeletionResult => {
+        this.log.warn('Session background work could not be stopped', diagnosticErrorFields(error))
+        return { status: 'failed', reason: 'runtime', runtimeDetached: false }
+      })
+    }
+    const pending = this.options.withAdmission
+      ? this.options.withAdmission(request, stopped)
+      : stopped()
+    const promise = pending.finally(() => {
       if (this.activeBySessionId.get(request.sessionId)?.promise === promise) {
         this.activeBySessionId.delete(request.sessionId)
       }
@@ -76,10 +107,23 @@ class SessionDeletionOwner {
       return { status: 'failed', reason: 'runtime', runtimeDetached: false }
     }
 
+    try {
+      await this.backgroundResults?.prepareSessionDeletion(request.projectId, request.sessionId)
+    } catch (error) {
+      this.log.warn('Session result delivery fence failed', {
+        operation: 'delete-session',
+        phase: 'prepare-result-delivery',
+        outcome: 'failed',
+        ...diagnosticErrorFields(error)
+      })
+      return { status: 'failed', reason: 'runtime', runtimeDetached: false }
+    }
+
     let snapshot: AcpRuntimeState
     try {
       snapshot = await this.runtime.deleteSession({ sessionId: request.sessionId })
     } catch (error) {
+      await this.abortBackgroundResultFence(request)
       this.log.warn('Session runtime deletion failed', {
         operation: 'delete-session',
         phase: 'delete-runtime',
@@ -90,6 +134,7 @@ class SessionDeletionOwner {
     }
 
     if (snapshot.sessionIds.includes(request.sessionId)) {
+      await this.abortBackgroundResultFence(request)
       this.log.warn('Session runtime remained attached after deletion', {
         operation: 'delete-session',
         phase: 'verify-runtime-deletion',
@@ -108,14 +153,51 @@ class SessionDeletionOwner {
         ...diagnosticErrorFields(error)
       })
       if (error instanceof SessionDeletionCommittedError) {
+        await this.commitBackgroundResultDeletion(request)
         return { status: 'deleted', runtimeDetached: true, cleanupPending: true }
       }
       return { status: 'failed', reason: 'persistence', runtimeDetached: true }
     }
 
+    if (!(await this.commitBackgroundResultDeletion(request))) {
+      return { status: 'deleted', runtimeDetached: true, cleanupPending: true }
+    }
     return { status: 'deleted', runtimeDetached: true }
+  }
+
+  private async commitBackgroundResultDeletion(request: DeleteSessionRequest): Promise<boolean> {
+    try {
+      await this.backgroundResults?.commitSessionDeletion(request.projectId, request.sessionId)
+      return true
+    } catch (error) {
+      this.log.warn('Session result delivery cleanup failed', {
+        operation: 'delete-session',
+        phase: 'commit-result-delivery',
+        outcome: 'failed',
+        ...diagnosticErrorFields(error)
+      })
+      return false
+    }
+  }
+
+  private async abortBackgroundResultFence(request: DeleteSessionRequest): Promise<void> {
+    try {
+      await this.backgroundResults?.abortSessionDeletion(request.projectId, request.sessionId)
+    } catch (error) {
+      this.log.warn('Session result delivery fence rollback failed', {
+        operation: 'delete-session',
+        phase: 'abort-result-delivery',
+        outcome: 'failed',
+        ...diagnosticErrorFields(error)
+      })
+    }
   }
 }
 
 export { SessionDeletionOwner }
-export type { SessionDeletionOwnerOptions, SessionDeletionPersistence, SessionDeletionRuntime }
+export type {
+  SessionDeletionBackgroundResults,
+  SessionDeletionOwnerOptions,
+  SessionDeletionPersistence,
+  SessionDeletionRuntime
+}

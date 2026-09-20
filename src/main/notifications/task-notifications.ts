@@ -251,7 +251,9 @@ export const describeTaskNotification = (
 
   if (event.kind === 'error') {
     if (event.title !== ACP_PROMPT_FAILED_EVENT_TITLE) return null
-    if (event.recoverable === 'context-overflow') return null
+    const isRecoverable =
+      event.recoverable === 'context-overflow' || event.recoverable === 'session-lost'
+    if (isRecoverable) return null
 
     const reason = event.text?.trim() || translate('Unknown error.')
 

@@ -1,5 +1,9 @@
 import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
-import { unwrapApplicationCommandOutcome } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope,
+  unwrapApplicationCommandOutcome
+} from '../shared/application-command-contract'
 import type {
   RendererContractDescriptor,
   RendererParameterCodec
@@ -100,9 +104,21 @@ const encodeRequestArguments = (
     case 'session-save-optional-argument':
       return args[1] ? args : args.slice(0, 1)
     case 'storage-parent-object':
-      return [{ parent: args[0] }]
+      return [{ parent: args[0], ...(args[1] === undefined ? {} : { selection: args[1] }) }]
     case 'storage-data-root-object':
-      return [{ parent: args[0], markOnboarding: args[1] }]
+      return [
+        {
+          parent: args[0],
+          markOnboarding: args[1],
+          ...(args[2] === undefined ? {} : { selection: args[2] })
+        }
+      ]
+    case 'session-package-import-file': {
+      if (args[1] === undefined) return args
+      const sourcePath = getPathForFile(args[1])
+      if (!sourcePath) throw new Error('The dropped file has no native path.')
+      return [args[0], sourcePath]
+    }
     case 'native-file-upload-request': {
       const sourcePath = getPathForFile(args[0])
       return sourcePath ? [{ ...(args[1] as object), sourcePath }] : null
@@ -114,7 +130,14 @@ const encodeRequestArguments = (
     case 'runtime-enablement-object':
       return [{ language: args[0], envId: args[1], enabled: args[2], force: args[3] }]
     case 'runtime-install-authorization-object':
-      return [{ language: args[0], envId: args[1], authorized: args[2] }]
+      return [
+        {
+          language: args[0],
+          envId: args[1],
+          authorized: args[2],
+          ...(args[3] === undefined ? {} : { library: args[3] })
+        }
+      ]
     case 'runtime-interpreter-path-object':
       return [{ language: args[0], path: args[1] }]
     default:
@@ -134,9 +157,21 @@ export const createElectronRendererContractAdapter = (
     )
     if (encodedArgs === null) return null as Result
     const result = await port.invoke(channel, ...encodedArgs)
-    return contract.applicationCommand === 'runtime-validated'
-      ? unwrapApplicationCommandOutcome<Result>(result)
-      : (result as Result)
+    try {
+      return contract.applicationCommand === 'runtime-validated'
+        ? unwrapApplicationCommandOutcome<Result>(result)
+        : (result as Result)
+    } catch (error) {
+      if (
+        publicPath === 'literature.citationStyles' &&
+        error instanceof ApplicationCommandError &&
+        error.code.startsWith('csl-')
+      ) {
+        // contextBridge strips custom Error properties; plain rejections retain CSL diagnostics.
+        throw toApplicationCommandErrorEnvelope(error)
+      }
+      throw error
+    }
   },
   send: (publicPath: string, ...args: unknown[]): void => {
     port.send(requireSendContract(publicPath), ...args)

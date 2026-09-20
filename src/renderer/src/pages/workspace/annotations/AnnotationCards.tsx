@@ -1,3 +1,6 @@
+import { AnnotationMoveTarget } from './AnnotationTransferSource'
+import { useAnnotationDrag } from './use-annotation-drag'
+import type { HTMLAttributes } from 'react'
 import { FileText, Image, Pencil, Quote, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -100,6 +103,18 @@ const annotationChipLabel = (annotation: Annotation, t: TFunction): string =>
         : (annotation.selector.text ?? t('Selected area'))
       : (annotation.source.name ?? annotation.source.path))
 
+const DraggableAnnotationCard = ({
+  annotation,
+  ...props
+}: HTMLAttributes<HTMLElement> & { annotation: Annotation }): React.JSX.Element => {
+  const drag = useAnnotationDrag(annotation)
+  return (
+    <AnnotationMoveTarget annotation={annotation}>
+      <article {...props} {...drag} />
+    </AnnotationMoveTarget>
+  )
+}
+
 const AnnotationDraftCards = ({
   annotations,
   disabled,
@@ -168,7 +183,8 @@ const AnnotationDraftCards = ({
                 onOpenChange={(open) => setHoveredId(open ? annotation.id : undefined)}
               >
                 <TooltipTrigger asChild>
-                  <article
+                  <DraggableAnnotationCard
+                    annotation={annotation}
                     data-annotation-draft-chip="true"
                     data-annotation-hover-label={hoverLabel}
                     className="group relative inline-flex h-7 min-w-0 max-w-[13rem] items-center rounded-md border border-border bg-background text-xs hover:bg-muted focus-within:bg-muted"
@@ -246,7 +262,7 @@ const AnnotationDraftCards = ({
                         <TooltipContent>{t('Remove annotation')}</TooltipContent>
                       </Tooltip>
                     </div>
-                  </article>
+                  </DraggableAnnotationCard>
                 </TooltipTrigger>
                 <TooltipContent
                   data-annotation-hover-note="true"

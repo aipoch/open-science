@@ -24,6 +24,112 @@ describe('ManagedVersionDiffContent', () => {
     container.remove()
   })
 
+  it.each([
+    ['text', 'script.py'],
+    ['text', 'notes.txt'],
+    ['markdown', 'README.md']
+  ] as const)(
+    'names a removed carriage return in %s %s while preserving raw content',
+    async (format, name) => {
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: 'visible-carriage-return',
+        before: 'line\r\n',
+        after: 'line\n'
+      })
+      await act(async () => {
+        root.render(
+          <ManagedVersionDiffContent
+            result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+            format={format}
+            name={name}
+          />
+        )
+      })
+      const removed = container.querySelector('del[data-managed-diff="removed"]')
+      expect(removed?.querySelector('[data-managed-diff-content]')?.textContent).toBe('\r')
+      const explanation = [
+        container.textContent,
+        removed?.getAttribute('aria-label'),
+        removed?.getAttribute('title')
+      ].join(' ')
+      expect(explanation).toMatch(/carriage return|\bCR\b|CRLF/iu)
+    }
+  )
+
+  it.each([true, false])(
+    'keeps a bare trailing carriage return distinct from a newline (added: %s)',
+    async (added) => {
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `bare-carriage-return-${added}`,
+        before: added ? 'line' : 'line\r',
+        after: added ? 'line\r' : 'line'
+      })
+      await act(async () =>
+        root.render(
+          <ManagedVersionDiffContent
+            result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+            format="text"
+            name="script.py"
+          />
+        )
+      )
+      expect(container.textContent).toContain('Carriage return (CR)')
+      expect(container.textContent).not.toMatch(/Newline at end of file/u)
+    }
+  )
+
+  it.each([true, false])('explains a trailing newline change (added: %s)', async (added) => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: `ending-${added}`,
+      before: added ? 'line' : 'line\n',
+      after: added ? 'line\n' : 'line'
+    })
+    await act(async () =>
+      root.render(
+        <ManagedVersionDiffContent
+          result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+          format="markdown"
+          name="notes.md"
+        />
+      )
+    )
+    expect(container.textContent).toContain(
+      added ? 'Newline at end of file added' : 'Newline at end of file removed'
+    )
+  })
+
+  it('displays omitted ranges and a BOM-only change without inventing source content', async () => {
+    const lines = await new ManagedTextDiffTaskRunner().run({
+      requestId: 'omitted-bom',
+      before: 'same\n'.repeat(50),
+      after: 'same\n'.repeat(50)
+    })
+    await act(async () =>
+      root.render(
+        <ManagedVersionDiffContent
+          result={{
+            baseVersionId: 'v1',
+            selectedVersionId: 'v2',
+            baseFormat: { hasUtf8Bom: true },
+            selectedFormat: { hasUtf8Bom: false },
+            lines
+          }}
+          format="markdown"
+          name="notes.md"
+        />
+      )
+    )
+    expect(container.textContent).toContain('UTF-8 BOM removed')
+    expect(container.textContent).toContain('No text changes.')
+    expect(container.querySelector('[data-diff-kind="omitted"]')?.textContent).toContain(
+      '44 (base 4–47, selected 4–47)'
+    )
+    expect(
+      container.querySelector('[data-diff-kind="omitted"] [data-managed-diff-content]')
+    ).toBeNull()
+    expect(container.querySelector('.managed-version-diff-markdown')).toBeNull()
+  })
+
   it('renders Markdown structure and semantic inline changes without visible line numbers', async () => {
     const result: ManagedFileVersionDiffResult = {
       baseVersionId: 'v1',

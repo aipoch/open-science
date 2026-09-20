@@ -1,3 +1,4 @@
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -38,7 +39,7 @@ const statusReasonLabel = (
     case 'trustBundleInvalid':
       return t('The configured CA bundle could not be read or is not a valid PEM bundle.')
     case 'windowsHostMissing':
-      return t('The Windows sandbox component is missing. Reinstall Open Science.')
+      return t('The Windows sandbox component is missing. Reinstall Open-Science.')
     case 'windowsGatewayPortUnavailable':
       return t('The Windows sandbox gateway port is unavailable. Set up the sandbox again.')
     case 'windowsLoopbackMissing':
@@ -186,7 +187,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               {status.kind === 'setupRequired' && status.platform === 'win32' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t(
-                    'Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.'
+                    'Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.'
                   )}
                 </p>
               ) : null}
@@ -264,8 +265,8 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
         </div>
       </section>
 
-      <section aria-label={t('Open Science domains')}>
-        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Open Science domains')}</h3>
+      <section aria-label={t('Open-Science domains')}>
+        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Open-Science domains')}</h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           {t(
             'Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.'
@@ -387,12 +388,13 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
       </section>
 
       {message?.kind === 'error' ? (
-        <p
-          className="rounded-lg border border-status-failure-border bg-status-failure-subtle/50 px-3 py-2 text-xs text-status-failure-strong"
+        <InlineNotice
+          level="error"
+
           role="alert"
         >
           {message.text}
-        </p>
+        </InlineNotice>
       ) : message ? (
         <p className="text-xs text-muted-foreground" role="status">
           {message.text}

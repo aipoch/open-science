@@ -36,6 +36,30 @@ describe('source preview load monitor', () => {
     })
   })
 
+  it.each(['loading', 'loaded', 'failed'] as const)(
+    'preserves %s metadata and identity during in-page navigation',
+    (phase) => {
+      const publish = vi.fn()
+      const monitor = createSourcePreviewLoadMonitor(publish)
+      const frame = { frameTreeNodeId: 7, processId: 11, routingId: 13 }
+      const sourceUrl = 'https://example.com/paper'
+      monitor.registerRoot(frame, sourceUrl)
+      if (phase === 'loaded') monitor.finishNavigation(frame, sourceUrl, 201, 'Created')
+      if (phase === 'failed') monitor.finishNavigation(frame, sourceUrl, 404, 'Not Found')
+      const previous = publish.mock.calls.at(-1)![0]
+      monitor.navigateInPage(frame, `${sourceUrl}#methods`)
+      expect(publish).toHaveBeenLastCalledWith({ ...previous, currentUrl: `${sourceUrl}#methods` })
+      const count = publish.mock.calls.length
+      monitor.navigateInPage(frame, `${sourceUrl}#methods`)
+      monitor.navigateInPage(null, `${sourceUrl}#ignored`)
+      monitor.navigateInPage({ frameTreeNodeId: 8 }, `${sourceUrl}#ignored`)
+      expect(publish).toHaveBeenCalledTimes(count)
+      monitor.releaseSource(sourceUrl)
+      monitor.navigateInPage({ processId: 11, routingId: 13 }, `${sourceUrl}#released`)
+      expect(publish).toHaveBeenCalledTimes(count)
+    }
+  )
+
   it('ignores late lifecycle events after a source is released', () => {
     const publish = vi.fn()
     const monitor = createSourcePreviewLoadMonitor(publish) as ReturnType<

@@ -54,6 +54,12 @@ const isRangeTriggerVisible = (
   // leaves the clone on a disconnected tree or collapses it onto a connected
   // parent; neither should keep the portalled trigger at the fallback margin.
   if (!isRangeConnected(range) || range.collapsed) return false
+  const source =
+    range.commonAncestorContainer instanceof Element
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement
+  // The trigger portals to body, so it must explicitly respect its source's modal isolation.
+  if (source?.closest('[inert], [aria-hidden="true"]')) return false
   const anchorRect = rangeAnchorRect(range, backward)
   // Geometry is unavailable for connected jsdom ranges. Those environments
   // often still expose a zero-size DOMRect; treat that as missing so placement

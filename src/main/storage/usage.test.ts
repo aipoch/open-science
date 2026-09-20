@@ -46,6 +46,45 @@ const writeSized = async (path: string, bytes: number): Promise<void> => {
 }
 
 describe('computeStorageUsage', () => {
+  it('includes shared PDF bytes and literature checkpoints in the total', async () => {
+    await writeSized(join(dataRoot, 'content', 'blobs', 'paper'), 125)
+    await writeSized(join(dataRoot, 'literature', 'citation-styles', 'custom.csl'), 20)
+    await writeSized(join(dataRoot, 'literature', 'batch-jobs.json'), 10)
+    await writeSized(join(dataRoot, 'literature', 'batch-jobs.json.d', 'job.json.123.tmp'), 30)
+    expect((await computeStorageUsage(dataRoot)).totalBytes).toBe(185)
+  })
+
+  it('counts PDF results and staging within the relocatable cache', async () => {
+    await writeSized(join(dataRoot, 'pdf-structure', 'v1', 'cache', 'structure.json'), 50)
+    await writeSized(
+      join(dataRoot, 'pdf-structure', 'v1', 'cache', 'thumbnails', 'figure.png'),
+      100
+    )
+    await writeSized(join(dataRoot, 'pdf-structure', 'v1', 'staging', 'input.pdf'), 25)
+    const usage = await computeStorageUsage(dataRoot)
+    expect(usage.categories.find(({ key }) => key === 'pdf-structure')).toEqual({
+      key: 'pdf-structure',
+      bytes: 175
+    })
+    expect(RELOCATABLE_DATA_DIRS).toContain('pdf-structure')
+    expect(usage.totalBytes).toBe(175)
+  })
+  it('counts installed and partial model files together', async () => {
+    await writeSized(
+      join(dataRoot, 'models', 'pdf-tables', 'revisions', 'v1', 'detection.onnx'),
+      100
+    )
+    await writeSized(
+      join(dataRoot, 'models', 'pdf-tables', 'staging', 'v2', 'detection.onnx.part'),
+      40
+    )
+    const usage = await computeStorageUsage(dataRoot)
+    expect(usage.categories.find(({ key }) => key === 'models')).toEqual({
+      key: 'models',
+      bytes: 140
+    })
+    expect(usage.totalBytes).toBe(140)
+  })
   it('counts Session cache downloads in the compute category and total', async () => {
     await writeSized(join(dataRoot, 'compute', 'session-cache', 'result.bin'), 125)
 
@@ -88,7 +127,9 @@ describe('computeStorageUsage', () => {
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 100 },
       { key: 'compute', bytes: 0 },
+      { key: 'content', bytes: 0 },
       { key: 'delegation', bytes: 75 },
+      { key: 'literature', bytes: 0 },
       { key: 'uploads', bytes: 50 },
       {
         key: 'runtime',
@@ -99,6 +140,8 @@ describe('computeStorageUsage', () => {
         ]
       },
       { key: 'notebooks', bytes: 0 },
+      { key: 'models', bytes: 0 },
+      { key: 'pdf-structure', bytes: 0 },
       { key: 'execution-file-evidence', bytes: 125 },
       {
         key: 'workspaces',
@@ -240,10 +283,14 @@ describe('computeStorageUsage', () => {
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 0 },
       { key: 'compute', bytes: 0 },
+      { key: 'content', bytes: 0 },
       { key: 'delegation', bytes: 0 },
+      { key: 'literature', bytes: 0 },
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
       { key: 'notebooks', bytes: 0 },
+      { key: 'models', bytes: 0 },
+      { key: 'pdf-structure', bytes: 0 },
       { key: 'execution-file-evidence', bytes: 0 },
       { key: 'workspaces', bytes: 0 }
     ])

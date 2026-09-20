@@ -37,7 +37,7 @@ export const isOutsideStorageError = (error: unknown): boolean => {
 export const isManagedFilePublicationPendingError = (error: unknown): boolean => {
   if (!error) return false
   const message = error instanceof Error ? error.message : String(error)
-  return /Managed file has no published version/i.test(message)
+  return /Managed file (?:has no published version|version is not published)/i.test(message)
 }
 
 // True when a file can't be shown because it's unavailable under the current storage root — either

@@ -1,7 +1,25 @@
+import { literatureCatalogReceiptSchema } from '../../../../shared/literature'
+import { summarizeLiteratureSaveReceipts } from '../../../../shared/literature-save'
+
 type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
 
 type LiteratureToolSummary = Readonly<{
   action: LiteratureToolAction
+  pdfElements?: Readonly<{
+    caption?: string
+    elementCount?: number
+    parsedPages?: number
+    checkedPages?: number
+    imageIncluded?: boolean
+    incomplete: boolean
+    limitations?: readonly Readonly<{
+      caption?: string
+      pageStart?: number
+      pageEnd?: number
+      tableStructureConflict: boolean
+      otherLimitations: boolean
+    }>[]
+  }>
   query?: string
   documentNames: readonly string[]
   documentCount: number
@@ -19,7 +37,14 @@ type LiteratureToolSummary = Readonly<{
   resultEnd?: number
   requestedStart?: number
   requestedEnd?: number
+  pdfDownloaded?: boolean
   savedCount?: number
+  existingItemIds?: readonly string[]
+  duplicateCount?: number
+  otherCount?: number
+  failedInputIndex?: number
+  notAttemptedCount?: number
+  cancelled?: boolean
   styleId?: string
   locale?: string
   error?: string
@@ -79,6 +104,110 @@ const isLiteratureReadDocumentTool = (...identities: Array<string | undefined>):
     )
   })
 
+const pdfElementToolAction = (
+  ...identities: Array<string | undefined>
+): 'search' | 'read' | undefined => {
+  for (const identity of identities) {
+    if (!identity) continue
+    const name = normalizeIdentity(identity)
+    for (const separator of ['/', '-']) {
+      if (name === `open-science-literature${separator}list-pdf-elements`) return 'search'
+      if (name === `open-science-literature${separator}read-pdf-element`) return 'read'
+    }
+  }
+  return undefined
+}
+
+const buildPdfElementToolSummary = (
+  action: 'search' | 'read',
+  outputValue: unknown
+): LiteratureToolSummary => {
+  const outputs = collectOutputRecords(outputValue)
+  const output = outputs.find(isLiteratureOutputRecord)
+  const documentNames = documentNamesFromOutput(output)
+  const elements = Array.isArray(output?.elements) ? output.elements.filter(isRecord) : undefined
+  const pages = elements ?? (output ? [output] : [])
+  const starts = pages
+    .map((item) => asPositiveInteger(item.pageStart))
+    .filter((page): page is number => page !== undefined)
+  const ends = pages
+    .map((item) => asPositiveInteger(item.pageEnd))
+    .filter((page): page is number => page !== undefined)
+  const coverage = isRecord(output?.coverage) ? output.coverage : undefined
+  // Group reasons per element: repeated element/table issues describe one limitation.
+  // Only explicit omissions interrupt the result. Other extraction limitations remain inspectable.
+  let incomplete = Array.isArray(coverage?.unavailablePages) && coverage.unavailablePages.length > 0
+  const omissionWarnings = new Set([
+    'No cells or image are available; caption alone is not detailed evidence.',
+    'Some checked pages have no usable Structure cache. Open Structure and parse those pages before concluding that they contain no figures or tables.',
+    'The cached image could not be prepared for the model; inspect the source PDF.',
+    'No cached image is available; caption or extracted text cannot replace visual evidence.',
+    'Notes or unassigned text exceed this response budget; inspect the source PDF.',
+    'Leading rows or merged labels exceed the context budget; inspect earlier batches and the source PDF for labels.',
+    'Some source rows exceed the response budget and are listed in omittedRows; do not treat this as complete table evidence.'
+  ])
+  const limitations = (elements ? [output, ...elements] : output ? [output] : []).flatMap(
+    (item) => {
+      if (!Array.isArray(item?.warnings) || item.warnings.length === 0) return []
+      let tableStructureConflict = false
+      let otherLimitations = false
+      for (const warning of item.warnings) {
+        if (
+          action === 'search' &&
+          (warning === 'Caption is truncated; inspect the source PDF for the complete text.' ||
+            warning === 'Table preview is truncated; inspect the source PDF for the complete text.')
+        ) {
+          continue
+        } else if (
+          warning === 'span-conflicts-with-source-rows' ||
+          warning === 'span-conflicts-with-source-columns'
+        ) {
+          tableStructureConflict = true
+        } else if (
+          omissionWarnings.has(warning) ||
+          (action === 'read' &&
+            (warning === 'Caption is truncated; inspect the source PDF for the complete text.' ||
+              warning === 'Part title is truncated; inspect the source PDF for the complete text.'))
+        ) {
+          incomplete = true
+        } else {
+          otherLimitations = true
+        }
+      }
+      if (!tableStructureConflict && !otherLimitations) return []
+      const caption = asString(item.caption)
+      return [
+        {
+          caption: caption && caption.length > 120 ? `${caption.slice(0, 120)}…` : caption,
+          pageStart: asPositiveInteger(item.pageStart),
+          pageEnd: asPositiveInteger(item.pageEnd),
+          tableStructureConflict,
+          otherLimitations
+        }
+      ]
+    }
+  )
+  return {
+    action,
+    documentNames,
+    documentCount: documentNames.length,
+    ...(starts.length ? { pageStart: Math.min(...starts), pageEnd: Math.max(...ends) } : {}),
+    ...(output && 'nextCursor' in output ? { hasMore: output.nextCursor !== null } : {}),
+    ...(isRecord(output?.error) ? { error: asString(output.error.message) } : {}),
+    pdfElements: {
+      caption: asString(output?.caption),
+      elementCount: elements?.length,
+      parsedPages: Array.isArray(coverage?.parsedPages) ? coverage.parsedPages.length : undefined,
+      checkedPages: Array.isArray(coverage?.checkedPages)
+        ? coverage.checkedPages.length
+        : undefined,
+      imageIncluded: typeof output?.imageIncluded === 'boolean' ? output.imageIncluded : undefined,
+      incomplete,
+      limitations
+    }
+  }
+}
+
 const isLiteratureLibraryPdfReadTool = (...identities: Array<string | undefined>): boolean =>
   identities.some((identity) => {
     if (!identity) return false
@@ -96,6 +225,16 @@ const isLiteratureLibraryLatexTool = (...identities: Array<string | undefined>):
     return (
       normalized === 'open-science-library/prepare-latex-bundle' ||
       normalized === 'open-science-library-prepare-latex-bundle'
+    )
+  })
+
+const isLiteratureLibraryAcquirePdfTool = (...identities: Array<string | undefined>): boolean =>
+  identities.some((identity) => {
+    if (!identity) return false
+    const normalized = normalizeIdentity(identity)
+    return (
+      normalized === 'open-science-library/acquire-pdf' ||
+      normalized === 'open-science-library-acquire-pdf'
     )
   })
 
@@ -353,7 +492,35 @@ const buildLiteratureLibraryToolSummary = (
   const candidateCount =
     asNonNegativeInteger(presentation?.candidateCount) ??
     (action === 'save' && Array.isArray(input.candidates) ? input.candidates.length : undefined)
-  const savedCount = asNonNegativeInteger(presentation?.savedCount)
+  // Historical presentation counts may be wrong. Recompute only from actual receipts;
+  // summary-only history remains neutral rather than inventing pending records.
+  const savedResult =
+    action === 'save' ? outputs.find((output) => Array.isArray(output.results)) : undefined
+  const parsedReceipts = savedResult
+    ? literatureCatalogReceiptSchema.array().safeParse(savedResult.results)
+    : undefined
+  const acquired =
+    action === 'save'
+      ? outputs.find((output) => output.status === 'pending-review' && asString(output.candidateId))
+      : undefined
+  const saveSummary = parsedReceipts?.success
+    ? summarizeLiteratureSaveReceipts(parsedReceipts.data)
+    : acquired
+      ? summarizeLiteratureSaveReceipts([
+          { kind: 'candidate', id: acquired.candidateId as string, state: 'pending' }
+        ])
+      : undefined
+  const failedInputIndex = isRecord(savedResult?.failure)
+    ? asNonNegativeInteger(savedResult.failure.inputIndex)
+    : undefined
+  const cancelled = savedResult?.cancelled === true
+  const notAttemptedCount =
+    parsedReceipts?.success && candidateCount !== undefined
+      ? Math.max(
+          0,
+          candidateCount - parsedReceipts.data.length - (failedInputIndex !== undefined ? 1 : 0)
+        )
+      : undefined
   const offset =
     asNonNegativeInteger(presentation?.offset) ??
     asNonNegativeInteger(input.offset) ??
@@ -419,7 +586,18 @@ const buildLiteratureLibraryToolSummary = (
     ...(action === 'search' && offset !== undefined && limit !== undefined
       ? { requestedEnd: offset + limit }
       : {}),
-    ...(savedCount !== undefined ? { savedCount } : {}),
+    ...(acquired ? { pdfDownloaded: true } : {}),
+    ...(saveSummary
+      ? {
+          savedCount: saveSummary.pendingCount,
+          existingItemIds: saveSummary.existingItemIds,
+          duplicateCount: saveSummary.duplicateCount,
+          otherCount: saveSummary.otherCount
+        }
+      : {}),
+    ...(failedInputIndex !== undefined ? { failedInputIndex } : {}),
+    ...(notAttemptedCount !== undefined ? { notAttemptedCount } : {}),
+    ...(cancelled ? { cancelled: true } : {}),
     ...(action === 'format' && asString(input.styleId) ? { styleId: asString(input.styleId) } : {}),
     ...(action === 'format' && asString(input.locale) ? { locale: asString(input.locale) } : {}),
     ...(hasMore !== undefined ? { hasMore } : {})
@@ -427,9 +605,12 @@ const buildLiteratureLibraryToolSummary = (
 }
 
 export {
+  pdfElementToolAction,
+  buildPdfElementToolSummary,
   buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
+  isLiteratureLibraryAcquirePdfTool,
   isLiteratureLibraryLatexTool,
   isLiteratureLibraryPdfReadTool,
   isLiteratureReadDocumentTool

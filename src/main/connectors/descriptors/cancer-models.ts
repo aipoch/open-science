@@ -48,6 +48,13 @@ type CBioSampleList = {
   sampleCount?: number
 }
 type CBioIdRecord = { sampleId?: string; patientId?: string }
+type CBioGenePanelData = {
+  sampleId?: string
+  molecularProfileId?: string
+  genePanelId?: string
+  profiled?: boolean
+}
+type CBioGenePanel = { genes?: { entrezGeneId?: number }[] }
 type CBioMutation = {
   sampleId?: string
   patientId?: string
@@ -136,7 +143,66 @@ const pickSampleList = (
   return undefined
 }
 
-const round4 = (x: number): number => Math.round(x * 10_000) / 10_000
+// Coverage is specific to both the molecular profile and the queried gene. A profiled sample
+// without a panel covers all genes; a targeted panel covers only its listed genes (cBioPortal's
+// GenePanelUtils.computeGenePanelInformation uses the same distinction).
+async function fetchGeneCoverage(
+  ctx: ToolContext,
+  profileId: string,
+  sampleListId: string,
+  entrezGeneId: number,
+  panelCoverage: Map<string, boolean | null>
+): Promise<Map<string, boolean | null>> {
+  const [sampleIds, panelData] = (await Promise.all([
+    ctx.fetchJson(`${CBIOPORTAL}/sample-lists/${encodeURIComponent(sampleListId)}/sample-ids`),
+    ctx.postJson(
+      `${CBIOPORTAL}/molecular-profiles/${encodeURIComponent(profileId)}/gene-panel-data/fetch`,
+      { sampleListId }
+    )
+  ])) as [string[], CBioGenePanelData[]]
+  if (!Array.isArray(sampleIds) || sampleIds.some((id) => typeof id !== 'string' || !id)) {
+    throw new Error(`Invalid sample list: ${sampleListId}`)
+  }
+  const coverage = new Map<string, boolean | null>(sampleIds.map((id) => [id, null]))
+  const seen = new Set<string>()
+  for (const record of panelData ?? []) {
+    const sampleId = record.sampleId
+    if (!sampleId || !coverage.has(sampleId) || record.molecularProfileId !== profileId) continue
+    let profiled: boolean | null = null
+    if (record.profiled === false) {
+      profiled = false
+    } else if (record.profiled === true) {
+      if (!record.genePanelId) {
+        profiled = true
+      } else {
+        const panelId = record.genePanelId
+        if (!panelCoverage.has(panelId)) {
+          let panel: CBioGenePanel | undefined
+          try {
+            panel = (await ctx.fetchJson(
+              `${CBIOPORTAL}/gene-panels/${encodeURIComponent(panelId)}?projection=DETAILED`
+            )) as CBioGenePanel
+          } catch (err) {
+            if (!isNotFound(err)) throw err
+          }
+          panelCoverage.set(
+            panelId,
+            Array.isArray(panel?.genes)
+              ? panel.genes.some((gene) => gene.entrezGeneId === entrezGeneId)
+              : null
+          )
+        }
+        profiled = panelCoverage.get(panelId) ?? null
+      }
+    }
+    // Conflicting records must not make the denominator depend on response order.
+    if (seen.has(sampleId) && coverage.get(sampleId) !== profiled) profiled = null
+    coverage.set(sampleId, profiled)
+    seen.add(sampleId)
+  }
+  return coverage
+}
+
 const trimDescription = (d?: string): string | undefined =>
   d && d.length > DESC_MAX ? `${d.slice(0, DESC_MAX).trimEnd()}…` : d
 
@@ -404,7 +470,7 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     id: 'cbioportal_mutation_frequency',
     connector: 'cancer-models',
     description:
-      'Mutation frequency of one gene across several cBioPortal studies (1–12): mutated-sample fraction of the sequenced cohort per study, ranked most-frequent first.',
+      'Mutation frequency of one gene across several cBioPortal studies (1–12): unique mutated samples divided by samples profiled for that gene in the selected mutation profile and sample list, accounting for targeted gene panels; ranked most-frequent first.',
     input: {
       type: 'object',
       properties: {
@@ -415,13 +481,15 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
     },
     required: ['gene_symbol', 'study_ids'],
     returns:
-      '`{ "gene": { "symbol": str, "entrez_gene_id": int }, "count": int, "frequencies": [ { "study_id": str, "study_name": str, "molecular_profile_id": str, "mutation_count": int, "mutated_samples": int, "sequenced_samples": int, "frequency": float } ], "unknown_studies": [ str ], "no_mutation_data": [ str ] }` — `frequencies` are sorted by descending `frequency` (4-dp, null when the study reports 0 sequenced samples); ids the API does not know go to `unknown_studies`, studies without a mutation profile / sample list to `no_mutation_data`. At most 12 ids are considered. Unknown gene throws "Gene not found".',
+      '`{ "gene": { "symbol": str, "entrez_gene_id": int }, "count": int, "frequencies": [ { "study_id": str, "study_name": str, "molecular_profile_id": str, "sample_list_id": str, "mutation_count": int, "mutated_samples": int, "sequenced_samples": int, "cohort_samples": int, "profiled_samples": int, "not_profiled_samples": int, "unknown_profile_samples": int, "frequency": float | null, "frequency_status": str } ], "unknown_studies": [ str ], "no_mutation_data": [ str ] }` — `frequency` is an unrounded fraction (0–1), sorted descending with null last. `profiled_samples` is the gene-specific denominator; `cohort_samples` equals profiled + not_profiled + unknown_profile samples in the selected list. `sequenced_samples` is study metadata, not the denominator. `mutation_count` counts returned mutation records and `mutated_samples` counts their unique sample ids, without additional mutation-type filtering. `frequency_status` is `available`, `no_profiled_samples`, `incomplete_coverage`, or `inconsistent_mutation_data` (a mutation lacks a sample id or falls outside the known gene-profiled samples); only `available` has a numeric frequency. Zero means profiled samples with no reported mutation, not an untested gene. Unknown study ids go to `unknown_studies`, studies without a mutation profile / sample list to `no_mutation_data`. At most 12 ids are considered. Unknown gene throws "Gene not found".',
     example:
       'const result = await host.mcp("cancer-models", "cbioportal_mutation_frequency", {"gene_symbol": "KRAS", "study_ids": ["msk_impact_2017", "difg_msk_2023"]})',
     run: async (ctx, a) => {
       const symbol = String(a.gene_symbol)
       const studyIds = (Array.isArray(a.study_ids) ? a.study_ids : []).map(String).slice(0, 12)
       const gene = await resolveGene(ctx, symbol)
+      if (!Number.isInteger(gene.entrezGeneId)) throw new Error(`Missing gene id: ${symbol}`)
+      const panelCoverage = new Map<string, boolean | null>()
 
       const frequencies: Record<string, unknown>[] = []
       const unknownStudies: string[] = []
@@ -462,15 +530,46 @@ export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
               `&entrezGeneId=${gene.entrezGeneId}&projection=DETAILED&pageSize=${FULL_PAGE}&pageNumber=0`
           )) as CBioMutation[]) ?? []
         const sequenced = study.sequencedSampleCount ?? 0
-        const mutatedSamples = new Set(rows.map((m) => m.sampleId)).size
+        const coverage = await fetchGeneCoverage(
+          ctx,
+          profile.molecularProfileId,
+          sampleList.sampleListId,
+          gene.entrezGeneId!,
+          panelCoverage
+        )
+        const profiledSamples = [...coverage.values()].filter(
+          (profiled) => profiled === true
+        ).length
+        const notProfiledSamples = [...coverage.values()].filter(
+          (profiled) => profiled === false
+        ).length
+        const unknownProfileSamples = coverage.size - profiledSamples - notProfiledSamples
+        const mutatedSamples = new Set(rows.map((m) => m.sampleId).filter(Boolean)).size
+        const inconsistentMutations = rows.some(
+          (m) => !m.sampleId || coverage.get(m.sampleId) !== true
+        )
+        const frequencyStatus =
+          unknownProfileSamples > 0
+            ? 'incomplete_coverage'
+            : inconsistentMutations
+              ? 'inconsistent_mutation_data'
+              : profiledSamples === 0
+                ? 'no_profiled_samples'
+                : 'available'
         frequencies.push({
           study_id: studyId,
           study_name: study.name,
           molecular_profile_id: profile.molecularProfileId,
+          sample_list_id: sampleList.sampleListId,
           mutation_count: rows.length,
           mutated_samples: mutatedSamples,
           sequenced_samples: sequenced,
-          frequency: sequenced > 0 ? round4(mutatedSamples / sequenced) : null
+          cohort_samples: coverage.size,
+          profiled_samples: profiledSamples,
+          not_profiled_samples: notProfiledSamples,
+          unknown_profile_samples: unknownProfileSamples,
+          frequency: frequencyStatus === 'available' ? mutatedSamples / profiledSamples : null,
+          frequency_status: frequencyStatus
         })
       }
 

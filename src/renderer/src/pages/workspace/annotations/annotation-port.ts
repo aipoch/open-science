@@ -4,6 +4,7 @@ type AnnotationPort = Readonly<{
   sessionId: string
   activeAnnotations: readonly TextAnnotation[]
   onAdd: (annotation: TextAnnotation) => AnnotationValidationError | undefined
+  onRemove?: (id: string) => void
   onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
   onError: (error: AnnotationValidationError) => void
 }>

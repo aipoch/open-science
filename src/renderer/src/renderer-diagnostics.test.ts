@@ -144,3 +144,34 @@ describe('projectRendererFailure', () => {
     expect(reportCount).toBe(1)
   })
 })
+
+describe('renderer fingerprint privacy and stability', () => {
+  it('ignores host, installation root, URL query and error message changes at the same location', () => {
+    const fingerprint = (url: string, message: string): string | undefined => {
+      const error = new TypeError(message)
+      error.stack = `TypeError: ${message}\n at ${url}:10:5`
+      return projectRendererFailure('window-error', error, 'workspace').fingerprint
+    }
+    expect(fingerprint('http://localhost:5173/src/page.tsx?token=private-a', 'first')).toBe(
+      fingerprint('http://localhost:3000/src/page.tsx?token=private-b', 'second')
+    )
+    expect(fingerprint('file:///Applications/One/out/renderer/assets/index.js', 'first')).toBe(
+      fingerprint('file:///C:/Users/Private/out/renderer/assets/index.js', 'second')
+    )
+  })
+
+  it('retains a bounded fallback when the stack is absent or unreadable', () => {
+    const error = new TypeError('private')
+    error.stack = undefined
+    const report = projectRendererFailure('window-error', error, 'workspace')
+    expect(report.fingerprint).toMatch(/^[a-f0-9]{8}$/)
+    Object.defineProperty(error, 'stack', {
+      get() {
+        throw new Error('unavailable')
+      }
+    })
+    expect(projectRendererFailure('window-error', error, 'workspace').fingerprint).toMatch(
+      /^[a-f0-9]{8}$/
+    )
+  })
+})

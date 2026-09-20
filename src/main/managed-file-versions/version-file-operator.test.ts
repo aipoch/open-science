@@ -545,6 +545,57 @@ describe('NodeVersionFileOperator', () => {
     await invalidRangeLease.close()
   })
 
+  it('rejects bytes changed and restored during a range read', async () => {
+    const { NodeVersionFileOperator } = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-restore-'))
+    const path = join(cleanupRoot, 'content.bin')
+    const original = Buffer.from('ORIGINAL')
+    const fixedTime = new Date('2000-01-01T00:00:00.000Z')
+    await writeFile(path, original)
+    await utimes(path, fixedTime, fixedTime)
+    let replaceDuringRead = false
+    const operator = new NodeVersionFileOperator({
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'read')
+                return async (
+                  buffer: Uint8Array,
+                  offset: number,
+                  length: number,
+                  position: number
+                ) => {
+                  if (!replaceDuringRead) return target.read(buffer, offset, length, position)
+                  replaceDuringRead = false
+                  await writeFile(path, 'REPLACED')
+                  const result = await target.read(buffer, offset, length, position)
+                  await writeFile(path, original)
+                  await utimes(path, fixedTime, fixedTime)
+                  return result
+                }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    })
+    const lease = await operator.openImmutable('content.bin', {
+      sizeBytes: original.length,
+      checksum: createHash('sha256').update(original).digest('hex')
+    })
+    try {
+      replaceDuringRead = true
+      await expect(lease.readRange(0, 4)).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+      expect(await readFile(path)).toEqual(original)
+    } finally {
+      await lease.close()
+    }
+  })
+
   it('does not hash the same unchanged immutable file again on a later open', async () => {
     const module = await import('./version-file-operator')
     cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))

@@ -199,6 +199,7 @@ export const completionToResponse = (
 ): JsonObject => {
   const message = completion.choices?.[0]?.message ?? {}
   const terminal = chatTerminalDetails(completion.choices?.[0]?.finish_reason)
+  const responseId = completion.id ?? `resp_${randomBytes(6).toString('hex')}`
   const output: JsonObject[] = []
   if (hasUpstreamImageField(message)) throw unsupportedUpstreamImageOutput()
   const contentText = upstreamTextFromContent(message.content)
@@ -210,7 +211,7 @@ export const completionToResponse = (
         : ''
   if (text) {
     output.push({
-      id: `msg_${completion.id}`,
+      id: `msg_${responseId}`,
       type: 'message',
       status: terminal.status,
       role: 'assistant',
@@ -230,7 +231,7 @@ export const completionToResponse = (
   }
   return {
     ...responseEnvelope(
-      completion.id ?? `resp_${randomBytes(6).toString('hex')}`,
+      responseId,
       completion.model,
       output,
       chatUsageToResponsesUsage(completion.usage),
@@ -257,7 +258,7 @@ export const streamChatToResponses = async (
   model: string,
   namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
   maxResponseBytes = DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
-): Promise<{ reasoning: string; callIds: string[] }> => {
+): Promise<{ reasoning: string; callIds: string[]; messageId?: string }> => {
   if (!upstream.body) throw new Error('Chat Completions upstream returned no body')
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -489,5 +490,9 @@ export const streamChatToResponses = async (
     toolNames: toolCalls.map((item) => item.name)
   })
 
-  return { reasoning, callIds: toolCalls.map((item) => String(item.call_id)) }
+  return {
+    reasoning,
+    callIds: toolCalls.map((item) => String(item.call_id)),
+    ...(textItem ? { messageId: String(textItem.id) } : {})
+  }
 }

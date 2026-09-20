@@ -1,4 +1,4 @@
-# Contributing to Open Science
+# Contributing to Open-Science
 
 Thanks for your interest in contributing! This document explains how to set up
 the project, the workflow we follow, and the checks your change must pass before
@@ -33,11 +33,38 @@ npm install
 `npm install` runs a `postinstall` step that generates the Prisma client and
 installs native Electron app dependencies.
 
+An existing `node_modules` directory can retain an older patch even when the
+dependency version has not changed. Before applying patches, `npm install`
+automatically restores known historical `@shadcn/react@0.3.0` scroller files to
+their original content so the current patch can apply. Recovery is limited to
+the exact version and checksums of previously committed patches; it does not
+overwrite unknown manual edits or download dependencies from a lifecycle script.
+
+If installation still reports a `patch-package` failure, review any manual edits
+inside `node_modules`, then run `npm ci` from the repository root. It recreates
+`node_modules` from `package-lock.json` and applies the current patches without
+updating the lockfile. Any manual edits inside `node_modules` will be removed.
+
+Patch failures stop installation before Prisma generation and native dependency
+setup. Do not bypass them with `--ignore-scripts` or regenerate a patch from a
+partially patched installation. See the upstream
+[patch-package guidance](https://github.com/ds300/patch-package#applying-patches).
+
 ### Run in development
 
 ```bash
 npm run dev
 ```
+
+On Windows x64, opt into the unpackaged WSL2 Bash development flow from PowerShell with:
+
+```powershell
+$env:OPEN_SCIENCE_DEV_WSL2_BASH_PREVIEW = '1'
+npm run dev
+```
+
+The switch is off by default and applies only to the development server. Packaged builds ignore it
+and continue to require the certified, version-matched WSL2 assets.
 
 ## Coding-agent navigation
 
@@ -202,7 +229,7 @@ Before handoff, derive the minimum set from the final material diff:
 Directory proximity alone is not impact evidence. If a file mixes responsibilities, treat it as
 Interface-affecting or use the full fallback.
 
-`test:module` supports only the Module IDs declared in `scripts/ci/module-impact.json`. It runs that
+`test:module` supports the Module IDs given by filenames in `scripts/ci/module-impact/`. It runs that
 Module's curated owner, contract, and representative consumer tests; it is not complete downstream
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
@@ -296,11 +323,45 @@ ci(review): unify automated AI reviews
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
 - Ensure the final Test Impact Set, or the full fallback when required, passes.
-- After the pull request checks pass, merge it directly using **squash merge only**. Do not update the
-  branch only because `main` advanced; update it when it has merge conflicts or a maintainer requests
-  it. The squash commit subject must keep the pull request title's Conventional Commit format.
-- Non-documentation changes merged into `main` trigger the [Nightly workflow](.github/workflows/nightly.yml),
-  which runs post-merge verification and cross-platform package certification on the resulting commit.
+- After required PR checks and review pass, add the pull request to the native merge queue once
+  the queue rollout is enabled. The queue validates the combined revision before **squash merge**;
+  its squash subject must retain the PR title's Conventional Commit format. Do not update a branch
+  merely because `main` advanced; update it for conflicts or a maintainer request.
+- PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
+  workflow), AI review, static checks and portable tests on Ubuntu. Desktop changes run Windows
+  business E2E, including the Windows renderer browser suite. Automatic PR checks do not allocate
+  Mac runners, including for platform-sensitive changes; Mac validation happens in merge queue.
+  PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
+  merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
+  `--fail-on-flaky-tests`.
+- Merge queue keeps concurrency two and validates the combined revision with Linux/portable
+  checks and one short Mac job (project creation/relaunch, persisted theme and window presentation).
+  Classification diffs the whole merge group against the target branch tip, so a stacked entry is
+  planned for every change it carries, not only its own pull request. CI Integrity re-validates the
+  pull request title in the queue because it becomes the squash subject.
+  Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
+  and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
+  Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Existing
+  selected Windows core checks remain blocking. Full portable fallback still applies to unknown
+  owners, destructive changes and global CI inputs.
+- The platform policy uses the existing `macosProfile` values (`smoke` or `expanded`). An expanded
+  queue plan selects the short core lane plus native checks on one runner. Manual `macos-smoke`,
+  `source-regressions` and `e2e` runs retain their explicitly selected suites for early platform
+  diagnosis. Classification and gate validation continue to use trusted base code.
+- Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
+  (Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
+  runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
+  Nightly packaging, Windows Full Test and Runtime Resource Soak retain their daily 23:17, 00:47
+  and 03:23 Singapore schedules and skip a head that the last successful scheduled run already
+  covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
+  be published under the rolling `nightly` tag, and manual runs never count as coverage because
+  the runs API cannot report which dispatch mode they selected. Manual runs always execute.
+  Formal release certification and post-release Windows Upgrade Smoke retain their existing gates.
+  Scheduled failures cannot retroactively block an already merged PR; Mac-only failures may first
+  be discovered in queue or scheduled validation. A failing scheduled run opens or refreshes one
+  tracking issue labelled `ci-scheduled-failure` and closes it once a later scheduled run passes.
+  Nightly publication additionally requires the advisory runtime-certification and regression
+  jobs of the source run to have succeeded.
 
 ## Reporting Issues
 
@@ -320,3 +381,81 @@ use `npm-v*` tags and are published through the protected `Publish npm package` 
 
 By contributing, you agree that your contributions will be licensed under the
 [Apache License 2.0](./LICENSE), the same license that covers this project.
+
+### Supplemental desktop coverage
+
+Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
+Asia/Singapore, as well as focused manual validation. Automatic PRs use Windows business coverage;
+queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
+regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
+Source Regression; manual callers without an explicit capacity input retain complete coverage.
+
+### CI control-plane approval
+
+CI workflows, local actions, CI scripts, Dependabot configuration and CODEOWNERS itself have
+`@aipoch/ci-maintainers` as owner in `.github/CODEOWNERS`. Maintain membership in GitHub instead
+of editing individual usernames in the file. The team must be visible and have explicit repository
+write access. The main ruleset requires approval from one owner other than the PR author and
+dismisses stale approvals after new commits. Ordinary application files have no CODEOWNERS entry.
+The `scripts/ci/module-impact.json` registration file and JSON records directly under
+`scripts/ci/module-impact/` are exempt from owner approval; other CI scripts and manifests remain
+protected. CI Integrity rejects invalid filenames, nested records, nonregular files and mixed
+inline/sharded layouts. New modules and additive ownership/test/consumer
+registrations can enter the normal merge queue after required checks pass, without a bypass.
+
+Trusted-base CI Integrity validates candidate registration data in both PRs and merge groups.
+It preserves surviving owner/interface/test paths, consumer edges, capability overlays, fallback
+routing and existing full-validation markers. References to actually deleted files may be removed.
+New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
+coverage reductions fail the check; owner approval alone does not waive these invariants. Deliberate
+reductions require a separate CI policy change, not a registration-only PR. Registration changes
+still select full portable tests; this exception does not enable untrusted selective test routing.
+Introducing this exception changes protected policy files and therefore still needs owner approval.
+It can then enter the normal queue; no bootstrap bypass is required when its checks pass.
+
+Owner review authorizes control-plane changes; CI Integrity still validates unsafe workflow
+execution, mutable action references, expanded target-workflow permissions and spoofed or missing
+required checks. It runs for both PR admission and merge-group validation. Passing required checks
+and owner approval precede normal merge-queue admission. Never remove the Integrity `merge_group`
+trigger while its check is required; the `required-check-triggers` rule rejects a PR Gate or CI
+Integrity revision that drops its `merge_group` or pull request trigger.
+
+Keep required code-owner review and stale-approval dismissal enabled while relying on this policy.
+CI Integrity checks exact module ownership under `src/` and `packages/`, covering all tracked code,
+native sources, runtime helpers, assets and fixtures regardless of file extension.
+Register each file in exactly one module's `ownerPaths` in `scripts/ci/module-impact/<module-id>.json`,
+including owner, contract and consumer test evidence. Consumer-test membership does not establish
+ownership. New unregistered files and ownership regressions block admission; renames must register
+their new paths. Candidate manifests are read as data by trusted base code, against the Git merge
+base. E2E and CI scripts retain their existing routing and integrity checks.
+
+Registrations use a metadata-only `module-impact.json` containing
+`{"schemaVersion": 1}` plus one module object per `module-impact/<module-id>.json` file.
+The filename supplies the module ID; no shared index or committed aggregate is required.
+Use `loadModuleImpactManifest` from `scripts/ci/load-module-impact.mjs` in tooling and tests
+instead of reading the root JSON directly. The assembled manifest and validation rules are the
+same for both layouts. Edit the affected module file directly; adding a module requires only a new
+`<module-id>.json` file, with a lowercase ID matching `[a-z][a-z0-9_]*`. Keep all existing ownership,
+test and consumer evidence when moving registrations. Do not add an inline module list or mix
+inline modules and shards. The reader retains old-format Git history support.
+
+The historical inventory is complete. Run `node scripts/ci/audit-module-ownership.mjs` (or `--json`)
+to check every tracked file in these roots, including files untouched by a PR. The inventory test
+rejects gaps and duplicate owners. The consumer-coverage test checks transitive static imports and
+explicit native/worker loading edges in `scripts/ci/module-runtime-consumers.json`. Keep IPC,
+event, filesystem and other dynamic consumer contracts explicit in module test evidence; static
+analysis alone cannot prove those relationships.
+
+Editing a registered test runs that test directly, except tests exporting shared helpers: register
+those files in `interfacePaths` so their consumers remain selected. Tests owned by modules with
+`fullTestReason` also retain full validation. Editing implementations or shared test helpers
+runs the module's owner, contract and consumer evidence. Locale JSON keeps its focused translation
+guards; the shared translation runtime has its own broader module. Modules whose dynamic consumers
+cannot be safely bounded declare a nonempty `fullTestReason` and retain full validation. This is
+intentional coverage, not an unregistered legacy exception. Unknown and destructive changes still
+fall back to full validation.
+
+The migration PR that removes the former unconditional protected-file rejection still encounters
+the old guard from its base revision. Any bootstrap ruleset bypass requires explicit maintainer
+authorization and directly merges the PR; it does not carry approval into a later queue run. Do not
+enqueue a PR with a known failing required check and expect the queue to waive it.

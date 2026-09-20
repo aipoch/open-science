@@ -5,6 +5,11 @@ import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 import {
+  WSL2_BASH_PREVIEW_MANIFEST,
+  matchesWsl2BashPreviewManifest
+} from '../src/shared/wsl2-preview-manifest'
+
+import {
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
   WINDOWS_CACHE_TRUSTED_OWNER_SIDS
 } from '../src/main/notebook/micromamba-cache'
@@ -17,6 +22,9 @@ describe('electron-builder native image processing', () => {
 
     expect(config.asarUnpack).toContain('node_modules/sharp/**')
     expect(config.asarUnpack).toContain('node_modules/@img/**')
+    expect(config.asarUnpack).toContain(
+      'node_modules/@aipoch/process-tree-native/build/Release/*.node'
+    )
   })
 
   it('ships the Notebook network sandbox helpers for every supported platform', () => {
@@ -28,12 +36,56 @@ describe('electron-builder native image processing', () => {
     }
 
     expect(config.files).toContain('!node_modules/@aipoch/notebook-network-sandbox{,/**/*}')
+    expect(config.files).toContain('!packages/notebook-network-sandbox{,/**/*}')
     expect(config.win?.extraResources).toContainEqual({
       from: 'packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe',
       to: 'notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe'
     })
+    expect(config.win?.extraResources).toContainEqual({
+      from: 'packages/notebook-network-sandbox/vendor/wsl2/manifest.json',
+      to: 'notebook-network-sandbox/wsl2/manifest.json'
+    })
     expect(config.mac?.extraResources).toHaveLength(1)
-    expect(config.linux?.extraResources).toHaveLength(1)
+    expect(config.linux?.extraResources).toEqual([
+      { from: 'resources/bin/linux/${arch}/micromamba', to: 'micromamba' },
+      { from: 'build/deb-cli-launcher', to: 'open-science-cli' }
+    ])
+  })
+})
+
+describe('WSL2 Bash Preview resource compatibility', () => {
+  it('keeps the packaged manifest identical to the main-process certification contract', () => {
+    const packagedManifest = JSON.parse(
+      readFileSync(
+        join(
+          process.cwd(),
+          'packages',
+          'notebook-network-sandbox',
+          'vendor',
+          'wsl2',
+          'manifest.json'
+        ),
+        'utf8'
+      )
+    )
+
+    expect(packagedManifest).toEqual(WSL2_BASH_PREVIEW_MANIFEST)
+  })
+
+  it('uses a resource compatibility contract independent of application releases', () => {
+    expect(WSL2_BASH_PREVIEW_MANIFEST).not.toHaveProperty('appVersion')
+    expect(matchesWsl2BashPreviewManifest(WSL2_BASH_PREVIEW_MANIFEST)).toBe(true)
+  })
+
+  it.each([
+    null,
+    {},
+    { ...WSL2_BASH_PREVIEW_MANIFEST, schemaVersion: -1 },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, assets: [] },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, assets: [...WSL2_BASH_PREVIEW_MANIFEST.assets, 'unknown'] },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, appVersion: 'old-release' }
+  ])('rejects incompatible resource metadata: %j', (manifest) => {
+    expect(matchesWsl2BashPreviewManifest(manifest)).toBe(false)
   })
 })
 
@@ -67,7 +119,10 @@ describe('electron-builder Windows targets', () => {
     )
 
     expect(config).toContain('from: build/windows-runtime-cache-uninstall.ps1')
-    expect(config).toContain('include: build/installer.nsh')
+    expect(config).toContain('include: build/installer-license.nsh')
+    expect(readFileSync(join(process.cwd(), 'build', 'installer-license.nsh'), 'utf8')).toContain(
+      '!include "${BUILD_RESOURCES_DIR}\\installer.nsh"'
+    )
     expect(include).toContain('windows-runtime-cache-uninstall.ps1')
     const customUninstall = include.match(/!macro customUnInstall\n([\s\S]*?)!macroend/)?.[1]
     expect(customUninstall).toContain('$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe')
@@ -111,7 +166,12 @@ describe('electron-builder Windows targets', () => {
     expect(include).toContain('${ifNot} ${isUpdated}')
     expect(include).toContain('notebookSandboxCleanupComplete')
     expect(include).toContain('The uninstall was stopped so the cleanup can be retried.')
-    expect(cleanup).toContain('-ArgumentList @($Command, $installationId, $ownershipRoot)')
+    expect(cleanup).toContain('-ArgumentList $quotedArguments')
+    expect(cleanup).toContain(
+      '@($Command, $installationId, $ownershipRoot) | ForEach-Object { ConvertTo-WindowsArgument $_ }'
+    )
+    expect(cleanup).toContain('OPEN_SCIENCE_E2E_STORAGE_ROOT')
+    expect(cleanup).not.toContain('OPEN_SCIENCE_E2E_ROOT')
     expect(cleanup).toContain('& $HostPath $Command $installationId $ownershipRoot')
     expect(cleanup).toContain('& $HostPath prepare-remove $installationId $ownershipRoot')
     expect(cleanup).toContain('& $HostPath finish-remove $installationId $ownershipRoot')
@@ -190,4 +250,35 @@ describe('electron-builder macOS icons', () => {
       )
     ).toBe(true)
   })
+})
+
+it('registers .science as a viewable document without changing the per-user installer', () => {
+  const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+    win: {
+      fileAssociations: {
+        ext: string
+        role: string
+        mimeType: string
+        name: string
+        description: string
+      }[]
+    }
+    mac: { fileAssociations: { name: string }[] }
+    linux: { fileAssociations: { name: string }[] }
+    nsis: { perMachine: boolean; allowElevation: boolean }
+  }
+  expect(config.win.fileAssociations).toContainEqual(
+    expect.objectContaining({
+      ext: 'science',
+      role: 'Viewer',
+      mimeType: 'application/x-open-science-session'
+    })
+  )
+  expect(config.win.fileAssociations[0]).toMatchObject({
+    name: 'Open Science Session package',
+    description: 'Open-Science Session package'
+  })
+  expect(config.mac.fileAssociations[0].name).toBe('Open-Science Session package')
+  expect(config.linux.fileAssociations[0].name).toBe('Open-Science Session package')
+  expect(config.nsis).toMatchObject({ perMachine: false, allowElevation: false })
 })

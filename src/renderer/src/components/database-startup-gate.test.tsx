@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { StrictMode } from 'react'
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,6 +39,192 @@ describe('DatabaseStartupGate', () => {
     } as unknown as Window['api']
   })
 
+  it('keeps the ready application mounted after a delayed retry snapshot', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    await act(async () => {
+      render(
+        <DatabaseStartupGate>
+          <div>Business application</div>
+        </DatabaseStartupGate>
+      )
+    })
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    act(() => publish({ phase: 'ready' }))
+    const application = screen.getByText('Business application')
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.queryByText('Business application')).toBe(application)
+    expect(screen.queryByText('Starting Open-Science…')).toBeNull()
+  })
+
+  it.each(['ready', 'blocked'] as const)(
+    'keeps a newer %s event when retry rejects',
+    async (phase) => {
+      let rejectRetry!: (error: Error) => void
+      retry.mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRetry = reject
+          })
+      )
+      await act(async () => {
+        render(
+          <DatabaseStartupGate>
+            <div>Business application</div>
+          </DatabaseStartupGate>
+        )
+      })
+      const blocked: DatabaseStartupState = {
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      }
+      act(() => publish(blocked))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      act(() => publish(phase === 'ready' ? { phase } : blocked))
+      await act(async () => rejectRetry(new Error('late failure')))
+      expect(screen.queryByText('Open-Science could not finish checking its database.')).toBeNull()
+      expect(
+        screen.getByText(phase === 'ready' ? 'Business application' : blocked.error.message)
+      ).toBeTruthy()
+    }
+  )
+
+  it('keeps a newer blocked event when a retry returns an older starting state', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    await act(async () => {
+      render(
+        <DatabaseStartupGate>
+          <div>Business application</div>
+        </DatabaseStartupGate>
+      )
+    })
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_newer_than_app',
+          message: 'A newer app is required.',
+          retryable: false
+        }
+      })
+    )
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.getByText('A newer app is required.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
+
+  it('accepts a retry snapshot before ready and ignores events after unmount', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    const view = render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.getByText('Starting Open-Science…')).toBeTruthy()
+    act(() => publish({ phase: 'ready' }))
+    expect(screen.getByText('Business application')).toBeTruthy()
+    view.unmount()
+    act(() => publish({ phase: 'starting' }))
+    expect(screen.queryByText('Starting Open-Science…')).toBeNull()
+  })
+
+  it('ignores a retry from an unmounted StrictMode gate after a new gate is ready', async () => {
+    let resolveRetry!: (state: DatabaseStartupState) => void
+    retry.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetry = resolve
+        })
+    )
+    const view = render(
+      <StrictMode>
+        <DatabaseStartupGate>
+          <div>Old application</div>
+        </DatabaseStartupGate>
+      </StrictMode>
+    )
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open-Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    view.unmount()
+    getState.mockResolvedValue({ phase: 'ready' })
+    await act(async () => {
+      render(
+        <StrictMode>
+          <DatabaseStartupGate>
+            <div>New application</div>
+          </DatabaseStartupGate>
+        </StrictMode>
+      )
+    })
+    const application = screen.getByText('New application')
+    await act(async () => resolveRetry({ phase: 'starting' }))
+    expect(screen.getByText('New application')).toBe(application)
+    expect(screen.queryByText('Starting Open-Science…')).toBeNull()
+  })
+
   it('reuses the branded startup loader while checking and migrating the database', () => {
     render(
       <DatabaseStartupGate>
@@ -58,15 +246,15 @@ describe('DatabaseStartupGate', () => {
     const updatingLabel = screen.getByText('Updating database…')
     expect(updatingLabel.tagName).toBe('SPAN')
     expect(updatingLabel.className).toBe(checkingLabel.className)
-    expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
+    expect(screen.getByText('Keep Open-Science open while this finishes.')).toBeTruthy()
     expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
 
     act(() => publish({ phase: 'starting' }))
 
-    const startingLabel = screen.getByText('Starting Open Science…')
+    const startingLabel = screen.getByText('Starting Open-Science…')
     expect(startingLabel.tagName).toBe('SPAN')
     expect(startingLabel.className).toBe(checkingLabel.className)
-    expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
+    expect(screen.getByText('Keep Open-Science open while this finishes.')).toBeTruthy()
     expect(screen.queryByText('Checking database…')).toBeNull()
     expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
   })
@@ -86,13 +274,13 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_newer_than_app',
-          message: 'This database was updated by a newer version of Open Science.',
+          message: 'This database was updated by a newer version of Open-Science.',
           migrationId: '0002_future_schema',
           retryable: false
         }
       })
     )
-    expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
+    expect(screen.getByText("Open-Science couldn't start")).toBeTruthy()
     expect(screen.getByText(/database_newer_than_app/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
 
@@ -123,9 +311,9 @@ describe('DatabaseStartupGate', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
+      expect(screen.getByText("Open-Science couldn't start")).toBeTruthy()
     })
-    expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+    expect(screen.getByText('Open-Science could not finish checking its database.')).toBeTruthy()
     expect(screen.getByText(/database_startup_unavailable/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Quit' })).toBeTruthy()
@@ -152,7 +340,7 @@ describe('DatabaseStartupGate', () => {
     })
 
     expect(screen.getByText('Business application')).toBeTruthy()
-    expect(screen.queryByText("Open Science couldn't start")).toBeNull()
+    expect(screen.queryByText("Open-Science couldn't start")).toBeNull()
   })
 
   it('restores retry after a retry IPC rejection', async () => {
@@ -170,7 +358,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_open_failed',
-          message: 'Open Science could not open its database.',
+          message: 'Open-Science could not open its database.',
           retryable: true
         }
       })
@@ -178,8 +366,8 @@ describe('DatabaseStartupGate', () => {
 
     await act(async () => screen.getByRole('button', { name: 'Retry' }).click())
 
-    expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
-    expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+    expect(screen.getByText("Open-Science couldn't start")).toBeTruthy()
+    expect(screen.getByText('Open-Science could not finish checking its database.')).toBeTruthy()
     expect(screen.getByText(/database_startup_unavailable/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.queryByText('Checking database…')).toBeNull()
@@ -205,7 +393,7 @@ describe('DatabaseStartupGate', () => {
     })
 
     expect(screen.getByText('Business application')).toBeTruthy()
-    expect(screen.queryByText("Open Science couldn't start")).toBeNull()
+    expect(screen.queryByText("Open-Science couldn't start")).toBeNull()
     expect(getState).toHaveBeenCalledOnce()
   })
 
@@ -219,14 +407,14 @@ describe('DatabaseStartupGate', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+      expect(screen.getByText('Open-Science could not finish checking its database.')).toBeTruthy()
     })
 
     await act(async () => {
       await i18next.changeLanguage('zh-Hans')
     })
 
-    expect(screen.getByText('Open Science 无法完成数据库检查。')).toBeTruthy()
+    expect(screen.getByText('Open-Science 无法完成数据库检查。')).toBeTruthy()
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
     expect(screen.queryByText('Business application')).toBeNull()
   })
@@ -243,7 +431,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_open_failed',
-          message: 'Open Science could not open its database.',
+          message: 'Open-Science could not open its database.',
           retryable: true
         }
       })
@@ -265,7 +453,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_newer_than_app',
-          message: 'The database was updated by a newer version of Open Science.',
+          message: 'The database was updated by a newer version of Open-Science.',
           migrationId: '0009_vision_evidence',
           retryable: false,
           diagnostics: 'App version: 0.9.2 (darwin-arm64)\n\nError: boom'
@@ -324,7 +512,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_open_failed',
-          message: 'Open Science could not open its database.',
+          message: 'Open-Science could not open its database.',
           retryable: true
         }
       })
@@ -332,7 +520,7 @@ describe('DatabaseStartupGate', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(
       screen.getByText(
-        'Quit other copies of Open Science, check free disk space and folder permissions, then retry.'
+        'Quit other copies of Open-Science, check free disk space and folder permissions, then retry.'
       )
     ).toBeTruthy()
     expect(screen.queryByText(/Part of the stored data doesn't match/)).toBeNull()

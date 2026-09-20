@@ -68,7 +68,7 @@ describe('application event projections', () => {
     })
   })
 
-  it('keeps Specialist events out of Web and public Task surfaces', () => {
+  it('projects Specialist catalog changes to Web while keeping session switches and public Task private', () => {
     const catalogChanged: ApplicationEvent<'specialist:catalog-changed'> = {
       channel: 'specialist:catalog-changed',
       payload: undefined
@@ -78,8 +78,13 @@ describe('application event projections', () => {
       payload: { sessionId: 'session-1', targetName: 'Analyst' }
     }
 
+    expect(projectWebRendererEvent(catalogChanged)).toEqual({
+      protocolVersion: 1,
+      channel: 'specialist:catalog-changed',
+      payload: null
+    })
+    expect(projectWebRendererEvent(pendingSwitch)).toBeUndefined()
     for (const event of [catalogChanged, pendingSwitch]) {
-      expect(projectWebRendererEvent(event)).toBeUndefined()
       expect(projectPublicTaskEvent(event)).toBeUndefined()
       expect(projectTaskRuntimeEvent(event)).toBeUndefined()
     }

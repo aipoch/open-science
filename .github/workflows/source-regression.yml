@@ -1,0 +1,145 @@
+name: Source Regression
+
+# Run complete Mac source coverage twice daily, independently of package publication.
+# Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
+on:
+  schedule:
+    - cron: '37 5,17 * * *' # UTC; 01:37 and 13:37 Asia/Singapore
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: source-regression-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Complete source regression (macOS)
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Build web application
+        run: npm run build:web
+      - name: Install headless Chromium
+        run: npx playwright install chromium --only-shell
+      - name: Run complete Mac functional journeys
+        id: functional
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional.json
+        run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000
+      - name: Run complete Mac workspace journeys
+        id: workspace
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
+        run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000
+      - name: Run complete Mac browser and visual coverage
+        id: presentation
+        continue-on-error: true
+        run: |
+          npx playwright test --config playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=300000
+          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=300000
+      - name: Run complete Mac accessibility checks
+        id: accessibility
+        continue-on-error: true
+        run: npm run test:e2e:accessibility:signal
+      # Collect both outcomes using one build and one macOS slot. Neither failure is advisory.
+      - name: Run supplemental regressions
+        id: regressions
+        continue-on-error: true
+        uses: ./.github/actions/source-regression
+        with:
+          group: regressions
+          include-capacity: 'true'
+      - name: Run supplemental delegation
+        id: delegation
+        continue-on-error: true
+        uses: ./.github/actions/source-regression
+        with:
+          group: delegation
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: source-regression-${{ github.run_attempt }}
+          retention-days: 5
+          path: |
+            blob-report/
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+      - name: Enforce complete Mac core and presentation suites
+        if: always()
+        shell: bash
+        env:
+          FUNCTIONAL: ${{ steps.functional.outcome }}
+          WORKSPACE: ${{ steps.workspace.outcome }}
+          PRESENTATION: ${{ steps.presentation.outcome }}
+          ACCESSIBILITY: ${{ steps.accessibility.outcome }}
+        run: |
+          [[ "$FUNCTIONAL" == "success" && "$WORKSPACE" == "success" && "$PRESENTATION" == "success" && "$ACCESSIBILITY" == "success" ]]
+      - name: Enforce both supplemental suites
+        if: always()
+        shell: bash
+        env:
+          REGRESSIONS: ${{ steps.regressions.outcome }}
+          DELEGATION: ${{ steps.delegation.outcome }}
+        run: |
+          [[ "$REGRESSIONS" == "success" && "$DELEGATION" == "success" ]]
+
+  # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
+  report:
+    name: Report scheduled outcome
+    needs: [regression]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout-cone-mode: false
+      - name: Open, refresh, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        with:
+          script: |
+            const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github,
+              repo: context.repo,
+              workflowFile: 'source-regression.yml',
+              workflowName: context.workflow,
+              runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              headSha: context.sha,
+              conclusion: process.env.CONCLUSION,
+              log: core.info
+            })

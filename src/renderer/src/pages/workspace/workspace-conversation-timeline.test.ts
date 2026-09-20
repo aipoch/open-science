@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
@@ -7,7 +7,10 @@ import {
   synchronizeActiveConversationActivities
 } from '../../../../shared/conversation-graph'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
-import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
+import {
+  createWorkspaceConversationTimeline,
+  resolveForkBoundaryItemId
+} from './workspace-conversation-timeline'
 
 const message = (overrides: Partial<ChatMessage>): ChatMessage => ({
   id: 'prompt-1',
@@ -51,6 +54,51 @@ const timelineIds = (
 ): string[] => createWorkspaceConversationTimeline(input, handoffEvents).map(({ id }) => id)
 
 describe('workspace conversation timeline', () => {
+  it('avoids a full prompt-array scan for every completed turn', () => {
+    const turnCount = 250
+    const messages = Array.from({ length: turnCount }, (_, index) => [
+      message({ id: `prompt-${index}`, createdAt: index * 2, sortIndex: index * 2 }),
+      message({
+        id: `reply-${index}`,
+        role: 'agent',
+        responseToMessageId: `prompt-${index}`,
+        createdAt: index * 2 + 1,
+        sortIndex: index * 2 + 1,
+        completedAt: index * 2 + 2
+      })
+    ]).flat()
+    // Count the reported repeated scan, rather than imposing a hardware-dependent time limit.
+    // The production projection remains unmocked; restore instrumentation before assertions.
+    const originalForEach = Array.prototype.forEach
+    let promptVisits = 0
+    const scan = vi.spyOn(Array.prototype, 'forEach').mockImplementation(function (
+      this: unknown[],
+      callback,
+      thisArg
+    ) {
+      const isPromptArray =
+        this.length === messages.length &&
+        typeof this[0] === 'string' &&
+        this[0].startsWith('prompt-')
+      if (isPromptArray) promptVisits += this.length
+      return originalForEach.call(this, callback, thisArg)
+    })
+    let result: ReturnType<typeof createWorkspaceConversationTimeline>
+    try {
+      result = createWorkspaceConversationTimeline(session({ messages }))
+    } finally {
+      scan.mockRestore()
+    }
+    expect(result.map((item) => item.id)).toEqual(
+      Array.from({ length: turnCount }, (_, index) => [
+        `prompt-${index}`,
+        `reply-${index}`,
+        `turn-completion-reply-${index}`
+      ]).flat()
+    )
+    expect(promptVisits).toBeLessThanOrEqual(messages.length)
+  })
+
   it('places one turn completion after a tool that follows the final Agent fragment', () => {
     const input = session({
       messages: [
@@ -381,4 +429,127 @@ describe('workspace conversation timeline', () => {
       'turn-completion-reply-1'
     ])
   })
+})
+
+describe('fork turn boundary', () => {
+  const inherited = message({
+    id: 'copied-answer',
+    role: 'agent',
+    responseToMessageId: 'prompt-1',
+    sortIndex: 2,
+    completedAt: 200,
+    usageOrigin: { sessionId: 'ancestor', messageId: 'ancestor-answer' }
+  })
+  const fork = (overrides: Partial<ChatSession> = {}): ChatSession =>
+    session({
+      messages: [message({ sortIndex: 1 }), inherited],
+      forkOrigin: {
+        importId: 'copy',
+        sourceProjectId: 'project-1',
+        sourceSessionId: 'source',
+        importedAt: 300,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      forkHeadMessageId: inherited.id,
+      ...overrides
+    })
+
+  it.each([true, false])(
+    'keeps the fork turn before new turns despite a late inherited footer (explicit head: %s)',
+    (explicit) => {
+      const input = fork({
+        forkHeadMessageId: explicit ? inherited.id : undefined,
+        messages: [
+          message({ sortIndex: 1 }),
+          inherited,
+          message({ id: 'new-prompt', sortIndex: 3 })
+        ],
+        activities: [activity({ id: 'late-tool', sortIndex: 4 })]
+      })
+      const timeline = createWorkspaceConversationTimeline(input)
+      expect(timeline.at(-1)?.id).toBe('turn-completion-copied-answer')
+      const boundary = resolveForkBoundaryItemId(input, timeline)
+      expect(boundary).toBe(inherited.id)
+      expect(timeline.findIndex((item) => item.id === boundary)).toBeLessThan(
+        timeline.findIndex((item) => item.id === 'new-prompt')
+      )
+    }
+  )
+
+  it('includes completion details while they still belong before the next turn', () => {
+    const input = fork({ activities: [activity({ sortIndex: 3 })] })
+    expect(resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))).toBe(
+      'turn-completion-copied-answer'
+    )
+  })
+
+  it('uses the stored local head even when another inherited message follows it', () => {
+    const input = fork({
+      messages: [
+        inherited,
+        message({
+          id: 'later',
+          sortIndex: 3,
+          usageOrigin: { sessionId: 'other', messageId: 'other-message' }
+        })
+      ]
+    })
+    expect(resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))).toBe(
+      'turn-completion-copied-answer'
+    )
+  })
+
+  it('does not move the divider to another selected branch without the fork head', () => {
+    const input = fork({
+      messages: [message({ id: 'sibling', usageOrigin: inherited.usageOrigin })]
+    })
+    expect(
+      resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))
+    ).toBeUndefined()
+    const original = fork()
+    expect(resolveForkBoundaryItemId(original, createWorkspaceConversationTimeline(original))).toBe(
+      'turn-completion-copied-answer'
+    )
+  })
+})
+
+describe('branch turn boundary', () => {
+  it('keeps the selected branch turn before follow-ups even with later inherited provenance', () => {
+    const input = session({
+      branchSource: { sessionId: 'source', headMessageId: 'branch-answer' },
+      messages: [
+        message({ id: 'branch-answer', role: 'agent', sortIndex: 1, completedAt: 200 }),
+        message({
+          id: 'followup',
+          sortIndex: 2,
+          usageOrigin: { sessionId: 'other', messageId: 'other' }
+        })
+      ]
+    })
+    expect(resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))).toBe(
+      'turn-completion-branch-answer'
+    )
+  })
+})
+
+it.each(['missing-head', undefined])(
+  'does not guess a branch boundary when its head is %s',
+  (headMessageId) => {
+    const input = session({
+      branchSource: { sessionId: 'source', headMessageId },
+      messages: [message({ usageOrigin: { sessionId: 'source', messageId: 'old' } })]
+    })
+    expect(
+      resolveForkBoundaryItemId(input, createWorkspaceConversationTimeline(input))
+    ).toBeUndefined()
+  }
+)
+
+it('anchors a branch with a hidden head to its last visible ancestor', () => {
+  const input = session({
+    branchSource: { sessionId: 'source', headMessageId: 'hidden' },
+    messages: [message({ id: 'visible', sortIndex: 1 }), message({ id: 'hidden', sortIndex: 2 })]
+  })
+  const timeline = createWorkspaceConversationTimeline(input).filter((item) => item.id !== 'hidden')
+  expect(resolveForkBoundaryItemId(input, timeline)).toBe('visible')
 })

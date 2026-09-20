@@ -39,7 +39,10 @@ import {
   removeQueuedItem,
   type MessageQueueItemView
 } from './workspace-message-queue-projection'
-import { subscribeWorkspacePresentationRevealing } from './workspace-presentation-revealing'
+import {
+  isWorkspacePresentationRevealing,
+  subscribeWorkspacePresentationRevealing
+} from './workspace-presentation-revealing'
 import {
   isWorkspaceSpecialistBarrierInFlight,
   subscribeWorkspaceSpecialistBarriers
@@ -163,7 +166,7 @@ const WorkspaceMessageQueueRuntimeBridge = ({
       discardSnapshot: () => undefined
     },
     isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight,
-    isPresentationRevealing: () => false,
+    isPresentationRevealing: isWorkspacePresentationRevealing,
     isSpecialistReady: (sessionId) => {
       const session = useSessionStore
         .getState()

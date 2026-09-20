@@ -181,7 +181,11 @@ export const prepareVisibleStartupRuntime = async <Shell, Modules, Runtime>(
     const [modules] = await Promise.all([applicationModules, databaseVerification])
     return await deps.composeRuntime(shell, modules)
   } catch (error) {
-    await deps.rollbackShell?.(shell, error)
+    try {
+      await deps.rollbackShell?.(shell, error)
+    } catch {
+      // Keep the original startup failure authoritative even when shell rollback also fails.
+    }
     throw error
   }
 }
@@ -198,13 +202,15 @@ export const waitForStartupShell = (
 ): Promise<void> =>
   new Promise((resolve) => {
     let settled = false
+    // BrowserWindow.webContents cannot be accessed after destroy(), including in `closed`.
+    const webContents = window.webContents
 
     const cleanup = (): void => {
       clearTimeout(timeout)
       window.removeListener('ready-to-show', settle)
       window.removeListener('closed', settle)
-      window.webContents.removeListener('did-fail-load', onDidFailLoad)
-      window.webContents.removeListener('render-process-gone', settle)
+      webContents.removeListener('did-fail-load', onDidFailLoad)
+      webContents.removeListener('render-process-gone', settle)
     }
     const settle = (): void => {
       if (settled) return
@@ -228,8 +234,8 @@ export const waitForStartupShell = (
 
     window.once('ready-to-show', settle)
     window.once('closed', settle)
-    window.webContents.on('did-fail-load', onDidFailLoad)
-    window.webContents.once('render-process-gone', settle)
+    webContents.on('did-fail-load', onDidFailLoad)
+    webContents.once('render-process-gone', settle)
     const timeoutMs = options.timeoutMs ?? STARTUP_SHELL_TIMEOUT_MS
     const timeout = setTimeout(() => {
       options.diagnostics?.phase('startup-shell-timeout', { timeoutMs })

@@ -10,6 +10,7 @@ const MAX_HIGHLIGHT_BYTES = 256 * 1024
 type HighlightedCodeLinesProps = {
   code: string
   language?: string
+  startingLineNumber?: number
   highlightLine?: number
   rowClassName?: string
   rowStyle?: React.CSSProperties
@@ -36,6 +37,7 @@ const HighlightedCodeLines = ({
   code,
   language,
   highlightLine,
+  startingLineNumber = 1,
   rowClassName,
   rowStyle,
   lineNumberClassName,
@@ -87,7 +89,7 @@ const HighlightedCodeLines = ({
       : undefined
   const lineNumberStyle = rowStyle
     ? undefined
-    : { minWidth: `${String(lines.length).length + 2}ch` }
+    : { minWidth: `${String(startingLineNumber + lines.length - 1).length + 2}ch` }
 
   return (
     <>
@@ -95,7 +97,10 @@ const HighlightedCodeLines = ({
         return (
           <div
             key={`${index}-${line}`}
-            className={cn(rowClassName, highlightLine === index + 1 && 'bg-danger-900')}
+            className={cn(
+              rowClassName,
+              highlightLine === startingLineNumber + index && 'bg-danger-900'
+            )}
             style={rowStyle}
           >
             <span
@@ -104,7 +109,7 @@ const HighlightedCodeLines = ({
               style={lineNumberStyle}
               aria-hidden="true"
             >
-              {index + 1}
+              {startingLineNumber + index}
             </span>
             <span className={cn('whitespace-pre-wrap break-words text-text-000', contentClassName)}>
               {tokens?.[index]?.map((token, tokenIndex) => (

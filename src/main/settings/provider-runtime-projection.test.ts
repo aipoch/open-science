@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { getAgentFramework } from '../agent-framework'
 import type { StoredProvider } from './types'
+import { resolveProviderDraft } from './provider-draft-projection'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -15,6 +16,59 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each([
+    [undefined, 'cn'],
+    ['china', 'cn'],
+    ['global', 'ai']
+  ])('resolves the SenseNova validation draft for region %s', (region, domain) => {
+    expect(
+      resolveProviderDraft({
+        type: 'official',
+        vendorId: 'sensenova',
+        region,
+        key: 'synthetic-key'
+      })
+    ).toMatchObject({
+      baseUrl: `https://token.sensenova.${domain}`,
+      openaiBaseUrl: `https://token.sensenova.${domain}/v1`,
+      model: 'sensenova-6.8-flash-lite',
+      apiEndpoints: ['anthropic', 'openai']
+    })
+  })
+
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'resolves an omitted model from the changing provider default for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'anthropic',
+        type: 'official',
+        vendorId: 'anthropic',
+        name: 'Anthropic',
+        model: 'claude-opus-4-6',
+        fetchedModels: ['claude-sonnet-4-6', 'claude-opus-4-6']
+      }
+      const framework = getAgentFramework(frameworkId)
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('claude-opus-4-6')
+      const changed = { ...provider, model: 'claude-sonnet-4-6' }
+      expect(
+        owner.resolveRuntimeTarget(changed, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('claude-sonnet-4-6')
+      expect(
+        owner.resolveRuntimeTarget(
+          changed,
+          {
+            kind: 'configured',
+            requestedModel: 'claude-opus-4-6'
+          },
+          framework
+        ).effectiveModel
+      ).toBe('claude-opus-4-6')
+    }
+  )
+
   it('fails closed when a required model is outside the provider catalog', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -91,6 +145,34 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(provider.keyMask).toBe('secr…-key')
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'preserves pinned DeepSeek legacy ids after a cached refresh for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'deepseek',
+        type: 'official',
+        vendorId: 'deepseek',
+        name: 'DeepSeek',
+        fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
+      }
+      for (const model of [
+        'deepseek-v4-pro[1m]',
+        'deepseek-v4-flash',
+        'deepseek-v4-flash-vision-exp'
+      ]) {
+        expect(owner.toProviderView(provider).models).toContain(model)
+        expect(
+          owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
+        ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+      }
+    }
+  )
+
   it('routes DeepSeek V4 Pro through native Responses for Codex', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -114,7 +196,149 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
-  it('enables image input only for DeepSeek vision-exp while keeping native Responses', () => {
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'projects Ark capabilities without changing a saved selection for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'ark',
+        type: 'official',
+        vendorId: 'volcengine',
+        name: 'Ark',
+        model: 'doubao-seed-2-1-pro-260628'
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      for (const model of [
+        'doubao-seed-2-1-pro-260915',
+        'deepseek-v4-1-flash-260910',
+        'glm-5-3-flash-260828'
+      ]) {
+        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        expect(target).toMatchObject({
+          effectiveModel: model,
+          frameworkCompatible: true,
+          needsChatResponsesBridge: false,
+          needsNativeResponsesCompatibility: frameworkId === 'codex',
+          provider: { supportsImageInput: true, contextWindow: 1_024_000 }
+        })
+      }
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('doubao-seed-2-1-pro-260628')
+      expect(provider).toEqual(before)
+      expect(
+        resolveProviderDraft({ type: 'official', vendorId: 'volcengine', key: 'synthetic-key' })
+      ).toMatchObject({ model: 'doubao-seed-2-1-pro-260915' })
+    }
+  )
+
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'projects the SenseNova catalog and preserves a pinned legacy model for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'sensenova',
+        type: 'official',
+        vendorId: 'sensenova',
+        name: 'SenseNova'
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      const targets = owner.resolveRuntimeModelCatalog(provider, framework)
+
+      expect(targets.map(({ effectiveModel }) => effectiveModel)).toEqual([
+        'sensenova-6.8-flash-lite',
+        'deepseek-v4-pro',
+        'deepseek-v4-flash',
+        'glm-5.2',
+        'kimi-k3',
+        'sensenova-6.7-flash-lite'
+      ])
+      for (const target of targets) {
+        const messagesSupported = [
+          'sensenova-6.8-flash-lite',
+          'deepseek-v4-flash',
+          'sensenova-6.7-flash-lite'
+        ].includes(target.effectiveModel ?? '')
+        expect(target).toMatchObject({
+          frameworkCompatible: frameworkId !== 'claude-code' || messagesSupported,
+          needsChatResponsesBridge: frameworkId === 'codex',
+          needsNativeResponsesCompatibility: false,
+          provider: {
+            vendorId: 'sensenova',
+            baseUrl: 'https://token.sensenova.cn',
+            openaiBaseUrl: 'https://token.sensenova.cn/v1',
+            supportsImageInput: [
+              'sensenova-6.8-flash-lite',
+              'kimi-k3',
+              'sensenova-6.7-flash-lite'
+            ].includes(target.effectiveModel ?? '')
+          }
+        })
+      }
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'provider-default' }, framework).effectiveModel
+      ).toBe('sensenova-6.8-flash-lite')
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'configured', requestedModel: 'sensenova-6.7-flash-lite' },
+          framework
+        ).effectiveModel
+      ).toBe('sensenova-6.7-flash-lite')
+      expect(provider).toEqual(before)
+    }
+  )
+
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'routes SenseNova Global and rejects China-only models for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'sensenova-global',
+        type: 'official',
+        vendorId: 'sensenova',
+        name: 'SenseNova Global',
+        region: 'global',
+        fetchedModels: ['deepseek-v4-pro', 'sensenova-6.7-flash-lite']
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework(frameworkId)
+      expect(owner.toProviderView(provider).models).toEqual(['sensenova-6.8-flash-lite'])
+      expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([
+        expect.objectContaining({
+          effectiveModel: 'sensenova-6.8-flash-lite',
+          frameworkCompatible: true,
+          needsChatResponsesBridge: frameworkId === 'codex',
+          needsNativeResponsesCompatibility: false,
+          provider: expect.objectContaining({
+            baseUrl: 'https://token.sensenova.ai',
+            openaiBaseUrl: 'https://token.sensenova.ai/v1',
+            supportsImageInput: true
+          })
+        })
+      ])
+      for (const model of ['deepseek-v4-pro', 'sensenova-6.7-flash-lite']) {
+        expect(() =>
+          owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        ).toThrow('not available')
+        expect(() =>
+          owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'configured', requestedModel: model },
+            framework
+          )
+        ).toThrow()
+      }
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'provider-default' }, framework).effectiveModel
+      ).toBe('sensenova-6.8-flash-lite')
+      expect(provider).toEqual(before)
+    }
+  )
+
+  it('enables image input for DeepSeek V4.1 Flash and aliases while keeping native Responses', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
       id: 'deepseek',
@@ -123,24 +347,19 @@ describe('ProviderRuntimeProjectionOwner', () => {
       name: 'DeepSeek'
     }
 
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'deepseek-v4-flash-vision-exp' },
-        getAgentFramework('codex')
-      )
-    ).toMatchObject({
-      apiEndpoints: ['anthropic', 'openai', 'responses'],
-      needsNativeResponsesCompatibility: true,
-      provider: { supportsImageInput: true, model: 'deepseek-v4-flash-vision-exp' }
-    })
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'deepseek-v4-flash' },
-        getAgentFramework('codex')
-      ).provider.supportsImageInput
-    ).toBe(false)
+    for (const model of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      expect(
+        owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model },
+          getAgentFramework('codex')
+        )
+      ).toMatchObject({
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        needsNativeResponsesCompatibility: true,
+        provider: { supportsImageInput: true, model }
+      })
+    }
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 
@@ -235,6 +454,39 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'projects free gateway models through their supported protocols for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      for (const [vendorId, models] of [
+        ['openrouter', ['openrouter/free', 'google/gemma-4-31b-it:free']],
+        ['opencode', ['big-pickle', 'mimo-v2.5-free']]
+      ] as const) {
+        const provider: StoredProvider = {
+          id: vendorId,
+          type: 'official',
+          vendorId,
+          name: vendorId
+        }
+        const framework = getAgentFramework(frameworkId)
+        const catalog = owner.resolveRuntimeModelCatalog(provider, framework)
+        for (const model of models) {
+          expect(catalog.map(({ effectiveModel }) => effectiveModel)).toContain(model)
+          expect(
+            owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+          ).toMatchObject({
+            effectiveModel: model,
+            apiEndpoints: vendorId === 'openrouter' ? ['anthropic', 'openai'] : ['openai'],
+            frameworkCompatible: vendorId === 'openrouter' || frameworkId !== 'claude-code',
+            needsChatResponsesBridge: frameworkId === 'codex',
+            needsNativeResponsesCompatibility: false,
+            provider: { model, supportsImageInput: model !== 'big-pickle' }
+          })
+        }
+      }
+    }
+  )
+
   it('routes mixed OpenCode Zen models only through their documented protocol', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -317,4 +569,18 @@ describe('ProviderRuntimeProjectionOwner', () => {
       }
     )
   })
+})
+
+it('rejects a persisted remote HTTP provider before projecting credentials into an agent process', () => {
+  const owner = new ProviderRuntimeProjectionOwner()
+  const provider: StoredProvider = {
+    id: 'legacy',
+    name: 'Legacy',
+    type: 'custom',
+    baseUrl: 'http://remote-gateway.invalid',
+    model: 'model',
+    keyRef: encryptKey('PRIVACY_CANARY')
+  }
+  expect(() => owner.resolveProvider(provider)).toThrow(/HTTPS/)
+  expect(owner.toProviderView(provider).baseUrl).toBe(provider.baseUrl)
 })

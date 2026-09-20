@@ -6,6 +6,7 @@ import type {
   HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ReadProjectExportFilesRequest,
   ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
@@ -19,6 +20,7 @@ import {
   decodeGroupCursor,
   decodeSearchArtifactCursor,
   encodeCursor,
+  fileSearchRank,
   getAuthoritativeOverviewCounts,
   listAuthoritativeArtifactGroups,
   listAuthoritativeFiles,
@@ -189,6 +191,24 @@ class ProjectFilesQueryOwner {
     }
   }
 
+  async readExportFiles(request: ReadProjectExportFilesRequest): Promise<ProjectFileItem[]> {
+    requireIdentifier(request.projectId, 'projectId')
+    if (request.sessionId !== undefined) requireIdentifier(request.sessionId, 'sessionId')
+    const client = await this.getClient()
+    if (!this.readIndexComplete(request.projectId)) {
+      throw new Error('Some Project Files could not be indexed yet.')
+    }
+    // A single SQL statement fixes both membership and immutable Version IDs. Never traverse live
+    // pages here: a new current Version can move an unread file behind an earlier page's cursor.
+    const rows = await queryAuthoritativeFiles(client, {
+      projectIds: [request.projectId],
+      ...(request.sessionId === undefined
+        ? {}
+        : { source: 'artifact', sessionId: request.sessionId })
+    })
+    return rows.map((row) => toProjectFileItem(row))
+  }
+
   async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {
     requireIdentifier(request.projectId, 'projectId')
     requireIdentifier(request.sessionId, 'sessionId')
@@ -288,21 +308,34 @@ class ProjectFilesQueryOwner {
       throw new Error('Project files otherLimit must be between 0 and 5.')
     }
 
+    const source = request.source ?? 'artifact'
+    if (!['artifact', 'upload', 'all'].includes(source)) throw new Error('Invalid file source.')
+    if (request.sessionId !== undefined) requireIdentifier(request.sessionId, 'sessionId')
     const primaryLimit = normalizeLimit(request.primaryLimit)
     const search = normalizeSearch({
       filenameContains: request.filenameContains ?? '',
+      updatedAfter: request.updatedAfter,
+      format: request.format,
+      sort: request.sort,
       ...(request.excludedSessionIds === undefined
         ? {}
         : { excludedSessionIds: request.excludedSessionIds })
     })
     const cursor = request.primaryCursor
-      ? decodeSearchArtifactCursor(request.primaryCursor, primaryProjectIds, search)
+      ? decodeSearchArtifactCursor(
+          request.primaryCursor,
+          primaryProjectIds,
+          search,
+          source,
+          request.sessionId
+        )
       : undefined
     const client = await this.getClient()
     const [primaryResult, otherRows] = await Promise.all([
       listAuthoritativeFiles(client, {
         projectIds: primaryProjectIds,
-        source: 'artifact',
+        source: source === 'all' ? undefined : source,
+        sessionId: request.sessionId,
         search,
         cursor,
         limit: primaryLimit + 1
@@ -310,7 +343,8 @@ class ProjectFilesQueryOwner {
       request.otherLimit > 0
         ? queryAuthoritativeFiles(client, {
             projectIds: otherProjectIds,
-            source: 'artifact',
+            source: source === 'all' ? undefined : source,
+            sessionId: request.sessionId,
             search,
             limit: request.otherLimit
           })
@@ -345,9 +379,12 @@ class ProjectFilesQueryOwner {
             ? encodeCursor({
                 version: 2,
                 kind: 'globalArtifacts',
+                source,
+                sessionId: request.sessionId,
                 primaryProjectIds,
                 queryKey: search?.queryKey ?? '',
                 sortAtMs: lastPrimaryRow.sortAtMs.toString(),
+                rank: fileSearchRank(lastPrimaryRow.displayName, search),
                 seq: lastPrimaryRow.seq
               })
             : undefined

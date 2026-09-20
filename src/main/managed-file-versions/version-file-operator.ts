@@ -619,7 +619,15 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
             )
           }
           const buffer = Buffer.allocUnsafe(end - begin)
+          const beforeRead = await leaseHandle.stat({ bigint: true })
           await readExact(leaseHandle, buffer, begin)
+          // Rehashing the current file cannot validate a range captured before bytes were restored.
+          if (!verificationSnapshotMatches(beforeRead, await leaseHandle.stat({ bigint: true }))) {
+            throw new VersionFileOperatorError(
+              'INTEGRITY_FAILED',
+              'Immutable version changed during range reading.'
+            )
+          }
           await verifyUnchanged()
           return new Uint8Array(buffer)
         } catch (error) {

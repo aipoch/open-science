@@ -84,6 +84,7 @@ const resolveValidatedSessionAgentTarget = (
     frameworkEndpoints: framework?.supportedApiTypes ?? ['anthropic']
   })
   const resolution = resolveSessionAgentConfiguration({
+    providers: settings.providers,
     session: source,
     catalog,
     activeProviderId: settings.activeProviderId,

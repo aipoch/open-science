@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { materializeSessionConversationGraph } from '../../../../shared/session-persistence'
-import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
 const session = (): ChatSession =>
@@ -60,6 +60,33 @@ describe('Save as skill availability', () => {
     })
   })
 
+  it('allows a completed historical branch to prepare its own context reset', () => {
+    const original = session()
+    const graph = original.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    graph.branches.push({
+      id: 'historical-branch',
+      agentFrameId: frame.id,
+      parentBranchId: frame.activeBranchId,
+      forkMessageId: 'answer-1',
+      headMessageId: 'answer-1',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    useSessionStore.setState({ sessions: [original] })
+    expect(availability({ session: original }).enabled).toBe(true)
+    useSessionStore.getState().activateMessageBranch(original.id, 'historical-branch')
+    const switched = useSessionStore.getState().sessions[0]
+    expect(switched.status).toBe('idle')
+    expect(switched.activeRun).toBeUndefined()
+    expect(switched.messages.at(-1)).toMatchObject({ role: 'agent', status: 'complete' })
+    expect(switched.branchContextResetRequired).toBe(true)
+    expect(availability({ session: switched })).toEqual({
+      enabled: true,
+      disabledReason: undefined
+    })
+  })
+
   it('uses the active Branch tail instead of the flat compatibility projection', () => {
     const withOffBranchFlatTail = session()
     withOffBranchFlatTail.messages.push({
@@ -99,10 +126,7 @@ describe('Save as skill availability', () => {
     expect(availability({ sideChatOpen: true }).disabledReason).toContain('Close Side chat')
   })
 
-  it('waits for pending Branch and Specialist replay state', () => {
-    expect(
-      availability({ session: { ...session(), branchContextResetRequired: true } }).disabledReason
-    ).toContain('Session operation')
+  it('waits for pending history and Specialist replay state', () => {
     expect(
       availability({ session: { ...session(), specialistSwitchResetRequired: true } })
         .disabledReason

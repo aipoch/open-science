@@ -1,3 +1,4 @@
+import { readLiteratureSelectionPage } from '../literature/literature-read-pages'
 import {
   createLiteratureAttachmentVersionReference,
   type LiteratureAttachmentVersionView,
@@ -57,7 +58,12 @@ const creatorLabel = (item: LiteratureItemView): string =>
 const preferredPdfVersion = (
   item: LiteratureItemView,
   multiPageOnly: boolean
-): LiteratureAttachmentVersionView | undefined =>
+):
+  | Readonly<{
+      attachment: LiteratureItemView['attachments'][number]
+      version: LiteratureAttachmentVersionView
+    }>
+  | undefined =>
   item.attachments
     .flatMap((attachment) => attachment.versions.map((version) => ({ attachment, version })))
     .filter(({ version }) => isPdf(version) && (!multiPageOnly || (version.pageCount ?? 2) > 1))
@@ -67,14 +73,15 @@ const preferredPdfVersion = (
           Number(left.attachment.kind === 'fullText') ||
         right.version.versionNumber - left.version.versionNumber ||
         right.version.createdAt - left.version.createdAt
-    )[0]?.version
+    )[0]
 
 export const literatureItemToPdfOption = (
   item: LiteratureItemView,
   { multiPageOnly = true }: { multiPageOnly?: boolean } = {}
 ): LiteraturePdfOption | undefined => {
-  const version = preferredPdfVersion(item, multiPageOnly)
-  if (!version) return undefined
+  const preferred = preferredPdfVersion(item, multiPageOnly)
+  if (!preferred) return undefined
+  const { attachment, version } = preferred
   return {
     itemId: item.id,
     name: item.item.title || version.filename,
@@ -85,6 +92,7 @@ export const literatureItemToPdfOption = (
     size: version.sizeBytes,
     source: {
       sourceKind: 'literature-attachment-version',
+      sourceFileId: attachment.id,
       sourceVersionId: version.id
     }
   }
@@ -94,17 +102,24 @@ export const searchLiteraturePdfOptions = async (
   query: string,
   { projectId }: { projectId?: string } = {}
 ): Promise<LiteraturePdfOption[]> => {
-  const page = await window.api.literature.search({
-    scope: 'library',
-    ...(query.trim() ? { query: query.trim() } : {}),
-    ...(projectId ? { projectId } : {}),
-    limit: 100
-  })
-  return page.entries.flatMap((entry) => {
-    if (!isItem(entry)) return []
-    const option = literatureItemToPdfOption(entry)
-    return option ? [option] : []
-  })
+  const options: LiteraturePdfOption[] = []
+  let offset: number | undefined
+  do {
+    const page = await readLiteratureSelectionPage({
+      scope: 'library',
+      ...(query.trim() ? { query: query.trim() } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(offset !== undefined ? { offset } : {}),
+      limit: 100
+    })
+    for (const entry of page.entries) {
+      if (!isItem(entry)) continue
+      const option = literatureItemToPdfOption(entry)
+      if (option) options.push(option)
+    }
+    offset = page.nextOffset
+  } while (offset !== undefined)
+  return options
 }
 
 export const literatureItemToMentionOption = (
@@ -117,13 +132,13 @@ export const literatureItemToMentionOption = (
       itemId: item.id,
       metadataRevision: item.metadataRevision,
       item: item.item,
-      ...(pdf ? { attachmentVersionId: pdf.id } : {})
+      ...(pdf ? { attachmentVersionId: pdf.version.id } : {})
     },
     name: item.item.title,
     description: [creatorLabel(item), item.item.issuedYear, item.item.containerTitle]
       .filter(Boolean)
       .join(' · '),
-    iconName: pdf?.filename ?? `${item.item.title}.bib`
+    iconName: pdf?.version.filename ?? `${item.item.title}.bib`
   }
 }
 
@@ -131,7 +146,7 @@ export const searchLiteratureMentionOptions = async (
   query: string,
   { projectId }: { projectId?: string } = {}
 ): Promise<LiteratureMentionOption[]> => {
-  const page = await window.api.literature.search({
+  const page = await readLiteratureSelectionPage({
     scope: 'library',
     ...(query.trim() ? { query: query.trim() } : {}),
     ...(projectId ? { projectId } : {}),
@@ -145,7 +160,7 @@ export const searchLiteratureMentionOptions = async (
 export const searchLiteratureCollectionMentionOptions = async (
   query: string
 ): Promise<LiteratureCollectionMentionOption[]> => {
-  const page = await window.api.literature.search({
+  const page = await readLiteratureSelectionPage({
     scope: 'collections',
     ...(query.trim() ? { query: query.trim() } : {}),
     limit: 20

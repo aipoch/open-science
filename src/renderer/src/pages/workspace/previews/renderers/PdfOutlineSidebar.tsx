@@ -1,5 +1,5 @@
-/* Hallmark · component: PDF navigation · genre: modern-minimal · theme: Open Science tokens */
-import { ChevronLeft, ChevronRight, Files, ListTree } from 'lucide-react'
+/* Hallmark · component: PDF navigation · genre: modern-minimal · theme: Open-Science tokens */
+import { ChevronRight, Files, ListTree, PanelLeft } from 'lucide-react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {
   useCallback,
@@ -12,6 +12,8 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useNearViewport } from '../useNearViewport'
 
@@ -219,6 +221,14 @@ const PdfThumbnailList = ({
     updateVisibleRange()
   }, [currentPage, pageCount, updateVisibleRange])
 
+  useEffect(() => {
+    const scroll = scrollRef.current
+    if (!scroll) return
+    const observer = new ResizeObserver(updateVisibleRange)
+    observer.observe(scroll)
+    return () => observer.disconnect()
+  }, [updateVisibleRange])
+
   return (
     <div
       ref={scrollRef}
@@ -270,24 +280,34 @@ const PdfOutlineTree = ({
   const { t } = useTranslation()
   const parents = useMemo(() => collectParents(items), [items])
   const activeId = useMemo(() => activeOutlineId(items, currentPage), [currentPage, items])
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
-    () => new Set(items.filter((item) => item.children.length > 0).map((item) => item.id))
-  )
-  const [focusedId, setFocusedId] = useState<string | undefined>(activeId ?? items[0]?.id)
-  const itemRefs = useRef(new Map<string, HTMLButtonElement>())
-  const visibleExpanded = useMemo(() => {
-    const next = new Set(expanded)
+  const expandActiveParents = (current: ReadonlySet<string>): ReadonlySet<string> => {
+    const next = new Set(current)
     let parentId = activeId ? parents.get(activeId) : undefined
     while (parentId) {
       next.add(parentId)
       parentId = parents.get(parentId)
     }
     return next
-  }, [activeId, expanded, parents])
-  const visible = useMemo(() => flattenVisible(items, visibleExpanded), [items, visibleExpanded])
-  const effectiveFocusedId = visible.some(({ item }) => item.id === focusedId)
-    ? focusedId
-    : (activeId ?? visible[0]?.item.id)
+  }
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
+    expandActiveParents(
+      new Set(items.filter((item) => item.children.length > 0).map((item) => item.id))
+    )
+  )
+  const [expandedActiveId, setExpandedActiveId] = useState(activeId)
+  // Expand once per active section, then respect the user's collapse until it changes.
+  if (expandedActiveId !== activeId) {
+    setExpandedActiveId(activeId)
+    setExpanded(expandActiveParents(expanded))
+  }
+  const [focusedId, setFocusedId] = useState<string | undefined>(activeId ?? items[0]?.id)
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>())
+  const visible = useMemo(() => flattenVisible(items, expanded), [items, expanded])
+  let effectiveFocusedId = focusedId
+  while (effectiveFocusedId && !visible.some(({ item }) => item.id === effectiveFocusedId)) {
+    effectiveFocusedId = parents.get(effectiveFocusedId)
+  }
+  effectiveFocusedId ??= visible[0]?.item.id
   const toggle = (id: string, force?: boolean): void => {
     setExpanded((current) => {
       const next = new Set(current)
@@ -311,7 +331,7 @@ const PdfOutlineTree = ({
     <ul role="tree" aria-label={t('Outline')} className="space-y-0.5">
       {visible.map(({ item, level, parentId }, index) => {
         const hasChildren = item.children.length > 0
-        const isExpanded = hasChildren && visibleExpanded.has(item.id)
+        const isExpanded = hasChildren && expanded.has(item.id)
         const isActive = item.id === activeId
         return (
           <li key={item.id} role="none">
@@ -411,107 +431,115 @@ export const PdfOutlineSidebar = ({
   const effectiveMode: PdfNavigationMode = items.length > 0 ? mode : 'pages'
 
   return (
-    <aside
-      id="pdf-navigation-sidebar"
-      className="relative flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000"
-      style={{ width }}
-      aria-label={t('PDF navigation')}
-    >
-      <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1.75rem] gap-1 border-b border-border-200 p-1">
-        <button
-          type="button"
-          className={cn(
-            'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200 hover:bg-bg-200 hover:text-text-000',
-            effectiveMode === 'outline' && 'bg-bg-200 font-medium text-text-000'
-          )}
-          disabled={items.length === 0}
-          aria-pressed={effectiveMode === 'outline'}
-          onClick={() => setMode('outline')}
-        >
-          <ListTree className="size-3.5" aria-hidden="true" />
-          {t('Outline')}
-        </button>
-        <button
-          type="button"
-          className={cn(
-            'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200 hover:bg-bg-200 hover:text-text-000',
-            effectiveMode === 'pages' && 'bg-bg-200 font-medium text-text-000'
-          )}
-          aria-pressed={effectiveMode === 'pages'}
-          onClick={() => setMode('pages')}
-        >
-          <Files className="size-3.5" aria-hidden="true" />
-          {t('Pages')}
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center justify-center rounded text-text-300 hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          aria-label={t('Hide navigation')}
-          title={t('Hide navigation')}
-          onClick={onClose}
-        >
-          <ChevronLeft className="size-3.5" aria-hidden="true" />
-        </button>
-      </div>
-      {effectiveMode === 'outline' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
-          <PdfOutlineTree items={items} currentPage={currentPage} onNavigate={onNavigate} />
-        </div>
-      ) : (
-        <PdfThumbnailList
-          document={document}
-          pageCount={pageCount}
-          pageLabels={pageLabels}
-          currentPage={currentPage}
-          onNavigate={onNavigate}
-        />
-      )}
-      <button
-        type="button"
-        role="separator"
-        aria-label={t('Resize navigation')}
-        aria-orientation="vertical"
-        aria-valuemin={SIDEBAR_MIN_WIDTH}
-        aria-valuemax={SIDEBAR_MAX_WIDTH}
-        aria-valuenow={width}
-        className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          resizeTo(
-            width + (event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP)
-          )
-        }}
-        onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
-          if (event.button !== 0 || !event.isPrimary) return
-          event.currentTarget.setPointerCapture?.(event.pointerId)
-          resizeGestureRef.current = {
-            pointerId: event.pointerId,
-            startX: event.clientX,
-            startWidth: width
-          }
-        }}
-        onPointerMove={(event) => {
-          const gesture = resizeGestureRef.current
-          if (gesture?.pointerId === event.pointerId) {
-            resizeTo(gesture.startWidth + event.clientX - gesture.startX)
-          }
-        }}
-        onPointerUp={(event) => {
-          const gesture = resizeGestureRef.current
-          if (gesture?.pointerId !== event.pointerId) return
-          resizeGestureRef.current = undefined
-          if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId)
-          }
-          if (gesture.startWidth + event.clientX - gesture.startX < SIDEBAR_MIN_WIDTH) onClose()
-        }}
-        onPointerCancel={() => {
-          resizeGestureRef.current = undefined
-        }}
+    <TooltipProvider delayDuration={250} skipDelayDuration={300}>
+      <aside
+        id="pdf-navigation-sidebar"
+        className="relative flex shrink-0 flex-col border-r border-border-200 bg-bg-000 text-text-000"
+        style={{ width }}
+        aria-label={t('PDF navigation')}
       >
-        <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
-      </button>
-    </aside>
+        <div className="grid h-10 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_1.75rem] gap-1 border-b border-border-200 p-1">
+          <button
+            type="button"
+            className={cn(
+              'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200 hover:bg-bg-200 hover:text-text-000',
+              effectiveMode === 'outline' && 'bg-bg-200 font-medium text-text-000'
+            )}
+            disabled={items.length === 0}
+            aria-pressed={effectiveMode === 'outline'}
+            onClick={() => setMode('outline')}
+          >
+            <ListTree className="size-4" aria-hidden="true" />
+            {t('Outline')}
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'inline-flex items-center justify-center gap-1 rounded text-xs text-text-200 hover:bg-bg-200 hover:text-text-000',
+              effectiveMode === 'pages' && 'bg-bg-200 font-medium text-text-000'
+            )}
+            aria-pressed={effectiveMode === 'pages'}
+            onClick={() => setMode('pages')}
+          >
+            <Files className="size-4" aria-hidden="true" />
+            {t('Pages')}
+          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-text-100 hover:text-text-000"
+                aria-label={t('Hide navigation')}
+                onClick={onClose}
+              >
+                <PanelLeft aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Hide navigation')}</TooltipContent>
+          </Tooltip>
+        </div>
+        {effectiveMode === 'outline' ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+            <PdfOutlineTree items={items} currentPage={currentPage} onNavigate={onNavigate} />
+          </div>
+        ) : (
+          <PdfThumbnailList
+            document={document}
+            pageCount={pageCount}
+            pageLabels={pageLabels}
+            currentPage={currentPage}
+            onNavigate={onNavigate}
+          />
+        )}
+        <button
+          type="button"
+          role="separator"
+          aria-label={t('Resize navigation')}
+          aria-orientation="vertical"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={width}
+          className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+            event.preventDefault()
+            resizeTo(
+              width + (event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP)
+            )
+          }}
+          onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+            if (event.button !== 0 || !event.isPrimary) return
+            event.currentTarget.setPointerCapture?.(event.pointerId)
+            resizeGestureRef.current = {
+              pointerId: event.pointerId,
+              startX: event.clientX,
+              startWidth: width
+            }
+          }}
+          onPointerMove={(event) => {
+            const gesture = resizeGestureRef.current
+            if (gesture?.pointerId === event.pointerId) {
+              resizeTo(gesture.startWidth + event.clientX - gesture.startX)
+            }
+          }}
+          onPointerUp={(event) => {
+            const gesture = resizeGestureRef.current
+            if (gesture?.pointerId !== event.pointerId) return
+            resizeGestureRef.current = undefined
+            if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId)
+            }
+            if (gesture.startWidth + event.clientX - gesture.startX < SIDEBAR_MIN_WIDTH) onClose()
+          }}
+          onPointerCancel={() => {
+            resizeGestureRef.current = undefined
+          }}
+        >
+          <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
+        </button>
+      </aside>
+    </TooltipProvider>
   )
 }

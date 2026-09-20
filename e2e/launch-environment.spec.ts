@@ -25,7 +25,7 @@ test('isolates source E2E data storage without changing the process home', () =>
 
 test('isolates packaged certification storage without changing the process home', () => {
   const environment = launchEnvironment('storage-root', undefined, {
-    OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open Science'
+    OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open-Science'
   })
 
   expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBe('storage-root')
@@ -51,7 +51,13 @@ test('enables the basic password store only for Linux E2E profiles', () => {
     args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
   })
   expect(electronLaunchTarget('profile-root', {}, 'darwin')).toEqual({
-    args: ['--user-data-dir=profile-root', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--use-mock-keychain',
+      '--require',
+      expect.stringContaining('mock-credential-identity.cjs'),
+      expect.any(String)
+    ]
   })
   expect(electronLaunchTarget('profile-root', {}, 'win32')).toEqual({
     args: ['--user-data-dir=profile-root', expect.any(String)]
@@ -63,15 +69,30 @@ test('launches packaged and source applications with the expected Linux argument
     electronLaunchTarget(
       'profile-root',
       {
-        OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open Science.app/Contents/MacOS/Open Science'
+        OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open-Science.app/Contents/MacOS/Open-Science'
       },
       'linux'
     )
   ).toEqual({
     args: ['--user-data-dir=profile-root', '--password-store=basic'],
-    executablePath: '/artifacts/Open Science.app/Contents/MacOS/Open Science'
+    executablePath: '/artifacts/Open-Science.app/Contents/MacOS/Open-Science'
   })
   expect(electronLaunchTarget('profile-root', {}, 'linux')).toEqual({
     args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
+  })
+})
+
+test('uses the real Keychain and native identity probe for packaged macOS E2E', () => {
+  expect(
+    electronLaunchTarget(
+      'profile-root',
+      {
+        OPEN_SCIENCE_E2E_EXECUTABLE: '/artifacts/Open-Science.app/Contents/MacOS/Open-Science'
+      },
+      'darwin'
+    )
+  ).toEqual({
+    args: ['--user-data-dir=profile-root'],
+    executablePath: '/artifacts/Open-Science.app/Contents/MacOS/Open-Science'
   })
 })

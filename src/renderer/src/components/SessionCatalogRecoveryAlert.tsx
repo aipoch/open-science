@@ -4,7 +4,11 @@ import * as Dialog from '@/components/ui/dialog'
 
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { SessionPersistenceAlert } from './SessionPersistenceAlert'
 
 type SessionCatalogRecoveryAlertProps = {
@@ -50,7 +54,7 @@ const SessionCatalogRecoveryAlert = ({
       <SessionPersistenceAlert
         title={t('Project recovery needs attention')}
         message={t(
-          'Open Science could not finish recovering a previous project deletion. Retry recovery before archiving or deleting projects.'
+          'Open-Science could not finish recovering a previous project deletion. Retry recovery before archiving or deleting projects.'
         )}
         inline={inline}
         onRetry={onRetry}
@@ -62,13 +66,13 @@ const SessionCatalogRecoveryAlert = ({
   if (recovery.kind === 'unsupported-version') {
     return (
       <SessionPersistenceAlert
-        title={t('Open Science update required')}
+        title={t('Open-Science update required')}
         message={t(
-          '{{count}} saved conversations require a newer version of Open Science. Update the app before creating or saving conversations so those files stay unchanged.',
+          '{{count}} saved conversations require a newer version of Open-Science. Update the app before creating or saving conversations so those files stay unchanged.',
           {
             count: recovery.affectedFileCount,
             defaultValue_one:
-              'A saved conversation requires a newer version of Open Science. Update the app before creating or saving conversations so those files stay unchanged.'
+              'A saved conversation requires a newer version of Open-Science. Update the app before creating or saving conversations so those files stay unchanged.'
           }
         )}
         variant="warning"
@@ -93,7 +97,7 @@ const SessionCatalogRecoveryAlert = ({
               ? t('Conversation storage limit reached')
               : t('Project archive needs attention')
           }
-          message={
+          message={`${
             isOversized
               ? t(
                   'One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.'
@@ -106,9 +110,11 @@ const SessionCatalogRecoveryAlert = ({
                       'A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified. You can still permanently delete the project.'
                   }
                 )
-          }
+          } ${t('Compute jobs in affected Sessions may remain queued. Preserve the affected files and recover a valid copy; dispatch retries automatically.')}`}
           variant="warning"
           inline={inline}
+          onRetry={onRetry}
+          retryLabel={t('Recheck saved conversations')}
           onAction={() => setAreRecoveryDetailsOpen(true)}
           actionLabel={t('View affected conversations')}
           onDismiss={onDismiss}
@@ -123,7 +129,7 @@ const SessionCatalogRecoveryAlert = ({
               data-testid="session-recovery-details-dialog"
             >
               <div className="border-b border-border px-5 py-4">
-                <Dialog.Title className="text-base font-semibold text-foreground">
+                <Dialog.Title className={dialogTitleClassName}>
                   {t('Affected saved conversations')}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-muted-foreground">

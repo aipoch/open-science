@@ -78,3 +78,72 @@ describe('Literature duplicate detection', () => {
     expect(groups[0].itemIds).toHaveLength(1000)
   })
 })
+
+for (const order of ['abcd', 'cdab', 'badc', 'dcba']) {
+  it(`finds the compatible pair behind crossed identifiers in order ${order}`, () => {
+    const candidates = Object.fromEntries(
+      [
+        ['a', 'x', '1'],
+        ['b', 'y', '2'],
+        ['c', 'x', '2'],
+        ['d', 'x', '2']
+      ].map(([id, value, pmid]) => [
+        id,
+        item(id, {
+          title: '',
+          issuedYear: null,
+          creators: [],
+          identifiers: [
+            { scheme: 'doi', normalizedValue: `10.1234/${value}` },
+            { scheme: 'pmid', normalizedValue: pmid }
+          ]
+        })
+      ])
+    )
+    expect(
+      findLiteratureDuplicateGroups([...order].map((id) => candidates[id])).map((group) =>
+        group.itemIds.sort()
+      )
+    ).toEqual([['c', 'd']])
+  })
+}
+
+it('finds matching metadata after an incompatible candidate occupies its key', () => {
+  expect(
+    findLiteratureDuplicateGroups([
+      item('a', {
+        identifiers: [
+          { scheme: 'doi', normalizedValue: '10.1234/x' },
+          { scheme: 'pmid', normalizedValue: '1' }
+        ]
+      }),
+      item('c', { identifiers: doi('10.1234/y') }),
+      item('d', { identifiers: [{ scheme: 'pmid', normalizedValue: '2' }] })
+    ]).map((group) => group.itemIds)
+  ).toEqual([['c', 'd']])
+})
+
+it('partitions a collision key even when unrelated records lack identifiers', () => {
+  const records = Array.from({ length: 1000 }, (_, index) =>
+    item(String(index), { identifiers: doi(`10.1234/${index}`) })
+  )
+  records.push(item('unidentified', { title: 'Unrelated' }))
+  records.push(item('copy', { identifiers: doi('10.1234/999') }))
+  expect(findLiteratureDuplicateGroups(records).map((group) => group.itemIds)).toEqual([
+    ['999', 'copy']
+  ])
+})
+it('preserves cross-key joins when a component gains a second identity scheme', () => {
+  const records = [
+    item('a', { title: 'First title', identifiers: doi('10.1234/a') }),
+    item('b', {
+      title: 'Second title',
+      identifiers: [...doi('10.1234/a'), { scheme: 'pmid', normalizedValue: '42' }]
+    }),
+    item('c', { title: 'Third title', identifiers: [{ scheme: 'pmid', normalizedValue: '42' }] }),
+    item('d', { title: 'Second title', identifiers: doi('10.1234/conflict') })
+  ]
+  expect(findLiteratureDuplicateGroups(records).map((group) => group.itemIds)).toEqual([
+    ['a', 'b', 'c']
+  ])
+})

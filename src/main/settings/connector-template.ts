@@ -681,7 +681,7 @@ export const parseConnectorTemplate = (
           diagnostics,
           'warning',
           'connector-template.normalized-name',
-          'MCP server name was normalized for Open Science.',
+          'MCP server name was normalized for Open-Science.',
           path
         )
       }

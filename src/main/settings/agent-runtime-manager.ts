@@ -4,6 +4,7 @@ import { access, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
+import { BootstrapError } from '../../shared/bootstrap'
 
 import type {
   ClaudeDetectResult,
@@ -14,7 +15,7 @@ import type {
   InstallCodeBuddyRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
-  Preflight,
+  ReadinessPreflight,
   ValidateProviderResult
 } from '../../shared/settings'
 import {
@@ -63,6 +64,7 @@ import {
 } from './codex-detect'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import { provisionAppClaudePrivateProfile } from './claude-config-provision'
 import { provisionClaudeRuntime, type ClaudeRuntimeAssets } from './claude-runtime-provisioner'
@@ -101,6 +103,7 @@ import {
 import { runEnvironmentCheck } from './environment-check'
 import { computePreflight } from './preflight'
 import { isEncryptionAvailable } from './crypto'
+import { getCredentialStore } from './credential-store-mode'
 import { augmentedPathEnv } from './shell-path'
 import { buildProviderEnv, type ResolvedProvider } from './provider-env'
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
@@ -313,6 +316,7 @@ export type AgentRuntimeManagerOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
+  installCoordinator?: SettingsInstallCoordinator
 }
 
 // Owns host runtime discovery, installation, executable preparation, and runtime-specific filesystem
@@ -331,10 +335,9 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
-  private activeInstallId: string | undefined
   private activeInstallAbort: AbortController | undefined
   private activeInstallCompletion: Promise<Error | undefined> | undefined
-  private installAdmissionHolders = 0
+  private readonly installCoordinator: SettingsInstallCoordinator
   private readonly shutdownAbort = new AbortController()
   private readonly activeDetections = new Set<Promise<unknown>>()
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
@@ -354,21 +357,15 @@ export class AgentRuntimeManager {
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
 
   hasActiveInstall(): boolean {
-    return this.activeInstallId !== undefined
+    return this.installCoordinator.getActiveId() !== undefined
   }
 
   getActiveInstallId(): string | undefined {
-    return this.activeInstallId
+    return this.installCoordinator.getActiveId()
   }
 
   holdInstallAdmission(): () => void {
-    this.installAdmissionHolders += 1
-    let released = false
-    return () => {
-      if (released) return
-      released = true
-      this.installAdmissionHolders -= 1
-    }
+    return this.installCoordinator.holdAdmission()
   }
 
   async dispose(): Promise<void> {
@@ -427,6 +424,7 @@ export class AgentRuntimeManager {
 
     this.allocateOpenCodeUsagePort = options.allocateOpenCodeUsagePort ?? allocateLoopbackPort
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
+    this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodeBuddyImpl =
@@ -436,7 +434,7 @@ export class AgentRuntimeManager {
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
   }
 
-  async getPreflight(providers: ProviderPreflightAccess): Promise<Preflight> {
+  async getPreflight(providers: ProviderPreflightAccess): Promise<ReadinessPreflight> {
     return this.trackDetection(async (signal) => {
       const settings = await this.repository.getSettings()
       signal.throwIfAborted()
@@ -461,18 +459,16 @@ export class AgentRuntimeManager {
       const activeEndpoints = activeProvider
         ? providers.resolveProviderApiEndpoints(activeProvider, activeModel)
         : undefined
-      const activeProviderCompatible =
-        activeProvider && configuredModelAvailable
-          ? isProviderUsableByFramework(
-              { apiEndpoints: activeEndpoints, type: activeProvider.type },
-              framework
-            ) &&
-            (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
-          : false
-      const activeProviderKeyUsable =
-        activeProvider && activeProvider.lastValidatedAt !== undefined
-          ? await providers.isProviderKeyUsable(activeProvider)
-          : false
+      const activeProviderCompatible = activeProvider
+        ? isProviderUsableByFramework(
+            { apiEndpoints: activeEndpoints, type: activeProvider.type },
+            framework
+          ) &&
+          (framework.id !== 'codex' || isModelBridgeSupported(activeProvider, activeModel))
+        : false
+      const activeProviderKeyUsable = activeProvider
+        ? await providers.isProviderKeyUsable(activeProvider)
+        : false
       const activeValidationTarget = activeProvider
         ? {
             model: activeModel,
@@ -500,6 +496,7 @@ export class AgentRuntimeManager {
         isProviderKeyUsable: (provider) =>
           provider.id === activeProvider?.id && activeProviderKeyUsable,
         activeProviderCompatible,
+        activeProviderModelAvailable: configuredModelAvailable,
         activeValidationTarget
       })
     })
@@ -558,7 +555,8 @@ export class AgentRuntimeManager {
             runtime: codebuddyRuntime
           }
         ],
-        encryptionAvailable: isEncryptionAvailable()
+        encryptionAvailable: isEncryptionAvailable(),
+        credentialStore: getCredentialStore()
       })
       signal.throwIfAborted()
       return result
@@ -570,6 +568,14 @@ export class AgentRuntimeManager {
     signal?: AbortSignal
   ): Promise<T> {
     this.shutdownAbort.signal.throwIfAborted()
+    // The install's own post-install detection is allowed; independent detection must not probe
+    // files being replaced or publish an older snapshot after the installer commits its result.
+    if (
+      this.installCoordinator.getActiveId() !== undefined &&
+      signal !== this.activeInstallAbort?.signal
+    ) {
+      throw new Error('Runtime installation is in progress. Wait before detecting agents.')
+    }
     const operationSignal = signal
       ? AbortSignal.any([signal, this.shutdownAbort.signal])
       : this.shutdownAbort.signal
@@ -645,6 +651,35 @@ export class AgentRuntimeManager {
         if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
       }
     }, signal)
+  }
+
+  async bootstrapCodex(onEvent: (event: ClaudeInstallEvent) => void): Promise<void> {
+    await this.repository.selectBootstrapCodex()
+    const healthy = (): Promise<boolean> =>
+      this.trackDetection(async (signal) => {
+        const settings = await this.repository.getSettings()
+        const codex = settings.codex
+        if (
+          !codex?.resolvedPath ||
+          !codex.nativePath ||
+          !codexVersionsFromProbe(await this.probeConfiguredCodexRuntime(codex, signal))
+        )
+          return false
+        const ready = await this.codexDetectDeps.smokeInitialize(
+          codex.resolvedPath,
+          { codexPath: codex.nativePath },
+          signal
+        )
+        signal.throwIfAborted()
+        return ready
+      })
+    if (await healthy()) return this.repository.selectBootstrapCodex()
+    await this.detectCodex()
+    if (await healthy()) return this.repository.selectBootstrapCodex()
+    const installed = await this.installCodex({ source: 'managed' }, onEvent)
+    if (!installed.ok || !(await healthy())) throw new BootstrapError('runtime_unavailable')
+    // Installation may overlap a human Settings change; never change the selection back.
+    await this.repository.selectBootstrapCodex()
   }
 
   async installClaude(
@@ -820,14 +855,22 @@ export class AgentRuntimeManager {
     if (this.shutdownAbort.signal.aborted) {
       return { installId, ok: false, error: 'Settings service is shutting down.' }
     }
-    if (this.activeInstallId !== undefined || this.installAdmissionHolders > 0) {
+    // Check synchronously before claiming install admission. activeDetections includes repository
+    // writes, so replacement cannot race a probe or its delayed snapshot commit.
+    if (this.activeDetections.size > 0) {
+      return {
+        installId,
+        ok: false,
+        error: 'Runtime detection is in progress. Retry after it finishes.'
+      }
+    }
+    const lease = this.installCoordinator.tryAcquire(installId)
+    if (!lease) {
       return { installId, ok: false, error: 'Another install is already in progress.' }
     }
-
     const controller = new AbortController()
     const completion = Promise.withResolvers<Error | undefined>()
     let cleanupFailure: Error | undefined
-    this.activeInstallId = installId
     this.activeInstallAbort = controller
     this.activeInstallCompletion = completion.promise
     try {
@@ -835,11 +878,9 @@ export class AgentRuntimeManager {
         cleanupFailure = error
       })
     } finally {
-      if (this.activeInstallId === installId) {
-        this.activeInstallId = undefined
-        this.activeInstallAbort = undefined
-        this.activeInstallCompletion = undefined
-      }
+      this.activeInstallAbort = undefined
+      this.activeInstallCompletion = undefined
+      lease.release()
       completion.resolve(cleanupFailure)
     }
   }
@@ -903,6 +944,10 @@ export class AgentRuntimeManager {
     await this.detectCodex()
     await this.autoSwitchAwayFrom('codex')
     return { activeBackendAffected: wasActive }
+  }
+
+  isManagedCodexNativePath(path: string): boolean {
+    return path === managedCodexBinary(this.configRoot)
   }
 
   isManagedRuntimePath(frameworkId: AgentFrameworkId, path: string): boolean {
@@ -1045,7 +1090,7 @@ export class AgentRuntimeManager {
     const adapterPath =
       this.codexDetectDeps.managedAdapterPath ?? managedCodexAdapterEntry(this.configRoot)
     if (!(await this.pathExists(adapterPath))) {
-      throw new Error('Open Science Codex ACP adapter not found. Install Codex in settings.')
+      throw new Error('Open-Science Codex ACP adapter not found. Install Codex in settings.')
     }
 
     const adapterOutput = await this.codexDetectDeps
@@ -1053,7 +1098,7 @@ export class AgentRuntimeManager {
       .catch(() => undefined)
     const adapterVersion = adapterOutput ? parseCodexVersion(adapterOutput) : undefined
     if (!adapterVersion) {
-      throw new Error('Open Science could not determine the Codex ACP adapter version.')
+      throw new Error('Open-Science could not determine the Codex ACP adapter version.')
     }
     if (!isSupportedCodexAcpVersion(adapterVersion)) {
       throw new Error(buildUnsupportedCodexAcpVersionMessage(adapterVersion))
@@ -1311,19 +1356,19 @@ export class AgentRuntimeManager {
     const components = await detectCodexComponents(detectDeps, signal)
     let diagnostic: string | undefined
     if (components.nativeCliFound && !components.adapterFound) {
-      diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open Science is missing.`
+      diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open-Science is missing.`
     } else if (!components.nativeCliFound && components.adapterFound) {
       diagnostic =
         components.adapterFailureReason === 'smoke-test-failed'
           ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but it failed to initialize (native Codex CLI may be missing or incompatible).`
           : components.adapterFailureReason === 'unsupported-version'
-            ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but Open Science requires ${MINIMUM_CODEX_ACP_VERSION} or later.`
+            ? `Codex ACP adapter ${components.adapterVersion} is installed at ${components.adapterPath}, but Open-Science requires ${MINIMUM_CODEX_ACP_VERSION} or later.`
             : `Codex ACP adapter is installed at ${components.adapterPath}, but version detection failed.`
     } else if (components.nativeCliFound && components.adapterFound) {
       if (components.adapterFailureReason === 'smoke-test-failed') {
         diagnostic = `Both native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but the adapter failed to initialize with the native CLI.`
       } else if (components.adapterFailureReason === 'unsupported-version') {
-        diagnostic = `Native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but Open Science requires ACP adapter ${MINIMUM_CODEX_ACP_VERSION} or later.`
+        diagnostic = `Native Codex ${components.nativeCliVersion} and ACP adapter ${components.adapterVersion} are installed, but Open-Science requires ACP adapter ${MINIMUM_CODEX_ACP_VERSION} or later.`
       } else if (components.adapterFailureReason === 'version-probe-failed') {
         diagnostic = `Native Codex ${components.nativeCliVersion} is installed, and an ACP adapter exists at ${components.adapterPath}, but the adapter's version could not be determined.`
       }

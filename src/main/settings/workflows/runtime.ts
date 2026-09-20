@@ -4,6 +4,7 @@ import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   type ProviderDeletionScenarioModelHandling,
+  type RefreshProviderModelsRequest,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type SetAgentRoutingRequest,
@@ -12,15 +13,20 @@ import {
 } from '../../../shared/settings'
 import type { AgentFrameworkId } from '../../agent-framework'
 import type { SettingsService } from '../service'
+import { createLogger, diagnosticErrorFields } from '../../logger'
+
+const log = createLogger('settings')
 
 type RuntimeSettingsWorkflowStore = Pick<
   SettingsService,
   | 'getSettingsView'
+  | 'refreshProviderModels'
   | 'uninstallClaude'
   | 'uninstallOpencode'
   | 'uninstallCodeBuddy'
   | 'uninstallCodex'
   | 'upsertProvider'
+  | 'saveValidatedProvider'
   | 'deleteProvider'
   | 'setActiveProvider'
   | 'setAgentFramework'
@@ -93,6 +99,50 @@ class RuntimeSettingsWorkflows {
     }
 
     return snapshot
+  }
+
+  async saveValidatedProvider(
+    request: UpsertProviderRequest
+  ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['saveValidatedProvider']>>> {
+    const before = await this.settings.getSettingsView()
+    const result = await this.settings.saveValidatedProvider(request)
+    if (result.providerId && request.id) {
+      try {
+        this.effects.requestProviderReconnect(
+          affectedProviderIds(result.providerId),
+          result.providerId === before.activeProviderId ||
+            result.providerId === result.snapshot?.activeProviderId
+        )
+      } catch (error) {
+        log.warn(
+          'Provider saved, but runtime reconnect could not be requested.',
+          diagnosticErrorFields(error)
+        )
+        return { ...result, runtimeReconnectFailed: true }
+      }
+    }
+    return result
+  }
+
+  async refreshProviderModels(
+    request: RefreshProviderModelsRequest
+  ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['refreshProviderModels']>>> {
+    const before = await this.settings.getSettingsView()
+    const result = await this.settings.refreshProviderModels(request)
+    if (!result.ok) return result
+    const after = await this.settings.getSettingsView()
+    const previous = before.providers.find((provider) => provider.id === request.providerId)
+    const current = after.providers.find((provider) => provider.id === request.providerId)
+    // Catalog order can own an omitted model's default. Reconnect existing provider generations
+    // through the same deferred transition used for provider edits; do not interrupt active turns.
+    if (previous && current && JSON.stringify(previous.models) !== JSON.stringify(current.models)) {
+      this.effects.requestProviderReconnect(
+        affectedProviderIds(request.providerId),
+        request.providerId === before.activeProviderId ||
+          request.providerId === after.activeProviderId
+      )
+    }
+    return result
   }
 
   async deleteProvider(

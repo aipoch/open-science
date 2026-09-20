@@ -254,6 +254,7 @@ type Overrides = Partial<{
   historyStatus: string
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
   mentionPreviewContext: { sessionId: string; projectId?: string }
+  onPreviewMentionArtifact: React.ComponentProps<typeof ComposerEditor>['onPreviewMentionArtifact']
   focusRequest: string | number
   restoreFocusRequest: number
   caretRequest: { key: number; position: { nodeIndex: number; offset: number } }
@@ -278,6 +279,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         historyStatus={overrides.historyStatus}
         onNavigateHistory={overrides.onNavigateHistory}
         mentionPreviewContext={overrides.mentionPreviewContext}
+        onPreviewMentionArtifact={overrides.onPreviewMentionArtifact}
         focusRequest={overrides.focusRequest}
         restoreFocusRequest={overrides.restoreFocusRequest}
         caretRequest={overrides.caretRequest}
@@ -313,6 +315,223 @@ const flushProjectFiles = async (): Promise<void> => {
     await Promise.resolve()
   })
 }
+
+describe('ComposerEditor mention input safety', () => {
+  it('does not insert a prior-project reference into an identical unsaved project draft', async () => {
+    window.api.literature = {
+      ...window.api.literature,
+      search: vi.fn().mockImplementation((request) => {
+        if (request.scope === 'collections') return Promise.resolve({ entries: [] })
+        if (request.projectId === 'project-b') return new Promise(() => undefined)
+        return Promise.resolve({
+          entries: [
+            {
+              id: 'project-a-only-item',
+              metadataRevision: 7,
+              attachments: [],
+              projectIds: ['default'],
+              collectionIds: [],
+              createdAt: 1,
+              updatedAt: 1,
+              item: {
+                itemType: 'journalArticle',
+                title: 'UniquePaper',
+                abstract: '',
+                issuedText: '',
+                containerTitle: '',
+                shortTitle: '',
+                language: '',
+                rights: '',
+                url: '',
+                extra: '',
+                typeFields: {},
+                creators: [],
+                identifiers: []
+              }
+            }
+          ]
+        })
+      })
+    }
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: '@Unique' }] }
+    renderEditor({ doc })
+    await typeQuery('@Unique')
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[role="option"]')?.textContent).toContain('UniquePaper')
+    )
+    await act(async () => useNavigationStore.setState({ activeProjectId: 'project-b' }))
+    renderEditor({ doc: { nodes: [{ type: 'text', text: '@Unique' }] } })
+    act(() => document.body.querySelector<HTMLElement>('[role="option"]')?.click())
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(
+      domToDoc(editor()).nodes.some(
+        (node) => node.type === 'literature' && node.itemId === 'project-a-only-item'
+      )
+    ).toBe(false)
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+  })
+
+  const typeQuery = async (text: string): Promise<void> => {
+    act(() => {
+      editor().textContent = text
+      setCaret(editor().firstChild!, text.length)
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flushProjectFiles()
+  }
+
+  it.each([
+    { key: 'Enter', query: '@', outputFirst: true },
+    { key: 'Tab', query: '@', outputFirst: true },
+    { key: 'Enter', query: '@seq', outputFirst: true },
+    { key: 'Enter', query: '@', outputFirst: false }
+  ])(
+    'inserts the hovered upload with $key for $query (output first: $outputFirst)',
+    async ({ key, query, outputFirst }) => {
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: outputFirst ? [pickerProjectFiles[1], pickerProjectFiles[0]] : pickerProjectFiles,
+        totalCount: 2
+      })
+      renderEditor()
+      await typeQuery(query)
+      const upload = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((option) => option.textContent?.includes('sequence.csv'))!
+      act(() => upload.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+      expect(upload.getAttribute('aria-selected')).toBe('true')
+      dispatchKey(editor(), key)
+      await flushProjectFiles()
+      expect(editor().querySelector('[data-mention-type]')?.textContent).toBe('@sequence.csv')
+    }
+  )
+
+  it.each(['/lit', '@seq', '#'])(
+    'preserves %s while Enter confirms IME composition',
+    async (query) => {
+      renderEditor()
+      await typeQuery(query)
+      expect(document.body.querySelector('[role="option"]')).not.toBeNull()
+      act(() => {
+        editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      })
+      dispatchKey(editor(), 'Enter', { isComposing: true })
+      await flushProjectFiles()
+      expect(editor().querySelector('[data-mention-type]')).toBeNull()
+      expect(editor().textContent).toBe(query)
+      expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    }
+  )
+
+  it.each(
+    ['/lit', '@seq', '#'].flatMap((query) =>
+      ['Enter', 'ArrowDown', 'ArrowUp', 'Escape', 'Tab'].map((key) => ({ query, key }))
+    )
+  )('leaves $key to composition for $query without a native flag', async ({ query, key }) => {
+    renderEditor()
+    await typeQuery(query)
+    const active = editor().getAttribute('aria-activedescendant')
+    act(() => editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })))
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    act(() => editor().dispatchEvent(event))
+    await flushProjectFiles()
+    expect(event.defaultPrevented).toBe(false)
+    expect(editor().textContent).toBe(query)
+    expect(editor().getAttribute('aria-activedescendant')).toBe(active)
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    act(() => editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })))
+    dispatchKey(editor(), 'Enter')
+    await flushProjectFiles()
+    expect(editor().querySelector('[data-mention-type]')).not.toBeNull()
+  })
+
+  it.each(['another token', 'cancel', 'replace draft', 'switch session', 'new selection'])(
+    'ignores an earlier file lookup after %s',
+    async (change) => {
+      const inspect = vi.mocked(window.api.managedFileVersions.inspect)
+      const result = await inspect({ source: 'upload', projectId: 'default', fileId: 'up-1' })
+      let resolve!: (value: typeof result) => void
+      inspect.mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          })
+      )
+      renderEditor({ mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' } })
+      await typeQuery(change === 'another token' ? '@seq @seq' : '@seq')
+      dispatchKey(editor(), 'Enter')
+      let expected = '@seq'
+      if (change === 'another token') {
+        act(() => {
+          setCaret(editor().firstChild!, 4)
+          document.dispatchEvent(new Event('selectionchange'))
+        })
+        expected = '@seq @seq'
+      } else if (change === 'cancel') {
+        dispatchKey(editor(), 'Escape')
+      } else if (change === 'switch session') {
+        renderEditor({
+          doc: { nodes: [{ type: 'text', text: '@seq' }] },
+          mentionPreviewContext: { sessionId: 'session-2', projectId: 'default' }
+        })
+      } else if (change === 'replace draft') {
+        renderEditor({
+          doc: { nodes: [{ type: 'text', text: '@seq new draft' }] },
+          mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' }
+        })
+        // Preserve the query while replacing the controlled draft through public props.
+        act(() => {
+          setCaret(editor().firstChild!, 4)
+          document.dispatchEvent(new Event('selectionchange'))
+        })
+        expected = '@seq new draft'
+      } else {
+        await typeQuery('@report')
+        dispatchKey(editor(), 'Enter')
+        await flushProjectFiles()
+        expected = '@report.pdf'
+      }
+      await act(async () => resolve(result))
+      expect(editor().textContent).toBe(expected)
+      expect(editor().querySelectorAll('[data-mention-type]')).toHaveLength(
+        change === 'new selection' ? 1 : 0
+      )
+    }
+  )
+
+  it('preserves a newer file query when an earlier version lookup finishes', async () => {
+    const inspect = vi.mocked(window.api.managedFileVersions.inspect)
+    const result = await inspect({ source: 'upload', projectId: 'default', fileId: 'up-1' })
+    let resolve!: (value: typeof result) => void
+    inspect.mockClear()
+    inspect.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        })
+    )
+    renderEditor()
+    await typeQuery('@seq')
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('sequence.csv')
+    dispatchKey(editor(), 'Enter')
+    expect(inspect).toHaveBeenCalledOnce()
+    await typeQuery('@report')
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('report.pdf')
+    await act(async () => resolve(result))
+    expect(editor().textContent).toBe('@report')
+    expect(editor().querySelector('[data-mention-type]')).toBeNull()
+  })
+
+  it.each([
+    ['/does-not-exist', 'No matching skills'],
+    ['#999999999', 'No matching sessions']
+  ])('explains empty suggestions for %s', async (query, message) => {
+    renderEditor()
+    await typeQuery(query)
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(0)
+    expect(document.body.textContent).toContain(message)
+  })
+})
 
 describe('ComposerEditor', () => {
   it('shows the placeholder when the doc is empty and hides it once there is content', () => {
@@ -478,6 +697,66 @@ describe('ComposerEditor', () => {
     })
 
     expect(onDocChange).toHaveBeenCalledWith({ nodes: [{ type: 'text', text: 'hello' }] })
+  })
+
+  it('emits browser-created multiline blocks with their logical caret position', () => {
+    const onDocChange = vi.fn()
+    renderEditor({ onDocChange })
+    const secondLine = document.createElement('div')
+    secondLine.textContent = 'second line'
+
+    act(() => {
+      editor().append('first line', secondLine)
+      setCaret(secondLine.firstChild!, 'second'.length)
+    })
+    dispatchKey(editor(), 'x')
+    act(() => editor().dispatchEvent(new Event('input', { bubbles: true })))
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: [{ type: 'text', text: 'first line\nsecond line' }] },
+      { nodeIndex: 0, offset: 'first line\nsecond'.length }
+    )
+  })
+
+  it('maps a multiline caret after an owned chip to the logical Composer node', () => {
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: {
+        nodes: [
+          { type: 'text', text: 'first ' },
+          { type: 'skill', id: 'analysis', name: 'analysis' },
+          { type: 'text', text: 'second line' }
+        ]
+      },
+      onDocChange
+    })
+    const root = editor()
+    const firstLine = document.createElement('div')
+    firstLine.append('first ')
+    const skill = document.createElement('span')
+    skill.setAttribute('contenteditable', 'false')
+    skill.setAttribute('data-mention-type', 'skill')
+    skill.setAttribute('data-skill-id', 'analysis')
+    skill.textContent = '/analysis'
+    firstLine.append(skill)
+    const secondLine = document.createElement('div')
+    secondLine.textContent = 'second line'
+    root.replaceChildren(firstLine, secondLine)
+
+    act(() => setCaret(secondLine.firstChild!, 'second'.length))
+    dispatchKey(root, 'x')
+    act(() => root.dispatchEvent(new Event('input', { bubbles: true })))
+
+    expect(onDocChange).toHaveBeenCalledWith(
+      {
+        nodes: [
+          { type: 'text', text: 'first ' },
+          { type: 'skill', id: 'analysis', name: 'analysis' },
+          { type: 'text', text: '\nsecond line' }
+        ]
+      },
+      { nodeIndex: 2, offset: '\nsecond'.length }
+    )
   })
 
   it('captures the selection start before replacing selected Composer text', () => {
@@ -1291,7 +1570,54 @@ describe('ComposerEditor', () => {
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 
-  it('opens an upload mention chip in the preview workbench on click after a successful probe', async () => {
+  it.each(pickerProjectFiles)(
+    'opens a pasted $source reference before a target Session exists',
+    async (file) => {
+      renderEditor()
+      editor().focus()
+      setCaret(editor(), 0)
+      const part = {
+        type: 'artifact',
+        id: file.id,
+        sourceFileId: file.sourceFileId,
+        versionId: file.sourceVersionId,
+        source: file.source,
+        name: file.name,
+        path: file.path,
+        mimeType: file.mimeType
+      }
+      const carrier = document.createElement('span')
+      carrier.setAttribute(
+        'data-open-science-message',
+        JSON.stringify({
+          version: 1,
+          origin: location.origin,
+          projectId: 'default',
+          parts: [part]
+        })
+      )
+      const paste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', {
+        value: {
+          getData: (type: string) => (type === 'text/html' ? carrier.outerHTML : `@${file.name}`)
+        }
+      })
+      act(() => editor().dispatchEvent(paste))
+      const chip = editor().querySelector<HTMLElement>('[data-mention-type="artifact"]')
+      expect(chip).not.toBeNull()
+      await act(async () => chip!.click())
+      expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+      expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+        projectId: 'default',
+        sessionId: 'session-1',
+        managedFileId: file.sourceFileId,
+        path: file.path,
+        name: file.name
+      })
+    }
+  )
+
+  it('opens an upload mention chip in the preview workbench on click through the shared preview surface', async () => {
     renderEditor({
       mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
       doc: {
@@ -1317,7 +1643,7 @@ describe('ComposerEditor', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('up-1')
   })
 
-  it('keeps an upload mention chip inert when the probe fails', async () => {
+  it('opens the preview surface to handle unreadable files without a silent probe', async () => {
     ;(
       window as unknown as { api: { uploads: { readPreview: ReturnType<typeof vi.fn> } } }
     ).api.uploads.readPreview.mockRejectedValueOnce(new Error('gone'))
@@ -1343,11 +1669,14 @@ describe('ComposerEditor', () => {
       await Promise.resolve()
     })
 
-    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('up-1')
   })
 
   it('opens a Literature PDF mention without probing Upload or Artifact storage', () => {
+    const ownerPreview = vi.fn()
     renderEditor({
+      onPreviewMentionArtifact: ownerPreview,
       mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
       doc: {
         nodes: [
@@ -1369,6 +1698,7 @@ describe('ComposerEditor', () => {
 
     expect(window.api.uploads.readPreview).not.toHaveBeenCalled()
     expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+    expect(ownerPreview).not.toHaveBeenCalled()
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature-item-1')
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
       sessionId: '__literature__',
@@ -1376,5 +1706,106 @@ describe('ComposerEditor', () => {
       path: 'literature-attachment-version:literature-version-1',
       format: 'pdf'
     })
+  })
+})
+
+describe('structured message paste', () => {
+  const fragment = [{ type: 'skill' as const, id: 'lit', name: 'Literature' }]
+  const pasteSkill = (): void => {
+    const element = document.createElement('span')
+    element.setAttribute(
+      'data-open-science-message',
+      JSON.stringify({
+        version: 1,
+        origin: location.origin,
+        projectId: 'default',
+        parts: fragment
+      })
+    )
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => (type === 'text/html' ? element.outerHTML : '/Literature')
+      }
+    })
+    act(() => {
+      editor().dispatchEvent(paste)
+    })
+  }
+  const selectContents = (): void => {
+    editor().focus()
+    const range = document.createRange()
+    range.selectNodeContents(editor())
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+  }
+
+  it('preserves the selection while the Skill catalog loads, then restores the Skill on retry', async () => {
+    const loadSkills = vi.fn(async () => {
+      useSettingsStore.setState({ skillsLoaded: true, skills: seedSkills })
+    })
+    useSettingsStore.setState({ skillsLoaded: false, skills: [], loadSkills })
+    const onDocChange = vi.fn()
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'keep this' }] }, onDocChange })
+    selectContents()
+    await act(async () => {
+      pasteSkill()
+    })
+    expect(editor().textContent).toBe('keep this')
+    expect(onDocChange).not.toHaveBeenCalled()
+    expect(loadSkills).toHaveBeenCalledOnce()
+    expect(document.body.textContent).toContain('Skills are loading. Paste again shortly.')
+    pasteSkill()
+    expect(domToDoc(editor())).toEqual({ nodes: fragment })
+    expect(onDocChange).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the draft on catalog failure and hides its notice in a different Session', async () => {
+    const loadSkills = vi.fn().mockRejectedValue(new Error('offline'))
+    useSettingsStore.setState({ skillsLoaded: false, skills: [], loadSkills })
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: 'keep this' }] }
+    renderEditor({ doc, mentionPreviewContext: { sessionId: 'first', projectId: 'default' } })
+    selectContents()
+    await act(async () => {
+      pasteSkill()
+    })
+    expect(editor().textContent).toBe('keep this')
+    expect(document.body.textContent).toContain('Could not load Skills. Try pasting again.')
+    renderEditor({ doc, mentionPreviewContext: { sessionId: 'second', projectId: 'default' } })
+    expect(document.body.textContent).not.toContain('Could not load Skills. Try pasting again.')
+  })
+
+  it('replaces a selected Skill without counting it against the new paste', () => {
+    useSettingsStore.setState({ skillsLoaded: true })
+    const onDocChange = vi.fn()
+    renderEditor({
+      doc: { nodes: [{ type: 'skill', id: 'mpnn', name: 'ProteinMPNN' }] },
+      onDocChange
+    })
+    selectContents()
+    pasteSkill()
+    expect(domToDoc(editor())).toEqual({ nodes: fragment })
+    expect(onDocChange).toHaveBeenCalledWith(
+      { nodes: fragment },
+      expect.objectContaining({ nodeIndex: 0 })
+    )
+  })
+
+  it('preserves surrounding text and inserts at the selected range', () => {
+    useSettingsStore.setState({ skillsLoaded: true })
+    renderEditor({ doc: { nodes: [{ type: 'text', text: 'before replace after' }] } })
+    editor().focus()
+    const range = document.createRange()
+    range.setStart(editor().firstChild!, 7)
+    range.setEnd(editor().firstChild!, 14)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    pasteSkill()
+    expect(domToDoc(editor()).nodes).toEqual([
+      { type: 'text', text: 'before ' },
+      ...fragment,
+      { type: 'text', text: ' after' }
+    ])
   })
 })

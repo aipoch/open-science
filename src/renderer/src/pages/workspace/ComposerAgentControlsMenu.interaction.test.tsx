@@ -576,7 +576,7 @@ describe('ComposerAgentControlsMenu', () => {
         candidate.getAttribute('data-slot') === 'button'
     )
     expect(confirmButton?.getAttribute('data-slot')).toBe('button')
-    expect(confirmButton?.className).toContain('bg-amber-600')
+    expect(confirmButton?.className).toContain('bg-status-warning-surface')
 
     const overlay = container.querySelector<HTMLElement>('[data-testid="full-access-overlay"]')
     const dialog = container.querySelector<HTMLElement>('[data-testid="full-access-dialog"]')
@@ -740,7 +740,7 @@ describe('ComposerAgentControlsMenu', () => {
     })
     const fullCapsule = container.querySelector('[data-testid="profile-capsule"]')
     expect(fullCapsule?.textContent).toContain('Full access')
-    expect(fullCapsule?.getAttribute('class')).toContain('text-amber-600')
+    expect(fullCapsule?.getAttribute('class')).toContain('text-status-warning-foreground')
   })
 
   it('renders the compact Full access label as a warning', () => {
@@ -757,7 +757,7 @@ describe('ComposerAgentControlsMenu', () => {
     const row = findButton('Full access')
 
     const title = row.querySelector('span.text-\\[13px\\]')
-    expect(title?.getAttribute('class')).toContain('text-amber-600')
+    expect(title?.getAttribute('class')).toContain('text-status-warning-foreground')
     expect(row.querySelector('span.text-\\[11px\\]')).toBeNull()
   })
 

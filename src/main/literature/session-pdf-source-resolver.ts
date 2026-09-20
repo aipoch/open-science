@@ -16,7 +16,9 @@ type ResolvedSessionPdfVersionBase = Readonly<{
   sizeBytes: number
   checksum: string
   path: string
-  openContent?: () => Promise<ImmutableInputContentLease>
+  openContent?: () => Promise<
+    Pick<ImmutableInputContentLease, 'path' | 'size' | 'readRange' | 'verifyUnchanged' | 'close'>
+  >
 }>
 
 type ResolvedSessionPdfVersion = ResolvedSessionPdfVersionBase &
@@ -33,7 +35,7 @@ type ResolvedSessionPdfVersion = ResolvedSessionPdfVersionBase &
 
 type SessionPdfSourceResolverOptions = Readonly<{
   inputs: Pick<ImmutableInputAuthority, 'resolveVersion' | 'openContent'>
-  literature: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
+  literature: Pick<LiteratureAttachmentAuthority, 'resolveVersion' | 'openContent'>
 }>
 
 const resolvedLiteratureVersion = (
@@ -66,7 +68,10 @@ class SessionPdfSourceResolver {
       ) {
         return undefined
       }
-      return resolvedLiteratureVersion(version)
+      return {
+        ...resolvedLiteratureVersion(version),
+        openContent: () => this.options.literature.openContent(version.versionId)
+      }
     }
 
     const input = await this.options.inputs.resolveVersion({

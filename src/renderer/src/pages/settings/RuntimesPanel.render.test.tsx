@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { NotebookNetworkStatus } from '../../../../shared/notebook-network'
 import type {
   DiscoveredInterpreter,
   EnvPackage,
@@ -12,6 +13,25 @@ import type {
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '../../stores/runtime-settings-store'
 import { RuntimesPanel } from './RuntimesPanel'
+
+vi.mock('./WslLocalShellSection', () => ({
+  WslLocalShellSection: ({
+    previewAvailable,
+    developmentPreview,
+    previewUnavailableReason
+  }: {
+    previewAvailable: boolean
+    developmentPreview?: boolean
+    previewUnavailableReason?: string
+  }) => (
+    <div
+      data-preview-available={String(previewAvailable)}
+      data-preview-development={String(developmentPreview === true)}
+      data-preview-reason={previewUnavailableReason}
+      data-testid="wsl2-preview-section"
+    />
+  )
+}))
 
 let container: HTMLDivElement
 let root: Root
@@ -64,6 +84,7 @@ let pickInterpreter: ReturnType<typeof vi.fn>
 let provision: ReturnType<typeof vi.fn>
 let cancelBridge: ReturnType<typeof vi.fn>
 let repairBridge: ReturnType<typeof vi.fn>
+let importEnvironmentLock: ReturnType<typeof vi.fn>
 
 const provisionStatus: ProvisionStatus = {
   pythonReady: false,
@@ -126,7 +147,24 @@ beforeEach(() => {
   provision = vi.fn().mockRejectedValue(new Error('runtime CDN unavailable'))
   cancelBridge = vi.fn().mockResolvedValue(undefined)
   repairBridge = vi.fn().mockResolvedValue(undefined)
+  importEnvironmentLock = vi.fn().mockResolvedValue({
+    imported: true,
+    environmentName: 'repro-eeeeeeeeeeee',
+    kernelKind: 'python',
+    reused: false
+  })
   ;(window as unknown as { api: unknown }).api = {
+    platform: 'linux',
+    settings: {
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
+      getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+        available: false,
+        reason: 'unsupported-platform'
+      }),
+      getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined)
+    },
+    artifacts: { importEnvironmentLock },
+    storage: { pickDirectory: vi.fn().mockResolvedValue(null) },
     runtime: {
       listEnvironments,
       listPackages,
@@ -186,6 +224,261 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it.each<NotebookNetworkStatus>([
+    { kind: 'setupRequired', platform: 'win32', reasons: ['windowsProfileMissing'] },
+    { kind: 'checking' },
+    { kind: 'error', reason: 'runtimeFailure' },
+    { kind: 'unsupported', platform: 'win32' }
+  ])('does not offer R verification while network protection is $kind', async (status) => {
+    Object.assign(window.api, { platform: 'win32' })
+    Object.assign(window.api.settings, {
+      getNotebookNetworkStatus: vi.fn().mockResolvedValue(status)
+    })
+    const managed = {
+      ...rEnvs[0],
+      provenance: 'app-managed',
+      condaEnv: 'default-r',
+      runnable: true
+    }
+    listEnvironments.mockResolvedValue({ python: pythonEnvs, r: [managed] })
+    const authorize = vi
+      .fn()
+      .mockRejectedValue(new Error('Enable protected mode before verifying R access.'))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    const openNetwork = vi.fn()
+    await render(undefined, undefined, openNetwork)
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )
+    await click(button ?? null)
+    expect(container.textContent).not.toContain('Enable protected mode before verifying R access.')
+    expect(authorize).not.toHaveBeenCalled()
+    expect(button?.disabled).toBe(true)
+    expect(container.textContent).toContain(
+      'R access verification requires network protection to be ready.'
+    )
+    const remove = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )
+    expect(remove?.disabled).toBe(false)
+    await click(
+      container.querySelector('[data-testid="notebook-network-protection-banner"] button')
+    )
+    expect(openNetwork).toHaveBeenCalledOnce()
+  })
+
+  it('enables R verification after recheck confirms that protection is ready', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    const getStatus = vi.fn().mockResolvedValue({
+      kind: 'setupRequired',
+      platform: 'win32',
+      reasons: ['windowsProfileMissing']
+    })
+    Object.assign(window.api.settings, { getNotebookNetworkStatus: getStatus })
+    listEnvironments.mockResolvedValue({
+      python: [],
+      r: [
+        {
+          ...rEnvs[0],
+          provenance: 'app-managed',
+          condaEnv: 'default-r',
+          runnable: true
+        }
+      ]
+    })
+    const authorize = vi.fn().mockResolvedValue({ cancelled: false })
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render(undefined, undefined, vi.fn())
+    const findButton = (name: string): HTMLButtonElement =>
+      Array.from(container.querySelectorAll('button')).find(
+        (element) => element.textContent === name
+      )!
+    expect(findButton('Authorize and verify').disabled).toBe(true)
+    getStatus.mockResolvedValue({ kind: 'ready', warnings: [] })
+    await click(findButton('Recheck'))
+    expect(findButton('Authorize and verify').disabled).toBe(false)
+    expect(container.textContent).toContain('Network protection on')
+    await click(findButton('Authorize and verify'))
+    expect(authorize).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('R access verified')
+  })
+
+  it('offers the existing sandbox authorization and removal controls for managed Windows R', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    const managed = {
+      ...rEnvs[0],
+      provenance: 'app-managed',
+      condaEnv: 'default-r',
+      runnable: true,
+      detail: undefined
+    }
+    listEnvironments.mockResolvedValue({ python: pythonEnvs, r: [managed] })
+    const authorize = vi.fn(async () => ({ cancelled: false }))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )
+    expect(button).toBeDefined()
+    await click(button!)
+    expect(authorize).toHaveBeenCalledWith('r', managed.envId, true)
+    expect(container.textContent).toContain('R access verified')
+    const remove = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )
+    expect(remove).toBeDefined()
+    await click(remove!)
+    expect(authorize).toHaveBeenLastCalledWith('r', managed.envId, false)
+  })
+
+  it('explains that authorization can remain when R verification fails', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    listEnvironments.mockResolvedValue({
+      python: pythonEnvs,
+      r: [{ ...rEnvs[0], runnable: true, detail: undefined }]
+    })
+    getEnablement.mockResolvedValue({
+      enabled: { [rEnvs[0].envId]: true },
+      installAuthorized: {}
+    })
+    const authorize = vi.fn().mockRejectedValue(new Error('R verification failed'))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render()
+    await click(
+      Array.from(container.querySelectorAll('button')).find(
+        (element) => element.textContent === 'Authorize and verify'
+      )!
+    )
+    expect(authorize).toHaveBeenCalledWith('r', rEnvs[0].envId, true)
+    expect(container.textContent).toContain(
+      'R access was not verified. Permission may already be granted. Use Remove R access to revoke it.'
+    )
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )!
+    expect(removeButton.disabled).toBe(false)
+    expect(container.textContent).not.toContain('R access verified')
+  })
+
+  it('does not offer authorization verification for R missing jsonlite while retaining removal', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    getEnablement.mockResolvedValue({
+      enabled: { [rEnvs[0].envId]: true },
+      installAuthorized: {}
+    })
+    const authorize = vi.fn(async () => ({ cancelled: false }))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render()
+    expect(container.textContent).toContain('Needs jsonlite')
+    const verifyButton = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )!
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )!
+    expect(verifyButton.disabled).toBe(true)
+    expect(removeButton.disabled).toBe(false)
+    await click(verifyButton)
+    expect(authorize).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'refreshes disabled R state after access removal (cancelled: %s)',
+    async (cancelled) => {
+      Object.assign(window.api, { platform: 'win32' })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      Object.assign(window.api.runtime, {
+        setSandboxAccess: vi.fn(async () => {
+          getEnablement.mockResolvedValue({
+            enabled: { [rEnvs[0].envId]: false },
+            installAuthorized: {}
+          })
+          return { cancelled }
+        })
+      })
+      await render()
+      await click(
+        Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent === 'Remove R access'
+        )!
+      )
+      const authorize = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Authorize and verify'
+      )!
+      expect(authorize.disabled).toBe(true)
+      expect(container.textContent?.includes('R access removed')).toBe(!cancelled)
+    }
+  )
+  it.each([false, true])(
+    'verifies only the selected R and does not confirm cancelled authorization (%s)',
+    async (cancelled) => {
+      Object.assign(window.api, { platform: 'win32' })
+      listEnvironments.mockResolvedValue({
+        python: pythonEnvs,
+        r: [{ ...rEnvs[0], runnable: true, detail: undefined }]
+      })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      const authorize = vi.fn(async () => ({ cancelled }))
+      Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+      await render()
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (element) => element.textContent === 'Authorize and verify'
+      )
+      expect(button).toBeDefined()
+      expect(container.textContent).toContain('Other file contents remain protected.')
+      await click(button!)
+      expect(authorize).toHaveBeenCalledWith('r', rEnvs[0].envId, true)
+      expect(container.textContent?.includes('R access verified')).toBe(!cancelled)
+    }
+  )
+
+  it('shows WSL2 Bash Preview only when the main process admits this build and host', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: true,
+      reason: 'available',
+      development: true
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-available="true"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-development="true"]')).not.toBeNull()
+  })
+
+  it('leaves the runtime UI unchanged when main rejects the Preview', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'build-disabled'
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="wsl2-preview-section"]')).toBeNull()
+  })
+
+  it('keeps only the PowerShell recovery surface when a rejected Preview remains selected', async () => {
+    window.api.platform = 'win32'
+    window.api.settings.getWsl2BashPreviewStatus = vi.fn().mockResolvedValue({
+      available: false,
+      reason: 'assets-unavailable'
+    })
+    window.api.settings.getLocalShellRuntimePreference = vi.fn().mockResolvedValue('wsl2-bash')
+
+    await render()
+
+    expect(container.querySelector('[data-preview-available="false"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-reason="assets-unavailable"]')).not.toBeNull()
+  })
+
   it('shows the network protection entry only when Settings provides its route', async () => {
     const onOpenNetworkProtection = vi.fn()
     ;(window.api as unknown as { settings: unknown }).settings = {
@@ -215,9 +508,19 @@ describe('RuntimesPanel', () => {
     const recheck = section?.querySelector<HTMLButtonElement>('[data-testid="runtimes-recheck"]')
     const checkedAt = section?.querySelector('[data-testid="runtimes-checked-at"]')
     expect(recheck?.textContent).toContain('Recheck')
-    expect(recheck?.parentElement?.parentElement?.className).toContain('ml-auto')
+    expect(recheck?.parentElement?.parentElement?.parentElement?.className).toContain('ml-auto')
     expect(checkedAt?.textContent).toContain('Last checked')
-    expect(recheck?.nextElementSibling).toBe(checkedAt)
+    expect(recheck?.parentElement?.nextElementSibling).toBe(checkedAt)
+  })
+
+  it('imports an external Environment bundle from global runtime settings', async () => {
+    await render()
+
+    await click(container.querySelector('[data-testid="runtimes-import-environment"]'))
+
+    expect(importEnvironmentLock).toHaveBeenCalledWith({})
+    expect(listEnvironments).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Environment imported as repro-eeeeeeeeeeee.')
   })
 
   it('disables Recheck until the initial registry load settles', async () => {
@@ -577,7 +880,7 @@ describe('RuntimesPanel', () => {
     expect(setInstallAuthorized).toHaveBeenCalledWith('python', '/usr/bin/python3', true)
   })
 
-  it('explains that package installation is unavailable for an enabled user-owned R environment', async () => {
+  it('revokes historical R consent without a library and requires a library to authorize again', async () => {
     getEnablement.mockImplementation(async (language: string) =>
       language === 'r'
         ? {
@@ -586,17 +889,107 @@ describe('RuntimesPanel', () => {
           }
         : enablement
     )
+    setInstallAuthorized.mockResolvedValue({
+      enabled: { '/opt/conda/envs/bio/bin/R': true },
+      installAuthorized: { '/opt/conda/envs/bio/bin/R': false }
+    })
 
     await render()
 
     const installToggle = container.querySelector<HTMLButtonElement>(
       '[aria-label="Allow package install for R 4.4.1"]'
     )
+    expect(installToggle?.disabled).toBe(false)
+    expect(installToggle?.getAttribute('data-state')).toBe('checked')
+    expect(container.textContent).toContain('Authorize an existing personal R library.')
+    const picker = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Choose library folder…'
+    )!
+    expect(picker.disabled).toBe(true)
+    await click(installToggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith(
+      'r',
+      '/opt/conda/envs/bio/bin/R',
+      false,
+      undefined
+    )
     expect(installToggle?.disabled).toBe(true)
     expect(installToggle?.getAttribute('data-state')).toBe('unchecked')
-    expect(container.textContent).toContain(
-      'Open Science cannot install packages into user-owned R environments yet. You can still manage packages in the environment yourself.'
+    expect(picker.disabled).toBe(false)
+    expect(container.textContent).toContain('Use an app-managed R environment')
+    expect(container.textContent).not.toContain('Select an existing folder in advanced options.')
+    await click(picker)
+    expect(installToggle?.disabled).toBe(true)
+    vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/home/user/R/library')
+    await click(picker)
+    expect(installToggle?.disabled).toBe(false)
+    await click(installToggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith(
+      'r',
+      '/opt/conda/envs/bio/bin/R',
+      true,
+      '/home/user/R/library'
     )
+  })
+
+  it.each([['/personal/R'], ['/personal/R', '/other/R']])(
+    'uses detected personal libraries %j without requiring path entry',
+    async (...libraries) => {
+      listEnvironments.mockResolvedValue({
+        python: [],
+        r: [{ ...rEnvs[0], personalRLibraries: libraries }]
+      })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      await render()
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Allow package install for R 4.4.1"]'
+      )!
+      if (libraries.length > 1) {
+        expect(toggle.disabled).toBe(true)
+        const select = container.querySelector('select')!
+        await act(async () => {
+          select.value = libraries[1]!
+          select.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+      }
+      expect(toggle.disabled).toBe(false)
+      await click(toggle)
+      expect(setInstallAuthorized).toHaveBeenCalledWith('r', rEnvs[0].envId, true, libraries.at(-1))
+      expect(window.api.storage.pickDirectory).not.toHaveBeenCalled()
+    }
+  )
+
+  it('explains a rejected personal R library without exposing the Electron IPC wrapper', async () => {
+    listEnvironments.mockResolvedValue({
+      python: [],
+      r: [{ ...rEnvs[0], runnable: true, personalRLibraries: ['/personal/R'] }]
+    })
+    getEnablement.mockResolvedValue({
+      enabled: { [rEnvs[0].envId]: true },
+      installAuthorized: {}
+    })
+    // Replay the error shown in the report at the existing renderer IPC boundary.
+    // This tests presentation, not whether the reporter's selected directory was valid.
+    setInstallAuthorized.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'runtime:set-install-authorized': Error: Select an existing personal library visible to this R runtime."
+      )
+    )
+    await render()
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Allow package install for R 4.4.1"]'
+    )!
+    await click(toggle)
+    expect(setInstallAuthorized).toHaveBeenCalledWith('r', rEnvs[0].envId, true, '/personal/R')
+    const error = container.querySelector('[data-testid="runtimes-error"]')!
+    expect(error.textContent).toBeTruthy()
+    expect(error.textContent).not.toContain('Error invoking remote method')
+    expect(error.textContent).not.toContain('.libPaths()')
+    expect(error.textContent).toContain('Click Recheck')
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
   })
 
   it('surfaces the "cannot disable the last enabled runtime" error inline', async () => {
@@ -1174,4 +1567,150 @@ describe('RuntimesPanel packages dialog', () => {
     dialog = document.querySelector('[data-testid="runtime-packages-dialog"]')
     expect(occurrences(dialog, 'Conda: bio')).toBe(1)
   })
+})
+
+it('refreshes an open panel after another client changes policy and removes its listener', async () => {
+  let policy = true
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: vi.fn(async () => policy),
+    onPolicyChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  await render()
+  const toggle = (): Element | null =>
+    container.querySelector('[aria-label="Let the Agent create environments"]')
+  expect(toggle()?.getAttribute('data-state')).toBe('checked')
+  policy = false
+  await act(async () => {
+    for (const listener of listeners) listener()
+  })
+  expect(toggle()?.getAttribute('data-state')).toBe('unchecked')
+  expect(listEnvironments).toHaveBeenCalledOnce()
+  await act(async () => root.render(null))
+  expect(listeners.size).toBe(0)
+})
+
+it('ignores a delayed local policy receipt after a newer remote change', async () => {
+  let policy = true
+  let finish!: (value: boolean) => void
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: vi.fn(async () => policy),
+    setAgentEnvironmentCreationEnabled: vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    ),
+    onPolicyChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  await render()
+  const toggle = (): Element | null =>
+    container.querySelector('[aria-label="Let the Agent create environments"]')
+  await click(toggle())
+  policy = true
+  await act(async () => {
+    for (const listener of listeners) listener()
+    finish(false)
+  })
+  expect(toggle()?.getAttribute('data-state')).toBe('checked')
+})
+
+it('shows the committed policy when the follow-up read fails', async () => {
+  const read = vi.fn().mockResolvedValueOnce(true).mockRejectedValue(new Error('offline'))
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: read,
+    setAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false)
+  })
+  await render()
+  await click(container.querySelector('[aria-label="Let the Agent create environments"]'))
+  expect(
+    container
+      .querySelector('[aria-label="Let the Agent create environments"]')
+      ?.getAttribute('data-state')
+  ).toBe('unchecked')
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+})
+
+it('does not use a stale write fallback after a policy event even when rereading fails', async () => {
+  let finish!: (value: boolean) => void
+  let changed!: () => void
+  const read = vi.fn().mockResolvedValue(true)
+  Object.assign(window.api.runtime, {
+    getAgentEnvironmentCreationEnabled: read,
+    setAgentEnvironmentCreationEnabled: vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+    ),
+    onPolicyChanged: (listener: () => void) => {
+      changed = listener
+      return () => undefined
+    }
+  })
+  await render()
+  await click(container.querySelector('[aria-label="Let the Agent create environments"]'))
+  await act(async () => {
+    changed()
+  })
+  read.mockRejectedValue(new Error('offline'))
+  await act(async () => {
+    finish(false)
+  })
+  expect(
+    container
+      .querySelector('[aria-label="Let the Agent create environments"]')
+      ?.getAttribute('data-state')
+  ).toBe('checked')
+  expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+})
+
+it('rechecks recovery before discovery without resetting or changing package permissions', async () => {
+  const getStatus = vi.mocked(window.api.notebookEnv.getStatus)
+  getStatus.mockResolvedValue({
+    ...provisionStatus,
+    pythonRecoveryBlocked: true,
+    recovery: {
+      checkedAt: 123,
+      corruptJournal: false,
+      operations: [
+        { operationId: 'old-install', runtimeId: '/own/python', reason: 'child-unrecorded' }
+      ]
+    }
+  })
+  await act(async () => root.render(<RuntimesPanel title="Runtimes" description="" />))
+  expect(container.textContent).toContain('old-install')
+  expect(container.textContent).toContain('The worker identity was not recorded.')
+  getStatus.mockResolvedValue({
+    ...provisionStatus,
+    recovery: { checkedAt: 456, corruptJournal: false, operations: [] }
+  })
+  const before = getStatus.mock.calls.length
+  await act(async () =>
+    (container.querySelector('[data-testid="runtimes-recheck"]') as HTMLButtonElement).click()
+  )
+  expect(getStatus).toHaveBeenCalledTimes(before + 1)
+  expect(container.textContent).not.toContain('old-install')
+  expect(repairBridge).not.toHaveBeenCalled()
+  expect(provision).not.toHaveBeenCalled()
+  expect(setInstallAuthorized).not.toHaveBeenCalled()
+})
+
+it('distinguishes a durable repair requirement from an unconfirmed worker', async () => {
+  vi.mocked(window.api.notebookEnv.getStatus).mockResolvedValue({
+    ...provisionStatus,
+    pythonRecoveryBlocked: true,
+    pythonRepairRequired: true
+  })
+  await act(async () => root.render(<RuntimesPanel title="Runtimes" description="" />))
+  expect(container.textContent).toContain('Runtime repair required')
+  expect(container.textContent).not.toContain('The previous worker may still be running')
+  expect(container.querySelector('[data-testid="runtime-reset-python"]')).not.toBeNull()
 })

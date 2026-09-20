@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { i18next } from '../../i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -44,11 +45,11 @@ const files: ProjectFileItem[] = [
 
 let container: HTMLElement
 let root: Root
-let listFiles: ReturnType<typeof vi.fn>
+let readExportFiles: ReturnType<typeof vi.fn>
 let saveProjectArtifacts: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
-  listFiles = vi.fn().mockResolvedValue({ items: files, totalCount: files.length })
+  readExportFiles = vi.fn().mockResolvedValue(files)
   saveProjectArtifacts = vi.fn().mockResolvedValue({
     saved: true,
     filePath: '/downloads/research.zip'
@@ -62,7 +63,7 @@ beforeEach(() => {
         artifactGroupCount: 2,
         isIndexComplete: true
       }),
-      listFiles,
+      readExportFiles,
       repairIndex: vi.fn().mockResolvedValue(undefined)
     },
     saveProjectArtifacts
@@ -98,6 +99,67 @@ const checkboxes = (): HTMLInputElement[] => [
 ]
 
 describe('DownloadProjectArtifactsDialog', () => {
+  it('rebuilds the original checked ZIP selection after a partial export', async () => {
+    saveProjectArtifacts.mockResolvedValueOnce({
+      saved: true,
+      filePath: '/downloads/research.zip',
+      failures: [
+        {
+          source: 'artifact',
+          sessionId: 'session-2',
+          fileId: 'figure',
+          suggestedName: 'figure.csv',
+          message: 'temporarily unreadable'
+        }
+      ]
+    })
+    await renderDialog()
+    act(() => checkboxes()[2].click())
+    await act(async () => {
+      confirmButton()?.click()
+    })
+    await act(async () => {
+      confirmButton()?.click()
+    })
+    expect(saveProjectArtifacts).toHaveBeenCalledTimes(2)
+    expect(saveProjectArtifacts.mock.calls[1][0].files).toEqual(
+      saveProjectArtifacts.mock.calls[0][0].files
+    )
+  })
+
+  it('translates the partial project export summary into the active language', async () => {
+    await i18next.changeLanguage('zh-Hans')
+    try {
+      saveProjectArtifacts.mockResolvedValueOnce({
+        saved: true,
+        filePath: '/downloads/research.zip',
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-2',
+            fileId: 'figure',
+            suggestedName: 'figure.csv',
+            message: 'temporarily unreadable'
+          }
+        ]
+      })
+      await renderDialog()
+      await act(async () => {
+        confirmButton()?.click()
+      })
+      const expected = i18next.t(
+        'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+        { downloaded: 2, total: 3, failed: 1 }
+      )
+      expect(expected).not.toContain('Downloaded')
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(expected)
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('groups every file flat under Generated and Uploads headings without session levels', async () => {
     await renderDialog()
 
@@ -132,7 +194,7 @@ describe('DownloadProjectArtifactsDialog', () => {
   })
 
   it('hides a group heading when that source has no files', async () => {
-    listFiles.mockResolvedValue({ items: [files[0]], totalCount: 1 })
+    readExportFiles.mockResolvedValue([files[0]])
     await renderDialog()
 
     const headings = [
@@ -200,7 +262,7 @@ describe('DownloadProjectArtifactsDialog', () => {
   })
 
   it('exports the immutable Version shown in the Project Files snapshot without a path', async () => {
-    listFiles.mockResolvedValue({ items: [files[0]!], totalCount: 1 })
+    readExportFiles.mockResolvedValue([files[0]!])
     await renderDialog()
 
     await act(async () => {
@@ -223,7 +285,7 @@ describe('DownloadProjectArtifactsDialog', () => {
     })
   })
 
-  it('keeps only failed files selected with an inline summary after a partial export', async () => {
+  it('keeps the complete selection with an inline summary after a partial export', async () => {
     const onClose = vi.fn()
     // A same-name file from another source must not be mistaken for the failed logical file.
     const colliding: ProjectFileItem = {
@@ -231,7 +293,7 @@ describe('DownloadProjectArtifactsDialog', () => {
       name: 'figure.csv',
       path: 'artifact://figure'
     }
-    listFiles.mockResolvedValue({ items: [...files, colliding], totalCount: 4 })
+    readExportFiles.mockResolvedValue([...files, colliding])
     saveProjectArtifacts.mockResolvedValue({
       saved: true,
       filePath: '/downloads/research.zip',
@@ -252,7 +314,7 @@ describe('DownloadProjectArtifactsDialog', () => {
       await Promise.resolve()
     })
 
-    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, true, false, false])
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, true, true, true])
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
       'Downloaded 3 of 4 artifacts. 1 failed.'
     )
@@ -280,7 +342,7 @@ describe('DownloadProjectArtifactsDialog', () => {
       await Promise.resolve()
     })
     expect(document.body.querySelector('[role="alert"]')).not.toBeNull()
-    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, false, false])
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, true, true])
 
     await act(async () => {
       root.render(<DownloadProjectArtifactsDialog project={undefined} onClose={onClose} />)
@@ -292,7 +354,7 @@ describe('DownloadProjectArtifactsDialog', () => {
       await Promise.resolve()
     })
 
-    expect(listFiles).toHaveBeenCalledTimes(2)
+    expect(readExportFiles).toHaveBeenCalledTimes(2)
     expect(document.body.querySelector('[role="alert"]')).toBeNull()
     expect(document.body.textContent).toContain('3 of 3 selected')
     expect(checkboxes().every((checkbox) => checkbox.checked)).toBe(true)
@@ -335,10 +397,10 @@ describe('DownloadProjectArtifactsDialog', () => {
   })
 
   it('offers Retry when the file snapshot cannot be loaded', async () => {
-    listFiles
+    readExportFiles
       .mockReset()
       .mockRejectedValueOnce(new Error('file index unavailable'))
-      .mockResolvedValueOnce({ items: files, totalCount: files.length })
+      .mockResolvedValueOnce(files)
     await renderDialog()
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
@@ -354,7 +416,7 @@ describe('DownloadProjectArtifactsDialog', () => {
       await Promise.resolve()
     })
 
-    expect(listFiles).toHaveBeenCalledTimes(2)
+    expect(readExportFiles).toHaveBeenCalledTimes(2)
     expect(document.body.textContent).toContain('report.csv')
     expect(document.body.textContent).toContain('3 of 3 selected')
   })
@@ -374,7 +436,7 @@ describe('DownloadProjectArtifactsDialog', () => {
   })
 
   it('shows an empty state when the project has no files', async () => {
-    listFiles.mockResolvedValue({ items: [], totalCount: 0 })
+    readExportFiles.mockResolvedValue([])
     await renderDialog()
 
     expect(document.body.textContent).toContain('No downloadable artifacts in this project.')

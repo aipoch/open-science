@@ -409,8 +409,13 @@ async function defaultCreateClient(
 ): Promise<Client> {
   const transport = buildTransport(config, authProvider)
   const client = new Client({ name: 'open-science', version: '0.0.0' })
-  await client.connect(transport, signal ? { signal } : undefined)
-  return client
+  try {
+    await client.connect(transport, signal ? { signal } : undefined)
+    return client
+  } catch (error) {
+    await client.close().catch(() => undefined)
+    throw error
+  }
 }
 
 // MCP client for user-added custom servers (Phase 1: local/stdio). Mirrors the bundled
@@ -450,10 +455,12 @@ export class McpClientManager {
 
   async listTools(
     config: CustomMcpServerConfig,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onDiscovery?: () => void
   ): Promise<McpClientManagerTool[]> {
     signal?.throwIfAborted()
     const client = await this.connect(config, signal)
+    onDiscovery?.()
     try {
       signal?.throwIfAborted()
       const tools: McpClientManagerTool[] = []

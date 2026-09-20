@@ -1,0 +1,24 @@
+{
+  "ownerPaths": ["src/main/session-deletion/owner.test.ts", "src/main/session-deletion/owner.ts"],
+  "interfacePaths": ["src/main/session-deletion/owner.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/session-deletion/owner.test.ts"],
+    "contract": [
+      "src/preload/index.test.ts",
+      "src/renderer/web/api-installer.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
+    ],
+    "consumer": [
+      "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/session-persistence/deletion-integration.test.ts",
+      "src/main/session-persistence/ipc.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

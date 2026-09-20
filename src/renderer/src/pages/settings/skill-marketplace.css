@@ -1,0 +1,202 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3
+ * genre: modern-minimal · macrostructure: Catalogue · tone: utilitarian
+ * Existing Open-Science tokens and Settings navigation; no decorative reveals.
+ */
+[data-slot='skill-marketplace'] {
+  container-type: inline-size;
+}
+.skill-marketplace-batch-surface,
+.skill-marketplace-batch-layout {
+  height: 100%;
+  min-height: 0;
+}
+.skill-marketplace-batch-layout {
+  display: flex;
+  flex-direction: column;
+}
+.skill-marketplace-batch-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 2rem;
+  padding-bottom: 2rem;
+}
+.skill-marketplace-card[data-selected='true'] {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 5%, var(--card));
+}
+[data-slot='skill-marketplace'] input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+[data-testid='skill-marketplace-batch-confirm'] {
+  max-height: calc(100dvh - 2rem);
+}
+[data-testid='skill-marketplace-batch-confirm'] p {
+  max-height: 50dvh;
+  overflow: auto;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.skill-marketplace-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+}
+.skill-marketplace-filters > [role='combobox'] {
+  flex-grow: 1;
+  min-width: 0;
+}
+@container (min-width: 640px) {
+  .skill-marketplace-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  }
+  .skill-marketplace-filters > [role='combobox'] {
+    width: 100%;
+  }
+  .skill-marketplace-filters[data-batch='true'] {
+    grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  }
+}
+.skill-marketplace-install-action[data-installed='true'] {
+  color: var(--success-000);
+  background-color: var(--background);
+  border-color: var(--border);
+  opacity: 1;
+}
+.skill-marketplace-card-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.skill-marketplace-card-controls {
+  display: contents;
+}
+.skill-marketplace-card-controls > .skill-marketplace-primary-action {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.skill-marketplace-card-controls > :not(.skill-marketplace-primary-action) {
+  grid-column: 1 / -1;
+}
+.skill-marketplace-metadata {
+  grid-template-columns: 11rem minmax(0, 1fr);
+  text-align: left;
+}
+.skill-marketplace-metadata > dt {
+  color: var(--muted-foreground);
+}
+.skill-marketplace-metadata > dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.skill-marketplace-detail {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.skill-marketplace-detail-header,
+.skill-marketplace-detail-controls {
+  display: contents;
+}
+.skill-marketplace-detail > *,
+.skill-marketplace-detail-controls > * {
+  grid-column: 1 / -1;
+}
+.skill-marketplace-detail-identity {
+  grid-column: 1;
+  grid-row: 1;
+}
+.skill-marketplace-detail-score,
+.skill-marketplace-detail-controls > .skill-marketplace-primary-action {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+}
+.skill-marketplace-detail-controls > .skill-marketplace-primary-action {
+  max-width: min(24rem, 45cqw);
+  justify-content: flex-end;
+}
+.skill-marketplace-detail:has(.skill-marketplace-detail-score)
+  > .skill-marketplace-detail-controls
+  > .skill-marketplace-primary-action {
+  margin-top: 2.75rem;
+}
+.skill-marketplace-detail-summary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.skill-marketplace-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  list-style: none;
+}
+.skill-marketplace-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.skill-marketplace-disclosure > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.skill-marketplace-disclosure[open] > summary > svg {
+  transform: rotate(180deg);
+}
+@media (hover: hover) {
+  .skill-marketplace-card:hover,
+  .skill-marketplace-disclosure > summary:hover {
+    background-color: var(--background);
+  }
+}
+@container (max-width: 340px) {
+  .skill-marketplace-metadata {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (pointer: coarse) {
+  [data-slot='skill-marketplace'] button:not([role='switch']),
+  [data-slot='skill-marketplace'] input {
+    min-height: 2.75rem;
+  }
+}
+.skill-marketplace-tooltip {
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  --skill-tooltip-offset: 4px;
+}
+.skill-marketplace-tooltip[data-side='bottom'] {
+  --skill-tooltip-offset: -4px;
+}
+.skill-marketplace-tooltip[data-state='delayed-open'],
+.skill-marketplace-tooltip[data-state='instant-open'] {
+  animation: skill-tooltip-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.skill-marketplace-tooltip[data-state='closed'] {
+  animation: skill-tooltip-out 100ms cubic-bezier(0.7, 0, 0.84, 0);
+}
+@keyframes skill-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--skill-tooltip-offset)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes skill-tooltip-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skill-marketplace-tooltip[data-state] {
+    animation: none;
+  }
+}

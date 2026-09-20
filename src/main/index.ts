@@ -1,6 +1,16 @@
+import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
+import { configureCredentialStore, getCredentialStore } from './settings/credential-store-mode'
+import {
+  selectStartupCredentialIdentity,
+  prepareCredentialValidation
+} from './credential-identity/bootstrap'
+import { CredentialIdentityError } from './credential-identity/selection'
+import { credentialRecoveryMessage } from './credential-identity/recovery'
+import { parseWebModeOptions } from './web-service/options'
 import { createRequire } from 'node:module'
-import { isAbsolute } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 
 // Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
 // modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
@@ -19,7 +29,13 @@ import {
   initializeApplicationDiagnostics,
   reportApplicationStartupFailure
 } from './diagnostics/startup'
-import { createLogger, diagnosticErrorFields, flushLogs, writeFatalLogSync } from './logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs,
+  writeFatalLogSync
+} from './logger'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG } from './office-preview/office-preview-runtime-protocol'
 import {
@@ -27,7 +43,7 @@ import {
   registerRendererDiagnosticsIpc
 } from './renderer-diagnostics'
 
-const APP_NAME = 'Open Science'
+const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
@@ -36,8 +52,12 @@ const shouldRunSkillImportMcpServer = process.argv.includes(SKILL_IMPORT_MCP_SER
 const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_SERVER_ARG)
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
+let credentialRecoveryPresented = false
+let electronInitializationStarted = false
+let preparingLocations = false
+let bootstrapPhase = 'electron-bootstrap'
 let startupDiagnostics: DiagnosticOperation | undefined
-let startupFlush = flushLogs
+let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
 if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.
@@ -85,13 +105,49 @@ if (shouldRunArtifactMcpServer) {
     })
 } else {
   void startElectronApp(fileURLToPath(import.meta.url)).catch(async (error: unknown) => {
-    bootstrapLog.error('application startup failed', diagnosticErrorFields(error))
+    // Emit before native recovery UI: pre-ready failures may never reach a window or file sink.
+    // Reuse the bounded secret-redacting formatter, while retaining the credential reason code.
+    bootstrapLog.error('application startup failed', {
+      ...diagnosticErrorFields(error),
+      ...errorLogFields(error),
+      phase: bootstrapPhase,
+      ...(error instanceof CredentialIdentityError
+        ? {
+            recoveryReason: error.reason,
+            ...(error.probe ? { identityProbe: error.probe } : {})
+          }
+        : {})
+    })
+    const { app, dialog } = createRequire(import.meta.url)('electron') as typeof import('electron')
+    if (error instanceof CredentialIdentityError) {
+      if (!credentialRecoveryPresented) {
+        credentialRecoveryPresented = true
+        const message = credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
+        // A headless launch (web service, packaged smoke) has no one to dismiss a modal; a
+        // blocking box hangs an unattended run instead of failing it, so recovery goes to stderr.
+        if (parseWebModeOptions(process.argv).headless)
+          process.stderr.write(`${APP_NAME}: ${message}\n`)
+        else dialog.showErrorBox(APP_NAME, message)
+      }
+      // Do not yield to Electron's profile/key initialization after a failed pre-ready probe.
+      app.exit(1)
+      return
+    }
+    // Location/configuration failures happen before file diagnostics and the renderer. Present
+    // recovery before awaiting diagnostics; neither message wording nor a working file sink gates it.
+    if (preparingLocations) {
+      dialog.showErrorBox(APP_NAME, error instanceof Error ? error.message : String(error))
+    }
+    if (!electronInitializationStarted) {
+      // Preflight failures must not yield to OSCrypt initialization, even for a configuration error.
+      app.exit(1)
+      return
+    }
     await reportApplicationStartupFailure({
       operation: startupDiagnostics,
       error,
       flush: startupFlush
     })
-    const { app } = createRequire(import.meta.url)('electron') as typeof import('electron')
     app.exit(1)
   })
 }
@@ -106,8 +162,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     nativeImage,
     nativeTheme,
     powerMonitor,
-    protocol
+    protocol,
+    safeStorage,
+    dialog
   } = createRequire(import.meta.url)('electron') as typeof import('electron')
+
+  let reportPackageOverflow = (): void => undefined
+  const packageFiles = new PackageFileOpenRelay(() => reportPackageOverflow())
+  app.on('open-file', (event, path) => {
+    event.preventDefault()
+    packageFiles.receive(path)
+  })
 
   // Electron accepts privileged schemes only before app ready. Keep this in the synchronous UI
   // bootstrap before any awaited import can yield to the ready event.
@@ -119,22 +184,82 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
-  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
-  // Unpackaged isolate: a second electron-vite from a worktree would otherwise lose the
-  // macOS bundle-id lock and attach to an already-running main `npm run dev`.
-  if (!app.isPackaged) {
-    const isolateUserData = process.env.OPEN_SCIENCE_USER_DATA?.trim()
-    if (isolateUserData) {
-      if (!isAbsolute(isolateUserData)) {
-        throw new Error('OPEN_SCIENCE_USER_DATA must be an absolute path.')
-      }
-      app.setPath('userData', isolateUserData)
-    }
-  }
+  // Electron captures the OSCrypt identity immediately after the synchronous main entry. The
+  // metadata probe must finish before the first await, profile initialization, or secret access.
+  bootstrapPhase = 'credential-store-mode'
+  const webMode = parseWebModeOptions(process.argv)
+  configureCredentialStore(process.argv, process.platform, webMode.headless)
+  bootstrapPhase = 'credential-identity'
+  const credentialIdentity = selectStartupCredentialIdentity({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    credentialStore: getCredentialStore(),
+    ...(process.platform === 'linux'
+      ? { linuxPasswordStore: app.commandLine?.getSwitchValue('password-store') }
+      : {})
+  })
+  app.setName(credentialIdentity.appName)
+  preparingLocations = true
+  bootstrapPhase = 'configuration-root'
+  const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
+  bootstrapPhase = 'electron-profile'
+  const profilePath = resolveElectronProfile({
+    appData: app.getPath('appData'),
+    configRoot,
+    packaged: app.isPackaged
+  })
+  app.setPath('userData', profilePath)
+  app.setPath('sessionData', profilePath)
+  const isolated = Boolean(
+    process.env.OPEN_SCIENCE_USER_DATA ||
+    process.env.OPEN_SCIENCE_CONFIG_ROOT ||
+    process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT ||
+    (!app.isPackaged && process.env.OPEN_SCIENCE_STORAGE_ROOT)
+  )
   const allowMultiInstance =
     !app.isPackaged && process.env.OPEN_SCIENCE_ALLOW_MULTI_INSTANCE === '1'
+  const pendingSecondInstances: Array<[string[], string]> = []
+  let relaySecondInstance = (argv: string[], cwd: string): void => {
+    pendingSecondInstances.push([argv, cwd])
+  }
+  if (!allowMultiInstance && !app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
+  app.on('second-instance', (_event, argv, cwd) => relaySecondInstance(argv, cwd))
+  bootstrapPhase = 'credential-validation-preflight'
+  const validateCredentials = prepareCredentialValidation(credentialIdentity, {
+    configRoot,
+    profilePath
+  })
+  // A real secret-read phase may request OS authorization. It is not part of the silent probe.
+  // No settings recovery, database migration, or BrowserWindow can run before it succeeds.
+  electronInitializationStarted = true
+  bootstrapPhase = 'electron-ready'
+  await app.whenReady()
+  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  bootstrapPhase = 'credential-ciphertext-validation'
+  validateCredentials(safeStorage, (error) => {
+    if (!credentialRecoveryPresented) {
+      bootstrapLog.error('credential access failed', {
+        recoveryReason: error.reason,
+        ...(error.probe ? { identityProbe: error.probe } : {})
+      })
+      credentialRecoveryPresented = true
+      const message = credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
+      // Same headless rule as the pre-ready recovery path: never block an unattended launch.
+      if (webMode.headless) process.stderr.write(`${APP_NAME}: ${message}\n`)
+      else dialog.showErrorBox(APP_NAME, message)
+    }
+    app.exit(1)
+  })
+  bootstrapPhase = 'application-initialization'
+  app.setAppLogsPath(
+    process.platform === 'darwin' && !isolated
+      ? join(app.getPath('home'), 'Library', 'Logs', basename(profilePath))
+      : join(profilePath, 'logs')
+  )
   const [
-    { acquireSingleInstanceLock },
     {
       createSecondInstanceRelay,
       createStartupWindowCloseOptions,
@@ -143,32 +268,27 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       prepareVisibleStartupRuntime,
       waitForStartupShell
     },
-    { parseWebModeOptions },
     { installSystemLifecycleAdapters }
-  ] = await Promise.all([
-    import('./single-instance'),
-    import('./app-startup'),
-    import('./web-service/options'),
-    import('./system-lifecycle-adapters')
-  ])
+  ] = await Promise.all([import('./app-startup'), import('./system-lifecycle-adapters')])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
-  if (
-    !allowMultiInstance &&
-    !acquireSingleInstanceLock({
-      onSecondInstance: (argv) => preStartupSecondInstanceRelay.signal(argv)
-    })
-  ) {
-    app.quit()
-    return
+  relaySecondInstance = (argv, cwd) => {
+    for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
+    preStartupSecondInstanceRelay.signal(argv)
   }
-  const webMode = parseWebModeOptions(process.argv)
+  for (const [argv, cwd] of pendingSecondInstances) relaySecondInstance(argv, cwd)
+  for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
+  const { prepareApplicationLocations } = await import('./storage/initialize-location')
+  bootstrapPhase = 'initialize-application-locations'
+  const bootstrapLocations = await prepareApplicationLocations(configRoot)
+  preparingLocations = false
   let bindSystemShutdownWindow = (window: InstanceType<typeof BrowserWindow>): void => {
     void window
   }
   let installPowerMonitorListeners = (): void => {}
 
-  // Initialize the file sink after the primary lock but before assets, the backend graph, and
-  // app.whenReady so packaged startup failures remain locally diagnosable.
+  // Initialize the file sink after credential validation but before assets and the backend graph
+  // so later packaged startup failures remain locally diagnosable.
+  bootstrapPhase = 'application-diagnostics'
   const diagnostics = initializeApplicationDiagnostics({
     logDir: app.getPath('logs'),
     version: app.getVersion(),
@@ -253,7 +373,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // returns the handles the migration guard and lifecycle need; the guard is installed before the
   // lifecycle so its before-quit runs first. A second launch that arrives mid-startup is recorded by the
   // relay and surfaced once the window exists.
+  let openPackageWindow: (() => void) | undefined
   let forwardSecondInstanceDuringStartup: ((argv: string[]) => void) | undefined
+  bootstrapPhase = 'application-startup'
   await orchestrateAppStartup({
     diagnostics: startupDiagnostics,
     // The OS lock is already held. Bind the orchestrator's relay to the pre-logger relay so any
@@ -294,6 +416,21 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
+      app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+      // Electron created its default menu before ready using the selected credential identity.
+      // Rebuild standard roles now so About/Hide/app-menu labels use the display brand as well.
+      const { Menu } = createRequire(import.meta.url)('electron') as typeof import('electron')
+      if (process.platform === 'darwin')
+        Menu.setApplicationMenu(
+          Menu.buildFromTemplate([
+            { role: 'appMenu' },
+            { role: 'fileMenu' },
+            { role: 'editMenu' },
+            { role: 'viewMenu' },
+            { role: 'windowMenu' },
+            { role: 'help', submenu: [] }
+          ])
+        )
       installPowerMonitorListeners()
 
       startupDiagnostics?.phase('load-startup-shell-modules')
@@ -310,8 +447,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { buildStartupDiagnostics },
         { getProjectDbClient },
         { resolveConfigRoot },
-        { SettingsDocumentStore },
-        { SettingsRepository }
+        { initializeDataLocation }
       ] = await Promise.all([
         import('./managed-preview-protocol'),
         import('./windows'),
@@ -325,8 +461,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./database/startup-diagnostics'),
         import('./projects/prisma-client'),
         import('./storage-root'),
-        import('./settings/document-store'),
-        import('./settings/repository')
+        import('./storage/initialize-location')
       ])
 
       startupDiagnostics?.phase('prepare-shell')
@@ -337,8 +472,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Create the settings document owner before any native surface. The startup locale repository
       // and the later application Settings repository share this store, so every settings.json
       // mutation uses one serialization queue and one atomic-write implementation.
-      const settingsStore = new SettingsDocumentStore(resolveConfigRoot())
-      const startupSettingsRepository = new SettingsRepository(settingsStore)
+      const settingsStore = bootstrapLocations.settingsStore
+      const startupSettingsRepository = bootstrapLocations.repository
+      await initializeDataLocation(startupSettingsRepository)
       const startupSettings = await startupSettingsRepository.getSettings()
       const localeOwner = new LocalePreferenceOwner(
         app.getPreferredSystemLanguages(),
@@ -406,6 +542,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         ? waitForStartupShell(startupWindow, { diagnostics: startupDiagnostics })
         : Promise.resolve()
       if (startupWindow) {
+        void startupShellRendered
+          .then(async () => {
+            const { isReadOnlyMacInstallation, showMacInstallationGuidance } =
+              await import('./mac-installation')
+            if (isReadOnlyMacInstallation()) void showMacInstallationGuidance('startup')
+          })
+          .catch(() => {})
         if (!forwardSecondInstanceDuringStartup) {
           throw new Error('Second-instance startup relay is not initialized.')
         }
@@ -487,6 +630,19 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           ]
         ) => {
           startupDiagnostics?.phase('compose-runtime')
+          // Retain ownership before the complete context can be handed to the lifecycle.
+          let disposePartialRuntime:
+            Awaited<ReturnType<typeof registerIpcHandlers>>['dispose'] | undefined
+          let partialRemoteAccess:
+            Awaited<ReturnType<typeof RemoteAccessService.create>> | undefined
+          let partialWebController: ReturnType<typeof createWebServiceController> | undefined
+          let disposeTrayLocaleSubscription: (() => void) | undefined
+
+          // The controller must exist before its IPC responder, while the responder calls back into the
+          // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
+          const visibilityProbeBox: {
+            current: ReturnType<typeof registerUnreadTaskIpc> | undefined
+          } = { current: undefined }
 
           try {
             startupDiagnostics?.phase('register-application-ipc')
@@ -501,7 +657,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             // the app icon variant — the tray only exists once the lifecycle is installed (assigned in the
             // createTray callback). Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
             const appTrayBox: { current: ReturnType<typeof createAppTray> } = { current: undefined }
-            const disposeTrayLocaleSubscription = localeOwner.subscribe(() =>
+            disposeTrayLocaleSubscription = localeOwner.subscribe(() =>
               refreshAppTrayLocale(appTrayBox.current)
             )
             // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
@@ -512,6 +668,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
 
             // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
             const {
+              openSessionPackageFile,
               applicationCommands,
               applicationEvents,
               permissionApprovalPresence,
@@ -529,7 +686,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               holdSettingsInstallAdmission,
               prepareForQuit,
               abortQuitPreparation,
-              dispose: disposeApplicationRuntime
+              dispose: disposeRuntime
             } = await registerIpcHandlers({
               mainEntryPath,
               settingsStore,
@@ -559,13 +716,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               },
               listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
             })
+            const disposeApplicationRuntime = (): ReturnType<typeof disposeRuntime> => {
+              visibilityProbeBox.current?.dispose()
+              return disposeRuntime()
+            }
+            disposePartialRuntime = disposeApplicationRuntime
             startupDiagnostics?.phase('compose-desktop-surfaces')
 
-            // The controller must exist before its IPC responder, while the responder calls back into the
-            // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
-            const visibilityProbeBox: {
-              current: ReturnType<typeof registerUnreadTaskIpc> | undefined
-            } = { current: undefined }
             notificationInbox.configureDesktop({
               // Only the main conversation window can acknowledge a visible session. A focused preview
               // window must not clear unread state for the conversation underneath it.
@@ -608,6 +765,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             })
             startupDiagnostics?.phase('compose-remote-access')
             const remoteAccess = await RemoteAccessService.create()
+            partialRemoteAccess = remoteAccess
             bindRemoteAccess(remoteAccess)
             const webController = createWebServiceController({
               applicationCommands,
@@ -620,6 +778,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               computePreferences,
               detectActiveSessions
             })
+            partialWebController = webController
             remoteAccess.attachWebController(webController)
             registerRemoteAccessIpcHandlers(remoteAccess)
             // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
@@ -631,11 +790,24 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             void remoteAccess.restore()
 
             const disposeApplicationIpcHandlers = (): void => {
-              disposeTrayLocaleSubscription()
-              disposeLocalePreferenceIpc()
-              managedPreviewProtocolBridge.dispose()
-              disposeDatabaseStartupIpc()
-              disposeIpcHandlerRegistry()
+              const failures: unknown[] = []
+              for (const cleanup of [
+                () => visibilityProbeBox.current?.dispose(),
+                () => disposeTrayLocaleSubscription?.(),
+                disposeLocalePreferenceIpc,
+                () => managedPreviewProtocolBridge.dispose(),
+                disposeDatabaseStartupIpc,
+                disposeIpcHandlerRegistry
+              ]) {
+                try {
+                  cleanup()
+                } catch (error) {
+                  failures.push(error)
+                }
+              }
+              if (failures.length > 0) {
+                throw new AggregateError(failures, 'Application IPC cleanup failed.')
+              }
             }
             const shutdownApplicationSurfaces = createApplicationLifecycleShutdown({
               disposeApplicationRuntime,
@@ -646,6 +818,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             })
 
             return {
+              openSessionPackageFile,
               installMigrationQuitGuard,
               isMigrationInProgress,
               createMainWindow: (options: Parameters<typeof createMainWindow>[0]) =>
@@ -708,8 +881,24 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
             // Invalidate caller leases immediately if composition fails after registering IPC. The
             // outer shell rollback destroys the window and quits, but renderer calls can still arrive
             // while that shutdown is in flight.
-            disposeIpcHandlerRegistry()
-            managedPreviewProtocolBridge.dispose()
+            for (const invalidate of [
+              () => visibilityProbeBox.current?.dispose(),
+              disposeIpcHandlerRegistry,
+              () => managedPreviewProtocolBridge.dispose()
+            ]) {
+              try {
+                invalidate()
+              } catch {
+                // Preserve the startup error and still stop all acquired services.
+              }
+            }
+            await createApplicationLifecycleShutdown({
+              disposeApplicationRuntime: () => disposePartialRuntime?.(),
+              remoteAccess: { shutdown: () => partialRemoteAccess?.shutdown() },
+              webController: { dispose: () => partialWebController?.dispose() },
+              disposeIpcHandlers: () => disposeTrayLocaleSubscription?.(),
+              log
+            })()
             throw error
           }
         },
@@ -717,12 +906,22 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           // Module loading can fail while verification is actively migrating. Keep the quit guard
           // installed until that attempt settles so app.quit cannot interrupt database writes.
           await databaseStartupOwner.whenAttemptSettled()
-          disposeLocalePreferenceIpc()
-          databaseStartupQuitGuard.dispose()
-          managedPreviewProtocolBridge.dispose()
-          disposeDatabaseStartupIpc()
-          if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
-          app.quit()
+          for (const cleanup of [
+            disposeLocalePreferenceIpc,
+            () => databaseStartupQuitGuard.dispose(),
+            () => managedPreviewProtocolBridge.dispose(),
+            disposeDatabaseStartupIpc,
+            () => {
+              if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
+            },
+            () => app.quit()
+          ]) {
+            try {
+              cleanup()
+            } catch (error) {
+              log.warn('Startup shell cleanup failed', diagnosticErrorFields(error))
+            }
+          }
         }
       })
     },
@@ -769,6 +968,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           return tray
         },
         isMigrationInProgress: ctx.isMigrationInProgress,
+        beforeExit: async () => {
+          const { completeMacInstallationHandoff } = await import('./mac-installation')
+          completeMacInstallationHandoff()
+        },
         quit: () => app.quit(),
         countWindows: () => BrowserWindow.getAllWindows().length,
         createInitialWindow: !ctx.webMode.headless,
@@ -798,6 +1001,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         shutdownBackends: ctx.shutdownApplicationSurfaces
       })
       const { showMainWindow, getMainWindow, isMainWindowHidden, onSystemShutdown } = lifecycle
+      openPackageWindow = showMainWindow
 
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
       // overlay to the first window, then attach completion/focus/window-recreation events.
@@ -854,6 +1058,11 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     markReady: (ctx) => {
       ctx.databaseStartupOwner.complete()
       ctx.databaseStartupQuitGuard.release()
+      reportPackageOverflow = () => ctx.openSessionPackageFile(null)
+      packageFiles.bind((path) => {
+        openPackageWindow?.()
+        ctx.openSessionPackageFile(path)
+      })
     }
   })
 }

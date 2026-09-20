@@ -474,8 +474,13 @@ jobs: {}
     )
   })
 
-  it('rejects semantic changes to an established required workflow', () => {
-    const baseText = `jobs:
+  it('allows owner-reviewed workflow edits that preserve required checks', () => {
+    const baseText = `on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+jobs:
   gate:
     name: PR Gate
     needs: [preflight]
@@ -486,20 +491,117 @@ jobs: {}
       {
         path: '.github/workflows/pr-gate.yml',
         baseText,
-        headText: `jobs:
+        headText: baseText.replace('needs: [preflight]', 'needs: [preflight, policy]')
+      }
+    ])
+
+    // Native ruleset review is separate from this structural validation.
+    expect(result.ok).toBe(true)
+  })
+
+  it.each([
+    {
+      label: 'drops the merge_group trigger from pr-gate',
+      path: '.github/workflows/pr-gate.yml',
+      headText: `on:
+  pull_request:
+    branches: [main]
+jobs:
   gate:
     name: PR Gate
-    steps:
-      - run: echo pass
+`
+    },
+    {
+      label: 'drops checks_requested from the ci-integrity merge_group trigger',
+      path: '.github/workflows/ci-integrity.yml',
+      headText: `on:
+  pull_request_target:
+    branches: [main]
+  merge_group:
+    types: [destroyed]
+jobs:
+  integrity:
+    name: CI Integrity
+`
+    },
+    {
+      label: 'replaces pull_request_target with pull_request in ci-integrity',
+      path: '.github/workflows/ci-integrity.yml',
+      headText: `on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+jobs:
+  integrity:
+    name: CI Integrity
+`
+    },
+    {
+      label: 'uses a bare pull_request trigger without merge_group in pr-gate',
+      path: '.github/workflows/pr-gate.yml',
+      headText: `on: pull_request
+jobs:
+  gate:
+    name: PR Gate
+`
+    }
+  ])('rejects a required workflow that $label', ({ path, headText }) => {
+    const result = checkCiIntegrityChanges([
+      { path, baseText: readFileSync(resolve(path), 'utf8'), headText }
+    ])
+
+    expect(result.violations).toContainEqual(
+      expect.objectContaining({ path, rule: 'required-check-triggers' })
+    )
+    expect(result.violations).not.toContainEqual(
+      expect.objectContaining({ rule: 'stable-required-check' })
+    )
+  })
+
+  it('keeps required-check triggers when a required workflow is renamed', () => {
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/replacement.yml',
+        previousPath: '.github/workflows/ci-integrity.yml',
+        baseText: readFileSync(resolve('.github/workflows/ci-integrity.yml'), 'utf8'),
+        headText: `on:
+  pull_request_target:
+    branches: [main]
+jobs:
+  integrity:
+    name: CI Integrity
 `
       }
     ])
 
     expect(result.violations).toContainEqual(
       expect.objectContaining({
-        path: '.github/workflows/pr-gate.yml',
-        rule: 'protected-gate-control-plane'
+        path: '.github/workflows/replacement.yml',
+        rule: 'required-check-triggers'
       })
+    )
+  })
+
+  it('does not apply required-check triggers to unrelated workflows', () => {
+    const result = checkCiIntegrityChanges([
+      {
+        path: '.github/workflows/nightly.yml',
+        baseText: '',
+        headText: `on:
+  schedule:
+    - cron: '0 3 * * *'
+jobs:
+  nightly:
+    name: Nightly
+    steps:
+      - run: echo nightly
+`
+      }
+    ])
+
+    expect(result.violations).not.toContainEqual(
+      expect.objectContaining({ rule: 'required-check-triggers' })
     )
   })
 
@@ -509,18 +611,16 @@ jobs: {}
     'scripts/ci/classify-pr-changes.mjs',
     'scripts/ci/change-impact.json',
     'scripts/ci/evaluate-pr-gate.mjs'
-  ])('rejects semantic changes to established trusted control-plane file %s', (path) => {
+  ])('allows owner-reviewed changes to established control-plane file %s', (path) => {
     const result = checkCiIntegrityChanges([
       {
         path,
         baseText: 'trusted base content\n',
-        headText: 'weakened head content\n'
+        headText: 'updated trusted content\n'
       }
     ])
 
-    expect(result.violations).toContainEqual(
-      expect.objectContaining({ path, rule: 'protected-gate-control-plane' })
-    )
+    expect(result.ok).toBe(true)
   })
 
   it('rejects a content-preserving rename of an established required workflow', () => {
@@ -540,7 +640,7 @@ jobs: {}
     expect(result.violations).toContainEqual(
       expect.objectContaining({
         path: '.github/workflows/replacement.yml',
-        rule: 'protected-gate-control-plane'
+        rule: 'reserved-required-check'
       })
     )
   })

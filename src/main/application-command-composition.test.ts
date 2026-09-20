@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const routerFactoryControl = vi.hoisted(() => ({
@@ -35,8 +38,42 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import { createCallerContext } from './caller-context'
+import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
+import { createManagedPreviewOwnerRegistry } from './managed-preview-ipc'
+import { ManagedPreviewResources } from './managed-preview-resources'
+import { LocalFsService } from './local-fs/service'
+import type { ManagedPreviewResource, ManagedPreviewRangeResult } from '../shared/preview-resources'
 
 const EMPTY_OWNER = Object.freeze({})
+
+it('exposes bootstrap only to local Task callers without widening renderer management', async () => {
+  const bootstrap = vi.fn(async () => ({ ok: true }))
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: {
+      service: { bootstrap },
+      emitInstallEvent: vi.fn(),
+      snapshotCommits: { projectAfter: (pending: Promise<unknown>) => pending }
+    } as never
+  })
+  expect(composition.localWeb.commandNames()).not.toContain('settings:bootstrap')
+  expect(composition.remoteWeb.commandNames()).not.toContain('settings:bootstrap')
+  await expect(
+    composition.task.invoke('settings:bootstrap', {
+      ...invocation('remote'),
+      args: [{ action: 'runtime' }]
+    })
+  ).resolves.toEqual({ ok: false, code: 'invalid_request' })
+  expect(bootstrap).not.toHaveBeenCalled()
+  await expect(
+    composition.task.invoke('settings:bootstrap', {
+      ...invocation(),
+      args: [{ action: 'runtime' }]
+    })
+  ).resolves.toEqual({ ok: true })
+  expect(bootstrap).toHaveBeenCalledOnce()
+  composition.dispose()
+})
 const unexpectedCommand = defineApplicationCommand<'test:unexpected', readonly [], void>(
   'test:unexpected'
 )
@@ -62,7 +99,12 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     compute: EMPTY_OWNER,
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
+    specialist: {
+      dispose: vi.fn()
+    } as unknown as ApplicationCommandCompositionDependencies['specialist'],
+    memory: EMPTY_OWNER,
     literature: EMPTY_OWNER,
+    bookmarks: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -196,8 +238,15 @@ describe('application command composition', () => {
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
+      'bookmarks:create',
+      'bookmarks:delete',
+      'bookmarks:list',
+      'bookmarks:resolve-pdf-source',
+      'bookmarks:update-note',
+      'lifecycle:claim-runtime-writer',
       'literature:citation-styles',
       'literature:complete-metadata',
+      'literature:export-record',
       'literature:format-document',
       'literature:format-references',
       'literature:full-text',
@@ -205,7 +254,9 @@ describe('application command composition', () => {
       'literature:import-pdf',
       'literature:import-records',
       'literature:jobs',
+      'literature:lookup-metadata',
       'literature:search',
+      'literature:sources',
       'literature:transact',
       'memory:clear-all',
       'memory:create-category',
@@ -216,6 +267,11 @@ describe('application command composition', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-structure:cancel',
+      'pdf-structure:clear-cache',
+      'pdf-structure:parse',
+      'pdf-structure:read-cached',
+      'pdf-structure:read-thumbnail',
       'projects:create',
       'projects:delete',
       'projects:get',
@@ -226,8 +282,12 @@ describe('application command composition', () => {
       'projects:update-archive',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
+      'sessions:fork',
+      'sessions:import-package',
       'sessions:link-pdf-context',
+      'sessions:package-operation',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
@@ -237,7 +297,8 @@ describe('application command composition', () => {
       'tags:set-assignment',
       'tags:snapshot',
       'tags:update',
-      'uploads:finalize-session'
+      'uploads:finalize-session',
+      'uploads:recover-draft'
     ])
   })
 
@@ -289,10 +350,26 @@ describe('application command composition', () => {
     expect(composition.task.commandNames()).not.toContain('reviewer:abort-fix-loop')
   })
 
-  it('exposes only the twenty-one Task commands and no transport-wide capability', async () => {
+  it('exposes only the explicit Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
+      'settings:bootstrap',
+      'cli:install',
+      'settings:get-preflight',
+      'settings:list-skills',
+      'settings:list-connectors',
+      'settings:get-connector-detail',
+      'settings:set-connector-enabled',
+      'settings:set-custom-server-enabled',
+      'settings:add-custom-server',
+      'settings:update-custom-server',
+      'settings:remove-custom-server',
+      'settings:test-custom-server',
+      'settings:list-device-credentials',
+      'settings:create-device-credential',
+      'settings:update-device-credential',
+
       'projects:list',
       'projects:create',
       'projects:update',
@@ -301,6 +378,8 @@ describe('application command composition', () => {
       'settings:set-agent-routing',
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:bind-task-session',
+      'sessions:admit-task-turn',
       'sessions:stage-task-completion',
       'sessions:settle-task-completion',
       'sessions:fail-task-run',
@@ -312,6 +391,7 @@ describe('application command composition', () => {
       'reviewer:get-for-session',
       'reviewer:run',
       'artifacts:finalize-run',
+      'artifacts:resolve-version-descriptors',
       'preview-resources:acquire',
       'preview-resources:release'
     ])
@@ -350,7 +430,8 @@ describe('application command composition', () => {
       disable: vi.fn(),
       approve: vi.fn(),
       reject: vi.fn(),
-      revoke: vi.fn()
+      revoke: vi.fn(),
+      revokeBrowsers: vi.fn(async () => snapshot)
     }
     const replacementSnapshot = vi.fn(() =>
       Object.freeze({ ...snapshot, mode: 'remoteit' as const, enabled: true, lifecycle: 'running' })
@@ -367,6 +448,19 @@ describe('application command composition', () => {
       composition.remoteWeb.invoke('remote-access:get-snapshot', invocation('remote'))
     ).resolves.toBe(snapshot)
     expect(firstSnapshot).toHaveBeenCalledOnce()
+    const batch = { browserIds: ['first', 'second'] }
+    await expect(
+      composition.remoteWeb.invoke('remote-access:revoke-browsers', {
+        ...invocation('remote'),
+        callerContext: createCallerContext({
+          ...invocation('remote').callerContext,
+          authorities: ['manage-remote-pairing']
+        }),
+        args: [batch]
+      })
+    ).resolves.toBe(snapshot)
+    expect(firstOwner.revokeBrowsers).toHaveBeenCalledExactlyOnceWith(batch.browserIds, false, true)
+
     expect(() => composition.bindRemoteAccess(replacementOwner as never)).toThrow(
       'Remote Access command owner is already bound.'
     )
@@ -564,5 +658,149 @@ describe('application command composition', () => {
       project('from-task')
     ])
     expect(listProjects).toHaveBeenCalledTimes(2)
+  })
+})
+
+it('routes Task Connector reads to the existing Settings owner without adding Web diagnostics', async () => {
+  const snapshot = { connectors: [], customServers: [], ncbi: { hasApiKey: false } }
+  const listConnectors = vi.fn(async () => snapshot)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: { service: { listConnectors } } as never
+  })
+  await expect(composition.task.invoke('settings:list-connectors', invocation())).resolves.toEqual(
+    snapshot
+  )
+  expect(listConnectors).toHaveBeenCalledOnce()
+  expect(composition.localWeb.commandNames()).not.toContain('settings:test-custom-server')
+  expect(composition.remoteWeb.commandNames()).not.toContain('settings:test-custom-server')
+  composition.dispose()
+})
+
+it('routes Task doctor prerequisites to the existing Settings owners', async () => {
+  const preflight = {
+    claudeReady: false,
+    opencodeReady: false,
+    codebuddyReady: false,
+    codexReady: true,
+    agentFrameworkId: 'codex',
+    agentReady: true,
+    activeProviderReady: true
+  }
+  const skills = [{ id: 'literature-review' }]
+  const getPreflight = vi.fn(async () => preflight)
+  const listSkills = vi.fn(async () => skills)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: { service: { getPreflight, listSkills } } as never
+  })
+
+  await expect(composition.task.invoke('settings:get-preflight', invocation())).resolves.toEqual(
+    preflight
+  )
+  await expect(composition.task.invoke('settings:list-skills', invocation())).resolves.toEqual(
+    skills
+  )
+  composition.dispose()
+})
+
+it('validates bounded reference exports through the shared Web command boundary', async () => {
+  const exported = { chunk: '{"title":"Reference"}', digest: 'a'.repeat(64) }
+  const exportRecord = vi.fn(async () => exported)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    literature: { exportRecord } as never
+  })
+  await expect(
+    composition.localWeb.invoke('literature:export-record', {
+      ...invocation(),
+      args: [{ itemId: 'reference', offset: -1 }]
+    })
+  ).rejects.toThrow()
+  expect(exportRecord).not.toHaveBeenCalled()
+  await expect(
+    composition.remoteWeb.invoke('literature:export-record', {
+      ...invocation('remote'),
+      args: [{ itemId: 'reference' }]
+    })
+  ).resolves.toEqual(exported)
+  expect(exportRecord).toHaveBeenCalledWith({ itemId: 'reference' })
+  composition.dispose()
+})
+
+describe('TB-01 remote preview admission', () => {
+  it.each([
+    ['remote', 'local'],
+    ['local', 'local'],
+    ['remote', 'literature'],
+    ['remote', 'notebook-input']
+  ] as const)('enforces %s caller admission for %s preview sources', async (surface, source) => {
+    const location = surface === 'remote' ? 'remote' : 'local'
+    const directory = await mkdtemp(join(tmpdir(), 'preview-admission-'))
+    const path = join(directory, 'outside-project.txt')
+    const content = 'host-only-test-content'
+    await writeFile(path, content)
+    const localFs = new LocalFsService()
+    const resolvePath = vi.fn(async (_source, request) => localFs.resolveFilePath(request))
+    const trustedLease = {
+      path,
+      size: content.length,
+      versionToken: 1,
+      snapshot: { dev: 1n, ino: 1n, size: BigInt(content.length), mtimeNs: 1n },
+      read: vi.fn(),
+      readRange: async (begin: number, end: number) => Buffer.from(content).subarray(begin, end),
+      verifyUnchanged: async () => undefined,
+      close: async () => undefined
+    }
+    const resources = new ManagedPreviewResources({
+      resolvePath,
+      openLiterature: async () => trustedLease,
+      openNotebookInput: async () => trustedLease
+    })
+    const owners = createManagedPreviewOwnerRegistry(resources)
+    const deps = dependencies()
+    const composition = createApplicationCommandComposition({
+      ...deps,
+      dataContent: { ...deps.dataContent, managedPreview: owners }
+    })
+    const leases = new ApplicationCallerLeaseRegistry()
+    const initial = invocation(location)
+    const caller = { ...initial, callerLease: leases.acquire(initial.callerContext).lease }
+    const dispatcher = location === 'remote' ? composition.remoteWeb : composition.localWeb
+    let resource: ManagedPreviewResource | undefined
+    try {
+      const acquired = dispatcher.invoke('preview-resources:acquire', {
+        ...caller,
+        args: [{ source, path }]
+      }) as Promise<ManagedPreviewResource>
+      if (location === 'remote' && source === 'local') {
+        // Capture actual bytes if admission unexpectedly succeeds, without hiding the failed guard.
+        resource = await acquired.catch(() => undefined)
+        if (resource) {
+          const range = (await dispatcher.invoke('preview-resources:read-range', {
+            ...caller,
+            args: [{ resourceId: resource.id, begin: 0, end: content.length }]
+          })) as ManagedPreviewRangeResult
+          expect
+            .soft(Buffer.from(range.data).toString(), 'remote caller received host-only bytes')
+            .not.toBe(content)
+        }
+        await expect.soft(acquired).rejects.toThrow(/local app/)
+        expect.soft(resource, 'remote local-file request must be rejected').toBeUndefined()
+        expect(resolvePath, 'reject before filesystem resolution').not.toHaveBeenCalled()
+      } else {
+        resource = await acquired
+        const range = (await dispatcher.invoke('preview-resources:read-range', {
+          ...caller,
+          args: [{ resourceId: resource.id, begin: 0, end: content.length }]
+        })) as ManagedPreviewRangeResult
+        expect(Buffer.from(range.data).toString()).toBe(content)
+      }
+    } finally {
+      if (resource) owners.release(caller.callerLease, { resourceId: resource.id })
+      leases.dispose()
+      composition.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

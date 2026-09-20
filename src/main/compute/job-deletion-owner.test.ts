@@ -94,7 +94,9 @@ const createHarness = (jobs: ComputeJob[]) => {
     })
   }
   const jobRepository = {
-    findByOwner: vi.fn(async () => jobs),
+    findByOwner: vi.fn<(owner: { projectId: string; sessionId?: string }) => Promise<ComputeJob[]>>(
+      async () => jobs
+    ),
     listOwners: vi.fn(async () => [{ projectId: 'project-1', sessionId: 'session-1' }]),
     get: vi.fn(
       async (jobId: string) => jobs.find((candidate) => candidate.job_id === jobId) ?? null
@@ -629,6 +631,56 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.runtime.resume).toHaveBeenCalledOnce()
   })
 
+  it.each(['project-1', 'project-2'])(
+    'isolates failed session cleanup from another session in %s and retries the original owner',
+    async (projectId) => {
+      const harness = createHarness([job()])
+      harness.jobRepository.findByOwner.mockImplementation(async (scope) =>
+        scope.sessionId === 'session-1' ? [job()] : []
+      )
+      harness.runner.run.mockRejectedValueOnce(new Error('offline'))
+      await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+      await expect(
+        harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+      ).rejects.toThrow('offline')
+      await harness.owner.prepareSessionJobDeletion(projectId, 'session-2')
+      await harness.owner.commitSessionJobDeletion(projectId, 'session-2')
+      expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledExactlyOnceWith({
+        projectId,
+        sessionId: 'session-2'
+      })
+      expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+      await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+      expect(harness.lifecycle.deleteOwnerRows).toHaveBeenLastCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+      expect(harness.runner.run).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('continues orphan recovery after one owner fails and preserves its retry plan', async () => {
+    const harness = createHarness([job()])
+    harness.jobRepository.listOwners.mockResolvedValue([
+      { projectId: 'project-1', sessionId: 'session-1' },
+      { projectId: 'project-2', sessionId: 'session-2' }
+    ])
+    harness.jobRepository.findByOwner.mockImplementation(async (scope) =>
+      scope.projectId === 'project-1' ? [job()] : []
+    )
+    harness.runner.run.mockRejectedValueOnce(new Error('offline'))
+    await expect(harness.owner.reconcileOrphanJobs(async () => false)).rejects.toThrow()
+    expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-2',
+      sessionId: 'session-2'
+    })
+    await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+    expect(harness.lifecycle.deleteOwnerRows).toHaveBeenLastCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+  })
+
   it('recovers a retained child Session plan before preparing its parent Project', async () => {
     const harness = createHarness([job()])
     harness.runner.run.mockResolvedValueOnce({
@@ -816,22 +868,28 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.runner.run).not.toHaveBeenCalled()
   })
 
-  it('keeps unreadable owner authority fail-closed until it becomes live', async () => {
+  it('retains unreadable owners without treating them as deleted', async () => {
     const harness = createHarness([job()])
     const unknownOwner = vi.fn(async () => 'unknown' as const)
 
     await harness.owner.restoreOrphanJobDeletionBarriers(unknownOwner)
     await harness.owner.reconcileOrphanJobs(unknownOwner)
 
-    expect(harness.lifecycle.beginOwnerDeletion).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 'session-1'
-    })
-    expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.lifecycle.beginOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.queueManager.pauseOwner).not.toHaveBeenCalled()
     expect(harness.jobRepository.findByOwner).not.toHaveBeenCalled()
+    expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
+    expect(harness.runner.run).not.toHaveBeenCalled()
+  })
+
+  it('keeps a confirmed orphan barrier through unreadability and releases it when live', async () => {
+    const harness = createHarness([job()])
+    await harness.owner.restoreOrphanJobDeletionBarriers(async () => false)
+    await harness.owner.reconcileOrphanJobs(async () => 'unknown')
+    expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.queueManager.resumeOwner).not.toHaveBeenCalled()
 
     await harness.owner.reconcileOrphanJobs(async () => true)
-
     expect(harness.lifecycle.abortOwnerDeletion).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1'

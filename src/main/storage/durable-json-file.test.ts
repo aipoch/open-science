@@ -14,6 +14,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
+  readFileWithinLimit,
+  DurableJsonReadLimitError,
   writeDurableJsonFile,
   type DurableJsonFileDependencies
 } from './durable-json-file'
@@ -391,4 +393,32 @@ describe('durable JSON file recovery', () => {
     })
     await expect(readdir(root)).resolves.toEqual(['settings.json'])
   })
+})
+
+it('reads large UTF-8 JSON with bounded scratch allocations and an exact byte limit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'durable-json-read-'))
+  roots.push(root)
+  const path = join(root, 'session.json')
+  // Split multi-byte characters at read boundaries, including a final partial chunk.
+  const contents = 'a'.repeat(65535) + '研究🔬'.repeat(100000)
+  await writeFile(path, contents)
+  const bytes = Buffer.byteLength(contents)
+  let allocated = 0
+  const allocate = Buffer.allocUnsafe
+  const allocations = vi.spyOn(Buffer, 'allocUnsafe').mockImplementation((size) => {
+    allocated += size
+    return allocate(size)
+  })
+  let actual: string
+  try {
+    actual = await readFileWithinLimit(path, bytes)
+  } finally {
+    allocations.mockRestore()
+  }
+  expect(actual).toBe(contents)
+  // Scratch space must stay small even though the returned decoded string grows with the file.
+  expect(allocated).toBeLessThanOrEqual(128 * 1024)
+  await expect(readFileWithinLimit(path, bytes - 1)).rejects.toBeInstanceOf(
+    DurableJsonReadLimitError
+  )
 })

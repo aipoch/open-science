@@ -9,7 +9,9 @@ import type {
   ExportNotebookKernelRequest,
   AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
+  NotebookBackgroundRunLookupRequest,
   NotebookNamespaceRequest,
+  NotebookProjectActivityRequest,
   NotebookRestartRequest,
   NotebookSessionRequest,
   NotebookSessionStateRequest,
@@ -23,6 +25,9 @@ const log = createLogger('notebook:ipc')
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
   ipcMainHandle('notebook:state', (_event, request: NotebookSessionStateRequest) =>
     handlers.state(request)
+  )
+  ipcMainHandle('notebook:project-activity', (_event, request: NotebookProjectActivityRequest) =>
+    handlers.projectActivity(request)
   )
   ipcMainHandle('notebook:inspect-namespace', (_event, request: NotebookNamespaceRequest) =>
     handlers.inspectNamespace(request)
@@ -87,6 +92,13 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   )
   ipcMainHandle('notebook:shutdown', (_event, request: NotebookSessionRequest) =>
     handlers.shutdown(request)
+  )
+  ipcMainHandle('notebook:background-run', (_event, request: NotebookBackgroundRunLookupRequest) =>
+    handlers.getBackgroundRun(request)
+  )
+  ipcMainHandle(
+    'notebook:cancel-background-run',
+    (_event, request: NotebookBackgroundRunLookupRequest) => handlers.cancelBackgroundRun(request)
   )
 }
 

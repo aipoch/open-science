@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
+import { sanitizeMessageParts } from '../../shared/session-persistence'
+import {
+  docFromMessageParts,
+  docToMessageParts,
+  docArtifactCount
+} from '../../renderer/src/pages/workspace/composer/composer-doc'
+
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 
 describe('buildLiteratureReferencePrompt', () => {
+  it.each([5, 6, 10])(
+    'preserves exact retrieval identities for %i composer Collections',
+    (count) => {
+      const scopes = Array.from({ length: count }, (_, index) => ({
+        type: 'literature-scope' as const,
+        scope: 'collection' as const,
+        collectionId: `collection-exact-${index + 1}`,
+        name: `Study set ${index + 1}`
+      }))
+      const doc = docFromMessageParts(scopes)
+      expect(docArtifactCount(doc)).toBe(count)
+      const parts = sanitizeMessageParts(docToMessageParts(doc))
+      expect(parts).toEqual(scopes)
+      const prompt = buildLiteratureReferencePrompt(parts)
+      for (const scope of scopes) expect(prompt).toContain(JSON.stringify(scope.collectionId))
+    }
+  )
+
   it('serializes an immutable metadata snapshot without local file paths', () => {
     const prompt = buildLiteratureReferencePrompt([
       {
@@ -63,6 +88,15 @@ describe('buildLiteratureReferencePrompt', () => {
     expect(prompt).toContain('do not batch-read every search result')
     expect(prompt).toContain('read_library_pdf')
     expect(prompt).toContain('bounded passages with page numbers')
+    expect(prompt).toContain('Library itemId and linked-PDF documentId are not interchangeable')
+    expect(prompt).toContain('not every Library search result or attachment')
+    expect(prompt).toContain(
+      'Call list_pdf_elements with a linked documentId, or {} for a single linked PDF'
+    )
+    expect(prompt).toContain('call read_pdf_element with the exact elementRef returned by listing')
+    expect(prompt).toContain(
+      'read_library_pdf provides prose evidence, not verified table cells or images'
+    )
     expect(prompt).toContain('{{cite:itemId}}')
     expect(prompt).toContain('{{bibliography}}')
     expect(prompt).toContain('format_citation_document')
