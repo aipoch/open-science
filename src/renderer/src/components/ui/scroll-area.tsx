@@ -28,7 +28,8 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      {/* Keep the hover-mode bar mounted so focus-within can reveal it without pointer input. */}
+      <ScrollBar forceMount />
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )
