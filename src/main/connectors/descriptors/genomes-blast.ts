@@ -203,11 +203,23 @@ function parseSubmission(text: string): { rid: string; rtoeSeconds: number | nul
   return { rid: ridOf(rid), rtoeSeconds: rtoeText ? Number(rtoeText) : null }
 }
 
+function responseStatus(text: string): BlastStatus | undefined {
+  // Read protocol metadata, never arbitrary status-looking text in a report body.
+  const block =
+    /<!--\s*QBlastInfoBegin\s*([\s\S]*?)\s*QBlastInfoEnd\s*-->/i.exec(text)?.[1] ??
+    /^\s*QBlastInfoBegin\s*([\s\S]*?)\s*QBlastInfoEnd\s*$/i.exec(text)?.[1]
+  const status =
+    block !== undefined
+      ? /^\s*Status[ \t]*=[ \t]*(WAITING|READY|FAILED|UNKNOWN)[ \t]*$/im.exec(block)?.[1]
+      : /^\s*(?:<!--\s*)?Status[ \t]*=[ \t]*(WAITING|READY|FAILED|UNKNOWN)\s*(?:-->)?\s*$/i.exec(
+          text
+        )?.[1]
+  return status?.toUpperCase() as BlastStatus | undefined
+}
+
 function parseStatus(text: string): BlastStatus {
-  const status = /Status\s*=\s*(WAITING|READY|FAILED|UNKNOWN)/i.exec(text)?.[1]?.toUpperCase()
-  if (status === 'WAITING' || status === 'READY' || status === 'FAILED' || status === 'UNKNOWN') {
-    return status
-  }
+  const status = responseStatus(text)
+  if (status) return status
   throw new Error(
     'NCBI BLAST returned no recognizable status; the reply was omitted to avoid echoing request data.'
   )
@@ -224,7 +236,9 @@ function formatParams(format: BlastFormat): { formatType: string; alignmentView?
 
 const databaseSchema = {
   type: 'string',
-  enum: ['nt', 'core_nt', 'refseq_rna', 'nr', 'refseq_protein', 'swissprot']
+  enum: ['nt', 'core_nt', 'refseq_rna', 'nr', 'refseq_protein', 'swissprot'],
+  description:
+    'Requested database, not a guarantee of the effective search database. NCBI may automatically switch nt to core_nt; inspect the completed report for the database actually searched.'
 }
 
 export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
@@ -249,7 +263,7 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
     },
     required: ['sequence', 'molecule_type'],
     returns:
-      '{rid, rtoe_seconds, poll_after_seconds, program, database, molecule_type, sequence_length} — keep rid and wait at least 60 seconds before checking status. Throws blast_submission_unknown if dispatch may have succeeded without a usable receipt.',
+      '{rid, rtoe_seconds, poll_after_seconds, program, requested_database, molecule_type, sequence_length} — requested_database is the submitted value; NCBI may switch nt to core_nt. The completed report identifies the actual database. Keep rid and wait at least 60 seconds before checking status. Throws blast_submission_unknown if dispatch may have succeeded without a usable receipt.',
     example:
       'const result = await host.mcp("genomes", "blast_submit", {"sequence": "ATGCGTACGTAGCTAG", "molecule_type": "nucleotide", "database": "nt"})',
     // Leave headroom for the POST-specific timeout to surface its uncertainty diagnosis.
@@ -285,7 +299,7 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
         rtoe_seconds: rtoeSeconds,
         poll_after_seconds: Math.max(MIN_POLL_SECONDS, rtoeSeconds ?? MIN_POLL_SECONDS),
         program: moleculeType === 'nucleotide' ? 'blastn' : 'blastp',
-        database,
+        requested_database: database,
         molecule_type: moleculeType,
         sequence_length: length
       }
@@ -355,19 +369,6 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
       })
       if (selected.alignmentView) params.set('ALIGNMENT_VIEW', selected.alignmentView)
       const text = await getBlast(ctx, params)
-      const statusMatch = /Status\s*=\s*(WAITING|READY|FAILED|UNKNOWN)/i.exec(text)
-      if (statusMatch) {
-        const status = parseStatus(text)
-        if (status !== 'READY') {
-          return {
-            rid,
-            status,
-            ready: false,
-            format,
-            ...(status === 'WAITING' ? { retry_after_seconds: MIN_POLL_SECONDS } : {})
-          }
-        }
-      }
       // A successful HTTP response is not evidence of a completed report: NCBI can return HTML
       // error pages. Validate the envelope without projecting or rewriting biological results.
       let validReport = false
@@ -387,13 +388,25 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
         validReport = /<BlastXML2(?:\s|>)/.test(text) && /<\/BlastXML2>\s*$/.test(text)
       } else {
         validReport =
-          /\bBLAST[NPX]?\s+\d+\.\d+/i.test(text) &&
-          (statusMatch?.[1]?.toUpperCase() === 'READY' || /^\s*BLAST[NPX]?\s+\d+/i.test(text))
+          /^\s*(?:<!--[\s\S]*?-->\s*)*(?:<PRE>\s*)?(?:#\s*)?BLAST[NPX]?\s+\d+\.\d+/i.test(text) ||
+          (responseStatus(text) === 'READY' &&
+            /<PRE>\s*(?:#\s*)?BLAST[NPX]?\s+\d+\.\d+/i.test(text))
       }
-      if (!validReport)
+      if (!validReport) {
+        const status = responseStatus(text)
+        if (status && status !== 'READY') {
+          return {
+            rid,
+            status,
+            ready: false,
+            format,
+            ...(status === 'WAITING' ? { retry_after_seconds: MIN_POLL_SECONDS } : {})
+          }
+        }
         throw new Error(
           'NCBI BLAST returned an invalid result report; reply omitted. Keep the RID; do not resubmit the sequence.'
         )
+      }
       return { rid, status: 'READY' as const, ready: true, format, results: text }
     }
   }

@@ -32,7 +32,8 @@ describe('BLAST submission receipt and lifecycle', () => {
       rid: 'RID123',
       rtoe_seconds: 12,
       poll_after_seconds: 60,
-      program: 'blastn'
+      program: 'blastn',
+      requested_database: 'nt'
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
     const [, init] = fetchImpl.mock.calls[0]
@@ -217,7 +218,12 @@ describe('BLAST results format contract', () => {
     ['json2', 'JSON2_S', report],
     ['xml2', 'XML2_S', '<?xml version="1.0"?><BlastXML2><BlastOutput2/></BlastXML2>'],
     ['text', 'Text', '<!-- Status=READY --><PRE>BLASTN 2.17.0+\nNo hits found</PRE>'],
-    ['tabular', 'Text', '<!-- Status=READY --><PRE>BLASTN 2.17.0+\nquery\tsubject\t100</PRE>']
+    ['tabular', 'Text', '<!-- Status=READY --><PRE>BLASTN 2.17.0+\nquery\tsubject\t100</PRE>'],
+    [
+      'tabular',
+      'Text',
+      '<html><body><!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># BLASTN 2.17.0+\n# Query: Status=WAITING\n# 0 hits found</PRE></body></html>'
+    ]
   ])(
     'preserves %s report bytes and selects the documented upstream format',
     async (format, expected, payload) => {
@@ -234,6 +240,66 @@ describe('BLAST results format contract', () => {
       if (format === 'tabular') expect(url.searchParams.get('ALIGNMENT_VIEW')).toBe('Tabular')
     }
   )
+
+  it.each(['WAITING', 'FAILED', 'UNKNOWN'])(
+    'preserves reports containing Status=%s in titles',
+    async (state) => {
+      const title = `sample Status=${state}`
+      const reports = [
+        [
+          'json2',
+          JSON.stringify({
+            BlastOutput2: [{ report: { results: { search: { query_title: title, hits: [] } } } }]
+          })
+        ],
+        [
+          'xml2',
+          `<?xml version="1.0"?><BlastXML2><BlastOutput2><query-title>${title}</query-title></BlastOutput2></BlastXML2>`
+        ],
+        ['text', `BLASTN 2.17.0+\nQuery= ${title}\nNo hits found`],
+        [
+          'tabular',
+          `<!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># BLASTN 2.17.0+\n# Query: ${title}\n# 0 hits found</PRE>`
+        ]
+      ]
+      for (const [format, payload] of reports) {
+        const fetchText = vi.fn().mockResolvedValue(payload)
+        await expect(
+          results.run!({ ...ctx, fetchText }, { rid: 'RID123', format })
+        ).resolves.toMatchObject({
+          status: 'READY',
+          ready: true,
+          results: payload
+        })
+      }
+    }
+  )
+
+  it.each(['WAITING', 'FAILED', 'UNKNOWN'])(
+    'reads %s only from the protocol block in HTML',
+    async (state) => {
+      const payload = `<html><body><!-- QBlastInfoBegin\n    Status=${state}\nQBlastInfoEnd --></body></html>`
+      const fetchText = vi.fn().mockResolvedValue(payload)
+      await expect(results.run!({ ...ctx, fetchText }, { rid: 'RID123' })).resolves.toMatchObject({
+        status: state,
+        ready: false
+      })
+      await expect(status.run!({ ...ctx, fetchText }, { rid: 'RID123' })).resolves.toMatchObject({
+        status: state,
+        ready: false
+      })
+    }
+  )
+
+  it('rejects status-looking text outside protocol metadata', async () => {
+    const fetchText = vi.fn().mockResolvedValue('<html>Query: sample Status=WAITING</html>')
+    await expect(results.run!({ ...ctx, fetchText }, { rid: 'RID123' })).rejects.toThrow(
+      'invalid result report'
+    )
+    await expect(status.run!({ ...ctx, fetchText }, { rid: 'RID123' })).rejects.toThrow(
+      'no recognizable status'
+    )
+  })
 
   it.each([
     '',
