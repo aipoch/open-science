@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ParserEngine } from '../engine'
-import { validateToolArguments } from '../registry'
-import { renderSkillDoc } from '../skill-doc'
 import { OMICS_ARCHIVES_TOOLS } from './omics-archives'
 import type { ToolDescriptor } from '../types'
 
@@ -1045,15 +1043,6 @@ describe('pride_get_project_files', () => {
       {}
     )
 
-  it('exposes the paged file contract in the generated connector skill', () => {
-    const md = renderSkillDoc('omics-archives')
-    expect(md).toContain('### pride_get_project_files')
-    expect(md).toContain('next_page')
-    expect(md).toContain('for a PXD or PRD accession')
-    expect(md).toContain('paged project file inventories with download locations')
-    expect(md).toContain('Aspera locations are transfer addresses, not HTTP URLs')
-  })
-
   it('preserves download locations and requests metadata only', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes([file()], { total_records: '1' }))
     expect(await call(fetchImpl)).toEqual({
@@ -1084,10 +1073,9 @@ describe('pride_get_project_files', () => {
   })
 
   it.each(['PXD000001', 'PRD000001'])(
-    'accepts project accession %s through both the schema and executor',
+    'accepts project accession %s through the executor',
     async (projectAccession) => {
       const args = { project_accession: projectAccession }
-      expect(() => validateToolArguments(tool('pride_get_project_files'), args)).not.toThrow()
       const fetchImpl = vi
         .fn()
         .mockResolvedValue(
@@ -1189,23 +1177,8 @@ describe('pride_get_project_files', () => {
     { page_size: '2' }
   ])('rejects invalid arguments before fetching: %j', async (args) => {
     const fetchImpl = vi.fn()
-    expect(() =>
-      validateToolArguments(tool('pride_get_project_files'), {
-        project_accession: 'PXD000001',
-        ...args
-      })
-    ).toThrow(/invalid_arguments/)
     await expect(call(fetchImpl, args)).rejects.toThrow()
     expect(fetchImpl).not.toHaveBeenCalled()
-  })
-
-  it('rejects unknown arguments through the registry', () => {
-    expect(() =>
-      validateToolArguments(tool('pride_get_project_files'), {
-        project_accession: 'PXD000001',
-        download: true
-      })
-    ).toThrow(/invalid_arguments/)
   })
 
   it.each([

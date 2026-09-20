@@ -61,6 +61,15 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
+  it('exposes the PRIDE paged file contract in the generated connector skill', () => {
+    const md = renderSkillDoc('omics-archives')
+    expect(md).toContain('### pride_get_project_files')
+    expect(md).toContain('next_page')
+    expect(md).toContain('for a PXD or PRD accession')
+    expect(md).toContain('paged project file inventories with download locations')
+    expect(md).toContain('Aspera locations are transfer addresses, not HTTP URLs')
+  })
+
   it('renders a compact self-contained catalog without repeating the shared conventions', () => {
     const md = renderSkillDoc('chemistry')
     expect(md).toContain('name: mcp-chemistry')
