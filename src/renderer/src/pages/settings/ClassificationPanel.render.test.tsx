@@ -139,7 +139,9 @@ it('configures a custom TypeSafe-compatible endpoint without requiring a loopbac
   render(<Harness />)
   fireEvent.click(await screen.findByText('Add service'))
   fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
-  fireEvent.click(await screen.findByRole('option', { name: 'Custom HTTP service' }))
+  const customOption = await screen.findByRole('option', { name: 'Custom HTTP service' })
+  expect(customOption.querySelector('svg')).toBeTruthy()
+  fireEvent.click(customOption)
   expect(
     await screen.findByText(
       'Custom services use the TypeSafe classification request and response format.'

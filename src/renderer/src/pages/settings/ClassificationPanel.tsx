@@ -520,7 +520,10 @@ const ClassificationEditor = ({
                 </span>
               </SelectItem>
               <SelectItem value="custom">
-                <span className="inline-flex items-center gap-2">{t('Custom HTTP service')}</span>
+                <span className="inline-flex items-center gap-2">
+                  <ProviderKindIcon kindKey="custom" className="size-4" />
+                  {t('Custom HTTP service')}
+                </span>
               </SelectItem>
             </SelectContent>
           </Select>
