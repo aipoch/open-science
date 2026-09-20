@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { waitFor } from '@testing-library/react'
 import { Lexer } from 'marked'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
@@ -7,6 +8,23 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentMarkdown, PresentedAgentMarkdown } from './AgentMarkdown'
+
+const { renderMermaid } = vi.hoisted(() => ({
+  renderMermaid: vi.fn(async (id: string) => ({
+    svg: `<svg id="${id}" xmlns="http://www.w3.org/2000/svg"></svg>`
+  }))
+}))
+
+vi.mock('@streamdown/mermaid', () => {
+  const instance = { initialize: vi.fn(), render: renderMermaid }
+  const plugin = {
+    name: 'mermaid' as const,
+    type: 'diagram' as const,
+    language: 'mermaid',
+    getMermaid: vi.fn(() => instance)
+  }
+  return { createMermaidPlugin: vi.fn(() => plugin), mermaid: plugin }
+})
 
 describe('AgentMarkdown streaming presentation', () => {
   let container: HTMLDivElement
@@ -30,6 +48,52 @@ describe('AgentMarkdown streaming presentation', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     container.remove()
+  })
+
+  it('keeps the rendered Mermaid diagram when later paragraphs stream and the message finishes', async () => {
+    vi.useRealTimers()
+    renderMermaid.mockClear()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(private callback: IntersectionObserverCallback) {}
+        observe(target: Element): void {
+          queueMicrotask(() =>
+            this.callback(
+              [{ target, isIntersecting: true } as IntersectionObserverEntry],
+              this as unknown as IntersectionObserver
+            )
+          )
+        }
+        disconnect(): void {
+          /* This fixture delivers one observation only. */
+        }
+        unobserve(): void {
+          /* No ongoing observation is retained. */
+        }
+        takeRecords(): IntersectionObserverEntry[] {
+          return []
+        }
+      }
+    )
+    const chart = '```mermaid\ngraph TD; A-->B\n```\n\nTail'
+    await act(async () => root.render(<PresentedAgentMarkdown content={chart} isAnimating />))
+    await waitFor(() =>
+      expect(container.querySelector('svg[data-mermaid-render-id]')).not.toBeNull()
+    )
+    const svg = container.querySelector('svg[data-mermaid-render-id]')
+    const initialCalls = renderMermaid.mock.calls.length
+    expect(initialCalls).toBeGreaterThan(0)
+    for (let index = 1; index <= 20; index++) {
+      await act(async () =>
+        root.render(<PresentedAgentMarkdown content={chart + '.'.repeat(index)} isAnimating />)
+      )
+      expect(container.querySelector('svg[data-mermaid-render-id]'), `append ${index}`).toBe(svg)
+    }
+    await act(async () => root.render(<PresentedAgentMarkdown content={chart + '.'.repeat(20)} />))
+    expect(container.textContent).toContain('Tail' + '.'.repeat(20))
+    expect(container.querySelector('svg[data-mermaid-render-id]')).toBe(svg)
+    expect(renderMermaid).toHaveBeenCalledTimes(initialCalls)
   })
 
   it('renders fenced alert examples as their original source text', async () => {
