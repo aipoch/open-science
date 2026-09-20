@@ -150,9 +150,10 @@ test('renders expensive streamed output through the native parser Worker and com
   // Match the browser Worker journey: exercise the measured-cost boundary on fast hosts too.
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  const releaseFile = join(await app.createTestDirectory('markdown-parser'), 'release')
   await page
     .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Run the runtime resource stress journey.')
+    .fill(`Run the native Markdown parser journey. Release file: ${JSON.stringify(releaseFile)}`)
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect
     .poll(
@@ -164,10 +165,11 @@ test('renders expensive streamed output through the native parser Worker and com
     )
     .toBeGreaterThan(0)
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 })
-  await cdp.detach()
+  await writeFile(releaseFile, '')
   await expect(
-    conversation.getByText('Runtime resource stress journey complete.', { exact: false })
+    conversation.getByText('Native Markdown parser journey complete.', { exact: false })
   ).toBeVisible({ timeout: 60000 })
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Next message after streaming')
   await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  await cdp.detach()
 })

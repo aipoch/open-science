@@ -71,6 +71,7 @@ const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fen
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
 const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
 const RUNTIME_RESOURCE_STRESS_PROMPT = 'Run the runtime resource stress journey.'
+const MARKDOWN_PARSER_PROMPT = 'Run the native Markdown parser journey.'
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
@@ -1429,6 +1430,23 @@ if (process.argv.includes('--version')) {
           // Paint the final fragment before the prompt-completion response reaches the renderer.
           await delay(150)
           reply = ''
+        } else if (prompt.includes(MARKDOWN_PARSER_PROMPT)) {
+          // Exercise parser cost with bounded rich text, independently of the resource soak.
+          // Keep the turn open until the test observes a real nonempty Worker response.
+          const parserMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
+          for (let chunk = 0; chunk < 8; chunk += 1) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: parserMessageId,
+                content: { type: 'text', text: '**sample** and `code` '.repeat(64) + '\n' }
+              }
+            })
+            await delay(50)
+          }
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]))
+          reply = 'Native Markdown parser journey complete.'
         } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
           const stressMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           const payload = 'x'.repeat(2_048)
