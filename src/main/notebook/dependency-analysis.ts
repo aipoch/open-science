@@ -341,6 +341,14 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       })
     }
   }
+  const pythonHelperSources =
+    record.pythonHelperSources === undefined ? [] : record.pythonHelperSources
+  if (
+    !Array.isArray(pythonHelperSources) ||
+    pythonHelperSources.length > 32 ||
+    pythonHelperSources.some((source) => typeof source !== 'string' || source.length > 512 * 1024)
+  )
+    return undefined
   return {
     ...(pythonTaintedNamespaces.length ? { pythonTaintedNamespaces } : {}),
     ...(pythonBindings.length
@@ -348,7 +356,8 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       : {}),
     staticStrings: staticStrings.sort((left, right) => left.name.localeCompare(right.name)),
     staticCollections: staticCollections.sort((left, right) => left.name.localeCompare(right.name)),
-    localFileWrappers: localFileWrappers.sort((left, right) => left.name.localeCompare(right.name))
+    localFileWrappers: localFileWrappers.sort((left, right) => left.name.localeCompare(right.name)),
+    ...(pythonHelperSources.length ? { pythonHelperSources: [...pythonHelperSources] } : {})
   }
 }
 
@@ -1217,6 +1226,9 @@ const boundedFileContext = (
     namespaces.some((name) => name.length > MAX_STATIC_STRING_LENGTH)
       ? ['*']
       : namespaces
+  const pythonHelperSources = (context.pythonHelperSources ?? [])
+    .filter((source) => source.length <= 512 * 1024)
+    .slice(0, 32)
   return {
     ...(pythonTaintedNamespaces.length ? { pythonTaintedNamespaces } : {}),
     ...(pythonBindings.length ? { pythonBindings } : {}),
@@ -1228,7 +1240,8 @@ const boundedFileContext = (
       .slice(0, MAX_NAMES_PER_RUN),
     localFileWrappers: localFileWrappers
       .filter(({ name }) => !staticNames.has(name) && !collectionNames.has(name))
-      .slice(0, MAX_NAMES_PER_RUN)
+      .slice(0, MAX_NAMES_PER_RUN),
+    ...(pythonHelperSources.length ? { pythonHelperSources } : {})
   }
 }
 
@@ -1243,10 +1256,22 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.kernelEpochId,
         run.runtimeId,
         run.script,
-        run.fileEvidence?.checksum
+        run.fileEvidence?.checksum,
+        run.helperEvidenceStatus,
+        run.helperModules?.map(({ helperId, sourceDigest }) => [helperId, sourceDigest])
       ])
     )
     .digest('hex')
+
+// Helper modules are injected into the persistent Python namespace before a cell runs. Analyze
+// their recorded source together with the cell so a later call is attributed to the helper body,
+// while retaining the normal conservative handling for dynamic effects. Missing helper source is
+// deliberately not replaced with a name whitelist.
+const analysisSourceFor = (run: NotebookRunRecord): string => {
+  if (run.kernelKind !== 'python' || !run.helperModules?.length) return run.script
+  const helperSource = run.helperModules.map(({ source }) => source).join('\n\n')
+  return helperSource.length > 0 ? `${helperSource}\n\n${run.script}` : run.script
+}
 
 const emptySidecar = (): NotebookDependencyAnalysisSidecar => ({
   version: 1,
@@ -1771,11 +1796,7 @@ class NotebookDependencyAnalyzer {
     if (language !== 'python' && language !== 'r' && language !== 'repl') return false
     const externalFacts =
       language !== 'repl' && this.options.analyze && interpreter
-        ? await this.options.analyze(
-            interpreter,
-            language,
-            pending.map((run) => run.script)
-          )
+        ? await this.options.analyze(interpreter, language, pending.map(analysisSourceFor))
         : undefined
     for (const [index, run] of pending.entries()) {
       let priorContext = run.kernelEpochId
@@ -1801,7 +1822,7 @@ class NotebookDependencyAnalyzer {
         ? {
             facts: externalFacts[index] ?? unknownFacts('analysis-unavailable'),
             fileAccess: (language === 'python'
-              ? await analyzePythonFileAccesses([run.script], priorContext)
+              ? await analyzePythonFileAccesses([analysisSourceFor(run)], priorContext)
               : await analyzeRFileAccesses([run.script], priorContext))[0]
           }
         : await (
@@ -1810,10 +1831,27 @@ class NotebookDependencyAnalyzer {
               : language === 'python'
                 ? analyzePythonNotebookSource
                 : analyzeRNotebookSource
-          )(run.script, priorContext)
+          )(analysisSourceFor(run), priorContext)
       const normalizedFacts = normalizeFacts(analysis.facts)
       const fileAccess = analysis.fileAccess
-      const fileContext = fileAccess?.context
+      const helperSources =
+        run.kernelKind === 'python'
+          ? (run.helperModules ?? [])
+              .map(({ source }) => source)
+              .filter((source) => source.length > 0 && source.length <= 512 * 1024)
+              .slice(0, 32)
+          : []
+      const fileContext =
+        fileAccess?.context || helperSources.length > 0
+          ? {
+              ...(fileAccess?.context ?? {
+                staticStrings: [],
+                staticCollections: [],
+                localFileWrappers: []
+              }),
+              ...(helperSources.length ? { pythonHelperSources: helperSources } : {})
+            }
+          : undefined
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),
         facts: normalizedFacts,

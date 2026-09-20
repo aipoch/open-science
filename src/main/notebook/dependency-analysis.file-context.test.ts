@@ -90,6 +90,50 @@ const fileContext = async (
 }
 
 describe('file context after mutable path collections', () => {
+  it('preserves a pure Python helper across cells and cache reload', async () => {
+    const context = await fileContext('python', [
+      'scale = 2\ndef label(value):\n    return str(value * scale)'
+    ])
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'text = label(3)', context)
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('captures fixed input paths inside a recorded Python helper called in a later cell', async () => {
+    const helperSource =
+      'import pandas as pd\ndef read_inputs():\n    left = pd.read_csv("left.csv")\n    right = pd.read_csv("right.csv")\n    return left'
+    const context = await fileContext(
+      'python',
+      ['data = read_inputs()'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: helperSource,
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'data = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['left.csv', 'right.csv']
+    })
+  })
+
   it.each(['python', 'r'] as const)(
     'restores %s diagnostic path bindings after cache reload',
     async (language) => {

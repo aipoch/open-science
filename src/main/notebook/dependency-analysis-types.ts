@@ -132,6 +132,9 @@ type NotebookSourceFileAccessContext = {
   verifiedSerializedValues?: NotebookSerializedValue[]
   // Transient reference identities for Python collections; rebuilt from same-epoch facts.
   staticCollectionAliases?: Array<{ target: string; source: string }>
+  // Recorded helper source is bounded identity evidence used to analyze later calls. It is never
+  // executed or treated as a name whitelist.
+  pythonHelperSources?: string[]
 }
 
 // Only source-proven value categories. These descriptors contain no serialized contents.

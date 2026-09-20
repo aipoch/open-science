@@ -7005,6 +7005,15 @@ const analyzePythonFileAccessTree = (
   const diagnosticNamespaceLoads = namespaceLoadLines(tree)
   const consoleRedirected = pythonRedirectsConsole(tree)
   const localWrappers = pythonLocalFileWrappers(tree)
+  const functionBodies = new Map<string, PyNode>()
+  for (const statement of Array.isArray(tree.body) ? tree.body : []) {
+    if (
+      (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+      statement.name
+    )
+      functionBodies.set(statement.name, statement)
+  }
+  const activeFunctionNames = new Set<string>()
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
   const collections = new Map(
     context?.staticCollections.map((collection) => [
@@ -7296,6 +7305,21 @@ const analyzePythonFileAccessTree = (
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
     const canonicalName = canonicalCallName(node) ?? rawName
+    if (
+      node.func?.type === 'Name' &&
+      functionBodies.has(rawName) &&
+      !activeFunctionNames.has(rawName)
+    ) {
+      activeFunctionNames.add(rawName)
+      try {
+        const body = functionBodies.get(rawName)
+        if (body)
+          for (const statement of Array.isArray(body.body) ? body.body : []) visit(statement)
+      } finally {
+        activeFunctionNames.delete(rawName)
+      }
+      return
+    }
     if (
       pythonTaintedNamespaces.has('*') ||
       pythonTaintedNamespaces.has(canonicalName.split('.')[0]!)
