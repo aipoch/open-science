@@ -67,6 +67,54 @@ vi.mock('@/pages/workspace/FilePreviewDialog', () => ({
 beforeEach(setupSearch)
 afterEach(teardownSearch)
 
+it('loads project files and paper memberships only after visiting their tabs', async () => {
+  await renderSearch()
+  vi.mocked(window.api.projectFiles.searchArtifacts).mockClear()
+  vi.mocked(window.api.literature.search).mockClear()
+  clickRow('projects')
+  expect(window.api.projectFiles.searchArtifacts).not.toHaveBeenCalled()
+  act(() => button('Recent files').click())
+  await waitFor(() => expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledOnce())
+  act(() => button('Recent sessions').click())
+  act(() => button('Recent files').click())
+  expect(window.api.projectFiles.searchArtifacts).toHaveBeenCalledOnce()
+  clickRow('library')
+  expect(window.api.literature.search).not.toHaveBeenCalled()
+  act(() => button('Details').click())
+  await waitFor(() => expect(window.api.literature.search).toHaveBeenCalledOnce())
+  act(() => button('Abstract').click())
+  act(() => button('Details').click())
+  expect(window.api.literature.search).toHaveBeenCalledOnce()
+})
+
+it('discards pending lazy project files when another result is selected', async () => {
+  await renderSearch()
+  let resolveFiles!: (
+    page: Awaited<ReturnType<typeof window.api.projectFiles.searchArtifacts>>
+  ) => void
+  vi.mocked(window.api.projectFiles.searchArtifacts).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveFiles = resolve
+      })
+  )
+  clickRow('projects')
+  act(() => button('Recent files').click())
+  expect(detail().querySelector('[role="status"]')).not.toBeNull()
+  clickRow('projects', 1)
+  await act(async () =>
+    resolveFiles({
+      primary: { items: [{ ...artifact, name: 'Stale project file' }], totalCount: 1 },
+      other: [],
+      isIndexComplete: true
+    })
+  )
+  expect(detail().textContent).not.toContain('Stale project file')
+  expect(detail().querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+    'Recent sessions'
+  )
+})
+
 const openAdvancedFilters = (): void => {
   act(() => screen.getByRole('button', { name: 'Advanced filters' }).click())
 }
@@ -496,7 +544,7 @@ describe('GlobalSearchDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
     expect(useSearchMessageFocusStore.getState().pending).toBeUndefined()
   })
-  it('restarts remote category paging when switching between All and a category', async () => {
+  it('retains remote category paging when switching between All and a category', async () => {
     vi.mocked(window.api.sessions.searchMessages).mockImplementation(async ({ cursor }) => {
       const offset = Number(cursor ?? 0)
       return {
@@ -517,10 +565,12 @@ describe('GlobalSearchDialog', () => {
         .click()
     )
     await waitFor(() => expect(rows('messages')).toHaveLength(20))
+    const requests = vi.mocked(window.api.sessions.searchMessages).mock.calls.length
     act(() => document.querySelector<HTMLButtonElement>('[data-category="messages"]')!.click())
-    await waitFor(() => expect(rows('messages')).toHaveLength(10))
+    await waitFor(() => expect(rows('messages')).toHaveLength(20))
     act(() => document.querySelector<HTMLButtonElement>('[data-category="all"]')!.click())
-    await waitFor(() => expect(rows('messages')).toHaveLength(10))
+    await waitFor(() => expect(rows('messages')).toHaveLength(20))
+    expect(window.api.sessions.searchMessages).toHaveBeenCalledTimes(requests)
   })
   it('keeps keyboard focus in the search field while selecting results on narrow screens', async () => {
     const original = window.matchMedia
@@ -920,7 +970,7 @@ describe('GlobalSearchDialog', () => {
     expect(rows('generated')).toHaveLength(20)
     expect(document.body.textContent).not.toContain('Load more20/21')
     act(() => document.querySelector<HTMLButtonElement>('[data-category="generated"]')!.click())
-    await waitFor(() => expect(rows('generated')).toHaveLength(10))
+    await waitFor(() => expect(rows('generated')).toHaveLength(20))
     await act(async () => fireEvent.scroll(document.querySelector('.global-search-list')!))
     expect(rows('generated')).toHaveLength(20)
     await act(async () => fireEvent.scroll(document.querySelector('.global-search-list')!))

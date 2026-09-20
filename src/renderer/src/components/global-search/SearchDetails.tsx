@@ -63,6 +63,7 @@ export const SearchDetails = ({
   const locale = resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
   const contentRef = useRef<HTMLDivElement>(null)
   const [tab, setTab] = useState('content')
+  const [relatedRequested, setRelatedRequested] = useState(false)
   const [previewDialog, setPreviewDialog] = useState<PreviewFileItem>()
   useLayoutEffect(() => {
     onPreviewOpenChange(Boolean(previewDialog))
@@ -93,6 +94,7 @@ export const SearchDetails = ({
   if (loadedIdentity !== identity) {
     setLoadedIdentity(identity)
     setTab('content')
+    setRelatedRequested(false)
     setFiles([])
     setPapers([])
     setHasMoreRecentItems(false)
@@ -166,24 +168,6 @@ export const SearchDetails = ({
         .catch(() => {
           if (active) setFileCountUnavailable(true)
         })
-      void window.api.projectFiles
-        .searchArtifacts({
-          primaryProjectIds: [result.item.id],
-          otherProjectIds: [],
-          source: 'all',
-          sort: 'recent',
-          primaryLimit: 10,
-          otherLimit: 0
-        })
-        .then((page) => {
-          if (active) {
-            setFiles(page.primary.items)
-            setHasMoreRecentItems(page.primary.totalCount > 10)
-          }
-        })
-        .catch(() => {
-          if (active) setFiles([])
-        })
     } else if (result.kind === 'sessions') {
       void window.api.projectFiles
         .searchArtifacts({
@@ -209,29 +193,6 @@ export const SearchDetails = ({
             setFileCountUnavailable(true)
           }
         })
-    } else if (result.kind === 'library' && 'item' in result.item) {
-      const itemId = result.item.id
-      async function loadCollections(): Promise<void> {
-        try {
-          const names: string[] = []
-          let offset: number | undefined
-          do {
-            const page = await window.api.literature.search({
-              scope: 'collections',
-              itemId,
-              limit: 100,
-              offset
-            })
-            if (!active) return
-            for (const entry of page.entries) if ('name' in entry) names.push(entry.name)
-            offset = page.nextOffset
-          } while (offset !== undefined)
-          setCollectionNames(names.join(', ') || t('None'))
-        } catch {
-          if (active) setCollectionNames(t('Some results are unavailable.'))
-        }
-      }
-      void loadCollections()
     } else if (result.kind === 'library' && !('item' in result.item)) {
       void readLiteratureSelectionPage(
         {
@@ -260,6 +221,68 @@ export const SearchDetails = ({
     // Result identity changes reset tabs and related content without remounting the outer pane.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity])
+
+  // Once visited, keep this selected result's related data across tab changes.
+  const needsRelated =
+    (result.kind === 'projects' && tab === 'files') ||
+    (result.kind === 'library' && 'item' in result.item && tab === 'details')
+  if (loadedIdentity === identity && needsRelated && !relatedRequested) {
+    setRelatedRequested(true)
+    if (result.kind === 'projects') setStatus('loading')
+  }
+  useEffect(() => {
+    if (!relatedRequested) return
+    let active = true
+    if (result.kind === 'projects') {
+      void window.api.projectFiles
+        .searchArtifacts({
+          primaryProjectIds: [result.item.id],
+          otherProjectIds: [],
+          source: 'all',
+          sort: 'recent',
+          primaryLimit: 10,
+          otherLimit: 0
+        })
+        .then((page) => {
+          if (active) {
+            setStatus('idle')
+            setFiles(page.primary.items)
+            setHasMoreRecentItems(page.primary.totalCount > 10)
+          }
+        })
+        .catch(() => {
+          if (active) setStatus('error')
+        })
+    } else if (result.kind === 'library' && 'item' in result.item) {
+      const itemId = result.item.id
+      async function loadCollections(): Promise<void> {
+        try {
+          const names: string[] = []
+          let offset: number | undefined
+          do {
+            const page = await window.api.literature.search({
+              scope: 'collections',
+              itemId,
+              limit: 100,
+              offset
+            })
+            if (!active) return
+            for (const entry of page.entries) if ('name' in entry) names.push(entry.name)
+            offset = page.nextOffset
+          } while (offset !== undefined)
+          setCollectionNames(names.join(', ') || t('None'))
+        } catch {
+          if (active) setCollectionNames(t('Some results are unavailable.'))
+        }
+      }
+      void loadCollections()
+    }
+    return () => {
+      active = false
+    }
+    // Selection changes retire the previous read; tab revisits keep its result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity, relatedRequested])
 
   const tabs =
     result.kind === 'messages'
@@ -534,7 +557,7 @@ export const SearchDetails = ({
       >
         {result.kind === 'messages' ? (
           (!result.item.contentTruncated || completeMessage !== undefined) && (
-            <SearchContentHighlight query={query} className="search-message-content">
+            <SearchContentHighlight key={identity} query={query} className="search-message-content">
               <AgentMarkdown
                 content={result.item.contentTruncated ? completeMessage! : result.item.content}
               />
@@ -616,12 +639,12 @@ export const SearchDetails = ({
             )}
           </div>
         )}
-        {tab === 'content' && status === 'loading' && (
+        {tab === (result.kind === 'projects' ? 'files' : 'content') && status === 'loading' && (
           <div role="status" className="flex justify-center py-8">
             <LoaderCircle className="size-5 animate-spin" aria-label={t('Loading…')} />
           </div>
         )}
-        {tab === 'content' && status === 'error' && (
+        {tab === (result.kind === 'projects' ? 'files' : 'content') && status === 'error' && (
           <ErrorNotice
             title={
               result.kind === 'messages'

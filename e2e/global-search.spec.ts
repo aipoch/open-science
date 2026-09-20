@@ -346,6 +346,21 @@ test('searches projects, sessions, message bodies and Library with paged disclos
     )
     .toBe(true)
   await page.screenshot({ path: testInfo.outputPath('global-search-desktop.png') })
+  const detailViewport = details.locator('.search-detail-content')
+  const matchedPosition = await detailViewport.evaluate((element) => element.scrollTop)
+  await detailViewport.hover()
+  await page.mouse.wheel(0, -300)
+  await expect
+    .poll(() => detailViewport.evaluate((element) => element.scrollTop))
+    .toBeLessThan(matchedPosition - 100)
+  const readingPosition = await detailViewport.evaluate((element) => element.scrollTop)
+  // Focus revalidates Library results and updates the parent without changing this message.
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect(dialog.locator('[data-search-group="library"] [role="status"]')).toHaveCount(0)
+  await expect
+    .poll(() => detailViewport.evaluate((element) => element.scrollTop))
+    .toBeCloseTo(readingPosition, 0)
+  await page.screenshot({ path: testInfo.outputPath('global-search-reading-position.png') })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(details.getByRole('button', { name: 'Back to results' })).toBeVisible()
   await expect(details.getByRole('button', { name: 'Collapse details' })).toBeHidden()

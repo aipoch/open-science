@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { resultId, type SearchCategory, type SearchResult } from './search-result'
 import type { LiteratureCollectionView, LiteratureItemView } from '../../../../shared/literature'
 import type { SearchFileFormat, SearchSort } from '../../../../shared/search-text'
@@ -23,10 +23,31 @@ export const emptySearchPage = (): SearchPage => ({
 })
 const remoteCategories = ['messages', 'uploads', 'generated', 'library'] as const
 export type RemoteCategory = (typeof remoteCategories)[number]
-const emptyPages = (loading = false): Record<RemoteCategory, SearchPage> =>
-  Object.fromEntries(
-    remoteCategories.map((key) => [key, { ...emptySearchPage(), loading }])
-  ) as Record<RemoteCategory, SearchPage>
+type SearchScope = {
+  category?: SearchCategory | 'all'
+  projectIds: string[]
+  excludedSessionIds: string[]
+  projectId?: string
+  updatedAfter?: number
+  sort?: SearchSort
+  role?: 'user' | 'agent'
+  format?: SearchFileFormat
+  entryKind?: 'paper' | 'collection' | 'pdf'
+}
+// Displaying a different category does not change the other categories' queries or cursors.
+const categoryScope = (category: RemoteCategory, scope: SearchScope): string =>
+  JSON.stringify({
+    ...(category === 'library'
+      ? { projectId: scope.projectId }
+      : { projectIds: scope.projectIds, excludedSessionIds: scope.excludedSessionIds }),
+    updatedAfter: scope.updatedAfter,
+    sort: scope.sort,
+    ...(category === 'messages' ? { role: scope.role } : {}),
+    ...(category === 'uploads' || category === 'generated'
+      ? { format: scope.category === category ? scope.format : undefined }
+      : {}),
+    ...(category === 'library' ? { entryKind: scope.entryKind } : {})
+  })
 const isLibraryEntry = (entry: unknown): entry is LiteratureItemView | LiteratureCollectionView =>
   typeof entry === 'object' &&
   entry !== null &&
@@ -37,51 +58,45 @@ export const hasMoreSearchResults = (category: SearchCategory, page: SearchPage)
     ? page.cursor !== undefined || page.offset !== undefined
     : page.items.length < page.totalCount
 
-export const useSearchResults = (
+const useSearchPage = (
+  category: RemoteCategory,
   open: boolean,
   ready: boolean,
   query: string,
-  scopeKey: string
-): {
-  pages: Record<RemoteCategory, SearchPage>
-  load: (category: RemoteCategory, append?: boolean) => Promise<void>
-} => {
+  scopeKey: string,
+  clientId: string
+): { page: SearchPage; load: (append?: boolean) => Promise<void>; refresh: () => void } => {
   const identity = JSON.stringify([open, ready, query, scopeKey])
-  const [clientId] = useState(() => crypto.randomUUID())
   const [activeIdentity, setActiveIdentity] = useState(identity)
-  const [pages, setPages] = useState(() => emptyPages(open && ready))
+  const [page, setPage] = useState(() => ({ ...emptySearchPage(), loading: open && ready }))
   if (identity !== activeIdentity) {
     setActiveIdentity(identity)
-    setPages(emptyPages(open && ready))
+    setPage({ ...emptySearchPage(), loading: open && ready })
   }
-  const pagesRef = useRef(pages)
+  const pageRef = useRef(page)
   useLayoutEffect(() => {
-    pagesRef.current = pages
-  }, [pages])
+    pageRef.current = page
+  }, [page])
   const generation = useRef(0)
-  const libraryGeneration = useRef(0)
-  const pending = useRef(new Set<RemoteCategory>())
+  const pending = useRef(false)
   useLayoutEffect(() => {
     const version = generation
     version.current++
-    pending.current = new Set()
+    pending.current = false
     return () => {
       version.current++
     }
-  }, [open, ready, query, scopeKey])
+  }, [identity])
 
   const load = useCallback(
-    async (category: RemoteCategory, append = false) => {
-      if (!open || !ready || pending.current.has(category)) return
+    async (append = false) => {
+      if (!open || !ready || pending.current) return
       const version = generation.current
-      const libraryVersion = libraryGeneration.current
-      const isCurrent = (): boolean =>
-        generation.current === version &&
-        (category !== 'library' || libraryGeneration.current === libraryVersion)
-      const previous = append ? pagesRef.current[category] : emptySearchPage()
+      const isCurrent = (): boolean => generation.current === version
+      const previous = append ? pageRef.current : emptySearchPage()
       if (append && !hasMoreSearchResults(category, previous)) return
-      pending.current.add(category)
-      setPages((state) => ({ ...state, [category]: { ...previous, loading: true, error: false } }))
+      pending.current = true
+      setPage({ ...previous, loading: true, error: false })
       try {
         const {
           projectIds,
@@ -92,16 +107,7 @@ export const useSearchResults = (
           role,
           format,
           entryKind
-        } = JSON.parse(scopeKey) as {
-          projectIds: string[]
-          excludedSessionIds: string[]
-          projectId?: string
-          updatedAfter?: number
-          sort?: SearchSort
-          role?: 'user' | 'agent'
-          format?: SearchFileFormat
-          entryKind?: 'paper' | 'collection' | 'pdf'
-        }
+        } = JSON.parse(scopeKey) as SearchScope
         let page: SearchPage = emptySearchPage()
         if (category === 'library') {
           const result = await readLiteratureSelectionPage(
@@ -167,49 +173,101 @@ export const useSearchResults = (
         }
         if (!isCurrent()) return
         const previousIds = new Set(previous.items.map(resultId))
-        setPages((state) => ({
-          ...state,
-          [category]: {
-            ...page,
-            items: append
-              ? [
-                  ...previous.items,
-                  ...page.items.filter((item) => !previousIds.has(resultId(item)))
-                ]
-              : page.items
-          }
-        }))
+        setPage({
+          ...page,
+          items: append
+            ? [...previous.items, ...page.items.filter((item) => !previousIds.has(resultId(item)))]
+            : page.items
+        })
       } catch {
-        if (isCurrent())
-          setPages((state) => ({
-            ...state,
-            [category]: { ...previous, loading: false, error: true }
-          }))
+        if (isCurrent()) setPage({ ...previous, loading: false, error: true })
       } finally {
-        if (isCurrent()) pending.current.delete(category)
+        if (isCurrent()) pending.current = false
       }
     },
-    [open, ready, query, scopeKey, clientId]
+    [category, open, ready, query, scopeKey, clientId]
   )
-
-  useLiteratureChanges(() => {
-    if (!open || !ready) return
-    // Supersede an in-flight Library page after a mutation without resetting other categories.
-    libraryGeneration.current++
-    pending.current.delete('library')
-    void load('library')
-  })
 
   useEffect(() => {
     if (!open || !ready) return
-    const timer = window.setTimeout(
-      () => {
-        for (const category of remoteCategories) void load(category)
-      },
-      query ? 150 : 0
-    )
+    const timer = window.setTimeout(() => void load(), query ? 150 : 0)
     return () => window.clearTimeout(timer)
-  }, [open, ready, query, scopeKey, load])
+  }, [open, ready, query, load])
+
+  const refresh = useCallback(() => {
+    generation.current++
+    pending.current = false
+    void load()
+  }, [load])
+  return { page, load, refresh }
+}
+
+export const useSearchResults = (
+  open: boolean,
+  ready: boolean,
+  query: string,
+  scopeKey: string
+): {
+  pages: Record<RemoteCategory, SearchPage>
+  load: (category: RemoteCategory, append?: boolean) => Promise<void>
+} => {
+  const [clientId] = useState(() => crypto.randomUUID())
+  const scope = JSON.parse(scopeKey) as SearchScope
+  const messages = useSearchPage(
+    'messages',
+    open,
+    ready,
+    query,
+    categoryScope('messages', scope),
+    clientId
+  )
+  const uploads = useSearchPage(
+    'uploads',
+    open,
+    ready,
+    query,
+    categoryScope('uploads', scope),
+    clientId
+  )
+  const generated = useSearchPage(
+    'generated',
+    open,
+    ready,
+    query,
+    categoryScope('generated', scope),
+    clientId
+  )
+  const library = useSearchPage(
+    'library',
+    open,
+    ready,
+    query,
+    categoryScope('library', scope),
+    clientId
+  )
+  useLiteratureChanges(library.refresh)
+  const loads = useMemo(
+    () => ({
+      messages: messages.load,
+      uploads: uploads.load,
+      generated: generated.load,
+      library: library.load
+    }),
+    [messages.load, uploads.load, generated.load, library.load]
+  )
+  const load = useCallback(
+    (category: RemoteCategory, append = false) => loads[category](append),
+    [loads]
+  )
+  const pages = useMemo(
+    () => ({
+      messages: messages.page,
+      uploads: uploads.page,
+      generated: generated.page,
+      library: library.page
+    }),
+    [messages.page, uploads.page, generated.page, library.page]
+  )
   return { pages, load }
 }
 export const isRemoteCategory = (category: SearchCategory): category is RemoteCategory =>
