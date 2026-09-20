@@ -4,6 +4,8 @@
     "src/main/connectors/descriptors/genes-proteins.ts",
     "src/main/connectors/descriptors/genes-reactome.test.ts",
     "src/main/connectors/descriptors/genes-reactome.ts",
+    "src/main/connectors/descriptors/genes-gprofiler.test.ts",
+    "src/main/connectors/descriptors/genes-gprofiler.ts",
     "src/main/connectors/descriptors/genes.test.ts",
     "src/main/connectors/descriptors/genes.ts"
   ],
@@ -13,6 +15,7 @@
     "owner": [
       "src/main/connectors/descriptors/genes-proteins.test.ts",
       "src/main/connectors/descriptors/genes-reactome.test.ts",
+      "src/main/connectors/descriptors/genes-gprofiler.test.ts",
       "src/main/connectors/descriptors/genes.test.ts"
     ],
     "contract": [

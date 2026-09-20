@@ -1,3 +1,4 @@
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
@@ -338,9 +339,21 @@ export function CredentialsPanel({
           </div>
         ) : null}
         <div className="space-y-1.5">
-          <label htmlFor="service-api-key" className="text-sm font-medium">
-            {isOpenAlex ? t('API key') : t('NCBI API key')}
-          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label htmlFor="service-api-key" className="text-sm font-medium">
+              {isOpenAlex ? t('API key') : t('NCBI API key')}
+            </label>
+            <ExternalTextLink
+              href={
+                isOpenAlex
+                  ? 'https://openalex.org/settings/api'
+                  : 'https://account.ncbi.nlm.nih.gov/settings/'
+              }
+              className="whitespace-nowrap text-xs"
+            >
+              {t('Get an API key')}
+            </ExternalTextLink>
+          </div>
           <MaskedPasswordField
             id="service-api-key"
             value={apiKey}

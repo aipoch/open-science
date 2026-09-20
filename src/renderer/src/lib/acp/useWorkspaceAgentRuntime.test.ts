@@ -1,3 +1,8 @@
+import { RuntimeSessionOwner } from '../../../../main/session-persistence/runtime-session-owner'
+import { applySessionConversationCommands } from '../../../../shared/session-conversation-command'
+import type { RuntimeSessionScope } from '../../../../shared/runtime-session-projection'
+import type { SaveSessionOptions } from '../../../../shared/session-persistence'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
 import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
@@ -2879,6 +2884,46 @@ describe('workspace agent message sending', () => {
       expect.soft(runtime.sendPrompt.mock.calls[0]?.[11]).toBe(turnIntent)
     }
   )
+
+  it('announces the real message before waiting for persistence or dispatching the prompt', async () => {
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+    let release!: () => void
+    const persistence = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let flushCount = 0
+    const flushPersistence = vi.fn(() => {
+      flushCount += 1
+      return flushCount === 1 ? Promise.resolve() : persistence
+    })
+    const onMessageAppended = vi.fn(({ sessionId, messageId }) => {
+      const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+      expect(session?.messages.find((m) => m.id === messageId)?.content).toBe('mobile send')
+    })
+    const send = sendWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'transport-session-1',
+        text: 'mobile send',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        onMessageAppended
+      },
+      { flushPersistence }
+    )
+    await vi.waitFor(() => expect(onMessageAppended).toHaveBeenCalledOnce())
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    release()
+    const result = await send
+    expect(result).toEqual(onMessageAppended.mock.calls[0][0])
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
 
   it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
@@ -10627,6 +10672,73 @@ describe('recovering from a request-size overflow', () => {
       turnIntent: 'save-as-skill'
     })
   })
+
+  it.each([true, false])(
+    'persists the Main-owned overflow retry before dispatch (native=%s)',
+    async (native) => {
+      seedOverflowedConversation()
+      resetSessionConversationIntentsForTests()
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          runtimeTranscriptOwner: 'main' as const
+        }))
+      }))
+      let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      const originalSegmentIds = durable.conversationGraph!.runtimeSegments.map(({ id }) => id)
+      const gate = createDeferred<void>()
+      const saveSession = vi.fn(
+        async (_submitted: PersistedChatSession, options?: SaveSessionOptions) => {
+          await gate.promise
+          durable = applySessionConversationCommands(durable, options?.conversationCommands ?? [])
+          return structuredClone(durable)
+        }
+      )
+      vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+      const owner = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(durable),
+        mutateSession: async (_scope, mutate) => (durable = mutate(durable)),
+        finalizeArtifacts: async () => []
+      })
+      let admitted = false
+      const runtime = {
+        state: {
+          ...createSnapshot(['session-1']),
+          ...(native ? { nativeContextCompactionSessionIds: ['session-1'] } : {})
+        },
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+        compactSession: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+        sendPrompt: vi.fn(async (...args: unknown[]) => {
+          const provenance = args[9] as RuntimeSessionScope
+          await owner.begin({
+            ...provenance,
+            sessionId: 'session-1',
+            projectId: durable.projectId,
+            executionId: 'retry'
+          })
+          admitted = true
+          return createSnapshot(['session-1'])
+        })
+      }
+      const pending = recoverContextOverflowWorkspaceSession(runtime, 'session-1')
+      try {
+        await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+        expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      } finally {
+        gate.resolve()
+      }
+      expect(await pending).toBe(true)
+      await vi.waitFor(() => expect(admitted).toBe(true))
+      expect(durable.conversationGraph!.runtimeSegments.map(({ id }) => id)).toEqual(
+        originalSegmentIds
+      )
+      expect((runtime.sendPrompt.mock.calls[0][9] as RuntimeSessionScope).runtimeSegmentId).toBe(
+        originalSegmentIds.at(-1)
+      )
+    }
+  )
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
     seedOverflowedConversation()

@@ -467,7 +467,7 @@ export function excludeRepeatedMarginContent(pages) {
   // such as an ACCEPTED MANUSCRIPT watermark. Geometry alone cannot establish
   // this: the pixels must match on separate prose pages.
   // Some accepted manuscripts outline diagonal watermark lettering as paths.
-  // Require at least twelve matching positions across three prose pages, then
+  // Require at least twelve matching positions across three text/table pages, then
   // a narrow descending diagonal. Repeated chart axes alone do not qualify.
   const watermarkPaths = pages.map((page) =>
     (page.graphicsBounds ?? []).filter((g) => {
@@ -484,7 +484,10 @@ export function excludeRepeatedMarginContent(pages) {
         r[3] - r[1] < 0.1 &&
         pages.filter(
           (p) =>
-            (p.lines ?? []).filter((l) => l.text.length > 60).length >= 6 &&
+            ((p.lines ?? []).filter((l) => l.text.length > 60).length >= 6 ||
+              ((p.lines ?? []).some((l) => captionKind(l.text) === 'table') &&
+                !(p.lines ?? []).some((l) => captionKind(l.text) === 'figure') &&
+                (p.lines ?? []).filter((l) => l.text.length > 20).length >= 6)) &&
             (p.graphicsBounds ?? []).some(
               (other) =>
                 other.kind === 'path' &&

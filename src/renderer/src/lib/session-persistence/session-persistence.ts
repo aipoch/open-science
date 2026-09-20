@@ -1,3 +1,8 @@
+import {
+  ensureRuntimeWriter,
+  isRuntimeWriter,
+  runtimeWriterSaveOptions
+} from '../acp/runtime-writer-client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { shallow } from 'zustand/vanilla/shallow'
@@ -39,6 +44,7 @@ import {
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   getExternallyHydratedSessionAuthority,
+  hydrateSession,
   isArtifactFinalizationError,
   isExternallyHydratedSession,
   toPersistedSession,
@@ -50,6 +56,10 @@ import type {
   StreamingMessageContentByMessageId
 } from '../../stores/session-store'
 import { projectRendererFailure } from '../../renderer-diagnostics'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands
+} from '../../stores/session-conversation-intents'
 
 type SessionPersistenceApi = {
   list?: () => Promise<ListSessionSummariesResult>
@@ -767,8 +777,32 @@ const mergeSaveSessionOptions = (
   const conflictRebaseFields = [
     ...new Set([...(previous?.conflictRebaseFields ?? []), ...(next?.conflictRebaseFields ?? [])])
   ]
-  return conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+  const runtimeWriterToken =
+    next && Object.hasOwn(next, 'runtimeWriterToken')
+      ? next.runtimeWriterToken
+      : previous?.runtimeWriterToken
+  const conversationCommands = [
+    ...(previous?.conversationCommands ?? []),
+    ...(next?.conversationCommands ?? [])
+  ].filter(
+    (command, index, commands) => commands.findIndex(({ id }) => id === command.id) === index
+  )
+  return conflictRebaseFields.length > 0 || runtimeWriterToken || conversationCommands.length > 0
+    ? {
+        ...(runtimeWriterToken ? { runtimeWriterToken } : {}),
+        ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+        ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+      }
+    : undefined
 }
+
+const withPendingConversationCommands = (
+  session: PersistedChatSession,
+  options: SaveSessionOptions | undefined
+): SaveSessionOptions | undefined =>
+  mergeSaveSessionOptions(options, {
+    conversationCommands: pendingSessionConversationCommands(session.id)
+  })
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
 // While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
@@ -966,6 +1000,7 @@ const createOrderedSessionPersistence = (
       ? await api.saveSession(submitted, options)
       : await api.saveSession(submitted)
     acknowledgeSession(durable)
+    acknowledgeSessionConversationCommands(durable)
     return durable
   }
 
@@ -978,7 +1013,12 @@ const createOrderedSessionPersistence = (
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
       pending.task = task
-      pending.options = mergeSaveSessionOptions(pending.options, options)
+      // The latest snapshot owns its lease; explicit edits must not inherit an earlier writer's
+      // token. Rebase fields and conversation commands still accumulate across queued snapshots.
+      pending.options = mergeSaveSessionOptions(
+        { ...pending.options, runtimeWriterToken: options?.runtimeWriterToken },
+        options
+      )
       if (pending.streaming && !streaming) {
         // The turn ended: flush the terminal snapshot at the normal cadence instead of waiting
         // out the relaxed streaming interval.
@@ -1043,21 +1083,32 @@ const createOrderedSessionPersistence = (
     },
     clearWriteFailure: (target) => failedWritesByTarget.delete(target),
     clearWriteFailures: () => failedWritesByTarget.clear(),
-    saveSession: (session, options) =>
-      enqueue(`session:${session.id}`, () => saveSubmittedSession(session, options)),
-    saveSessionWithRecovery: (session, options, recover) =>
-      enqueue(`session:${session.id}`, async () => {
+    saveSession: (session, options) => {
+      // Commands must be paired with the snapshot visible when the save is admitted. Reading the
+      // pending buffer after an older save waits in the queue can attach a newer Message command.
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, () => saveSubmittedSession(session, submittedOptions))
+    },
+    saveSessionWithRecovery: (session, options, recover) => {
+      const submittedOptions = withPendingConversationCommands(session, options)
+      return enqueue(`session:${session.id}`, async () => {
         const submitted = structuredClone(session)
         submitted.revision = Math.max(
           sessionRevision(submitted),
           acknowledgedRevisions.get(submitted.id) ?? 0
         )
         try {
-          return await saveSubmittedSession(submitted, options)
+          return await saveSubmittedSession(submitted, submittedOptions)
         } catch (error) {
-          return recover(error, submitted, saveSubmittedSession)
+          return recover(error, submitted, (retrySession, retryOptions) =>
+            saveSubmittedSession(
+              retrySession,
+              mergeSaveSessionOptions(submittedOptions, retryOptions)
+            )
+          )
         }
-      }),
+      })
+    },
     saveManifest: (request) => enqueue('manifest', () => api.saveManifest(request)),
     flush: async () => {
       // Runtime/store updates can admit new snapshots while earlier writes are in flight.
@@ -1099,13 +1150,15 @@ const resetSessionPersistenceWriteFailuresForTests = (): void => {
 const saveSessionInOrder = async (
   session: PersistedChatSession,
   persistence: OrderedSessionPersistence = liveSessionPersistence,
-  api: SessionReadApi = window.api.sessions
+  api: SessionReadApi = window.api.sessions,
+  options?: SaveSessionOptions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
   try {
+    const saveOptions = withPendingConversationCommands(session, options)
     const durable = await persistence.saveSessionWithRecovery(
       session,
-      undefined,
+      saveOptions,
       async (error, submitted, retry) => {
         if (!isSessionRevisionConflictError(error)) throw error
         const base = persistence.getAcknowledgedSession(submitted.id)
@@ -1126,6 +1179,7 @@ const saveSessionInOrder = async (
         )
       }
     )
+    acknowledgeSessionConversationCommands(durable)
     unresolvedSessionRevisionConflictTargets.delete(target)
     return durable
   } catch (error) {
@@ -1133,6 +1187,14 @@ const saveSessionInOrder = async (
     throw error
   }
 }
+
+const saveSessionFieldsInOrder = (
+  session: PersistedChatSession,
+  conflictRebaseFields: readonly SessionConflictRebaseField[]
+): Promise<PersistedChatSession> =>
+  saveSessionInOrder(session, liveSessionPersistence, window.api.sessions, {
+    conflictRebaseFields: [...conflictRebaseFields]
+  })
 
 const confirmPendingDelegationPolicyAuthority = async (
   session: ChatSession
@@ -1326,6 +1388,7 @@ const retryPendingArtifactFinalization = async (
 // are isolated and never block the rest; an empty result leaves references untouched so a file still
 // readable at its pending path is never dropped.
 const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<void> => {
+  if (!(await ensureRuntimeWriter())) return
   for (const session of useSessionStore.getState().sessions) {
     try {
       await reconcileSessionPendingArtifacts(
@@ -1752,7 +1815,14 @@ const createStoreSaver = (
         ].filter((field): field is 'title' | 'pinned' => field === 'title' || field === 'pinned')
         // Catalog hydration changes object identity without introducing a local metadata edit.
         if (!isForced && conflictRebaseFields.length === 0) continue
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const saveOptions =
+          conflictRebaseFields.length > 0 || conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
@@ -1806,6 +1876,20 @@ const createStoreSaver = (
         )
         if (authorityIsNewer) acknowledgedSessions.set(session.id, authority)
       }
+
+      // A reader flush must not write a received snapshot back to the authority. Real user edits
+      // differ from the acknowledged snapshot and still follow normal conflict checking.
+      if (
+        isForced &&
+        !isRuntimeWriter() &&
+        jsonValuesEqual(
+          toPersistedSession(session, nextStreamingMessages),
+          acknowledgedSessions.has(session.id)
+            ? toPersistedSession(hydrateSession(acknowledgedSessions.get(session.id)!))
+            : undefined
+        )
+      )
+        continue
 
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
@@ -1880,7 +1964,23 @@ const createStoreSaver = (
           ])
         ]
 
-        const saveOptions = conflictRebaseFields.length > 0 ? { conflictRebaseFields } : undefined
+        const conversationCommands = pendingSessionConversationCommands(session.id)
+        const writerOptions =
+          conflictRebaseFields.length > 0 ||
+          hasUnsavedContextReset ||
+          conversationCommands.length > 0
+            ? undefined
+            : runtimeWriterSaveOptions()
+        const saveOptions =
+          conflictRebaseFields.length > 0 ||
+          writerOptions?.runtimeWriterToken ||
+          conversationCommands.length > 0
+            ? {
+                ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
+                ...(writerOptions ?? {}),
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+              }
+            : undefined
         const sourceAuthority = acknowledgedSessions.get(session.id)
         let submittedAuthority = sourceAuthority
         let rebasedBeforeSave = false
@@ -1923,6 +2023,9 @@ const createStoreSaver = (
             !selectionIntent &&
             sourceAuthority &&
             submittedAuthority &&
+            // Main applies captured user commands and preferences to its current transcript;
+            // a stale streaming projection must reach that owner rather than fail a legacy merge.
+            submittedAuthority.runtimeTranscriptOwner !== 'main' &&
             (selectedRootBranchId(sourceAuthority) !== selectedRootBranchId(submittedAuthority) ||
               (submittedAuthority.taskRunCommitId &&
                 submittedAuthority.taskRunCommitId !== sourceAuthority.taskRunCommitId &&
@@ -2015,6 +2118,7 @@ const createStoreSaver = (
                 }
                 acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                 acknowledgedSessions.set(session.id, durableSession)
+                acknowledgeSessionConversationCommands(durableSession)
                 observePersistencePhase('session-apply-durable', () =>
                   applyDurableSession(durableSession, saveOptions, recoveredRevisionConflict)
                 )
@@ -2049,6 +2153,7 @@ const createStoreSaver = (
                     }
                     acknowledgedRevisions.set(session.id, sessionRevision(durableSession))
                     acknowledgedSessions.set(session.id, durableSession)
+                    acknowledgeSessionConversationCommands(durableSession)
                     observePersistencePhase('session-apply-durable', () =>
                       applyDurableSession(
                         durableSession,
@@ -2620,6 +2725,7 @@ export {
   deriveSessionCatalogRecovery,
   deleteSession,
   saveSessionInOrder,
+  saveSessionFieldsInOrder,
   setDelegationPolicyAuthority,
   toPersistedSessionForAuthorityMaterialization,
   useSessionPersistence

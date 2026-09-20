@@ -792,6 +792,50 @@ describe('workspace Agent Runtime hook contract', () => {
     await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
   })
 
+  it('recovers an attached OpenCode session after its session service disappears', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue in the original project',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'opencode'
+    })
+    let liveListener:
+      ((events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void) | undefined
+    const runtime = createRuntime(
+      createSnapshot({
+        sessionIds: ['session-1'],
+        nativeContextCompactionSessionIds: ['session-1']
+      })
+    )
+    runtime.subscribeRuntimeEvents = vi.fn((listener) => {
+      liveListener = listener
+      return vi.fn()
+    })
+    runtime.currentRuntimeEvents = () => []
+    runtimeMock.current = runtime
+    await render()
+
+    liveListener?.(
+      [
+        {
+          id: 'runtime-1:session-lost-1',
+          timestamp: 1,
+          kind: 'error',
+          level: 'error',
+          sessionId: 'session-1',
+          // This is the main-process marker for OpenCode's `{ service: "session" }` failure.
+          recoverable: 'session-lost',
+          text: 'Internal error: OpenCode service failure'
+        } as AcpRuntimeEvent
+      ],
+      createSnapshot({ sessionIds: ['session-1'] })
+    )
+
+    await vi.waitFor(() => expect(runtime.resetSessionContext).toHaveBeenCalledOnce())
+    expect(runtime.compactSession).not.toHaveBeenCalled()
+  })
+
   it('owns one child runtime transport subscription and exposes its selector', async () => {
     let publish!: (update: AcpAgentRuntimeUpdate) => void
     const onAgentRuntimeUpdate = vi.fn((listener: typeof publish) => {
@@ -1177,6 +1221,34 @@ describe('workspace Agent Runtime hook contract', () => {
     deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
     await act(async () => response)
     expect(latest.pendingPermissions).toEqual([])
+  })
+
+  it('keeps an approved permission hidden until durable history catches up', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    runtime.state = createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [request] })
+    await render()
+    expect(latest.pendingPermissions).toEqual([request])
+
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    runtime.state = createSnapshot({ sessionIds: ['session-1'] })
+    await render()
+    // The live response has arrived, but the observer still holds the old durable snapshot.
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe('pending')
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      useSessionStore.getState().clearPermissionPending(request.sessionId!, {
+        authority: 'continuing',
+        requestId: request.requestId
+      })
+    })
+    expect(latest.pendingPermissions).toEqual([])
+    const nextRequest = { ...request, requestId: 'permission-next' }
+    runtime.state = createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [nextRequest] })
+    await render()
+    expect(latest.pendingPermissions).toEqual([nextRequest])
   })
 
   it('reports a permission response size limit for the affected Session', async () => {

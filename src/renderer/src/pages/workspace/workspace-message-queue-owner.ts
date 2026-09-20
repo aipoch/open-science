@@ -32,6 +32,8 @@ type MessageQueueItem = {
   phase: MessageQueuePhase
   error?: MessageQueueError
   deferredUntilIdle?: boolean
+  // Keep the dispatch reserved, but stop duplicating its real message in the queue preview.
+  messageAppended?: boolean
   application?: {
     messageId: string
     attribution: Extract<MessageAttribution, { feature: 'compute' }>
@@ -171,7 +173,9 @@ class WorkspaceMessageQueueOwner {
   replaceItem = (
     sessionId: string,
     itemId: string,
-    update: Partial<Pick<MessageQueueItem, 'phase' | 'error' | 'deferredUntilIdle'>>
+    update: Partial<
+      Pick<MessageQueueItem, 'phase' | 'error' | 'deferredUntilIdle' | 'messageAppended'>
+    >
   ): void => {
     const items = this.itemsFor(sessionId)
     const index = items.findIndex((item) => item.id === itemId)

@@ -697,7 +697,8 @@ export async function repairPdfSymbolText(page, content, operators) {
           name === 'AdvP4C4E74' &&
           glyph.width === 500 &&
           fontInfo.differences?.[glyph.originalCharCode] === 'C3' &&
-          glyph.unicode === '\u0002'
+          glyph.originalCharCode < 32 &&
+          glyph.unicode === String.fromCharCode(glyph.originalCharCode)
             ? '*'
             : undefined
         const tex = texSymbols.get(glyph.originalCharCode)

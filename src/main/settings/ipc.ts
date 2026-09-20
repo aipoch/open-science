@@ -558,6 +558,13 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
   )
+  ipcMainHandle('settings:get-classification', () => service.classification.snapshot())
+  ipcMainHandle('settings:update-classification', (_event, request) =>
+    service.classification.mutate(request)
+  )
+  ipcMainHandle('settings:test-classification', (_event, request) =>
+    service.classification.probe(request)
+  )
   ipcMainHandle('settings:list-device-credentials', () =>
     workflows.connectors.listDeviceCredentials()
   )

@@ -144,6 +144,7 @@ const createHarness = (
     cancellationCheckpoint?: AcpPromptTurnWorkflowOptions['interactions']['cancellationCheckpoint']
     execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
     finalize?: AcpPromptOutcomeFinalizer['finalize']
+    beginRuntimeSessionTurn?: AcpPromptTurnWorkflowOptions['beginRuntimeSessionTurn']
     onPromptStarted?: () => void
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     preemptCompaction?: AcpPromptTurnWorkflowOptions['finalization']['preemptCompaction']
@@ -362,6 +363,7 @@ const createHarness = (
     disconnectForReload: vi.fn(async () => journal.push('disconnect')),
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
+    beginRuntimeSessionTurn: input.beginRuntimeSessionTurn,
     onPromptStarted: vi.fn(() => {
       journal.push('start')
       input.onPromptStarted?.()
@@ -851,6 +853,28 @@ describe('AcpPromptTurnWorkflow', () => {
     reconnect.finalizer.mock.calls[0][0].recordContextUsed(42)
 
     expect(reconnect.contextUsage.reconcileUsed).not.toHaveBeenCalled()
+  })
+
+  it('rejects a parent continuation before provider dispatch when durable admission fails', async () => {
+    const begin = vi.fn(async () => {
+      throw new Error('durable command unavailable')
+    })
+    const harness = createHarness({ beginRuntimeSessionTurn: begin })
+    await expect(
+      harness.workflow.run(request(), {
+        kind: 'app-continuation',
+        delegatedMessageId: 'message-1'
+      })
+    ).rejects.toMatchObject({ name: 'DelegateMessagePreAcceptanceError' })
+    expect(begin).toHaveBeenCalledWith(
+      request(),
+      expect.any(String),
+      'renderer',
+      undefined,
+      'message-1'
+    )
+    expect(harness.executor).not.toHaveBeenCalled()
+    expect(harness.owner.current('s1')).toBeUndefined()
   })
 
   it('propagates app-continuation identity without publishing its synthetic text', async () => {
@@ -1433,4 +1457,43 @@ describe('AcpPromptTurnWorkflow', () => {
       })
     )
   })
+})
+
+it('does not dispatch after cancellation is accepted during framework preparation', async () => {
+  const gate = deferred<void>()
+  const entered = deferred<void>()
+  const providerPrompt = vi.fn(async () => undefined)
+  const executor = new AcpProviderPromptExecutor({
+    backendGeneration: { current: backend, openCodeUsageApi: () => undefined }
+  })
+  const harness = createHarness({
+    beforePromptDispatch: async () => {
+      entered.resolve()
+      await gate.promise
+    },
+    execute: (input) => executor.execute(input)
+  })
+  harness.setSession({
+    sessionId: 'provider-1',
+    prompt: providerPrompt,
+    nextUpdate: async () => ({ kind: 'stop', response: { stopReason: 'end_turn' } })
+  } as unknown as ActiveSession)
+  const run = harness.workflow.run(request(), { kind: 'user' })
+  try {
+    await entered.promise
+    await harness.owner.cancelPrompt({
+      sessionId: 's1',
+      notify: async () => undefined,
+      onAccepted: () => undefined,
+      onTimeout: () => undefined
+    })
+    gate.resolve()
+    await run
+    expect(providerPrompt).not.toHaveBeenCalled()
+    expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
+  } finally {
+    gate.resolve()
+    await run
+    harness.owner.supersedeAll()
+  }
 })

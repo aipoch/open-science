@@ -111,6 +111,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "packages/open-science/cli.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/backend-generation-owner.test.ts",
@@ -516,7 +518,17 @@
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/specialist/marketplace/official-source.test.ts",
+      "src/main/specialist/marketplace/service.test.ts",
+      "src/main/specialist/package/release-certification.test.ts",
+      "src/main/specialist/package/reported-regressions.test.ts",
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/delegation/process-ownership.test.ts",
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/delegation/frame-workspace.test.ts",
+      "src/main/acp/agent-process.test.ts",
+      "src/main/settings/classification-settings.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

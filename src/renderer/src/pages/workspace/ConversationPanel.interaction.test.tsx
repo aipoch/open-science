@@ -891,6 +891,83 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
 }
 
 describe('ConversationPanel header spacing', () => {
+  it('opens Session information and routes editing through the owner', () => {
+    const session: ChatSession = {
+      id: 'info-session',
+      projectId: 'project-1',
+      title: 'Session details',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const editSession = vi.fn()
+    renderPanel({ view: { activeSession: session }, sessionTools: { editSession } })
+    act(() =>
+      getConversationHeader()
+        .querySelector<HTMLButtonElement>('[aria-label^="Session information:"]')!
+        .click()
+    )
+    const edit = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Edit session'
+    )!
+    act(() => edit.click())
+    expect(editSession).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('forwards the current Session pin action through the information card', async () => {
+    const session: ChatSession = {
+      id: 'pin-info-session',
+      projectId: 'project-1',
+      title: 'Session details',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const toggle = vi.fn().mockResolvedValue(undefined)
+    renderPanel({
+      view: { activeSession: session },
+      sessionTools: { togglePin: toggle }
+    })
+    act(() =>
+      getConversationHeader()
+        .querySelector<HTMLButtonElement>('[aria-label^="Session information:"]')!
+        .click()
+    )
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Pin"]')!.click())
+    expect(toggle).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
+  it('closes the information card when switching Sessions', () => {
+    const session: ChatSession = {
+      id: 'first-info-session',
+      projectId: 'project-1',
+      title: 'First Session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    renderPanel({ view: { activeSession: session } })
+    act(() =>
+      getConversationHeader()
+        .querySelector<HTMLButtonElement>('[aria-label^="Session information:"]')!
+        .click()
+    )
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    renderPanel({
+      view: { activeSession: { ...session, id: 'second-info-session', title: 'Second Session' } }
+    })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(getConversationHeader().textContent).toContain('Second Session')
+  })
+
   it('keeps stable title spacing independent of sidebar state', () => {
     renderPanel()
 
@@ -1429,6 +1506,39 @@ describe('ConversationPanel composer intake', () => {
 
     expectComposerCoveredByBlockingOverlay()
     expect(document.activeElement).toBe(navigationButton)
+  })
+
+  it.each([false, true])(
+    'does not replay composer focus after permission approval (preview focus: %s)',
+    (previewFocus) => {
+      renderPanel({ view: { composerFocusKey: 'session-a' } })
+      if (previewFocus) {
+        act(() => window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT)))
+      }
+      const navigationButton = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Open navigation"]'
+      )!
+      navigationButton.focus()
+      renderPanel({
+        view: { composerFocusKey: 'session-a' },
+        permissions: { requests: [{ requestId: 'permission-focus' } as never] }
+      })
+      expectComposerCoveredByBlockingOverlay()
+      renderPanel({ view: { composerFocusKey: 'session-a' } })
+      expect(document.activeElement).toBe(navigationButton)
+    }
+  )
+
+  it('does not focus the composer when opening a pending permission then approving it', () => {
+    renderPanel({
+      view: { composerFocusKey: 'session-blocked' },
+      permissions: { requests: [{ requestId: 'permission-focus' } as never] }
+    })
+    expect(document.activeElement).not.toBe(getComposerEditor())
+    renderPanel({ view: { composerFocusKey: 'session-blocked' } })
+    expect(document.activeElement).not.toBe(getComposerEditor())
+    act(() => window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT)))
+    expect(document.activeElement).toBe(getComposerEditor())
   })
 
   it('does not refocus the composer when draft editing becomes available', () => {

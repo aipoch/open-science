@@ -49,7 +49,7 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.30.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.30.2는 안정성 릴리스입니다. Windows R 런타임이 안정적으로 복구되고(conda 시작, 실행 파일 확인, 커널 복구, 검증된 pip 진입점), Notebook의 같은 턴 입력이 올바르게 재실행되며, 검토자 수정이 연결된 피드백 전반에서 컨텍스트를 유지합니다. 문헌 가져오기는 PubMed 저자의 성과 이니셜을 분리하고 철회 관계를 잡아내며, 커넥터는 Ensembl, VEP, Reactome, UCSC, gnomAD 동작을 다듬고, DeepSeek V4.1 Flash가 모델 카탈로그에 합류합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[AIPOCH Open-Science v0.31.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.31.1은 세션에서 접근할 수 있는 과학 데이터의 폭을 넓힙니다. ENA 도구는 공개 ENA/INSDC 접근번호를 아카이브가 생성한 FASTQ 파일과 함께 시퀀싱 실행으로 해석하고, Genes 커넥터는 사용자 지정 통계 배경을 갖춘 g:Profiler 기반 GO 및 경로 농집을 지원하며, 새 NCBI 도구는 분류군 이름을 해석하고 버전이 관리되는 게놈 어셈블리를 검사하고 서열 별칭을 조회합니다. 설정에서 전용 분류 모델 서비스를 선택적으로 연결할 수 있고, 원격 접근 페어링은 보안 패널 맨 위로 이동하며 신뢰하는 브라우저를 안전하게 해지할 수 있습니다. 안정성도 전반적으로 더 단단해졌습니다 — Windows의 R Notebook은 지속되는 커널을 감독하고 네트워크 복구를 안내하며, 사라진 OpenCode 세션은 시작 시 복구되고, 승인 카드, 대기 중 메시지 미리보기, 최근 세션 목록이 더 안정적으로 동작합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

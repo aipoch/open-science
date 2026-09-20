@@ -1,11 +1,19 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
+import { readPdfFixture } from './read-fixture'
 
 const moduleUrl = pathToFileURL(
   resolve('resources/pdf-structure/literature-pdf-table-refine.mjs')
 ).href
 const { hasTableEvidence } = await import(moduleUrl)
+
+it('retains a bulleted table continuation without a repeated caption or numeric values', () => {
+  const table = readPdfFixture(
+    resolve('src/main/literature/pdf-structure/fixtures/ruled-bulleted-table-continuation.jsonl')
+  )
+  expect(hasTableEvidence(table)).toBe(true)
+})
 
 it('rejects short keyword panels and colon-style citations while retaining measured comparisons', () => {
   const grids = [
@@ -251,6 +259,25 @@ it('rejects two-column prose cut into artificial rows without discarding labelle
   expect(
     hasTableEvidence({ grid: paragraphs, issues }, { text: 'Table 1. Comparison of descriptions' })
   ).toBe(true)
+})
+
+it('rejects an uncaptioned paragraph split into one populated cell per row', () => {
+  const table = {
+    grid: [
+      ['criteria for access to confidential data.', ''],
+      ['Funding: This study is funded by MRC UK.', ''],
+      ['The grant application was subject to peer-review.', ''],
+      ['The funders had no role in study design.', ''],
+      ['Competing interests: The authors have declared', ''],
+      ['that no competing interests exist.', ''],
+      ['Abbreviations: BC, Breast Cancer.', ''],
+      ['BCSS, Breast Cancer Support Society Segamat.', ''],
+      ['CBE, Clinical Breast Examination.', '']
+    ],
+    issues: ['text-crosses-crop-boundary']
+  }
+  expect(hasTableEvidence(table)).toBe(false)
+  expect(hasTableEvidence(table, { text: 'Table 1. Study characteristics' })).toBe(true)
 })
 
 it('rejects an article-info/abstract heading straddling the crop edge', () => {
@@ -766,4 +793,27 @@ it('excludes uncaptioned author contribution forms and nomenclature lists with s
       true
     )
   }
+})
+
+it('rejects uncaptioned quoted callouts and article metadata blocks', () => {
+  const quote = {
+    grid: [
+      ['”Everything', 'I don’t ask'],
+      ['for anything; instead I', 'am thankful for each']
+    ],
+    unassigned: ['is totally changed.']
+  }
+  const metadata = {
+    grid: [
+      ['Article title', ''],
+      ['Department of Methodology University of Málaga, Spain', ''],
+      ['Authors', ''],
+      ['Department of Personality, Assessment and Psychological Treatment', '']
+    ],
+    unassigned: ['© Psychological Reports 2014', '2014, 115, 1, 44-64.']
+  }
+  expect(hasTableEvidence(quote)).toBe(false)
+  expect(hasTableEvidence(metadata)).toBe(false)
+  for (const table of [quote, metadata])
+    expect(hasTableEvidence(table, { lines: ['Table 1. Explicitly captioned content'] })).toBe(true)
 })

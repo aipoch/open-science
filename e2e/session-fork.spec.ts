@@ -127,19 +127,33 @@ test('changes branch permissions before the first follow-up without changing sou
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
   await page.getByRole('button', { name: 'Send message' }).click()
   const reply = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  // The first turn includes provider preparation on Windows. Wait for its actual durable
+  // completion before checking paced text presentation; this is not a latency benchmark.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(async (prompt) => {
+          const session = (await window.api.sessions.loadAll()).sessions.find((candidate) =>
+            candidate.messages.some(
+              (message) => message.role === 'user' && message.content === prompt
+            )
+          )
+          return {
+            status: session?.status,
+            activeRun: Boolean(session?.activeRun),
+            completedReply: session?.messages.some(
+              (message) =>
+                message.role === 'agent' &&
+                message.status === 'complete' &&
+                message.content === `Deterministic reply: ${prompt}`
+            )
+          }
+        }, prompt),
+      { timeout: 60_000 }
+    )
+    .toEqual({ status: 'idle', activeRun: false, completedReply: true })
   await expect(reply).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
-  await expect
-    .poll(async () =>
-      page.evaluate(async () =>
-        (await window.api.sessions.loadAll()).sessions.some((session) =>
-          session.messages.some(
-            (message) => message.role === 'agent' && message.status === 'complete'
-          )
-        )
-      )
-    )
-    .toBe(true)
   const source = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
   const profile = source.permissionProfile === 'ask' ? 'auto' : 'ask'
   const label = profile === 'ask' ? 'Ask for approval' : 'Auto-approve edits'

@@ -263,6 +263,7 @@ type TaskRunEventAccumulator = {
   runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'providerError'>
   activities: Map<string, PendingTaskRunActivity>
   artifactClaimIds: string[]
+  publishedArtifacts: ArtifactFile[]
 }
 
 type MutableTaskRun = TaskRun & {
@@ -297,6 +298,7 @@ type CompletedTaskSession = {
   artifacts: ArtifactFile[]
   persistedArtifacts: PersistedArtifact[]
   messageId?: string
+  runtimeTranscriptOwner?: 'main'
 }
 
 class PartialTaskCompletionError extends Error {
@@ -332,7 +334,8 @@ const createTaskRunEventAccumulator = (): TaskRunEventAccumulator => ({
   images: [],
   imageBytes: 0,
   activities: new Map(),
-  artifactClaimIds: []
+  artifactClaimIds: [],
+  publishedArtifacts: []
 })
 
 const accumulateToolActivity = (
@@ -397,6 +400,16 @@ const accumulateTaskRunEvent = (
   }
   if (event.kind === 'artifact' && event.artifactClaimId) {
     accumulator.artifactClaimIds.push(event.artifactClaimId)
+  }
+  if (event.kind === 'artifact') {
+    const publication = event as typeof event & {
+      publicationOwner?: 'main'
+      messageId?: string
+      artifacts: ArtifactFile[]
+    }
+    if (publication.publicationOwner === 'main') {
+      accumulator.publishedArtifacts.push(...publication.artifacts)
+    }
   }
   accumulateToolActivity(accumulator, event)
 }
@@ -1643,14 +1656,26 @@ class TaskRunner {
       return
     }
     try {
-      await this.dependencies.sessions.save({
-        ...session,
-        status: 'error',
-        activeRun: undefined,
-        taskRunCommitId: run.id,
-        error: message,
-        updatedAt: this.dependencies.now()
-      })
+      if (session.runtimeTranscriptOwner === 'main') {
+        await this.dependencies.sessions.failRun({
+          projectId: session.projectId,
+          sessionId: session.id,
+          promptMessageId: run.promptMessageId,
+          taskRunCommitId: run.id,
+          artifacts: [],
+          error: message,
+          updatedAt: this.dependencies.now()
+        })
+      } else {
+        await this.dependencies.sessions.save({
+          ...session,
+          status: 'error',
+          activeRun: undefined,
+          taskRunCommitId: run.id,
+          error: message,
+          updatedAt: this.dependencies.now()
+        })
+      }
     } catch (error) {
       log.error('Failed to reconcile a Session after its save reported an error.', {
         error: toErrorMessage(error),
@@ -2069,7 +2094,8 @@ class TaskRunner {
       completed = await this.completeSession(
         acceptedSession,
         run.eventAccumulator!,
-        promptError === undefined
+        promptError === undefined,
+        run.promptMessageId
       )
     } catch (error) {
       if (error instanceof PartialTaskCompletionError) {
@@ -2134,8 +2160,12 @@ class TaskRunner {
         sessionId: completed!.session.id,
         promptMessageId: run.promptMessageId,
         taskRunCommitId: run.id,
-        messageId: completed!.messageId,
-        artifacts: completed!.persistedArtifacts,
+        ...(completed!.runtimeTranscriptOwner === 'main'
+          ? { messageId: completed!.messageId, artifacts: [] }
+          : {
+              messageId: completed!.messageId,
+              artifacts: completed!.persistedArtifacts
+            }),
         updatedAt: this.dependencies.now()
       })
     } catch (error) {
@@ -2150,12 +2180,15 @@ class TaskRunner {
       !run.cancellation &&
       completed!.session.autoReviewEnabled === true
     ) {
-      const reviewedMessage = [...completed!.session.messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.role === 'agent' && message.responseToMessageId === run.promptMessageId
-        )
+      const reviewedMessage = [
+        ...(completed!.session.conversationGraph?.messages ?? []),
+        ...completed!.session.messages
+      ].find(
+        (message) =>
+          message.id === completed!.messageId &&
+          message.role === 'agent' &&
+          message.responseToMessageId === run.promptMessageId
+      )
       if (reviewedMessage) {
         const reviewAbortController = new AbortController()
         run.reviewAbortController = reviewAbortController
@@ -2265,8 +2298,93 @@ class TaskRunner {
   private async completeSession(
     session: PersistedChatSession,
     accumulator: TaskRunEventAccumulator,
-    clearPendingHistoryReplay: boolean
+    clearPendingHistoryReplay: boolean,
+    promptMessageId: string
   ): Promise<CompletedTaskSession> {
+    // Main stamps transcript ownership while admitting the prompt, after the Task callback may have
+    // returned its Session snapshot. Reload after prompt completion so selection follows current
+    // authority rather than that necessarily stale admission receipt.
+    const authoritative = (await this.dependencies.sessions.list()).find(
+      (candidate) => candidate.id === session.id && candidate.projectId === session.projectId
+    )
+    if (authoritative?.runtimeTranscriptOwner === 'main') {
+      const materialized = materializeSessionConversationGraph(authoritative)
+      const graph = materialized.conversationGraph
+      if (!graph) throw new Error('Main-owned Task Session has no durable conversation graph.')
+      const admittedPrompt = graph.messages.find(
+        (message) => message.id === promptMessageId && message.role === 'user'
+      )
+      if (!admittedPrompt) {
+        throw new Error('Main-owned Task prompt is absent from the durable conversation graph.')
+      }
+      const responseMessages = graph.messages.filter(
+        (message) =>
+          message.role === 'agent' &&
+          message.status === 'complete' &&
+          message.responseToMessageId === promptMessageId &&
+          message.agentFrameId === admittedPrompt.agentFrameId &&
+          message.introducedOnBranchId === admittedPrompt.introducedOnBranchId &&
+          message.runtimeSegmentId === admittedPrompt.runtimeSegmentId
+      )
+      const messageIds = new Set(responseMessages.map(({ id }) => id))
+      const emittedArtifacts = accumulator.publishedArtifacts.filter(
+        (artifact) => !artifact.messageId || messageIds.has(artifact.messageId)
+      )
+      const artifactIds = new Set(responseMessages.flatMap((message) => message.artifactIds ?? []))
+      const persistedArtifacts = (materialized.artifacts ?? []).filter((artifact) =>
+        artifactIds.has(artifact.versionId ?? artifact.id)
+      )
+      const persistedArtifactFiles = persistedArtifacts.flatMap((artifact): ArtifactFile[] => {
+        if (
+          !artifact.name ||
+          !artifact.fileUrl ||
+          artifact.size === undefined ||
+          artifact.mtimeMs === undefined
+        ) {
+          return []
+        }
+        return [
+          {
+            id: artifact.id,
+            projectId: materialized.projectId,
+            sessionId: materialized.id,
+            messageId: responseMessages.find((message) =>
+              message.artifactIds?.includes(artifact.versionId ?? artifact.id)
+            )?.id,
+            name: artifact.name,
+            path: artifact.path,
+            fileUrl: artifact.fileUrl,
+            size: artifact.size,
+            mtimeMs: artifact.mtimeMs,
+            artifactId: artifact.artifactId,
+            versionId: artifact.versionId,
+            versionNumber: artifact.versionNumber,
+            checksum: artifact.sha256,
+            mimeType: artifact.mimeType,
+            ...(artifact.createdAt === undefined
+              ? {}
+              : { createdAt: new Date(artifact.createdAt).toISOString() })
+          }
+        ]
+      })
+      const artifacts = [
+        ...new Map(
+          // A publication event may omit its Message owner. The exact Version in Main
+          // authority owns the final descriptor; never let an event erase that proof.
+          [...emittedArtifacts, ...persistedArtifactFiles]
+            .filter((artifact) => artifactIds.has(artifact.versionId ?? artifact.id))
+            .map((artifact) => [artifact.versionId ?? artifact.id, artifact])
+        ).values()
+      ]
+      return {
+        session: materialized,
+        output: responseMessages.map(({ content }) => content).join(''),
+        artifacts,
+        persistedArtifacts,
+        messageId: responseMessages.at(-1)?.id,
+        runtimeTranscriptOwner: 'main'
+      }
+    }
     const now = this.dependencies.now()
     const output =
       session.agentFrameworkId === 'claude-code'
@@ -2563,14 +2681,27 @@ class TaskRunner {
         run.status = 'failed'
         continue
       }
-      await this.dependencies.sessions.save({
-        ...current,
-        status: 'error',
-        activeRun: undefined,
-        taskRunCommitId: run.id,
-        error: current.error ?? PROCESS_RESTARTED_MESSAGE,
-        updatedAt: this.dependencies.now()
-      })
+      const error = current.error ?? PROCESS_RESTARTED_MESSAGE
+      if (current.runtimeTranscriptOwner === 'main') {
+        await this.dependencies.sessions.failRun({
+          projectId: current.projectId,
+          sessionId: current.id,
+          promptMessageId: run.promptMessageId,
+          taskRunCommitId: run.id,
+          artifacts: [],
+          error,
+          updatedAt: this.dependencies.now()
+        })
+      } else {
+        await this.dependencies.sessions.save({
+          ...current,
+          status: 'error',
+          activeRun: undefined,
+          taskRunCommitId: run.id,
+          error,
+          updatedAt: this.dependencies.now()
+        })
+      }
       run.status = 'failed'
     }
     for (const run of terminalSessionRepairs) {
@@ -2578,14 +2709,27 @@ class TaskRunner {
         (session) => session.taskRunCommitId !== run.id && sessionOwnsTaskRunPrompt(session, run)
       )
       if (!current) continue
-      await this.dependencies.sessions.save({
-        ...current,
-        status: 'error',
-        activeRun: undefined,
-        taskRunCommitId: run.id,
-        error: current.error ?? run.error ?? PROCESS_RESTARTED_MESSAGE,
-        updatedAt: this.dependencies.now()
-      })
+      const error = current.error ?? run.error ?? PROCESS_RESTARTED_MESSAGE
+      if (current.runtimeTranscriptOwner === 'main') {
+        await this.dependencies.sessions.failRun({
+          projectId: current.projectId,
+          sessionId: current.id,
+          promptMessageId: run.promptMessageId,
+          taskRunCommitId: run.id,
+          artifacts: [],
+          error,
+          updatedAt: this.dependencies.now()
+        })
+      } else {
+        await this.dependencies.sessions.save({
+          ...current,
+          status: 'error',
+          activeRun: undefined,
+          taskRunCommitId: run.id,
+          error,
+          updatedAt: this.dependencies.now()
+        })
+      }
     }
     if (interrupted.length > 0) await this.persistRuns()
   }

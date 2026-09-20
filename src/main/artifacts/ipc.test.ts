@@ -11,6 +11,7 @@ import {
 } from '../../shared/artifact-provenance'
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
+  ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
   type ArtifactWriteSource
@@ -25,6 +26,7 @@ import {
 } from './provenance-repository'
 import { ArtifactRepository } from './repository'
 import {
+  artifactFinalizationFailureResult,
   createArtifactHandlers,
   createDefaultArtifactRepository,
   registerArtifactIpcHandlers,
@@ -652,9 +654,33 @@ describe('artifact IPC handlers', () => {
       logger: diagnosticLogger
     })
 
-    await expect(
-      handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
-    ).rejects.toThrow(/compatibility storage unavailable/)
+    const firstFailure = await handlers
+      .finalizeRunArtifacts({ claimId, messageId: 'message-1' })
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    expect(firstFailure).toBeInstanceOf(Error)
+    expect((firstFailure as Error).message).toContain('failed at compatibility-publication')
+    expect((firstFailure as Error).message).toContain('Versions [version-1]')
+    expect((firstFailure as Error).message).not.toContain('secret artifact contents')
+    expect((firstFailure as Error).message).not.toContain('/Users/private')
+    expect(artifactFinalizationFailureResult(firstFailure)).toEqual({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
+      message: (firstFailure as Error).message,
+      execution: {
+        stage: 'compatibility-publication',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1',
+        artifactVersionIds: ['version-1'],
+        durableFinalizationCompleted: true,
+        compatibilityPublicationCompleted: false,
+        activationCompleted: false
+      }
+    })
     expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(provenance.finalizeRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBeUndefined()
@@ -686,6 +712,49 @@ describe('artifact IPC handlers', () => {
     expect(provenance.activateFinalizedRun).toHaveBeenCalledOnce()
     expect(registry.resolve(claimId).finalizedMessageId).toBe('message-1')
     expect(diagnosticLogger.error).toHaveBeenCalledOnce()
+  })
+
+  it('preserves completed publication facts when activation fails', async () => {
+    const finalizedArtifact = createFinalizedArtifact()
+    const repository = {
+      finalizeRunArtifacts: vi.fn().mockResolvedValue([finalizedArtifact])
+    } as unknown as ArtifactRepository
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
+    })
+    const handlers = createArtifactHandlers(repository, registry, {
+      provenance: {
+        finalizeRun: vi.fn().mockResolvedValue([finalizedArtifact]),
+        activateFinalizedRun: vi.fn().mockRejectedValue(new Error('SECRET_TOKEN=activation-secret'))
+      } as never
+    })
+
+    const failure = await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' }).then(
+      () => undefined,
+      (error: unknown) => artifactFinalizationFailureResult(error)
+    )
+
+    expect(failure).toMatchObject({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
+      execution: {
+        stage: 'activation',
+        durableFinalizationCompleted: true,
+        compatibilityPublicationCompleted: true,
+        activationCompleted: false
+      }
+    })
+    expect(JSON.stringify(failure)).not.toContain('activation-secret')
   })
 
   it('keeps migration drain pending until an artifact finalization already in progress finishes', async () => {
@@ -1183,6 +1252,60 @@ describe('artifact IPC handler registration', () => {
     await expect(electronFinalize).resolves.toEqual({ ok: true, artifacts: [] })
     expect(repository.finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(repository.listMessageFiles).toHaveBeenCalledOnce()
+  })
+
+  it('returns bounded execution state for an operational finalization failure', async () => {
+    const repository = {
+      finalizeRunArtifacts: vi
+        .fn()
+        .mockRejectedValue(new Error('SECRET_TOKEN=synthetic-secret /Users/private/generated.txt'))
+    } as unknown as ArtifactRepository
+    const registry = new ArtifactRunRegistry()
+    const claimId = registry.register({
+      projectId: 'default-project',
+      artifactSessionId: 'artifact-session-1',
+      sessionId: 'session-1',
+      runId: 'run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'prompt-1',
+      artifactVersionIds: ['version-1']
+    })
+    const handlers = createArtifactHandlers(repository, registry, {
+      provenance: {
+        finalizeRun: vi.fn().mockResolvedValue([]),
+        activateFinalizedRun: vi.fn()
+      } as never
+    })
+    registerArtifactIpcHandlers(repository, registry, undefined, undefined, handlers)
+
+    const result = await ipcHandlers.get('artifacts:finalize-run')?.(
+      {},
+      {
+        claimId,
+        messageId: 'message-1'
+      }
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: ARTIFACT_FINALIZATION_OPERATIONAL_FAILURE,
+      execution: {
+        stage: 'compatibility-publication',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        messageId: 'message-1',
+        artifactVersionIds: ['version-1'],
+        durableFinalizationCompleted: true,
+        compatibilityPublicationCompleted: false,
+        activationCompleted: false
+      }
+    })
+    expect(JSON.stringify(result)).not.toContain('synthetic-secret')
+    expect(JSON.stringify(result)).not.toContain('/Users/private')
   })
 
   it('preserves an injected handler identity when registration fails', async () => {

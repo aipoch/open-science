@@ -68,7 +68,7 @@ vi.mock('streamdown', () => ({
 
 const { AgentMarkdown, PresentedAgentMarkdown } = await import('./AgentMarkdown')
 const { SessionMessageLink } = await import('./SessionMessageLink')
-const { StreamingBlock } = await import('./StreamingBlock')
+const { AsyncStreamingBlock } = await import('./AsyncStreamingBlock')
 
 describe('AgentMarkdown renderer recovery', () => {
   let container: HTMLDivElement
@@ -309,14 +309,14 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(streamdownHarness.components?.['managed-diff-added-r4nd0m']).toBe(Added)
   })
 
-  it('defers highlighting of the trailing unclosed code fence via the streaming block', async () => {
+  it('uses the cost-aware streaming block adapter', async () => {
     streamdownHarness.shouldThrow = false
 
     await act(async () => {
       root.render(<AgentMarkdown content={'```ts\nconst value = 1'} isAnimating />)
     })
 
-    expect(streamdownHarness.blockComponent).toBe(StreamingBlock)
+    expect(streamdownHarness.blockComponent).toBe(AsyncStreamingBlock)
   })
 
   it('reveals a buffered segment across frames without any caret at the visible tail', async () => {

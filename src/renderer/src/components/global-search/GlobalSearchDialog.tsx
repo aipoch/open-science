@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -87,8 +96,112 @@ const updateStickyHeadings = (viewport: HTMLDivElement | null): void => {
         heading.getBoundingClientRect().bottom > top
     })
   )
-  for (const { heading, stuck } of headings) heading.dataset.stuck = String(stuck)
+  for (const { heading, stuck } of headings) {
+    if (heading.dataset.stuck !== String(stuck)) heading.dataset.stuck = String(stuck)
+  }
 }
+
+type SearchResultRowProps = {
+  result: SearchResult
+  query: string
+  listboxId: string
+  label: string
+  metadata: string
+  isSelected: boolean
+  mentionable: boolean
+  onSelect: (result: SearchResult, fromPointer?: boolean) => void
+  onOpen: (result: SearchResult) => void
+  onMention: (file: ProjectFileItem) => Promise<void>
+}
+
+// Selection changes only repaint the two affected rows, not every loaded result.
+const SearchResultRow = memo(function SearchResultRow({
+  result,
+  query,
+  listboxId,
+  label,
+  metadata,
+  isSelected,
+  mentionable,
+  onSelect,
+  onOpen,
+  onMention
+}: SearchResultRowProps): React.JSX.Element {
+  const { t } = useTranslation()
+
+  const id = resultId(result)
+  const Icon = result.kind === 'library' && !('item' in result.item) ? Folder : icons[result.kind]
+  const text = resultTitle(result)
+  const hit = result.kind === 'messages' ? findSearchMatches(text, query)[0] : undefined
+  const display =
+    result.kind === 'messages'
+      ? text.slice(Math.max(0, (hit?.start ?? 0) - 55), (hit?.end ?? 0) + 180).replace(/\s+/g, ' ')
+      : text
+  return (
+    <div
+      id={`${listboxId}-${id}`}
+      role="option"
+      aria-selected={isSelected}
+      tabIndex={-1}
+      onClick={() => onSelect(result, true)}
+      onDoubleClick={() => onOpen(result)}
+      className={cn(
+        'search-result-row group cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-ring'
+      )}
+    >
+      <span
+        className="search-result-icon"
+        role="img"
+        aria-label={result.kind === 'library' && !('item' in result.item) ? t('Collection') : label}
+        data-file={result.kind === 'uploads' || result.kind === 'generated'}
+      >
+        {result.kind === 'uploads' || result.kind === 'generated' ? (
+          <span>{fileFormatLabel(result.item)}</span>
+        ) : (
+          <Icon
+            className="size-4"
+            data-testid={result.kind === 'sessions' ? 'global-search-session-icon' : undefined}
+          />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div
+          className="search-result-title"
+          title={result.kind === 'messages' ? messageTitle(result.item) : text}
+        >
+          <SearchHighlight
+            text={result.kind === 'messages' ? messageTitle(result.item) : text}
+            query={query}
+          />
+        </div>
+        {result.kind === 'messages' && (
+          <div className="search-result-excerpt">
+            <SearchHighlight text={display} query={query} />
+          </div>
+        )}
+        <div className="search-result-meta">
+          <span className="truncate" title={metadata}>
+            {metadata}
+          </span>
+        </div>
+      </div>
+      {(result.kind === 'uploads' || result.kind === 'generated') && mentionable && (
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={t('Mention {{name}}', { name: result.item.name })}
+          onClick={(event) => {
+            event.stopPropagation()
+            void onMention(result.item)
+          }}
+          className="rounded p-1 text-muted-foreground opacity-0 hover:bg-bg-300 group-hover:opacity-100 focus:opacity-100"
+        >
+          <AtSign className="size-3.5" />
+        </button>
+      )}
+    </div>
+  )
+})
 
 export const GlobalSearchDialog = ({
   open,
@@ -102,9 +215,20 @@ export const GlobalSearchDialog = ({
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    updateStickyHeadings(listRef.current)
-  })
+  const stickyFrame = useRef<number | undefined>(undefined)
+  const scheduleStickyHeadings = useCallback(() => {
+    if (stickyFrame.current !== undefined) return
+    stickyFrame.current = requestAnimationFrame(() => {
+      stickyFrame.current = undefined
+      updateStickyHeadings(listRef.current)
+    })
+  }, [])
+  useEffect(
+    () => () => {
+      if (stickyFrame.current !== undefined) cancelAnimationFrame(stickyFrame.current)
+    },
+    []
+  )
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<SearchCategory | 'all'>('all')
   const [currentProjectOnly, setCurrentProjectOnly] = useState(false)
@@ -172,28 +296,44 @@ export const GlobalSearchDialog = ({
       ),
     [allMetadata, projectNames]
   )
-  const scopedProjects = restrictToProject
-    ? projects.filter((item) => item.id === activeProjectId)
-    : projects
-  const scopedSessions = restrictToProject
-    ? sessions.filter((item) => item.projectId === activeProjectId)
-    : sessions
-  const scopeKey = JSON.stringify({
-    category,
-    projectIds: scopedProjects.map((item) => item.id).sort(),
-    excludedSessionIds: allMetadata
-      .filter((item) => item.archivedAt !== undefined || item.isPending)
-      .map((item) => item.id)
-      .sort(),
-    ...(restrictToProject ? { projectId: activeProjectId } : {}),
-    updatedAfter,
-    sort,
-    ...(category === 'messages' && subtype !== 'all' ? { role: subtype } : {}),
-    ...((category === 'uploads' || category === 'generated') && subtype !== 'all'
-      ? { format: subtype }
-      : {}),
-    ...(category === 'library' && subtype !== 'all' ? { entryKind: subtype } : {})
-  })
+  const scopedProjects = useMemo(
+    () => (restrictToProject ? projects.filter((item) => item.id === activeProjectId) : projects),
+    [restrictToProject, projects, activeProjectId]
+  )
+  const scopedSessions = useMemo(
+    () =>
+      restrictToProject ? sessions.filter((item) => item.projectId === activeProjectId) : sessions,
+    [restrictToProject, sessions, activeProjectId]
+  )
+  const scopeKey = useMemo(
+    () =>
+      JSON.stringify({
+        category,
+        projectIds: scopedProjects.map((item) => item.id).sort(),
+        excludedSessionIds: allMetadata
+          .filter((item) => item.archivedAt !== undefined || item.isPending)
+          .map((item) => item.id)
+          .sort(),
+        ...(restrictToProject ? { projectId: activeProjectId } : {}),
+        updatedAfter,
+        sort,
+        ...(category === 'messages' && subtype !== 'all' ? { role: subtype } : {}),
+        ...((category === 'uploads' || category === 'generated') && subtype !== 'all'
+          ? { format: subtype }
+          : {}),
+        ...(category === 'library' && subtype !== 'all' ? { entryKind: subtype } : {})
+      }),
+    [
+      category,
+      scopedProjects,
+      allMetadata,
+      restrictToProject,
+      activeProjectId,
+      updatedAfter,
+      sort,
+      subtype
+    ]
+  )
   const { pages, load } = useSearchResults(open, isSessionPersistenceReady, query.trim(), scopeKey)
   const labels = {
     all: t('All'),
@@ -205,50 +345,83 @@ export const GlobalSearchDialog = ({
     library: t('Library')
   }
 
-  const matchedProjects = scopedProjects
-    .filter((item) => updatedAfter === undefined || item.updatedAt >= updatedAfter)
-    .filter(
-      (item) =>
-        !query.trim() || findSearchMatches(`${item.name}\n${item.description}`, query).length > 0
-    )
-    .sort(
-      (a, b) =>
-        (sort === 'relevance'
-          ? searchTitleRank(b.name, query) - searchTitleRank(a.name, query)
-          : 0) ||
-        b.updatedAt - a.updatedAt ||
-        a.id.localeCompare(b.id)
-    )
-  const sessionMatches = searchSessionTitles({
-    sessions: scopedSessions.filter(
-      (item) => updatedAfter === undefined || item.updatedAt >= updatedAfter
-    ),
-    query,
-    sort
-  })
-  const sessionItems = sessionMatches
-    .slice(0, counts.sessions)
-    .map((item) => ({ kind: 'sessions' as const, item }))
-  const groups: Record<SearchCategory, SearchPage> = {
-    ...pages,
-    projects: {
-      ...emptySearchPage(),
-      totalCount: matchedProjects.length,
-      items: matchedProjects.slice(0, counts.projects).map((item) => ({ kind: 'projects', item }))
-    },
-    sessions: {
-      ...emptySearchPage(),
-      totalCount: sessionMatches.length,
-      items: sessionItems
-    }
-  }
-  const shownCategories: readonly SearchCategory[] =
-    category === 'all' ? SEARCH_GROUP_ORDER : [category]
-  const rows = shownCategories.flatMap((key) => groups[key].items)
+  const matchedProjects = useMemo(
+    () =>
+      scopedProjects
+        .filter((item) => updatedAfter === undefined || item.updatedAt >= updatedAfter)
+        .filter(
+          (item) =>
+            !query.trim() ||
+            findSearchMatches(`${item.name}\n${item.description}`, query).length > 0
+        )
+        .sort(
+          (a, b) =>
+            (sort === 'relevance'
+              ? searchTitleRank(b.name, query) - searchTitleRank(a.name, query)
+              : 0) ||
+            b.updatedAt - a.updatedAt ||
+            a.id.localeCompare(b.id)
+        ),
+    [scopedProjects, updatedAfter, query, sort]
+  )
+  const sessionMatches = useMemo(
+    () =>
+      searchSessionTitles({
+        sessions: scopedSessions.filter(
+          (item) => updatedAfter === undefined || item.updatedAt >= updatedAfter
+        ),
+        query,
+        sort
+      }),
+    [scopedSessions, updatedAfter, query, sort]
+  )
+  const groups = useMemo<Record<SearchCategory, SearchPage>>(
+    () => ({
+      ...pages,
+      projects: {
+        ...emptySearchPage(),
+        totalCount: matchedProjects.length,
+        items: matchedProjects.slice(0, counts.projects).map((item) => ({ kind: 'projects', item }))
+      },
+      sessions: {
+        ...emptySearchPage(),
+        totalCount: sessionMatches.length,
+        items: sessionMatches
+          .slice(0, counts.sessions)
+          .map((item) => ({ kind: 'sessions' as const, item }))
+      }
+    }),
+    [pages, matchedProjects, sessionMatches, counts]
+  )
+  const shownCategories: readonly SearchCategory[] = useMemo(
+    () => (category === 'all' ? SEARCH_GROUP_ORDER : [category]),
+    [category]
+  )
+  const rows = useMemo(
+    () => shownCategories.flatMap((key) => groups[key].items),
+    [shownCategories, groups]
+  )
   const anyLoading = shownCategories.some((key) => groups[key].loading)
   const anyError = shownCategories.some((key) => groups[key].error || groups[key].incomplete)
   const total = shownCategories.reduce((sum, key) => sum + groups[key].totalCount, 0)
   const summaryCounts = useSearchSummaryCounts(open, rows)
+  useLayoutEffect(scheduleStickyHeadings, [
+    scheduleStickyHeadings,
+    rows,
+    selected,
+    advancedOpen,
+    open
+  ])
+  const sessionById = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions]
+  )
+  const projectSessionCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const session of sessions)
+      counts.set(session.projectId, (counts.get(session.projectId) ?? 0) + 1)
+    return counts
+  }, [sessions])
   const selectedId = selected ? resultId(selected) : undefined
   const collapse = useCallback(() => {
     setSelected(undefined)
@@ -292,47 +465,52 @@ export const GlobalSearchDialog = ({
     return () => window.clearTimeout(timer)
   }, [selected])
 
-  const close = (): void => {
+  const close = useCallback((): void => {
     actionVersion.current++
     onOpenChange(false)
-  }
-  const openResult = (result: SearchResult): void => {
-    const nav = useNavigationStore.getState()
-    if (result.kind === 'uploads' || result.kind === 'generated') {
-      const show = (): void => {
-        usePreviewWorkbenchStore.getState().openFileDialog(filePreviewItem(result.item))
-        close()
+  }, [onOpenChange])
+  const openResult = useCallback(
+    (result: SearchResult): void => {
+      const nav = useNavigationStore.getState()
+      if (result.kind === 'uploads' || result.kind === 'generated') {
+        const show = (): void => {
+          usePreviewWorkbenchStore.getState().openFileDialog(filePreviewItem(result.item))
+          close()
+        }
+        if (nav.activeProjectId !== result.item.projectId || nav.view !== 'workspace')
+          nav.openProject(result.item.projectId, 'user', show)
+        else show()
+      } else if (result.kind === 'projects') nav.openProject(result.item.id, 'user', close)
+      else if (result.kind === 'sessions' || result.kind === 'messages') {
+        const sessionId = result.kind === 'sessions' ? result.item.id : result.item.sessionId
+        if (
+          !sessions.some(
+            (item) => item.id === sessionId && item.projectId === result.item.projectId
+          )
+        ) {
+          setActionError(t('This session is no longer available.'))
+          return
+        }
+        nav.openSession(result.item.projectId, sessionId, 'user', () => {
+          if (result.kind === 'messages')
+            useSearchMessageFocusStore.getState().request({
+              projectId: result.item.projectId,
+              sessionId,
+              messageId: result.item.messageId,
+              navigationRevision: useNavigationStore.getState().userNavigationRevision
+            })
+          close()
+        })
+      } else {
+        if ('item' in result.item) {
+          nav.openLiteratureItem(result.item.id, 'user')
+          close()
+        } else if (nav.openCollectionLiterature(result.item.id, 'user')) close()
       }
-      if (nav.activeProjectId !== result.item.projectId || nav.view !== 'workspace')
-        nav.openProject(result.item.projectId, 'user', show)
-      else show()
-    } else if (result.kind === 'projects') nav.openProject(result.item.id, 'user', close)
-    else if (result.kind === 'sessions' || result.kind === 'messages') {
-      const sessionId = result.kind === 'sessions' ? result.item.id : result.item.sessionId
-      if (
-        !sessions.some((item) => item.id === sessionId && item.projectId === result.item.projectId)
-      ) {
-        setActionError(t('This session is no longer available.'))
-        return
-      }
-      nav.openSession(result.item.projectId, sessionId, 'user', () => {
-        if (result.kind === 'messages')
-          useSearchMessageFocusStore.getState().request({
-            projectId: result.item.projectId,
-            sessionId,
-            messageId: result.item.messageId,
-            navigationRevision: useNavigationStore.getState().userNavigationRevision
-          })
-        close()
-      })
-    } else {
-      if ('item' in result.item) {
-        nav.openLiteratureItem(result.item.id, 'user')
-        close()
-      } else if (nav.openCollectionLiterature(result.item.id, 'user')) close()
-    }
-  }
-  const canMention = (file: ProjectFileItem): boolean => {
+    },
+    [close, sessions, t]
+  )
+  const canMention = useCallback((file: ProjectFileItem): boolean => {
     const nav = useNavigationStore.getState()
     const session = useSessionStore
       .getState()
@@ -344,7 +522,7 @@ export const GlobalSearchDialog = ({
       nav.artifactMentionAvailability?.projectId === file.projectId &&
       nav.artifactMentionAvailability.canMention
     )
-  }
+  }, [])
   const locateFile = async (file: ProjectFileItem): Promise<void> => {
     const version = ++actionVersion.current
     const navigationRevision = useNavigationStore.getState().userNavigationRevision
@@ -392,43 +570,46 @@ export const GlobalSearchDialog = ({
         setActionError(t('The source message is no longer available.'))
     }
   }
-  const mention = async (file: ProjectFileItem): Promise<void> => {
-    if (!canMention(file)) return
-    const version = ++actionVersion.current
-    setActionError(undefined)
-    try {
-      const response = await window.api.managedFileVersions.inspect({
-        source: file.source,
-        projectId: file.projectId,
-        fileId: file.sourceFileId
-      })
-      if (actionVersion.current !== version || !canMention(file)) return
-      if (!response.ok) {
-        setActionError(t('Could not resolve file version.'))
-        return
+  const mention = useCallback(
+    async (file: ProjectFileItem): Promise<void> => {
+      if (!canMention(file)) return
+      const version = ++actionVersion.current
+      setActionError(undefined)
+      try {
+        const response = await window.api.managedFileVersions.inspect({
+          source: file.source,
+          projectId: file.projectId,
+          fileId: file.sourceFileId
+        })
+        if (actionVersion.current !== version || !canMention(file)) return
+        if (!response.ok) {
+          setActionError(t('Could not resolve file version.'))
+          return
+        }
+        const head =
+          response.value.headVersion ??
+          response.value.versions.find((item) => item.id === response.value.headVersionId)
+        if (!head) {
+          setActionError(t('The current file version is unavailable.'))
+          return
+        }
+        useNavigationStore.getState().requestArtifactMention({
+          ...file,
+          sourceVersionId: head.id,
+          checksum: head.checksum,
+          sessionId: response.value.sessionId,
+          name: response.value.displayName,
+          mimeType: head.contentType ?? file.mimeType,
+          size: head.sizeBytes,
+          sortAtMs: Date.parse(head.createdAt)
+        })
+        close()
+      } catch {
+        if (actionVersion.current === version) setActionError(t('Could not resolve file version.'))
       }
-      const head =
-        response.value.headVersion ??
-        response.value.versions.find((item) => item.id === response.value.headVersionId)
-      if (!head) {
-        setActionError(t('The current file version is unavailable.'))
-        return
-      }
-      useNavigationStore.getState().requestArtifactMention({
-        ...file,
-        sourceVersionId: head.id,
-        checksum: head.checksum,
-        sessionId: response.value.sessionId,
-        name: response.value.displayName,
-        mimeType: head.contentType ?? file.mimeType,
-        size: head.sizeBytes,
-        sortAtMs: Date.parse(head.createdAt)
-      })
-      close()
-    } catch {
-      if (actionVersion.current === version) setActionError(t('Could not resolve file version.'))
-    }
-  }
+    },
+    [canMention, close, t]
+  )
   const loadMore = useCallback(
     (key: SearchCategory) => {
       if (isRemoteCategory(key)) void load(key, true)
@@ -458,8 +639,9 @@ export const GlobalSearchDialog = ({
   }, [category, filteredPage, loadMore])
   const scrollMore = (): void => {
     const viewport = listRef.current
-    updateStickyHeadings(viewport)
+    scheduleStickyHeadings()
     if (
+      typeof IntersectionObserver === 'undefined' &&
       category !== 'all' &&
       viewport &&
       viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 80 &&
@@ -480,7 +662,7 @@ export const GlobalSearchDialog = ({
     if (result.kind === 'projects')
       return [
         t('{{count}} sessions', {
-          count: sessions.filter((session) => session.projectId === result.item.id).length,
+          count: projectSessionCounts.get(result.item.id) ?? 0,
           defaultValue_one: '{{count}} session'
         }),
         fileSummary,
@@ -522,7 +704,7 @@ export const GlobalSearchDialog = ({
         : [
             project,
             (() => {
-              const session = sessions.find((session) => session.id === result.item.sessionId)
+              const session = sessionById.get(result.item.sessionId)
               return session ? `#${session.number}` : result.item.originSession?.title
             })(),
             formatBytes(result.item.size),
@@ -771,7 +953,6 @@ export const GlobalSearchDialog = ({
                 className="global-search-list min-h-0 flex-1 overflow-auto"
                 ref={listRef}
                 onScroll={scrollMore}
-                onWheel={scrollMore}
               >
                 <div id={listboxId} role="listbox" aria-label={t('Search results')}>
                   {shownCategories.map((key) => {
@@ -793,109 +974,24 @@ export const GlobalSearchDialog = ({
                           <span className="tabular-nums opacity-70">{group.totalCount}</span>
                         </div>
                         <div>
-                          {group.items.map((result) => {
-                            const id = resultId(result)
-                            const Icon =
-                              result.kind === 'library' && !('item' in result.item)
-                                ? Folder
-                                : icons[key]
-                            const text = resultTitle(result)
-                            const hit =
-                              result.kind === 'messages'
-                                ? findSearchMatches(text, query)[0]
-                                : undefined
-                            const display =
-                              result.kind === 'messages'
-                                ? text
-                                    .slice(
-                                      Math.max(0, (hit?.start ?? 0) - 55),
-                                      (hit?.end ?? 0) + 180
-                                    )
-                                    .replace(/\s+/g, ' ')
-                                : text
-                            return (
-                              <div
-                                key={id}
-                                id={`${listboxId}-${id}`}
-                                role="option"
-                                aria-selected={selectedId === id}
-                                tabIndex={-1}
-                                onClick={() => select(result, true)}
-                                onDoubleClick={() => openResult(result)}
-                                className={cn(
-                                  'search-result-row group cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-ring'
-                                )}
-                              >
-                                <span
-                                  className="search-result-icon"
-                                  role="img"
-                                  aria-label={
-                                    result.kind === 'library' && !('item' in result.item)
-                                      ? t('Collection')
-                                      : labels[key]
-                                  }
-                                  data-file={
-                                    result.kind === 'uploads' || result.kind === 'generated'
-                                  }
-                                >
-                                  {result.kind === 'uploads' || result.kind === 'generated' ? (
-                                    <span>{fileFormatLabel(result.item)}</span>
-                                  ) : (
-                                    <Icon
-                                      className="size-4"
-                                      data-testid={
-                                        key === 'sessions'
-                                          ? 'global-search-session-icon'
-                                          : undefined
-                                      }
-                                    />
-                                  )}
-                                </span>
-                                <div className="min-w-0 flex-1">
-                                  <div
-                                    className="search-result-title"
-                                    title={
-                                      result.kind === 'messages' ? messageTitle(result.item) : text
-                                    }
-                                  >
-                                    <SearchHighlight
-                                      text={
-                                        result.kind === 'messages'
-                                          ? messageTitle(result.item)
-                                          : text
-                                      }
-                                      query={query}
-                                    />
-                                  </div>
-                                  {result.kind === 'messages' && (
-                                    <div className="search-result-excerpt">
-                                      <SearchHighlight text={display} query={query} />
-                                    </div>
-                                  )}
-                                  <div className="search-result-meta">
-                                    <span className="truncate" title={subtitle(result)}>
-                                      {subtitle(result)}
-                                    </span>
-                                  </div>
-                                </div>
-                                {(result.kind === 'uploads' || result.kind === 'generated') &&
-                                  canMention(result.item) && (
-                                    <button
-                                      type="button"
-                                      tabIndex={-1}
-                                      aria-label={t('Mention {{name}}', { name: result.item.name })}
-                                      onClick={(event) => {
-                                        event.stopPropagation()
-                                        void mention(result.item)
-                                      }}
-                                      className="rounded p-1 text-muted-foreground opacity-0 hover:bg-bg-300 group-hover:opacity-100 focus:opacity-100"
-                                    >
-                                      <AtSign className="size-3.5" />
-                                    </button>
-                                  )}
-                              </div>
-                            )
-                          })}
+                          {group.items.map((result) => (
+                            <SearchResultRow
+                              key={resultId(result)}
+                              result={result}
+                              query={query}
+                              listboxId={listboxId}
+                              label={labels[key]}
+                              metadata={subtitle(result)}
+                              isSelected={selectedId === resultId(result)}
+                              mentionable={
+                                (result.kind === 'uploads' || result.kind === 'generated') &&
+                                canMention(result.item)
+                              }
+                              onSelect={select}
+                              onOpen={openResult}
+                              onMention={mention}
+                            />
+                          ))}
                         </div>
                         {group.loading && (
                           <div role="status" className="flex justify-center py-3">

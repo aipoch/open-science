@@ -2,6 +2,7 @@
 #include "../src/credential_identity_probe.cc"
 
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 using credential_identity::ProbeIdentity;
@@ -26,6 +27,8 @@ struct Fixture {
   bool fail_restore = false;
   bool locked = false;
   bool unrelated_locked = false;
+  bool admin_keychain = false;
+  bool first_keychain_admin = false;
   bool second_keychain = false;
   bool owner_second = false;
   bool missing_reference = false;
@@ -90,6 +93,19 @@ OSStatus GetStatus(SecKeychainRef keychain, SecKeychainStatus* status) {
   *status = (fixture.unreadable ? 0 : kSecReadPermStatus) |
             (((fixture.locked && CFEqual(keychain, CFSTR("fake-keychain"))) || (fixture.unrelated_locked && CFEqual(keychain, CFSTR("unrelated-keychain"))) || (fixture.locks_after_query && fixture.queries))
                  ? 0 : kSecUnlockStateStatus);
+  return errSecSuccess;
+}
+
+OSStatus GetPath(SecKeychainRef keychain, UInt32* length, char* path) {
+  const char* source = "/Users/example/Library/Keychains/login.keychain-db";
+  if (fixture.first_keychain_admin && CFEqual(keychain, CFSTR("fake-keychain")))
+    source = "/Library/Keychains/System.keychain";
+  if (fixture.admin_keychain && CFEqual(keychain, CFSTR("unrelated-keychain")))
+    source = "/Library/Keychains/System.keychain";
+  const auto size = static_cast<UInt32>(std::strlen(source));
+  Expect(*length >= size, "path buffer smaller than the fixture path");
+  std::memcpy(path, source, size);
+  *length = size;
   return errSecSuccess;
 }
 
@@ -174,8 +190,8 @@ OSStatus CopyItemKeychain(SecKeychainItemRef reference, SecKeychainRef* keychain
   return errSecSuccess;
 }
 
-const SecurityApi api{GetInteraction, SetInteraction, CopySearchList, GetStatus, CopyMatching,
-                      CFStringGetTypeID, CopyItemKeychain};
+const SecurityApi api{GetInteraction, SetInteraction, CopySearchList, GetStatus, GetPath,
+                      CopyMatching, CFStringGetTypeID, CopyItemKeychain};
 int scenarios = 0;
 
 ProbeResult Run(const char* expected_status, const char* expected_reason = nullptr) {
@@ -333,10 +349,33 @@ int main() {
   fixture.matches = 2;
   Run("error", "ambiguous-account");
 
-  // Neither a missing new identity nor a missing suffixed account is authoritative with locks.
+  // The admin-managed System keychain is locked in every user session: the stock-macOS search
+  // list (unlocked login + locked System) must still reach definite absence on both accounts.
+  fixture = {};
+  fixture.second_keychain = true;
+  fixture.unrelated_locked = true;
+  fixture.admin_keychain = true;
+  Run("not-found");
+  Expect(fixture.accounts.size() == 2, "admin keychain lock suppressed the bare account fallback");
+
+  // The path classification is position-independent: a locked admin database is never a hiding
+  // place for an application identity.
+  fixture = {};
+  fixture.locked = true;
+  fixture.first_keychain_admin = true;
+  Run("not-found");
+  Expect(fixture.accounts.size() == 2, "admin keychain lock suppressed the bare account fallback");
+
+  // A locked USER database can hide a historical default-keychain account, so absence there
+  // stays uncertain and must not fall through to a replacement identity.
   fixture = {};
   fixture.unrelated_locked = true;
   fixture.legacy_status = errSecSuccess;
+  Run("access-blocked", "keychain-locked");
+  Expect(fixture.accounts.size() == 1, "uncertain absence fell back to bare account");
+
+  fixture = {};
+  fixture.unrelated_locked = true;
   Run("access-blocked", "keychain-locked");
   Expect(fixture.accounts.size() == 1, "uncertain absence fell back to bare account");
 

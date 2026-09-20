@@ -1,3 +1,4 @@
+import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
 import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
@@ -66,7 +67,8 @@ import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
-  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 import { parseLiteratureAttachmentVersionReference } from '../shared/literature'
 
@@ -1476,6 +1478,13 @@ const createApplicationModules = async (
         })
         return
       }
+      if (owner === 'runtime-transcript') {
+        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+          session,
+          originClientId: MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
+        })
+        return
+      }
       delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,
@@ -1978,6 +1987,7 @@ const createApplicationModules = async (
       translate,
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
       processSandbox: notebookNetworkSandbox,
+      getGrantedLocalRoots: () => grantedRootsRepository.list(),
       onBackgroundRunTerminal: (source) =>
         backgroundResultDelivery.enqueue(source).then(() => undefined),
       onBackgroundRunAdmitted: (source) =>
@@ -2194,6 +2204,7 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
+    skillSettings: settingsRepository,
     marketplaceOperationCoordinator,
     onSpecialistDeleted: (specialistId) =>
       marketplaceRepository.removeInstallationsForSpecialist(specialistId),
@@ -2214,7 +2225,7 @@ const createApplicationModules = async (
       ]),
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
-      void runtime.requestSkillsReload()
+      requestSkillCatalogRefresh()
     }
   })
   specialistPackageRecovery.current = (operation) =>
@@ -2227,8 +2238,6 @@ const createApplicationModules = async (
     packages: specialistPackageService,
     fetch: netFetchWithManualRedirect,
     officialSource: OFFICIAL_MARKETPLACE_SOURCE,
-    getDisabledSkillIds: async () =>
-      (await settingsRepository.getSettings()).disabledSkillIds ?? [],
     getInstalledSpecialists: async () =>
       (await specialistService.list()).map((profile) => ({
         id: profile.id,
@@ -2917,12 +2926,6 @@ const createApplicationModules = async (
                     agentConfiguration: toSessionAgentConfiguration(agentTarget)
                   })
                 }
-                const started = await delivery.startDispatch()
-                if (started !== 'started') {
-                  throw new DelegateMessageParkedError(
-                    'Parent message dispatch fence was not acquired.'
-                  )
-                }
                 if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
                   await runtime.resumeSession({
                     sessionId: latest.id,
@@ -2949,7 +2952,14 @@ const createApplicationModules = async (
                     ...(agentTarget ? { agentTarget } : {})
                   })
                 }
-              }
+                const started = await delivery.startDispatch()
+                if (started !== 'started') {
+                  throw new DelegateMessageParkedError(
+                    'Parent message dispatch fence was not acquired.'
+                  )
+                }
+              },
+              delivery.messageId
             )
           }
         )
@@ -3334,6 +3344,11 @@ const createApplicationModules = async (
       initializationBarrier: initialConnectorSkillsReady,
       specialistService,
       sessionPersistenceCoordinator,
+      finalizeRuntimeArtifacts: async (request) => {
+        const handlers = artifactHandlersRef.current
+        if (!handlers) throw new Error('Artifact finalization is not initialized.')
+        return handlers.finalizeRunArtifacts(request)
+      },
       literatureReader: literatureDocumentReader,
       pdfElementReader,
       literatureAttachments: literatureAttachmentAuthority,
@@ -3345,6 +3360,7 @@ const createApplicationModules = async (
         credentialRequestBroker.hasPendingForSession(sessionId),
       imageInputCompatibility,
       memory: memoryService,
+      classifySkills: settingsService.classification.selectSkills,
       auxiliaryUsage: {
         projectIdForSession: (sessionId) =>
           sessionPersistenceCoordinator.sessionProjectId(sessionId),
@@ -4490,8 +4506,14 @@ const createApplicationModules = async (
         )
     }
   })
+  const runtimeWriter = new RuntimeWriterOwner(undefined, undefined, (clientId) => {
+    if (!clientId.startsWith('electron:')) return undefined
+    const sender = webContents.fromId(Number(clientId.slice('electron:'.length)))
+    return Boolean(sender && !sender.isDestroyed() && !sender.isCrashed())
+  })
   surfaceAdapters.push(
     createSessionPersistenceElectronSurface({
+      runtimeWriter,
       sessionPersistenceBackend,
       reviewRepository,
       sessionPersistenceHandlers,
@@ -4604,6 +4626,18 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources),
     resolveSessionAgentTarget,
+    // Reviewer reads transcripts but never owns them. Injecting the composed owner keeps those
+    // reads on its scheduler and projection instead of a second SessionRepository over the same
+    // tree, whose corrupt-file recovery would rename live files outside this write lane.
+    sessionReader: {
+      loadSession: (projectId: string, sessionId: string) =>
+        sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
+      findSessionById: async (sessionId: string) => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (!projectId) return undefined
+        return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
+      }
+    },
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,
       configuration: SessionAgentConfiguration
@@ -4856,6 +4890,7 @@ const createApplicationModules = async (
       clearAll: () => memoryService.clearAll()
     },
     dataContent: {
+      runtimeWriter,
       artifacts: artifactHandlers,
       electron: {
         sessionPackageOperation: async (invocation) =>

@@ -343,6 +343,7 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'mutateClassification',
       'publishBootstrapOpenAlex',
       'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',
@@ -477,7 +478,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
@@ -512,6 +513,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/ipc.ts',
       'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
+      'src/main/settings/classification-settings.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
@@ -529,6 +531,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/subagent-model-owner.ts',
       'src/main/settings/vision-model-owner.ts',
       'src/main/settings/xai-provider-account-owner.ts',
+      'src/main/specialist/package/service.ts',
+      'src/main/specialist/package/transaction.ts',
       'src/main/storage/initialize-location.ts'
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
@@ -673,6 +677,7 @@ describe('Settings backend ownership architecture', () => {
       'agentEnvironmentCreationEnabled',
       'agentFrameworkId',
       'appIconVariant',
+      'classification',
       'claude',
       'claudeSubscriptionProviderId',
       'closePreference',
@@ -753,6 +758,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/ipc.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts',
+      'src/main/specialist/package/transaction.ts',
       'src/main/storage/initialize-location.ts'
     ])
     const computeIpc = readSource(resolve(projectRoot, 'src/main/compute/ipc.ts'))
@@ -769,6 +775,8 @@ describe('Settings backend ownership architecture', () => {
       /registerIpcHandlers\(\{\s+mainEntryPath,\s+settingsStore,\s+translate,/u
     )
     expect(mainIpc).toContain('settingsStore ?? resolveConfigRoot()')
+    // Package transactions use the shared production repository; their fallback supports standalone use.
+    expect(mainIpc).toContain('skillSettings: settingsRepository')
     expect(mainIpc).toContain('await settingsService.migrateAgentHomeSkillIdentities()')
     expect(mainIpc.indexOf('specialistPackageRecovery.current =')).toBeLessThan(
       mainIpc.indexOf('await settingsService.migrateAgentHomeSkillIdentities()')
@@ -830,7 +838,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/record-codec.test.ts',
       'src/main/settings/repository.test.ts',
       'src/main/settings/document-read-error.ts',
-      'src/main/settings/document-shape.ts'
+      'src/main/settings/document-shape.ts',
+      'src/main/settings/classification-config.ts'
     ])
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
@@ -972,7 +981,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.connectors.test.ts',
       'src/main/settings/service.providers.test.ts',
       'src/main/settings/service.test.ts',
-      'src/main/settings/settings-snapshot-commit-owner.test.ts'
+      'src/main/settings/settings-snapshot-commit-owner.test.ts',
+      'src/main/settings/classification-settings.ts',
+      'src/main/settings/classification-settings.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',
@@ -1054,6 +1065,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/task-api.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'packages/open-science/cli.test.ts',
       'src/main/acp/artifact-code-reconstruction-runner.test.ts',
       'src/main/acp/backend-generation-owner.test.ts',
@@ -1459,7 +1472,17 @@ describe('Settings backend ownership architecture', () => {
       'src/main/credential-identity/macos.test.ts',
       'src/main/credential-identity/probe-logging.test.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.test.ts',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/specialist/marketplace/official-source.test.ts',
+      'src/main/specialist/marketplace/service.test.ts',
+      'src/main/specialist/package/release-certification.test.ts',
+      'src/main/specialist/package/reported-regressions.test.ts',
+      'src/main/specialist/package/transaction.test.ts',
+      'src/main/delegation/process-ownership.test.ts',
+      'src/main/process-tree.windows.integration.test.ts',
+      'src/main/delegation/frame-workspace.test.ts',
+      'src/main/acp/agent-process.test.ts',
+      'src/main/settings/classification-settings.test.ts'
     ])
     expect(
       [

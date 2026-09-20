@@ -81,7 +81,10 @@ const isIncompleteRun = (run: NotebookRunRecord): boolean =>
 
 const namespaceKey = (run: NotebookRunRecord): string | undefined => {
   const projectedStatus = run.status === 'completed' || isIncompleteRun(run)
-  if ((run.kernelKind !== 'python' && run.kernelKind !== 'r') || !run.kernelEpochId) {
+  if (
+    (run.kernelKind !== 'python' && run.kernelKind !== 'r' && run.kernelKind !== 'repl') ||
+    !run.kernelEpochId
+  ) {
     return undefined
   }
   if (!projectedStatus) return undefined
@@ -277,7 +280,10 @@ class NotebookDependencyProjector {
     const conditionallyDefinedNames = new Set(facts.conditionallyDefinedNames ?? [])
     const namespace = namespaceKey(run)
     if (!namespace) {
-      if (run.status === 'completed' && (run.kernelKind === 'python' || run.kernelKind === 'r')) {
+      if (
+        run.status === 'completed' &&
+        (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl')
+      ) {
         stalenessByRunId[run.runId] = {
           state: 'unknown',
           reasons: ['kernel-epoch-unavailable']
@@ -1134,7 +1140,19 @@ class NotebookDependencyProjector {
     const safeCallShadowed = currentSafeCallNames.some(nameIsShadowed)
     const analysisReasons = (
       incompleteRun
-        ? ['incomplete-run']
+        ? [
+            'incomplete-run',
+            ...(run.kernelKind === 'repl' && analyzedFacts.state === 'unknown'
+              ? analyzedFacts.reasons.filter((reason) =>
+                  [
+                    'dynamic-namespace',
+                    'dynamic-assignment',
+                    'opaque-call',
+                    'parse-error'
+                  ].includes(reason)
+                )
+              : [])
+          ]
         : [
             ...(facts.state === 'unknown'
               ? facts.reasons.filter(
@@ -1154,6 +1172,12 @@ class NotebookDependencyProjector {
     const currentRunReasons = analysisReasons.filter(
       (reason) => reason !== 'opaque-mutation' && reason !== 'external-state'
     )
+    if (run.kernelKind === 'repl' && !incompleteRun) {
+      for (const name of facts.priorUsedNames ?? facts.usedNames ?? []) {
+        if (!latestDefinitions.has(name) && !currentSafeCallNames.includes(name))
+          currentRunReasons.push(`kernel-binding-unavailable:${name}`)
+      }
+    }
     const upstreamRunIds = new Set(packageUpstreamRunIds)
     // Formatting options are implicit inputs to R printing and plot labels.
     if (run.kernelKind === 'r') {
@@ -1905,7 +1929,8 @@ const unavailableNotebookDependencyProjection = (
 ): NotebookDependencyProjection => ({
   stalenessByRunId: Object.fromEntries(
     runs.flatMap((run) =>
-      run.status === 'completed' && (run.kernelKind === 'python' || run.kernelKind === 'r')
+      run.status === 'completed' &&
+      (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl')
         ? [[run.runId, { state: 'unknown', reasons: [reason] } satisfies NotebookRunStaleness]]
         : []
     )

@@ -1,3 +1,10 @@
+import type {
+  ClassificationSnapshot,
+  ClassificationMutation,
+  ClassificationMutationResult,
+  ClassificationProbe,
+  ClassificationProbeResult
+} from './classification'
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
   SkillMarketplaceCatalog,
@@ -538,6 +545,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
+  RevokeRemoteBrowsersRequest,
   SetRemoteAccessModeRequest
 } from './remote-access'
 import type {
@@ -1224,6 +1232,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'handoff-lifecycle:retry',
     ELECTRON
   ]),
+  'lifecycle.claimRuntimeWriter': callable<
+    () => Promise<import('./runtime-writer').RuntimeWriterLease>
+  >()('lifecycle', [
+    'lifecycle:claim-runtime-writer',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'lifecycle.getClientId': callable<() => Promise<string>>()('lifecycle', ['lifecycle:client-id']),
   'locale.initialize': callable<
     (request: InitializeLocalePreferenceRequest) => Promise<LocalePreferenceSnapshot>
@@ -1717,6 +1734,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'remoteAccess.revokeBrowser': callable<
     (request: RevokeRemoteBrowserRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:revoke-browser']),
+  'remoteAccess.revokeBrowsers': callable<
+    (request: RevokeRemoteBrowsersRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:revoke-browsers']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:set-mode', ELECTRON]),
@@ -2277,6 +2297,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNcbiCredentials': callable<
     (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-ncbi-credentials']),
+  'settings.getClassification': callable<() => Promise<ClassificationSnapshot>>()('settings', [
+    'settings:get-classification',
+    LOCAL
+  ]),
+  'settings.updateClassification': callable<
+    (request: ClassificationMutation) => Promise<ClassificationMutationResult>
+  >()('settings', ['settings:update-classification', LOCAL]),
+  'settings.testClassification': callable<
+    (request: ClassificationProbe) => Promise<ClassificationProbeResult>
+  >()('settings', ['settings:test-classification', LOCAL]),
   'settings.setOpenAlexCredential': callable<
     (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-openalex-credential', LOCAL]),

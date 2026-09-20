@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
 import type { ComponentProps, ReactNode } from 'react'
-import { LoaderCircle, type LucideIcon } from 'lucide-react'
+import { LoaderCircle, Plus, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,8 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-type SettingsSectionProps = ComponentProps<'section'> & {
-  title: string
+type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
+  title: ReactNode
   titleId?: string
   headingAs?: 'h2' | 'h3'
   // Optional decorative glyph rendered just before the title (e.g. a language logo).
@@ -71,6 +71,35 @@ const SettingsSection = ({
     </div>
     <div className={cn('mt-3 min-w-0', contentClassName)}>{children}</div>
   </section>
+)
+
+// Shared provider-list affordance; keeps the add action next to the resources it creates.
+const SettingsListAddAction = ({
+  children,
+  className,
+  ...props
+}: ComponentProps<'button'>): React.JSX.Element => (
+  <button
+    type="button"
+    className={cn(
+      'mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+      className
+    )}
+    {...props}
+  >
+    <Plus className="size-4" aria-hidden="true" />
+    {children}
+  </button>
+)
+
+const SettingsFormFooter = ({
+  children,
+  className,
+  ...props
+}: ComponentProps<'div'>): React.JSX.Element => (
+  <div className={cn('shrink-0 border-t border-border bg-card', className)} {...props}>
+    <div className="mx-auto max-w-[880px] space-y-3 px-5 py-4">{children}</div>
+  </div>
 )
 
 type SettingsRowProps = ComponentProps<'div'> & {
@@ -238,6 +267,8 @@ const SettingsIconAction = ({
 
 export {
   SettingsField,
+  SettingsFormFooter,
+  SettingsListAddAction,
   SettingsIconAction,
   SettingsLoadNotice,
   SettingsRow,

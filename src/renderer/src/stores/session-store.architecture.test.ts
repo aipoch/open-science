@@ -110,6 +110,7 @@ const publicValueExports = [
   'createSessionStore',
   'findMostRecentSessionId',
   'getExternallyHydratedSessionAuthority',
+  'hydrateSession',
   'isArtifactFinalizationError',
   'isRetryableArtifactFinalizationError',
   'isExternallyHydratedSession',
@@ -1031,12 +1032,16 @@ describe('Session Store architecture', () => {
         'src/renderer/src/stores/session-job-store.test.ts',
         'src/renderer/src/stores/session-store.architecture.test.ts',
         'src/renderer/src/stores/session-store.archive-order.test.ts',
-        'src/renderer/src/stores/session-store.test.ts'
+        'src/renderer/src/stores/session-store.test.ts',
+        'src/renderer/src/stores/session-conversation-intents.test.ts',
+        'src/renderer/src/stores/session-conversation-intents.ts',
+        'src/renderer/src/stores/session-store-conversation-intents.test.ts'
       ],
       interfacePaths: [
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-job-store.ts',
-        'src/renderer/src/stores/session-store-run-activity-helpers.ts'
+        'src/renderer/src/stores/session-store-run-activity-helpers.ts',
+        'src/renderer/src/stores/session-conversation-intents.ts'
       ],
       consumerModules: [
         'workspace_runtime',
@@ -1049,13 +1054,14 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/session-store.test.ts',
           'src/renderer/src/stores/session-store.archive-order.test.ts',
           'src/renderer/src/stores/session-store.architecture.test.ts',
-          'src/renderer/src/stores/session-job-store.test.ts'
+          'src/renderer/src/stores/session-job-store.test.ts',
+          'src/renderer/src/stores/session-conversation-intents.test.ts',
+          'src/renderer/src/stores/session-store-conversation-intents.test.ts'
         ],
         contract: ['src/shared/session-persistence.test.ts'],
         consumer: [
-          'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
-          'src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx',
-          'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx',
+          'src/renderer/src/lib/acp/runtime-observer.test.ts',
+          'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
           'src/main/session-persistence/usage-regressions.test.ts',
           'src/renderer/src/App.test.tsx',
           'src/renderer/src/app-shell-presentation-owner.test.ts',
@@ -1063,6 +1069,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/components/ConnectorAuthToast.test.tsx',
           'src/renderer/src/components/JobDetailModal.render.test.tsx',
           'src/renderer/src/components/LegacyDataMoveDialog.render.test.tsx',
+          'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
           'src/renderer/src/components/LifecycleToast.test.tsx',
           'src/renderer/src/components/NetworkStatusIndicator.render.test.tsx',
           'src/renderer/src/components/NotificationBell.test.tsx',
@@ -1078,6 +1085,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/components/WebEventRecoveryDialog.test.tsx',
           'src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx',
           'src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx',
+          'src/renderer/src/components/global-search/search-loading.test.tsx',
           'src/renderer/src/components/job-observation-ui.test.tsx',
           'src/renderer/src/components/notification-inbox-presentation.test.ts',
           'src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx',
@@ -1095,6 +1103,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/lib/acp/runtime-event-presentation.test.ts',
           'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx',
           'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx',
+          'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
           'src/renderer/src/lib/acp/useWorkspaceElicitation.test.ts',
           'src/renderer/src/lib/acp/workspace-events.test.ts',
           'src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts',
@@ -1108,6 +1117,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/lib/deep-link.navigation.test.tsx',
           'src/renderer/src/lib/deep-link.test.ts',
           'src/renderer/src/lib/preview-persistence/preview-persistence.test.tsx',
+          'src/renderer/src/lib/session-fork.test.ts',
           'src/renderer/src/lib/session-package-export.test.ts',
           'src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx',
           'src/renderer/src/lib/session-persistence/session-persistence.test.ts',
@@ -1192,6 +1202,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/ComposerModelPicker.render.test.tsx',
           'src/renderer/src/pages/workspace/ContextWindowDialog.render.test.tsx',
           'src/renderer/src/pages/workspace/ConversationExportDialog.interaction.test.tsx',
+          'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx',
           'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx',
           'src/renderer/src/pages/workspace/EditSessionDialog.interaction.test.tsx',
           'src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx',
@@ -1205,6 +1216,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/NotebookInputDataStrip.test.tsx',
           'src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx',
           'src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx',
+          'src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx',
           'src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx',
           'src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx',
           'src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx',
@@ -1215,6 +1227,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/ProjectComputeInbox.test.tsx',
           'src/renderer/src/pages/workspace/ProjectFilesView.test.tsx',
           'src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx',
+          'src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx',
           'src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx',
           'src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx',
           'src/renderer/src/pages/workspace/SessionMessageMarkdown.test.tsx',
@@ -1230,6 +1243,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/pages/workspace/WorkspaceActivityGroup.rowToggle.render.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.render.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx',
+          'src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceMessageItem.actions.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceMessageItem.containment.test.tsx',
           'src/renderer/src/pages/workspace/WorkspaceMessageItem.mentions.test.tsx',
@@ -1352,9 +1366,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/settings-navigation-slice.test.ts',
           'src/renderer/src/stores/settings-store.test.ts',
           'src/renderer/web/bootstrap.test.ts',
-          'src/renderer/web/renderer-argument-shape-characterization.test.ts',
-          'src/renderer/src/lib/session-fork.test.ts',
-          'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx'
+          'src/renderer/web/renderer-argument-shape-characterization.test.ts'
         ]
       },
       capabilityOverlays: ['renderer_state'],

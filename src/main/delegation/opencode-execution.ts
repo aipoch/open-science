@@ -122,7 +122,8 @@ const createOpenCodeDelegateExecution = (
       }
       return execution.reserve(count)
     },
-    run: execution.run
+    run: execution.run,
+    recoverCleanup: execution.recoverCleanup
   })
 }
 

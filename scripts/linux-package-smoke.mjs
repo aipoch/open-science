@@ -133,10 +133,16 @@ const assertPackagedResources = async (
 }
 
 const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  const child = spawn(executable, ['--open-science-headless', '--serve=0', '--no-sandbox'], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  // Headless packaged launches have no Secret Service desktop, so OS credential mode fails closed;
+  // the file backend is the supported headless mode on Linux (matching the CLI smoke launch).
+  const child = spawn(
+    executable,
+    ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+    {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  )
   let output = ''
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')

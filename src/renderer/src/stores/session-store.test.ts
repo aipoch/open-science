@@ -1506,6 +1506,12 @@ describe('session store', () => {
         runtimeContext: {
           ...source.runtimeContext!,
           revision: 2,
+          plan: {
+            ...source.runtimeContext!.plan!,
+            stepStatuses: {
+              'Step version-1': { status: 'in_progress', updatedAt: 3 }
+            }
+          },
           permission: {
             state: 'pending',
             request: {
@@ -1533,7 +1539,13 @@ describe('session store', () => {
       source: updated,
       session: {
         ...toPersistedSession(updated),
-        runtimeContext: { ...updated.runtimeContext!, revision: 3 },
+        // Permission-authority updates are partial and may omit the Plan while a step
+        // progress write is in flight. The Composer must keep showing the active Plan.
+        runtimeContext: {
+          version: updated.runtimeContext!.version,
+          revision: 3,
+          permission: updated.runtimeContext!.permission
+        },
         updatedAt: 4
       },
       mode: 'permission-authority'
@@ -1541,7 +1553,7 @@ describe('session store', () => {
 
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
       ...projection,
-      revision: 3
+      revision: 2
     })
   })
 
@@ -7258,6 +7270,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
+      'src/renderer/src/pages/home/use-recent-sessions.ts',
       'src/renderer/src/pages/settings/ArchivedPanel.tsx',
       'src/renderer/src/pages/settings/SettingsPage.tsx',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
@@ -7270,6 +7283,8 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
+      'src/renderer/src/pages/workspace/SessionInfoPopover.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
       'src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',

@@ -328,7 +328,8 @@ const recoverContextOverflowWorkspaceSession = async (
   cancelledSessionIds?: Set<string>,
   historyReplayDescriptor?: HistoryReplayDescriptor,
   agentTarget?: AcpSessionAgentTarget,
-  supportsImageRelay?: boolean
+  supportsImageRelay?: boolean,
+  options?: { skipNativeCompaction?: boolean }
 ): Promise<boolean> => {
   const session = workspaceSession(sessionId)
   if (!session) return false
@@ -373,6 +374,7 @@ const recoverContextOverflowWorkspaceSession = async (
 
   try {
     const supportsNativeCompaction =
+      options?.skipNativeCompaction !== true &&
       runtime.state.nativeContextCompactionSessionIds?.includes(sessionId) === true &&
       runtime.compactSession !== undefined
     let nativeCompacted = false
@@ -510,8 +512,19 @@ const processContextOverflowRecovery = (
   activeRecoverySessionIds: Set<string>,
   recover: (
     runtime: WorkspaceMessageRuntime,
-    sessionId: string
-  ) => Promise<boolean> = recoverContextOverflowWorkspaceSession
+    sessionId: string,
+    options?: { skipNativeCompaction?: boolean }
+  ) => Promise<boolean> = (recoveryRuntime, sessionId, options) =>
+    recoverContextOverflowWorkspaceSession(
+      recoveryRuntime,
+      sessionId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      options
+    )
 ): void => {
   for (const event of events) {
     if (handledEventIds.has(event.id)) continue
@@ -523,8 +536,9 @@ const processContextOverflowRecovery = (
       event.recoverable === 'context-overflow' ||
       isMediaOverflowError(event.text) ||
       isMediaOverflowError(event.title)
+    const isSessionLost = event.recoverable === 'session-lost'
 
-    if (!isOverflow) continue
+    if (!isOverflow && !isSessionLost) continue
 
     handledEventIds.add(event.id)
 
@@ -538,7 +552,9 @@ const processContextOverflowRecovery = (
     void (async () => {
       let recoverySession = workspaceSession(sessionId)
       try {
-        const pending = recover(runtime, sessionId)
+        const pending = isSessionLost
+          ? recover(runtime, sessionId, { skipNativeCompaction: true })
+          : recover(runtime, sessionId)
         recoverySession = workspaceSession(sessionId)
         await pending
       } catch (error) {
@@ -610,7 +626,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
         handledOverflowEventIds,
         overflowRecoveryCooldownSessionIds,
         activeOverflowRecoverySessionIds,
-        (recoveryRuntime, sessionId) => {
+        (recoveryRuntime, sessionId, recoveryOptions) => {
           cancelledOverflowRecoverySessionIds.delete(sessionId)
           return recoverContextOverflowWorkspaceSession(
             recoveryRuntime,
@@ -619,7 +635,8 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
             cancelledOverflowRecoverySessionIds,
             options.getHistoryReplayDescriptor(sessionId),
             admittedAgentTargetBySessionId.get(sessionId) ?? options.getAgentTarget(sessionId),
-            options.supportsImageRelay
+            options.supportsImageRelay,
+            recoveryOptions
           )
         }
       )

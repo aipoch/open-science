@@ -27,6 +27,7 @@ jobs:
   release-preflight:
     name: Release preflight
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -90,6 +91,7 @@ jobs:
     needs: [build, package-smoke, notarize-mac]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Job-level permissions fully override the workflow-level block, so contents:write is restated
     # alongside the two scopes the SLSA attestation needs: id-token to sign via Sigstore OIDC, and
     # attestations to write the provenance record.
@@ -102,6 +104,12 @@ jobs:
       # actions/checkout cleans the working dir, which would wipe a pre-downloaded artifacts/.
       - name: Checkout (for the mac-feed merge script)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Pin the release transform scripts to the repo's Node line instead of the runner default.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
 
       - name: Install release transform dependencies
         run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund

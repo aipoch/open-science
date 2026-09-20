@@ -204,3 +204,28 @@ describe('spawnClaudeAgentAcp', () => {
     )
   })
 })
+
+it('prevents Claude physical launch when delegated ownership admission fails', () => {
+  mocks.spawn.mockReturnValue({ on: vi.fn() })
+  const ownedSpawn = vi.fn(() => {
+    throw new Error('ownership receipt write failed')
+  })
+  const input = {
+    executablePath: '/runtime/claude',
+    envOverrides: { CLAUDE_CONFIG_DIR: '/isolated/claude' },
+    spawnProcess: ownedSpawn
+  }
+  expect(() => spawnClaudeAgentAcp(input)).toThrow('ownership receipt write failed')
+  expect(mocks.spawn).not.toHaveBeenCalled()
+  expect(ownedSpawn).toHaveBeenCalledWith(
+    process.execPath,
+    [expect.stringContaining('claude-agent-acp')],
+    expect.objectContaining({
+      env: expect.objectContaining({
+        CLAUDE_CONFIG_DIR: '/isolated/claude',
+        ELECTRON_RUN_AS_NODE: '1'
+      }),
+      stdio: 'pipe'
+    })
+  )
+})

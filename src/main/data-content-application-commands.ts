@@ -1,3 +1,5 @@
+import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
+import { runtimeWriterClaimContract, type RuntimeWriterLease } from '../shared/runtime-writer'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -6,7 +8,7 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import type { ApplicationEventMap, ApplicationEventPublisher } from './application-events'
-import type { ArtifactHandlers } from './artifacts/ipc'
+import { artifactFinalizationFailureResult, type ArtifactHandlers } from './artifacts/ipc'
 import {
   ArtifactFinalizationProofError,
   ArtifactOwnershipPersistenceRaceError
@@ -188,6 +190,7 @@ type UploadApplicationCommandOwner = InvocationOwner<{
 type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Result>
 
 type DataContentApplicationCommandDependencies = Readonly<{
+  runtimeWriter?: RuntimeWriterOwner
   artifacts: ArtifactHandlers
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
@@ -250,6 +253,11 @@ const dataContentApplicationCommands = Object.freeze({
     'artifacts:resolve-version-descriptors',
     'resolveVersionDescriptors'
   ),
+  runtimeWriterClaim: defineApplicationCommand<
+    'lifecycle:claim-runtime-writer',
+    readonly [],
+    RuntimeWriterLease
+  >('lifecycle:claim-runtime-writer', runtimeWriterClaimContract),
   lifecycleClientId: defineApplicationCommand<'lifecycle:client-id', readonly [], string>(
     'lifecycle:client-id'
   ),
@@ -484,7 +492,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactResolveVersionDescriptors
   ] as const),
   defineApplicationCommandGroup('lifecycle', [
-    dataContentApplicationCommands.lifecycleClientId
+    dataContentApplicationCommands.lifecycleClientId,
+    dataContentApplicationCommands.runtimeWriterClaim
   ] as const),
   defineApplicationCommandGroup('preview', [
     dataContentApplicationCommands.previewDelete,
@@ -617,6 +626,7 @@ const registerDataContentApplicationCommands = (
   dependencies: DataContentApplicationCommandDependencies
 ): ApplicationCommandInstallation => {
   const scope = registrar.createScope()
+  const runtimeWriter = dependencies.runtimeWriter ?? new RuntimeWriterOwner()
 
   try {
     scope.registerGroup(dataContentApplicationCommandGroups[0], {
@@ -627,6 +637,8 @@ const registerDataContentApplicationCommands = (
             artifacts: await dependencies.artifacts.finalizeRunArtifacts(args[0])
           }
         } catch (error) {
+          const executionFailure = artifactFinalizationFailureResult(error)
+          if (executionFailure) return executionFailure
           if (error instanceof ArtifactOwnershipPersistenceRaceError) {
             return {
               ok: false as const,
@@ -669,6 +681,8 @@ const registerDataContentApplicationCommands = (
         dependencies.artifacts.resolveVersionDescriptors(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[1], {
+      'lifecycle:claim-runtime-writer': ({ callerContext }) =>
+        runtimeWriter.claim(callerContext.lifecycleClientId),
       'lifecycle:client-id': ({ callerContext }) => callerContext.lifecycleClientId
     })
     scope.registerGroup(dataContentApplicationCommandGroups[2], {
@@ -865,7 +879,14 @@ const registerDataContentApplicationCommands = (
         ),
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(() =>
+        const writerToken = invocation.args[1]?.runtimeWriterToken
+        const withRuntimeWriterWrite = <T>(run: () => Promise<T>): Promise<T> =>
+          dependencies.withDataRootWrite(() =>
+            writerToken === undefined
+              ? run()
+              : runtimeWriter.commit(originClientId, writerToken, run)
+          )
+        return withRuntimeWriterWrite(() =>
           preserveSessionSizeLimitCode(async () => {
             let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
             try {

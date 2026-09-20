@@ -51,7 +51,13 @@ test('enables the basic password store only for Linux E2E profiles', () => {
     args: ['--user-data-dir=profile-root', '--password-store=basic', expect.any(String)]
   })
   expect(electronLaunchTarget('profile-root', {}, 'darwin')).toEqual({
-    args: ['--user-data-dir=profile-root', '--use-mock-keychain', expect.any(String)]
+    args: [
+      '--user-data-dir=profile-root',
+      '--use-mock-keychain',
+      '--require',
+      expect.stringContaining('mock-credential-identity.cjs'),
+      expect.any(String)
+    ]
   })
   expect(electronLaunchTarget('profile-root', {}, 'win32')).toEqual({
     args: ['--user-data-dir=profile-root', expect.any(String)]
@@ -76,7 +82,7 @@ test('launches packaged and source applications with the expected Linux argument
   })
 })
 
-test('uses the mock Keychain for packaged macOS E2E as well as source launches', () => {
+test('uses the real Keychain and native identity probe for packaged macOS E2E', () => {
   expect(
     electronLaunchTarget(
       'profile-root',
@@ -86,7 +92,7 @@ test('uses the mock Keychain for packaged macOS E2E as well as source launches',
       'darwin'
     )
   ).toEqual({
-    args: ['--user-data-dir=profile-root', '--use-mock-keychain'],
+    args: ['--user-data-dir=profile-root'],
     executablePath: '/artifacts/Open-Science.app/Contents/MacOS/Open-Science'
   })
 })

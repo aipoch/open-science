@@ -70,6 +70,8 @@ jobs:
               exit 1
             }
           }
+          # Contract-boundary commits for the Artifact RPC methods (artifactSaveVersion / artifactReserveWrite,
+          # src/main/notebook/local-rpc-server.ts); scripts/windows-installer-smoke.mjs replays the matching contract.
           $artifactSaveCommit = '1a6faf134836d417b8bb1cdf89571f5d9dee2a0b'
           $artifactReservationCommit = 'f12fd1f871022c7a9b771d193202d9ecf98aca96'
           $artifactSaveBase = git merge-base $artifactSaveCommit $releasedSha

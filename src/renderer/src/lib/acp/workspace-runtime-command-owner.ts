@@ -63,6 +63,8 @@ type SendWorkspaceMessageIntent = {
   sessionId?: string
   // Optional durable caller identity for restart-safe application-owned prompts.
   messageId?: string
+  // Renderer-only notification: the real message now replaces the composer's pending preview.
+  onMessageAppended?: (message: SendWorkspaceMessageResult) => void
   branchSourceSessionId?: string
   branchSourceMessageId?: string
   text: string
@@ -118,6 +120,7 @@ type WorkspaceCommandLifecycle = {
 type ResendEditedMessageInput = {
   expectedFrameworkId?: AgentFrameworkId
   agentConfiguration?: SessionAgentConfiguration
+  onMessageAppended?: (message: SendWorkspaceMessageResult) => void
   text: string
   annotations?: annotationProtocol.Annotation[]
   parts?: MessagePart[]
@@ -801,6 +804,7 @@ const sendWorkspaceMessage = async (
     })
     if (!pending?.messageId) return undefined
     const pendingPrompt = { sessionId: pending.sessionId, messageId: pending.messageId }
+    input.onMessageAppended?.(pendingPrompt)
     const session = useSessionStore
       .getState()
       .sessions.find((item) => item.id === pending.sessionId)
@@ -955,6 +959,7 @@ const sendWorkspaceMessage = async (
         preserveSelection: input.preserveSelection
       })
       if (!appended) return undefined
+      input.onMessageAppended?.(appended)
       const preparation = startPendingPrompt(
         runtime,
         {
@@ -1108,11 +1113,21 @@ const sendWorkspaceMessage = async (
       preserveSelection: input.preserveSelection
     })
     if (!appended) return undefined
+    input.onMessageAppended?.(appended)
     // Application-owned stable identities need an explicit save because they may be dispatched
     // outside the mounted store saver. Ordinary user Messages are already queued by that saver;
     // drain it before provider dispatch so Delegation cannot authenticate against a stale root
-    // conversation snapshot. Recovery rearms an already durable Message and needs no extra barrier.
-    if (stableMessageId && !(input.allowCompactionRecovery && rearmExistingStableMessage)) {
+    // conversation snapshot. Main-owned recovery also persists its new start-run command before
+    // dispatch, even though the user Message already exists in the durable transcript.
+    const mainOwnedRecovery =
+      input.allowCompactionRecovery &&
+      rearmExistingStableMessage &&
+      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+        ?.runtimeTranscriptOwner === 'main'
+    if (
+      stableMessageId &&
+      (!(input.allowCompactionRecovery && rearmExistingStableMessage) || mainOwnedRecovery)
+    ) {
       const durableSession = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
@@ -1199,6 +1214,7 @@ const sendWorkspaceMessage = async (
     selectedComputeHosts: input.selectedComputeHosts
   })
   if (!pending) return undefined
+  input.onMessageAppended?.(pending)
   const preparation = startPendingPrompt(
     runtime,
     {
@@ -1271,6 +1287,7 @@ const resendEditedWorkspaceMessage = async (
         agentBackendId: options.agentBackendId,
         agentModel: options.agentModel,
         agentConfiguration: options.agentConfiguration,
+        onMessageAppended: input.onMessageAppended,
         historyReplayDescriptor: options.historyReplayDescriptor,
         truncateFromMessageId: input.messageId,
         supportsImageInput: options.supportsImageInput,

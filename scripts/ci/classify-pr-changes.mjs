@@ -251,6 +251,7 @@ export function platformExecutionPlan(plan, changes, event) {
   if (hasDesktop && event === 'pull_request') {
     lanes.add('e2e_functional_windows')
     lanes.add('e2e_workspace_windows')
+    lanes.add('e2e_browser_windows')
   }
   for (const lane of lanes) {
     if (

@@ -1112,7 +1112,15 @@ describe('Session projection', () => {
       vi.spyOn(projection, 'commitSave').mockRejectedValueOnce(failure)
       await expect(
         repository.saveSession({ ...saved, title: 'Durable new title' }, saved.revision ?? 0)
-      ).rejects.toBe(failure)
+      ).rejects.toMatchObject({
+        name: 'SessionProjectionAfterCommitError',
+        committedSession: {
+          id: saved.id,
+          title: 'Durable new title',
+          revision: (saved.revision ?? 0) + 1
+        },
+        cause: failure
+      })
       await expect(projection.pending()).resolves.toEqual([
         { projectId: 'project-1', sessionId: 'session-1', operation: 'save' }
       ])

@@ -40,6 +40,7 @@ struct SecurityApi {
   OSStatus (*set_interaction)(Boolean);
   OSStatus (*copy_search_list)(CFArrayRef*);
   OSStatus (*get_status)(SecKeychainRef, SecKeychainStatus*);
+  OSStatus (*get_path)(SecKeychainRef, UInt32*, char*);
   OSStatus (*copy_matching)(CFDictionaryRef, CFTypeRef*);
   CFTypeID (*item_type_id)();
   OSStatus (*copy_item_keychain)(SecKeychainItemRef, SecKeychainRef*);
@@ -138,6 +139,29 @@ bool HasLockedKeychain(const std::vector<SecKeychainStatus>& states) {
   return false;
 }
 
+// Application identities are created and read through the user's default keychain. The
+// admin-managed System keychain requires per-item authorization for every write and never holds
+// one, yet macOS keeps it in every search list and locked in every user session. Only a locked
+// USER database can hide a historical account; an unreadable path fails closed as a user database.
+bool HidesAccountsWhenLocked(SecKeychainRef keychain, const SecurityApi& api) {
+  char path[512] = {0};
+  UInt32 length = sizeof(path);
+  if (api.get_path(keychain, &length, path) != errSecSuccess) return true;
+  return std::string(path, length) != "/Library/Keychains/System.keychain";
+}
+
+bool AnyLockedUserDatabase(CFArrayRef search_list, const std::vector<SecKeychainStatus>& states,
+                           const SecurityApi& api) {
+  for (CFIndex i = 0; i < CFArrayGetCount(search_list); i++) {
+    if (!(states[i] & kSecUnlockStateStatus) &&
+        HidesAccountsWhenLocked(reinterpret_cast<SecKeychainRef>(
+                                    const_cast<void*>(CFArrayGetValueAtIndex(search_list, i))),
+                                api))
+      return true;
+  }
+  return false;
+}
+
 ProbeResult QueryAccount(const std::string& service, const std::string& account,
                          CFArrayRef search_list, const std::vector<SecKeychainStatus>& states,
                          const SecurityApi& api) {
@@ -167,9 +191,13 @@ ProbeResult QueryAccount(const std::string& service, const std::string& account,
   auto availability = CheckStableSearch(search_list, states, api);
   if (availability.status != "ready") return availability;
   if (status == errSecItemNotFound) {
-    // SecItem's file-keychain cursor can skip inaccessible databases. Never interpret an
-    // incomplete search as absence, even if a different identity/account might be available.
-    if (HasLockedKeychain(states)) return {"access-blocked", "keychain-locked", ""};
+    // SecItem's file-keychain cursor can skip inaccessible databases, so a locked user database
+    // keeps absence uncertain. Counting the admin-managed System keychain — locked in every user
+    // session — made definite absence unreachable on every stock Mac and blocked fresh installs;
+    // a locked first database still fails closed, as that is where Electron's lookups and writes
+    // land.
+    if (AnyLockedUserDatabase(search_list, states, api))
+      return {"access-blocked", "keychain-locked", ""};
     return {"not-found", "account-not-found", "", status};
   }
   if (status != errSecSuccess) return Failure("metadata-query-failed", status);
@@ -262,7 +290,8 @@ int main(int argc, char* argv[]) {
   const std::string platform = "darwin";
   const credential_identity::SecurityApi api{SecKeychainGetUserInteractionAllowed,
       SecKeychainSetUserInteractionAllowed, SecKeychainCopySearchList, SecKeychainGetStatus,
-      SecItemCopyMatching, SecKeychainItemGetTypeID, SecKeychainItemCopyKeychain};
+      SecKeychainGetPath, SecItemCopyMatching, SecKeychainItemGetTypeID,
+      SecKeychainItemCopyKeychain};
   result = credential_identity::ProbeIdentity(identity, api);
 #else
 #ifdef _WIN32

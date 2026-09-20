@@ -43,6 +43,7 @@ type WorkingFileObservationRequest = {
   cwd?: string
   code?: string
   language?: NotebookLanguage
+  kind?: 'python' | 'r' | 'repl'
   fileEvidenceStorageRoot?: string
   fileEvidenceRoot?: string
   fileEvidenceStoragePrefix?: string
@@ -1506,17 +1507,25 @@ const prepareSourceFileAccess = async (
   request: WorkingFileObservationRequest
 ): Promise<WorkingFileObservationRequest['sourceFileAccess']> => {
   if (request.code === undefined) return undefined
+  const context = request.sourceFileAccessContext
+  const managedEnvironment = context?.managedEnvironmentSafe
+    ? {
+        OPEN_SCIENCE_NOTEBOOK_DIR: resolve(request.notebookSessionRoot),
+        OPEN_SCIENCE_NOTEBOOK_DATA_DIR: resolve(request.dataRoot),
+        OPEN_SCIENCE_HANDOFF_DIR: join(resolve(request.notebookSessionRoot), 'handoff')
+      }
+    : undefined
   const analysis = await analyzeNotebookSourceFileAccess(
-    request.language ?? 'python',
+    request.kind === 'repl' ? 'repl' : (request.language ?? 'python'),
     request.code,
-    request.sourceFileAccessContext
+    context ? { ...context, managedEnvironment } : undefined
   )
   const sessionRoot = resolve(request.notebookSessionRoot)
   const executionRoot = resolve(request.cwd ?? request.dataRoot)
   let outsideReadRoots = false
   let outsideWriteRoots = false
   const normalizePath = (path: string): string | undefined => {
-    if (/^[a-z][a-z\d+.-]*:/iu.test(path)) {
+    if (!isAbsolute(path) && /^[a-z][a-z\d+.-]*:/iu.test(path)) {
       return undefined
     }
     const absolute = resolve(executionRoot, path)
@@ -1562,7 +1571,7 @@ const prepareSourceFileAccess = async (
   }
   reportNotebookFileAnalysis(
     request.runId,
-    request.language ?? 'python',
+    request.kind === 'repl' ? 'repl' : (request.language ?? 'python'),
     result,
     Boolean(request.sourceFileAccessContext)
   )

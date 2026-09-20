@@ -22,7 +22,6 @@ describe('MarketplaceService', () => {
       operationCoordinator: coordinator,
       packages: { recover: vi.fn().mockResolvedValue(undefined) } as never,
       fetch: vi.fn() as never,
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })
@@ -32,7 +31,7 @@ describe('MarketplaceService', () => {
     expect(runExclusive).toHaveBeenCalledOnce()
   })
 
-  it('trusts a reviewed GitHub source and disables installed Skills for Main before commit', async () => {
+  it('trusts a reviewed GitHub source and delegates Main defaults to the package transaction', async () => {
     const storage = await mkdtemp(join(tmpdir(), 'marketplace-service-'))
     const { publicKey, privateKey } = generateKeyPairSync('ed25519')
     const publicKeyBase64 = publicKey.export({ format: 'der', type: 'spki' }).toString('base64')
@@ -204,7 +203,6 @@ describe('MarketplaceService', () => {
       fetch: fetcher,
       token: () => 'source-candidate',
       now: () => new Date(nowMs),
-      getDisabledSkillIds: async () => [...disabled],
       getInstalledSpecialists: async () =>
         installed
           ? [
@@ -354,8 +352,8 @@ describe('MarketplaceService', () => {
       total: archive.byteLength,
       percent: 100
     })
-    expect(order).toEqual(['disable-main', 'install'])
-    expect(disabled).toEqual(new Set(['personal-example-skill']))
+    expect(order).toEqual(['install'])
+    expect(disabled).toEqual(new Set())
     const installedSnapshot = await service.list()
     expect(installedSnapshot).toMatchObject({
       specialists: [
@@ -463,7 +461,6 @@ describe('MarketplaceService', () => {
       repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-rollback-'))),
       packages: packages as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [...disabled],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async (ids, enabled) => {
         for (const id of ids) {
@@ -548,7 +545,6 @@ describe('MarketplaceService', () => {
       repository,
       packages: packages as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [...disabled],
       getInstalledSpecialists: async () => [
         {
           id: installed.specialistId,
@@ -586,7 +582,6 @@ describe('MarketplaceService', () => {
       repository,
       packages: packages as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })
@@ -658,7 +653,6 @@ describe('MarketplaceService', () => {
       repository,
       packages: {} as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [
         {
           id: 'installed-specialist',
@@ -724,7 +718,6 @@ describe('MarketplaceService', () => {
       repository,
       packages: { recover: vi.fn() } as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [
         {
           id: 'installed-specialist',
@@ -788,7 +781,6 @@ describe('MarketplaceService', () => {
       repository,
       packages: packages as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [...disabled],
       getInstalledSpecialists: async () =>
         installed
           ? [
@@ -826,7 +818,7 @@ describe('MarketplaceService', () => {
 
     const installPromise = service.install({ candidateToken: 'queued-candidate' }, 17)
     await vi.waitFor(() => expect(packages.install).toHaveBeenCalledOnce())
-    expect(disabled).toEqual(new Set(['queued-skill']))
+    expect(disabled).toEqual(new Set())
 
     let recoverySettled = false
     const recoveryPromise = service.recover().then(() => {
@@ -843,7 +835,7 @@ describe('MarketplaceService', () => {
     })
     await recoveryPromise
 
-    expect(disabled).toEqual(new Set(['queued-skill']))
+    expect(disabled).toEqual(new Set())
     expect((await repository.getAll()).pendingInstallations).toEqual([])
   })
 
@@ -861,7 +853,6 @@ describe('MarketplaceService', () => {
       repository: new MarketplaceRepository(await mkdtemp(join(tmpdir(), 'marketplace-reuse-'))),
       packages: packages as never,
       fetch: vi.fn<typeof fetch>(),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled
     })
@@ -903,7 +894,6 @@ describe('MarketplaceService', () => {
       packages: packages as never,
       fetch: vi.fn<typeof fetch>(),
       now: () => new Date(now),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })
@@ -978,7 +968,6 @@ describe('MarketplaceService', () => {
       repository,
       packages: {} as never,
       fetch: fetcher,
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })
@@ -1129,7 +1118,6 @@ describe('MarketplaceService', () => {
         artifactBaseUrls: [artifactBase],
         trustedKeys: { 'mirror-2026-01': publicKeyBase64 }
       },
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })
@@ -1244,7 +1232,6 @@ describe('MarketplaceService', () => {
       // The clock advances between loads: with a fixed now the root cache never ages past its TTL,
       // and the offline-fallback path this case exercises would never be reached.
       now: () => new Date(nowMs),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })
@@ -1338,7 +1325,6 @@ describe('MarketplaceService', () => {
         trustedKeys: { 'ttl-2026-01': publicKeyBase64 }
       },
       now: () => new Date(nowMs),
-      getDisabledSkillIds: async () => [],
       getInstalledSpecialists: async () => [],
       setSkillsMainEnabled: async () => undefined
     })

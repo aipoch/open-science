@@ -369,6 +369,15 @@ describe('LiteratureFullTextLookup', () => {
     fireEvent.paste(screen.getByLabelText('OpenAlex API key'), {
       clipboardData: { getData: () => 'test-key' }
     })
+    const keyLink = screen.getByRole('link', { name: 'Get an API key' })
+    expect(keyLink.getAttribute('href')).toBe('https://openalex.org/settings/api')
+    expect(keyLink.getAttribute('target')).toBe('_blank')
+    expect(keyLink.getAttribute('rel')).toBe('noreferrer')
+    keyLink.addEventListener('click', (event) => event.preventDefault())
+    fireEvent.click(keyLink)
+    expect(save).not.toHaveBeenCalled()
+    expect(fullText).toHaveBeenCalledTimes(1)
+
     fireEvent.click(screen.getByRole('button', { name: 'Save key' }))
     expect(await screen.findByText('Configured')).not.toBeNull()
     expect(validate).toHaveBeenCalledWith({ apiKey: 'test-key' })

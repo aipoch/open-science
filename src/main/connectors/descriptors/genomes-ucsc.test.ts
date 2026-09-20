@@ -326,6 +326,26 @@ describe('ucsc_conservation', () => {
       run('ucsc_conservation', { chrom: 'chr7', start: 100, end: 200 }, fetchImpl)
     ).rejects.toThrow(/upstream truncated/)
   })
+
+  it('uses the hg19 conservation track that actually exists', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ phyloP100wayAll: [] }))
+    await run(
+      'ucsc_conservation',
+      { genome: 'hg19', chrom: 'chr7', start: 100, end: 200 },
+      fetchImpl
+    )
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('track=phyloP100wayAll')
+  })
+
+  it('preserves the phyloP100way fallback for other genomes', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ phyloP100way: [] }))
+    await run(
+      'ucsc_conservation',
+      { genome: 'mm10', chrom: 'chr7', start: 100, end: 200 },
+      fetchImpl
+    )
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('track=phyloP100way')
+  })
 })
 
 describe('ucsc_tfbs_clusters', () => {

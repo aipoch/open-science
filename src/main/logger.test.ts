@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import ts from 'typescript'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -57,6 +58,25 @@ const productionTypeScriptFiles = (directory: string): string[] =>
     if (/\.(?:test|integration|certification)\.tsx?$/.test(entry.name)) return []
     return path.endsWith(`${join('src', 'main', 'logger.ts')}`) ? [] : [path]
   })
+
+const hasConsoleAccess = (source: string): boolean => {
+  if (!source.includes('console')) return false
+  const root = ts.createSourceFile('source.ts', source, ts.ScriptTarget.Latest, false)
+  let found = false
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const receiver = node.expression
+      if (
+        (ts.isIdentifier(receiver) && receiver.text === 'console') ||
+        (ts.isPropertyAccessExpression(receiver) && receiver.name.text === 'console')
+      )
+        found = true
+    }
+    if (!found) ts.forEachChild(node, visit)
+  }
+  visit(root)
+  return found
+}
 
 describe('logger: main-process boundary', () => {
   it.each(['object', 'JSON', 'Error.message', 'escaped JSON key'] as const)(
@@ -251,10 +271,23 @@ describe('logger: main-process boundary', () => {
     }
   )
 
+  it.each([
+    ['console.log("message")', true],
+    ['console["error"]("message")', true],
+    ['console /* comment */ .warn("message")', true],
+    ['globalThis.console.log("message")', true],
+    ['const method = "console.log"', false],
+    ['// console.log("message")', false],
+    ['const message = `console.log`', false],
+    ['const message = `${console.log("message")}`', true]
+  ])('distinguishes console access from source data: %s', (source, expected) => {
+    expect(hasConsoleAccess(source)).toBe(expected)
+  })
+
   it('keeps the central logger as the only production console adapter', () => {
     const directConsoleCalls = productionTypeScriptFiles(__dirname).flatMap((path) => {
       const source = readFileSync(path, 'utf8')
-      return /\bconsole\s*(?:\.|\[)/.test(source) ? [path.slice(__dirname.length + 1)] : []
+      return hasConsoleAccess(source) ? [path.slice(__dirname.length + 1)] : []
     })
 
     expect(directConsoleCalls).toEqual([])

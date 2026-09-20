@@ -183,6 +183,11 @@ if missing:
     raise TypeError("missing or non-callable exports: " + ", ".join(missing))
 `
 
+// Windows-hosted runners can spend several seconds starting the interpreter while the full
+// Notebook shard is under disk and process pressure. Keep a bounded watchdog without treating
+// normal startup contention as an invalid helper.
+const NOTEBOOK_HELPER_VALIDATION_TIMEOUT_MS = 15_000
+
 export const validateNotebookHelperExports = async (
   helperId: string,
   source: string,
@@ -205,7 +210,7 @@ export const validateNotebookHelperExports = async (
       }
     )
     let stderr = ''
-    const timeout = setTimeout(() => child.kill(), 5_000)
+    const timeout = setTimeout(() => child.kill(), NOTEBOOK_HELPER_VALIDATION_TIMEOUT_MS)
     child.stderr.on('data', (chunk: Buffer) => {
       if (stderr.length < 8_192) stderr += chunk.toString('utf8').slice(0, 8_192 - stderr.length)
     })

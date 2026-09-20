@@ -29,6 +29,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/session-persistence/coordinator.test.ts",
       "src/main/session-persistence/deletion-integration.test.ts",
       "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",

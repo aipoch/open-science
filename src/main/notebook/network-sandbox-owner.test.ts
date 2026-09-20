@@ -1373,8 +1373,11 @@ describe('NotebookNetworkSandboxOwner', () => {
 
   it('defaults to native and forwards an explicit WSL2 sandbox target', async () => {
     const { logger, records } = createCapturingLogger()
+    const temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-owner-target-test-'))
+    fixtureDirectories.push(temporaryRoot)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
+      temporaryRoot,
       getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       persistAlwaysAllow: vi.fn(),
       requestDecision: vi.fn().mockResolvedValue('deny'),

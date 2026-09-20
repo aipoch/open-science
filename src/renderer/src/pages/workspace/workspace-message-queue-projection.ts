@@ -30,7 +30,7 @@ const projectActiveQueueItems = (
 ): MessageQueueItemView[] => {
   const activeItems = activeSessionId ? (queues.get(activeSessionId) ?? []) : []
   return activeItems
-    .filter((item) => item.kind === 'user')
+    .filter((item) => item.kind === 'user' && !(item.phase === 'sending' && item.messageAppended))
     .map(({ id, text, attachmentCount, phase, error, deferredUntilIdle }) => ({
       id,
       text,

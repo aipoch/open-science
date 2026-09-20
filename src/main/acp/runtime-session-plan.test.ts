@@ -121,6 +121,7 @@ const createRuntimeHarness = (options: {
     promptMessageId: 'interaction-1'
   }
   const sessionInteractions = {
+    has: () => true,
     snapshot: () => [{ kind: 'prompt', sessionId: 'session-1' }],
     current: () => currentInteraction,
     cancelPrompt: vi.fn(
@@ -172,6 +173,7 @@ const createRuntimeHarness = (options: {
     sessionRegistry: {
       lookup: () => ({ attachment: { session: { sessionId: 'provider-session-1' } } })
     },
+    promptTurnWorkflow: { captureCancellation: () => undefined },
     sessionPlanWorkflow,
     appContinuations: {
       get: vi.fn(() => undefined),

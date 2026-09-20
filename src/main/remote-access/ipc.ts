@@ -73,6 +73,16 @@ export const registerRemoteAccessIpcHandlers = (service: RemoteAccessService): v
     const desktop = isDesktopCaller(context)
     return service.revoke(request.browserId, desktop, canManagePairing(context))
   })
+  ipcMainHandle('remote-access:revoke-browsers', async (event, ...args) => {
+    const [request] = remoteAccessApplicationCommandContracts.revokeBrowsers.args.parse(args)
+    const context = callerContextForEvent(event)
+    requirePairingManager(context)
+    return service.revokeBrowsers(
+      request.browserIds,
+      isDesktopCaller(context),
+      canManagePairing(context)
+    )
+  })
 }
 
 export { canManagePairing, isDesktopCaller, requireDesktopCaller, requirePairingManager }

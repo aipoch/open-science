@@ -477,6 +477,7 @@ const installCustomProviderSnapshot = (): ProviderView => {
 
 describe('SettingsPage layout', () => {
   it('retains model tab DOM across model routes and navigation Back', async () => {
+    window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
     window.api.localModels = {
       getSnapshot: vi.fn().mockResolvedValue({
         availability: 'notInstalled',
@@ -4547,6 +4548,64 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-description')?.value).toBe(
       'My unsaved edit'
     )
+  })
+
+  it('labels Specialist export in shared navigation and preserves Back/Forward history', async () => {
+    window.api.specialist.previewExport = vi.fn().mockResolvedValue({
+      specialistId: 'export-fixture',
+      name: 'Export fixture',
+      version: '1.0.0',
+      fileName: 'export-fixture.zip',
+      expectedRevision: 1,
+      skills: [],
+      connectorIds: [],
+      diagnostics: [],
+      canExport: false
+    })
+    window.api.specialist.exportSpecialist = vi.fn()
+    window.api.specialist.list = vi.fn().mockResolvedValue({
+      items: [
+        {
+          kind: 'custom',
+          id: 'export-fixture',
+          name: 'Export fixture',
+          description: 'Fixture.',
+          systemPrompt: '',
+          enabled: true,
+          capabilityMode: 'selected',
+          revision: 1,
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+        }
+      ],
+      integrity: { status: 'ok' }
+    })
+    useSettingsStore.getState().openSettingsToPanel('specialists')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    openRadixMenu(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Actions for Export fixture"]')
+    )
+    await act(async () =>
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+          item.textContent?.includes('Export ZIP')
+        )
+      )
+    )
+    expect(document.body.textContent).toContain('Choose Skills to include')
+    expect(document.body.textContent).not.toContain('Edit specialist')
+    expect(
+      document.body.querySelector('[aria-label="Back to specialists"]')?.parentElement?.textContent
+    ).toContain('Export ZIP')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+    )
+    expect(document.body.textContent).not.toContain('Choose Skills to include')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')?.click()
+    )
+    expect(document.body.textContent).toContain('Choose Skills to include')
+    expect(document.body.textContent).not.toContain('Edit specialist')
   })
 
   it('labels the Specialist ZIP import breadcrumb with the active workflow', async () => {

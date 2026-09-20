@@ -797,17 +797,74 @@ describe('ensembl_sequence', () => {
     expect(out.seq_type).toBe('genomic')
   })
 
-  it('maps an unknown stable ID (400) to found:false with null fields', async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(errRes(400))
-    const out = (await run('ensembl_sequence', { stable_id: 'ENSGBAD' }, fetchImpl)) as {
-      found: boolean
-      id: unknown
-      length: number
+  it.each(['ENSG00000000000', 'ENSG00000000000.2'])(
+    'maps an explicit absence response for %s to found:false',
+    async (stableId) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ error: "ID 'ENSG00000000000' not found" }, { status: 400 })
+        )
+      const out = await run('ensembl_sequence', { stable_id: stableId }, fetchImpl)
+      expect(out).toEqual({
+        found: false,
+        query: stableId,
+        seq_type: 'genomic',
+        id: null,
+        description: null,
+        molecule: null,
+        length: 0,
+        sha256: null
+      })
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('/sequence/id/ENSG00000000000?')
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
     }
-    expect(out.found).toBe(false)
-    expect(out.id).toBeNull()
-    expect(out.length).toBe(0)
+  )
+
+  it.each([
+    'Requesting a gene and type not equal to "genomic" can result in multiple sequences. 40 sequences detected. Please rerun your request and specify the multiple_sequences parameter',
+    'No sequences returned, please check the type specified is compatible with the object requested',
+    "ID 'OTHER' not found"
+  ])('preserves an upstream sequence error instead of reporting absence: %s', async (error) => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json({ error }, { status: 400 }))
+    await expect(
+      run('ensembl_sequence', { stable_id: 'ENSG00000141510', seq_type: 'cdna' }, fetchImpl)
+    ).rejects.toThrow(`Ensembl sequence failed: ${error}`)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
+
+  it.each([{}, null, [], { error: null }, { seq: 'ACGT' }])(
+    'rejects an unrecognized HTTP 400 body: %j',
+    async (body) => {
+      const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(body, { status: 400 }))
+      await expect(
+        run('ensembl_sequence', { stable_id: 'ENSG00000141510' }, fetchImpl)
+      ).rejects.toThrow('unrecognized HTTP 400')
+    }
+  )
+
+  it('does not turn a non-JSON HTTP 400 response into absence', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('<html>Bad request</html>', { status: 400 }))
+    await expect(
+      run('ensembl_sequence', { stable_id: 'ENSG00000141510' }, fetchImpl)
+    ).rejects.toThrow()
+  })
+
+  it.each([404, 429, 500, 503])(
+    'propagates HTTP %s instead of reporting absence',
+    async (status) => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({ error: "ID 'ENSG00000141510' not found" }, { status })
+        )
+      await expect(
+        run('ensembl_sequence', { stable_id: 'ENSG00000141510' }, fetchImpl)
+      ).rejects.toThrow(`HTTP ${status}`)
+    }
+  )
 
   it('throws when neither stable_id nor region is provided', async () => {
     const fetchImpl = vi.fn()

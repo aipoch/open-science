@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
+import { execFileSync } from 'node:child_process'
+import { runInNewContext } from 'node:vm'
 import type { ElectronApplication } from 'playwright'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +15,70 @@ import {
   STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
   suppressWorkspaceStarNudge
 } from '../e2e/fixtures/electron-app'
+
+describe('source macOS mock Keychain metadata', () => {
+  it('replaces only the native probe path for an explicit source mock launch', async () => {
+    const source = await readFile('e2e/fixtures/mock-credential-identity.cjs', 'utf8')
+    const probe = { executablePath: 'native-probe', validatorExecutablePath: 'native-validator' }
+    const load = vi.fn((name: string) => {
+      if (name === 'electron')
+        return { app: { isPackaged: false, commandLine: { hasSwitch: () => true } } }
+      if (name === 'node:path') return { join: resolve }
+      if (name === '@aipoch/credential-identity-probe-native') return probe
+      throw new Error(`Unexpected module: ${name}`)
+    })
+    runInNewContext(source, {
+      require: load,
+      process: { platform: 'darwin' },
+      __dirname: resolve('e2e/fixtures')
+    })
+    expect(probe.executablePath).toBe(resolve('e2e/fixtures/mock-credential-identity.sh'))
+    expect(probe.validatorExecutablePath).toBe('native-validator')
+  })
+
+  it.each([
+    ['darwin', true, true],
+    ['darwin', false, false],
+    ['linux', false, true],
+    ['win32', false, true]
+  ])(
+    'rejects platform=%s packaged=%s mock=%s before replacing the probe',
+    async (platform, isPackaged, mock) => {
+      const source = await readFile('e2e/fixtures/mock-credential-identity.cjs', 'utf8')
+      const load = vi.fn((name: string) => {
+        if (name === 'electron')
+          return { app: { isPackaged, commandLine: { hasSwitch: () => mock } } }
+        if (name === 'node:path') return { join: resolve }
+        throw new Error(`Unexpected module: ${name}`)
+      })
+      expect(() => runInNewContext(source, { require: load, process: { platform } })).toThrow(
+        'requires a source macOS mock-Keychain launch'
+      )
+      expect(load).not.toHaveBeenCalledWith('@aipoch/credential-identity-probe-native')
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'returns the native metadata protocol for the fixed mock key and rejects unknown identities',
+    () => {
+      const executable = resolve('e2e/fixtures/mock-credential-identity.sh')
+      for (const identity of [
+        'Open-Science',
+        'Open-Science (DEV)',
+        'Open Science',
+        'Open Science (DEV)'
+      ]) {
+        expect(JSON.parse(execFileSync(executable, [identity], { encoding: 'utf8' }))).toEqual({
+          schemaVersion: 1,
+          platform: 'darwin',
+          identity,
+          status: 'exists'
+        })
+      }
+      expect(() => execFileSync(executable, ['unknown'])).toThrow()
+    }
+  )
+})
 
 const deferred = (): {
   promise: Promise<void>

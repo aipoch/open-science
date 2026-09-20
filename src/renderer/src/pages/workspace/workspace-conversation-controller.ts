@@ -493,12 +493,22 @@ const useWorkspaceConversationController = (
               updatedAt: 0
             }
           : undefined
+        const clearOptimisticMessage = (): void => {
+          if (!sessionId || !optimisticMessage) return
+          setOptimisticMessages((current) => {
+            if (current[sessionId] !== optimisticMessage) return current
+            const next = { ...current }
+            delete next[sessionId]
+            return next
+          })
+        }
         if (sessionId && optimisticMessage) {
           setOptimisticMessages((current) => ({ ...current, [sessionId]: optimisticMessage }))
         }
         void runtime
           .sendMessage({
             sessionId,
+            onMessageAppended: clearOptimisticMessage,
             ...(branchInNewSession && activeSession
               ? { branchSourceSessionId: activeSession.id }
               : {}),
@@ -553,13 +563,7 @@ const useWorkspaceConversationController = (
           })
           .finally(() => {
             inFlightDraftKeysRef.current.delete(snapshot.draftKey)
-            if (!sessionId || !optimisticMessage) return
-            setOptimisticMessages((current) => {
-              if (current[sessionId]?.id !== optimisticMessage.id) return current
-              const next = { ...current }
-              delete next[sessionId]
-              return next
-            })
+            clearOptimisticMessage()
           })
       }
 

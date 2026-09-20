@@ -285,3 +285,44 @@ it('retains complete native notes beginning inside raster plot bounds', () => {
   })
   expect(associateFigures(page, f.captions)[0].rect[3]).toBe(565.511)
 })
+
+it('keeps stacked side-captioned axes and their rasterized labels with the correct plot', () => {
+  const f = fixture('stacked-side-plots-with-rasterized-labels'),
+    original = structuredClone(f)
+  const captions = findCaptionCandidates(f.pages)
+  const figures = f.pages.flatMap((p: unknown) => associateFigures(p, captions))
+  expect(figures).toHaveLength(4)
+  expect(figures.every((g: { rect?: number[] }) => g.rect)).toBe(true)
+  const expected = [
+    [127.89, 52.71, 469.71, 291.41],
+    [37.2, 341.04, 376.7, 505.36],
+    [127.89, 52.71, 469.71, 226.33],
+    [37.2, 288.34, 379.02, 421.65]
+  ]
+  figures.forEach((g: { rect: number[] }, n: number) =>
+    g.rect.forEach((v, c) => expect(v).toBeCloseTo(expected[n][c], 1))
+  )
+  expect(f).toEqual(original)
+})
+
+it('removes a repeated outlined diagonal watermark only with three independent table witnesses', async () => {
+  const { excludeRepeatedMarginContent } = await import(
+    pathToFileURL(resolve('resources/pdf-structure/literature-pdf-graphics.mjs')).href
+  )
+  const f = fixture('outlined-diagonal-watermark-with-table-witnesses'),
+    original = structuredClone(f)
+  const pages = excludeRepeatedMarginContent(f.pages)
+  expect(associateFigures(pages[0], findCaptionCandidates(pages))[0].rect).toEqual([
+    144.1015625, 141.4296875, 429.98046875, 407.84375
+  ])
+  expect(pages[0].graphicsBounds.length).toBeLessThan(f.pages[0].graphicsBounds.length)
+  expect(
+    excludeRepeatedMarginContent(f.pages.slice(0, 3))[0].graphicsBounds.length
+  ).toBeGreaterThan(pages[0].graphicsBounds.length)
+  const conflicting = structuredClone(f.pages)
+  conflicting[1].lines.push({ ...conflicting[1].lines[0], text: 'Figure 2. Another diagram' })
+  expect(excludeRepeatedMarginContent(conflicting)[0].graphicsBounds.length).toBeGreaterThan(
+    pages[0].graphicsBounds.length
+  )
+  expect(f).toEqual(original)
+})

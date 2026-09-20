@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { unified } from 'unified'
 import { SessionMessageMarkdown } from '@/pages/workspace/SessionMessageMarkdown'
 import { PresentedAgentMarkdown } from './AgentMarkdown'
 
@@ -48,4 +49,70 @@ it('does not load SVG references or orphan sources from remote sites', () => {
     />
   )
   expect(view.container.querySelector('[href^="https:"],[src^="https:"]')).toBeNull()
+})
+
+it('renders each approved image with its own URL and alt text', () => {
+  const first = 'https://figures.invalid/first.png'
+  const second = 'https://figures.invalid/second.png'
+  const view = render(
+    <PresentedAgentMarkdown content={`![First figure](${first})\n\n![Second figure](${second})`} />
+  )
+  for (const button of view.getAllByRole('button', { name: /figures.invalid/ })) {
+    fireEvent.click(button)
+  }
+  expect(
+    [...view.container.querySelectorAll('img')].map((image) => [image.src, image.alt])
+  ).toEqual([
+    [first, 'First figure'],
+    [second, 'Second figure']
+  ])
+})
+
+it('updates approved image metadata without remounting or transferring approval to another URL', () => {
+  const source = 'https://metadata.invalid/image.png'
+  const view = render(
+    <PresentedAgentMarkdown content={`![Initial figure](${source}) caption`} isAnimating />
+  )
+  fireEvent.click(view.getByRole('button', { name: /metadata.invalid/ }))
+  const image = view.container.querySelector('img')
+  expect(image?.getAttribute('src')).toBe(source)
+  view.rerender(
+    <PresentedAgentMarkdown content={`![Updated figure](${source}) caption`} isAnimating />
+  )
+  expect(view.container.querySelector('img')).toBe(image)
+  expect(image?.alt).toBe('Updated figure')
+  view.rerender(
+    <PresentedAgentMarkdown
+      content={`![Updated figure](${source}?changed=1) caption grows`}
+      isAnimating
+    />
+  )
+  expect(view.container.querySelector('img')).toBeNull()
+})
+
+it('does not parse an unchanged approved image again while its paragraph streams', () => {
+  const content = '![Stable figure](https://stable.invalid/image.png) caption'
+  const view = render(<PresentedAgentMarkdown content={content} isAnimating />)
+  fireEvent.click(view.getByRole('button', { name: /stable.invalid/ }))
+  const image = view.container.querySelector('img')
+  const parse = vi.spyOn(Object.getPrototypeOf(unified) as typeof unified, 'parse')
+  try {
+    for (let index = 1; index <= 20; index++) {
+      view.rerender(<PresentedAgentMarkdown content={content + '.'.repeat(index)} isAnimating />)
+    }
+    expect(view.container.querySelector('img')).toBe(image)
+    expect(parse.mock.calls.length).toBeGreaterThan(0)
+    expect(parse.mock.calls.filter(([source]) => String(source).startsWith('{'))).toHaveLength(0)
+  } finally {
+    parse.mockRestore()
+  }
+})
+
+it('removes an approved image when media is disabled without changing the source', () => {
+  const content = '![Figure](https://toggle.invalid/image.png)'
+  const view = render(<PresentedAgentMarkdown content={content} />)
+  fireEvent.click(view.getByRole('button', { name: /toggle.invalid/ }))
+  expect(view.container.querySelector('img')).not.toBeNull()
+  view.rerender(<PresentedAgentMarkdown content={content} allowMedia={false} />)
+  expect(view.container.querySelector('img')).toBeNull()
 })

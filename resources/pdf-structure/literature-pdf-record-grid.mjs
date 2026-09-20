@@ -1313,10 +1313,18 @@ export function recoverDemographicRecords(table, items, captions, rules) {
   if (columns.length !== 2) return
   const cut = left + (columns[0].rect[2] + columns[1].rect[0]) / 2
   const source = tableSourceItems(items, table.cropRect)
-  const header = source.filter((i) => i.rect[1] < top + 36)
+  const firstBaseline = Math.min(...source.map((i) => i.baseline))
+  const compactHeader = source.filter((i) => Math.abs(i.baseline - firstBaseline) < i.height * 0.2)
+  const compactHeading = readSourceRow(compactHeader, [left, cut, right])
+  const characteristicHeader =
+    compactHeading &&
+    /^Characteristics?\(N\(%\).*M\(SD\)/i.test(compactHeading[0]) &&
+    /^N=\d+$/i.test(compactHeading[1])
+  const header = characteristicHeader ? compactHeader : source.filter((i) => i.rect[1] < top + 36)
   if (
-    !header.some((i) => /^Demographics$/.test(i.text)) ||
-    !header.some((i) => /Total sample/.test(i.text))
+    !characteristicHeader &&
+    (!header.some((i) => /^Demographics$/.test(i.text)) ||
+      !header.some((i) => /Total sample/.test(i.text)))
   )
     return
   const divider = rules
@@ -1329,8 +1337,32 @@ export function recoverDemographicRecords(table, items, captions, rules) {
         r[1] < top + 45
     )
     .sort((a, b) => a[1] - b[1])[0]
-  if (!divider) return
-  const body = source.filter((i) => i.rect[1] >= divider[1])
+  const headerBottom = Math.max(...header.map((i) => i.rect[3]))
+  if (
+    !divider &&
+    !(
+      characteristicHeader &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] <= left + 16 &&
+          r[2] >= right - 16 &&
+          r[1] <= Math.min(...header.map((i) => i.rect[1])) &&
+          r[1] >= top
+      ) &&
+      rules.some(
+        (r) =>
+          r[1] === r[3] &&
+          r[0] <= left + 16 &&
+          r[2] >= right - 16 &&
+          r[1] >= Math.max(...source.map((i) => i.rect[3])) &&
+          r[1] <= bottom
+      )
+    )
+  )
+    return
+  const headerEnd = divider?.[1] ?? headerBottom
+  const body = source.filter((i) => i.rect[1] >= headerEnd && !header.includes(i))
   const height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
   const groups = groupSourceRowsWithScripts(body, height, 0.35)
   if (!groups) return
@@ -1363,7 +1395,7 @@ export function recoverDemographicRecords(table, items, captions, rules) {
   if (counts < 12 || sections < 3) return
   return {
     rows: [
-      [left, Math.min(...header.map((i) => i.rect[1])), right, divider[1]],
+      [left, Math.min(...header.map((i) => i.rect[1])), right, headerEnd],
       ...records.map((r) => [left, r.rect[1], right, r.rect[3]])
     ],
     columns: [

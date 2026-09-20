@@ -102,6 +102,124 @@ describe('MessageScrollerItem', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
   })
 
+  it('does not rewrite unchanged scroll-state attributes while scrolling within the same range', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="reply">Reply</MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]'
+    )!
+    const scroller = container.querySelector<HTMLElement>('[data-slot="message-scroller"]')!
+    const item = container.querySelector<HTMLElement>('[data-message-id="reply"]')!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+      getBoundingClientRect: { configurable: true, value: () => ({ top: 0, bottom: 100 }) }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: -viewport.scrollTop, bottom: 600 - viewport.scrollTop })
+    })
+    await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(scroller.dataset.scrollable).toBe('start end')
+    const changes: MutationRecord[] = []
+    const observer = new MutationObserver((records) => changes.push(...records))
+    for (const element of [scroller, viewport]) {
+      observer.observe(element, {
+        attributes: true,
+        attributeFilter: ['data-scrollable', 'data-autoscrolling']
+      })
+    }
+    try {
+      for (const top of [120, 140, 160]) {
+        viewport.scrollTop = top
+        await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      }
+      expect(changes).toHaveLength(0)
+      // A real boundary change must still update both surfaces immediately.
+      viewport.scrollTop = 500
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      expect(scroller.dataset.scrollable).toBe('start')
+      expect(viewport.dataset.scrollable).toBe('start')
+      expect(changes).toHaveLength(2)
+    } finally {
+      observer.disconnect()
+    }
+  })
+
+  it('uses native scroll bounds without measuring content styles when no anchor spacer is visible', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="reply">Reply</MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton />
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]'
+    )!
+    const content = container.querySelector<HTMLElement>('[data-slot="message-scroller-content"]')!
+    const item = container.querySelector<HTMLElement>('[data-message-id="reply"]')!
+    const button = container.querySelector<HTMLElement>('[data-slot="message-scroller-button"]')!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+      getBoundingClientRect: { configurable: true, value: () => ({ top: 0, bottom: 100 }) }
+    })
+    let contentBottom = 600
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: -viewport.scrollTop, bottom: contentBottom - viewport.scrollTop })
+    })
+    const styles = vi.spyOn(window, 'getComputedStyle')
+    try {
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      expect(button.dataset.active).toBe('true')
+      viewport.scrollTop = 500
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      expect(button.dataset.active).toBe('false')
+      expect(styles.mock.calls.filter(([element]) => element === content)).toHaveLength(0)
+      // An active anchor spacer adds native scroll range that is not message content.
+      const spacer = container.querySelector<HTMLElement>('[data-message-scroller-spacer]')!
+      spacer.hidden = false
+      contentBottom = 400
+      viewport.scrollTop = 300
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      expect(button.dataset.active).toBe('false')
+      expect(styles.mock.calls.some(([element]) => element === content)).toBe(true)
+      spacer.hidden = true
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+      expect(button.dataset.active).toBe('true')
+    } finally {
+      styles.mockRestore()
+    }
+  })
+
   it('hides the end button at the native scroll limit despite fractional layout geometry', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)

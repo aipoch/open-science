@@ -20,6 +20,7 @@ import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
+import { SessionProjectionAfterCommitError } from '../session-persistence/save-session'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   startWorkingFileObservation,
@@ -1520,11 +1521,27 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
         return remove(path, ...args)
       })
     }
-    await expect(
-      new SessionPackageService(options).importFrom(archive, undefined, undefined, undefined, {
-        projectId: 'target'
+    const importPromise = new SessionPackageService(options).importFrom(
+      archive,
+      undefined,
+      undefined,
+      undefined,
+      { projectId: 'target' }
+    )
+    if (state === 'projection-pending') {
+      const error = await importPromise.catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(SessionProjectionAfterCommitError)
+      expect(error).toMatchObject({
+        committedSession: {
+          projectId: 'target',
+          title: 'Original title',
+          packageOrigin: expect.any(Object)
+        },
+        cause: expect.objectContaining({ message: failure })
       })
-    ).rejects.toThrow(failure)
+    } else {
+      await expect(importPromise).rejects.toThrow(failure)
+    }
     const repository = new SessionRepository(
       configRoot,
       {},

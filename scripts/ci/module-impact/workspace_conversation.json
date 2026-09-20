@@ -74,7 +74,10 @@
     "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts",
     "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
-    "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts"
+    "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts",
+    "src/renderer/src/pages/workspace/SessionInfoPopover.tsx",
+    "src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx",
+    "src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",
@@ -140,7 +143,8 @@
       "src/renderer/src/pages/workspace/workspace-conversation-timeline.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
-      "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts"
+      "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
+      "src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx"
     ],
     "contract": [],
     "consumer": [

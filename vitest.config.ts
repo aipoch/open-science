@@ -8,8 +8,16 @@ const sharedInstallRoot = basename(dirname(testRoot)) === '.worktree' ? resolve(
 const windowsFullTest = process.env.VITEST_WINDOWS_FULL_TEST === '1'
 
 export function resolveVitestMaxWorkers(
-  available = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length
+  available = typeof availableParallelism === 'function' ? availableParallelism() : cpus().length,
+  override?: string
 ): number {
+  if (override !== undefined) {
+    const workers = Number(override)
+    if (!/^[1-9]\d*$/.test(override) || !Number.isSafeInteger(workers)) {
+      throw new Error('OPEN_SCIENCE_TEST_MAX_WORKERS must be a positive integer.')
+    }
+    return workers
+  }
   return Math.max(available - 1, 1)
 }
 
@@ -43,6 +51,8 @@ export const VITEST_PROCESS_TEST_GLOBS = [
 const BASE_VITEST_EXCLUDE_PATTERNS = [
   ...configDefaults.exclude,
   'e2e/**',
+  // This native addon owns its node:test runner; Vitest cannot collect those suites.
+  'packages/credential-identity-probe-native/test/**',
   'docs/internal/**',
   '**/.claude/**',
   '**/.codex/**',
@@ -189,7 +199,10 @@ export default defineConfig({
     hookTimeout: windowsFullTest ? 60000 : 30000,
     // Pin the pool to Vitest's own CPU-minus-one bound so full-suite runs cannot spawn an unbounded
     // set of short-lived workers. Heavy files below run in later groups and do not share that pool.
-    maxWorkers: windowsFullTest ? 1 : resolveVitestMaxWorkers(),
+    // Inline projects inherit this before CLI overrides, so provide a config-time worker cap.
+    maxWorkers: windowsFullTest
+      ? 1
+      : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
       {
         extends: true,

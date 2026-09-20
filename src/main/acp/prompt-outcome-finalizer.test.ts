@@ -357,6 +357,27 @@ describe('AcpPromptOutcomeFinalizer', () => {
     )
   })
 
+  it('keeps a Main-owned stop successful when the Artifact retry commits', async () => {
+    const harness = createHarness()
+    harness.handles.commitTerminal = vi.fn(async (event) => {
+      harness.events.push(event)
+      harness.journal.push(`event:${event.kind}`)
+    })
+    harness.handles.emitArtifact = vi
+      .fn<(onPublished: () => void) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('temporary Artifact failure'))
+      .mockImplementationOnce(async (onPublished) => {
+        harness.journal.push('event:artifact')
+        onPublished()
+      })
+    expect(harness.interactions.captureTerminal(harness.interaction, 'stop')).toBe(true)
+
+    await expect(
+      new AcpPromptOutcomeFinalizer().finalize(harness.handles, stopped())
+    ).resolves.toEqual(expect.objectContaining({ stopReason: 'end_turn' }))
+    expect(harness.events.map(({ kind }) => kind)).toEqual(['stop'])
+  })
+
   it('does not replay an Artifact appended before its callback failed', async () => {
     const harness = createHarness()
     const callbackError = new Error('artifact callback failed')
@@ -412,6 +433,26 @@ describe('AcpPromptOutcomeFinalizer', () => {
         data: { errorKind: 'request_too_large' }
       }),
       recoverable: 'context-overflow',
+      providerError: false
+    },
+    {
+      name: 'OpenCode session service failure',
+      error: Object.assign(new Error('Internal error: OpenCode service failure'), {
+        code: -32603,
+        data: { service: 'session' },
+        name: 'RequestError'
+      }),
+      recoverable: 'session-lost',
+      providerError: false
+    },
+    {
+      name: 'non-session OpenCode service failure',
+      error: Object.assign(new Error('Internal error: OpenCode service failure'), {
+        code: -32603,
+        data: { service: 'provider' },
+        name: 'RequestError'
+      }),
+      recoverable: undefined,
       providerError: false
     },
     {

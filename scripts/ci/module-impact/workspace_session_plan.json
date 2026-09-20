@@ -41,6 +41,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/lib/acp/runtime-observer.test.ts",
+      "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/app-shell-presentation-owner.test.ts",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
@@ -59,6 +61,7 @@
       "src/renderer/src/components/WebEventRecoveryDialog.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/global-search/search-loading.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -84,6 +87,7 @@
       "src/renderer/src/lib/deep-link.navigation.test.tsx",
       "src/renderer/src/lib/deep-link.test.ts",
       "src/renderer/src/lib/preview-persistence/preview-persistence.test.tsx",
+      "src/renderer/src/lib/session-fork.test.ts",
       "src/renderer/src/lib/session-package-export.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
@@ -176,6 +180,7 @@
       "src/renderer/src/pages/workspace/NotebookInputDataStrip.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
@@ -291,8 +296,7 @@
       "src/renderer/src/stores/settings-navigation-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/lib/session-fork.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": [],

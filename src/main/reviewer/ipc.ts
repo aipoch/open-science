@@ -86,6 +86,35 @@ const createDefaultReviewRepository = (
   return new ReviewRepository(() => getProjectDbClient(storageRoot), { snapshotStorageRoot })
 }
 
+// The read-only slice of session persistence that reviewer depends on. Deliberately narrower than
+// SessionRepository: reviewer must not reach mutation or scan-diagnostics APIs.
+type ReviewerSessionReader = Readonly<{
+  loadSession: (projectId: string, sessionId: string) => Promise<PersistedChatSession | undefined>
+  findSessionById: (sessionId: string) => Promise<PersistedChatSession | undefined>
+}>
+
+// Standalone fallback used when no reader is injected. Every read pins `mode: 'read-only'`, which
+// is the only value that disables quarantine: `readSessionFile` treats `undefined` as "quarantine
+// allowed" (`options.quarantineInvalidFiles !== false`), so omitting the mode would let a reviewer
+// read rename a corrupt live session file.
+const createFallbackSessionReader = (storageRoot: string): ReviewerSessionReader => {
+  const repository = new SessionRepository(storageRoot)
+  return {
+    loadSession: async (projectId, sessionId) => {
+      const loaded = await repository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      return loaded.status === 'found' ? loaded.session : undefined
+    },
+    findSessionById: async (sessionId) => {
+      const { sessions } = await repository
+        .loadAllWithDiagnostics({ mode: 'read-only' })
+        .then((scan) => scan.result)
+      return sessions.find((candidate) => candidate.id === sessionId)
+    }
+  }
+}
+
 type ReviewerIpcOptions = {
   // The ACP runtime used to spawn reviewer sessions.
   acpRuntime: ReviewerAcpRuntime
@@ -133,6 +162,13 @@ type ReviewerIpcOptions = {
     operation: () => Promise<Result>
   ) => Promise<Result>
   resolveSessionAgentTarget?: SessionAgentTargetResolver
+  // Read-only session access. Reviewer never owns session files: it reads transcripts to detect
+  // stale verdicts and to refresh the fix loop after each correction turn. The composition root
+  // injects the already-composed session-persistence owner so reviewer reads share that owner's
+  // scheduler and projection. Without it this module would construct a second SessionRepository
+  // over the same tree, whose corrupt-file recovery path (`readSessionFile` quarantines unless
+  // `quarantineInvalidFiles === false`) would rename live files outside the coordinator.
+  sessionReader?: ReviewerSessionReader
   saveSessionAgentConfiguration?: (
     session: PersistedChatSession,
     configuration: SessionAgentConfiguration
@@ -194,7 +230,11 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     return attempt
   }
   void ensureRecovery()
-  const sessionRepository = new SessionRepository(storageRoot)
+  // Prefer the injected reader (production wires the composed session-persistence owner). The
+  // fallback keeps standalone/test construction working, and pins `mode: 'read-only'` so even that
+  // path cannot quarantine — reviewer is never the owner that repairs a corrupt session file.
+  const sessionReader: ReviewerSessionReader =
+    options.sessionReader ?? createFallbackSessionReader(storageRoot)
   const resolveArtifactVersion: ArtifactVersionContentResolver | undefined =
     options.managedFileVersions
       ? async (request) => {
@@ -271,7 +311,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     )
     let session: PersistedChatSession | undefined
     try {
-      session = await sessionRepository.loadSession(request.projectId, request.appSessionId)
+      session = await sessionReader.loadSession(request.projectId, request.appSessionId)
     } catch {
       return reviews.map((review) =>
         review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
@@ -380,9 +420,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     // Direct, repeatable loader used both for the start gate and every fix-loop refresh. The previous
     // closure returned the `session` variable below forever, so a correction turn could never appear.
     const loadCurrentSession = async (): Promise<PersistedChatSession | undefined> => {
-      if (projectId) return sessionRepository.loadSession(projectId, sessionId)
-      const { sessions } = await sessionRepository.loadAll()
-      return sessions.find((candidate) => candidate.id === sessionId)
+      if (projectId) return sessionReader.loadSession(projectId, sessionId)
+      return sessionReader.findSessionById(sessionId)
     }
 
     let session: PersistedChatSession | undefined

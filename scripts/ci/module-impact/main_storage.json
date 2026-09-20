@@ -114,6 +114,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "cli/config-root.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -676,7 +678,10 @@
       "src/main/session-plan/plan-legacy-compatibility.test.ts",
       "src/main/session-plan/plan-context-file.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/session-persistence/runtime-authority.test.ts",
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/notebook/dependency-analysis.repl.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

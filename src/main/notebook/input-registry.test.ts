@@ -301,6 +301,9 @@ describe('NotebookInputRegistry', () => {
     ])
     expect(registry.getTurnInputs(request)).toEqual([])
     // Removing storage after preparation makes any repeated materialization fail.
+    // Windows cannot unlink the database while the fixture's Prisma client holds it open.
+    await client!.$disconnect()
+    client = undefined
     await rm(storageRoot!, { recursive: true, force: true })
     expect(prepared.commit()).toBeUndefined()
     expect(registry.getTurnInputs(request)).toHaveLength(1)

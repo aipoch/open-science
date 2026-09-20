@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
@@ -21,6 +22,10 @@ import { createSpecialistService } from '../specialist/service'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
+import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import { startWorkingFileObservation } from './working-file-observer'
+import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
+import type { NotebookRunRecord } from '../../shared/notebook'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/notebook/repl-loop.integration.test.ts
 // Node is always available in vitest, so the only gate is RUN_KERNEL. The child is spawned exactly
@@ -67,6 +72,136 @@ const startLoop = (
     })
   return { child, send }
 }
+
+it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON)(
+  'captures REPL globals through handoff JSON into a real Python output graph',
+  async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'repl-handoff-'))
+    const notebookSessionRoot = join(storageRoot, 'notebooks/project/session')
+    const dataRoot = join(notebookSessionRoot, 'data')
+    const handoff = join(notebookSessionRoot, 'handoff')
+    await mkdir(dataRoot, { recursive: true })
+    await mkdir(handoff, { recursive: true })
+    const { child, send } = startLoop({ OPEN_SCIENCE_HANDOFF_DIR: handoff })
+    const runs: NotebookRunRecord[] = []
+    const activities: Parameters<typeof sealArtifactProvenanceGraph>[0]['notebookActivities'] = []
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: async () => runs }
+    })
+    const scripts = [
+      'globalThis.rows = [1, 2, 3];',
+      "const fs = require('node:fs'); const path = require('node:path'); const h = process.env.OPEN_SCIENCE_HANDOFF_DIR; fs.writeFileSync(path.join(h, 'rows.json'), JSON.stringify(rows));",
+      "import json, os\nh = os.environ['OPEN_SCIENCE_HANDOFF_DIR']\nrows = json.load(open(os.path.join(h, 'rows.json')))\nwith open(os.path.join(h, 'result.json'), 'w') as output:\n    json.dump(rows, output)"
+    ]
+    try {
+      for (const [index, script] of scripts.entries()) {
+        const kernelKind = index < 2 ? 'repl' : 'python'
+        const run: NotebookRunRecord = {
+          runId: `run-${index}`,
+          cellId: `cell-${index}`,
+          source: 'agent',
+          kernelKind,
+          kernelEpochId: kernelKind,
+          script,
+          status: 'running',
+          startedAt: index,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          workingFiles: [],
+          inputFiles: []
+        }
+        runs.push(run)
+        const sourceFileAccessContext = await analyzer.sourceFileAccessContext({
+          projectId: 'project',
+          sessionId: 'session',
+          currentRunId: run.runId,
+          language: kernelKind,
+          kernelEpochId: kernelKind,
+          includeManagedEnvironment: true
+        })
+        const observation = await startWorkingFileObservation({
+          notebookSessionRoot,
+          dataRoot,
+          cwd: dataRoot,
+          kind: kernelKind,
+          ...(kernelKind === 'python' ? { language: kernelKind } : {}),
+          code: script,
+          runId: run.runId,
+          fileEvidenceStorageRoot: storageRoot,
+          sourceFileAccessContext
+        })
+        if (kernelKind === 'repl') expect((await send(script)).error).toBeNull()
+        else
+          await promisify(execFile)(process.env.OPEN_SCIENCE_TEST_PYTHON!, ['-c', script], {
+            cwd: dataRoot,
+            env: { ...process.env, OPEN_SCIENCE_HANDOFF_DIR: handoff },
+            timeout: 30_000
+          })
+        const captured = await observation.finish()
+        expect(captured.fileEvidence).toMatchObject({
+          state: 'available',
+          fileReads: 'complete',
+          writerAttribution: 'complete'
+        })
+        Object.assign(run, {
+          status: 'completed',
+          endedAt: index + 1,
+          fileEvidence: captured.fileEvidence,
+          workingFiles: captured.workingFiles
+        })
+        activities.push({
+          run,
+          runIndex: index,
+          evidenceJson: await readFile(join(storageRoot, captured.fileEvidence.storageKey!), 'utf8')
+        })
+      }
+      const projection = await analyzer.project({ projectId: 'project', sessionId: 'session' })
+      expect(projection.dependenciesByRunId?.['run-1']).toEqual(['run-0'])
+      const finalEvidence = JSON.parse(activities[2]!.evidenceJson!)
+      const output = finalEvidence.relations.find(
+        (entry: { relativePath: string }) => entry.relativePath === 'handoff/result.json'
+      ).generation
+      const graph = sealArtifactProvenanceGraph({
+        target: {
+          versionId: 'version',
+          filename: 'result.json',
+          producerRunId: 'run-2',
+          sourceGenerationId: output.generationId,
+          checksum: output.checksum,
+          sizeBytes: output.sizeBytes
+        },
+        notebookActivities: activities,
+        computeActivities: [],
+        notebookDependencies: projection
+      })
+      expect(graph.activities.map((activity) => activity.activityId)).toEqual(
+        expect.arrayContaining(['run-0', 'run-1', 'run-2'])
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'depends-on',
+          activityId: 'run-1',
+          dependencyActivityId: 'run-0',
+          authority: 'authoritative'
+        })
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          activityId: 'run-2',
+          relativePath: 'handoff/rows.json',
+          authority: 'authoritative'
+        })
+      )
+      expect(await readFile(join(handoff, 'result.json'), 'utf8')).toBe('[1, 2, 3]')
+    } finally {
+      child.kill()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  },
+  60_000
+)
 
 describe('repl_loop local RPC transport', () => {
   it('exposes only the camelCase public method names', async () => {

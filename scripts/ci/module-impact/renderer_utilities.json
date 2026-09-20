@@ -86,6 +86,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/lib/acp/runtime-observer.test.ts",
+      "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/app-shell-presentation-owner.test.ts",
       "src/renderer/src/components/ActionToast.test.tsx",
@@ -97,6 +99,7 @@
       "src/renderer/src/components/JobDetailModal.render.test.tsx",
       "src/renderer/src/components/LanguageControls.render.test.tsx",
       "src/renderer/src/components/LegacyDataMoveDialog.render.test.tsx",
+      "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
       "src/renderer/src/components/NetworkStatusIndicator.render.test.tsx",
       "src/renderer/src/components/NotificationBell.test.tsx",
@@ -226,6 +229,7 @@
       "src/renderer/src/pages/settings/PermissionsPanel.render.test.tsx",
       "src/renderer/src/pages/settings/ProviderForm.render.test.tsx",
       "src/renderer/src/pages/settings/ProviderList.render.test.tsx",
+      "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
       "src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx",
       "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
       "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
@@ -319,6 +323,7 @@
       "src/renderer/src/pages/workspace/NotebookInputDataStrip.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx",
       "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
@@ -333,6 +338,7 @@
       "src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/SessionBackgroundActivity.test.tsx",
       "src/renderer/src/pages/workspace/SessionHoverPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionInfoPopover.test.tsx",
       "src/renderer/src/pages/workspace/SessionInterruptedBanner.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx",
@@ -450,8 +456,7 @@
       "src/renderer/src/stores/theme-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-      "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

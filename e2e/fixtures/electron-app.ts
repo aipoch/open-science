@@ -32,6 +32,7 @@ import { RendererFailureGate } from './renderer-failure-gate'
 import { prepareBrandStorageFixture } from './brand-storage-data'
 import { captureNativeQuitDialog } from './native-quit-dialog'
 import type { PackageOperationSnapshot } from '../../src/shared/session-package'
+import { createSessionFile, type PersistedChatSession } from '../../src/shared/session-persistence'
 
 const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
@@ -65,7 +66,13 @@ const electronLaunchTarget = (
     args: [
       `--user-data-dir=${userDataRoot}`,
       ...(platform === 'linux' ? ['--password-store=basic'] : []),
-      ...(platform === 'darwin' ? ['--use-mock-keychain'] : []),
+      ...(platform === 'darwin' && !executablePath
+        ? [
+            '--use-mock-keychain',
+            '--require',
+            resolve(APP_ROOT, 'e2e/fixtures/mock-credential-identity.cjs')
+          ]
+        : []),
       ...(executablePath ? [] : [APP_ROOT])
     ],
     ...(executablePath ? { executablePath } : {})
@@ -339,10 +346,12 @@ type ElectronApp = {
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
   restartAfterCrash: () => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
+  restartWithSessionFixture: (session: PersistedChatSession) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   recordResourceTiming: (name: string, durationMs: number) => void
   captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
+  setMainWindowSize: (width: number, height: number) => Promise<void>
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
 }
@@ -980,6 +989,15 @@ class ElectronAppHarness implements ElectronApp {
     await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
   }
 
+  async setMainWindowSize(width: number, height: number): Promise<void> {
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, { width, height }) => {
+        BrowserWindow.getAllWindows()[0].setSize(width, height)
+      },
+      { width, height }
+    )
+  }
+
   async setMainWindowZoomFactor(factor: number): Promise<void> {
     await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
@@ -1179,18 +1197,50 @@ class ElectronAppHarness implements ElectronApp {
         : undefined
     const result = await terminateProcessTree(child)
     let reaped = result.reaped
-    // taskkill can fail when a short-lived descendant exits during enumeration. Accept that
-    // race only after a complete query confirms the observed tree and its descendants are gone.
-    if (!reaped && before?.complete) {
-      const after = await readProcessTable()
-      reaped =
-        after.complete &&
-        before.processes.every(({ pid }) => selectProcessTree(after.processes, pid).length === 0)
+    // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
+    // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
+    if (process.platform === 'win32') {
+      reaped = false
+      if (before?.complete) {
+        const deadline = Date.now() + 10_000
+        do {
+          const after = await readProcessTable()
+          reaped =
+            after.complete &&
+            before.processes.every(
+              ({ pid }) => selectProcessTree(after.processes, pid).length === 0
+            )
+          if (reaped || Date.now() >= deadline) break
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        } while (Date.now() < deadline)
+      }
     }
     if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
     this.resourceProfiler?.detach(application)
     this.application = undefined
     this.currentPage = undefined
+    await this.launch()
+    return this.page
+  }
+
+  async restartWithSessionFixture(session: PersistedChatSession): Promise<Page> {
+    if (![session.projectId, session.id].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+      throw new Error('Invalid E2E Session fixture identity.')
+    }
+    await this.close()
+    const directory = join(this.roots.storageRoot, 'sessions', session.projectId)
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, `${session.id}.json`),
+      JSON.stringify(createSessionFile(session))
+    )
+    // Rebuild the catalog from the fixture file, just as the historical-session fixture does.
+    const client = createProjectDbClient(this.roots.storageRoot)
+    try {
+      await client.sessionProjectionState.deleteMany()
+    } finally {
+      await client.$disconnect()
+    }
     await this.launch()
     return this.page
   }

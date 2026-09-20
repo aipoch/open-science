@@ -5,7 +5,7 @@ inputs:
     description: Supplemental suite (regressions or delegation)
     required: true
   include-capacity:
-    description: Include nightly capacity profiling (older callers retain complete coverage)
+    description: Include nightly capacity profiling ('true' or 'false'; every caller sets it)
     default: 'true'
 runs:
   using: composite

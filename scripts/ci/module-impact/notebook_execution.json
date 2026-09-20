@@ -336,6 +336,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "scripts/electron-builder-config.test.ts",
       "scripts/stage-default-envs.test.ts",
       "scripts/windows-runtime-cache-uninstall.test.ts",
@@ -680,6 +682,7 @@
       "src/main/notebook/windows-external-r.integration.test.ts",
       "src/main/notebook/windows-path-access.integration.test.ts",
       "src/main/notebook/windows-r-conda-discovery.integration.test.ts",
+      "src/main/notebook/windows-r-report.integration.test.ts",
       "src/main/notebook/windows-repl-termination.integration.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/working-file-observer.performance.test.ts",
@@ -868,7 +871,14 @@
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/specialist/marketplace/official-source.test.ts",
+      "src/main/specialist/marketplace/service.test.ts",
+      "src/main/specialist/package/release-certification.test.ts",
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/notebook/dependency-analysis.repl.test.ts",
+      "src/main/notebook/managed-path-context.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

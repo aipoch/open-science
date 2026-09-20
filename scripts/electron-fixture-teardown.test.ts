@@ -268,8 +268,9 @@ it('still fails with diagnostics when initialization never finishes', async () =
 })
 
 it.each([true, false])(
-  'requires confirmed process termination before a crash restart (reaped=%s)',
+  'requires confirmed non-Windows process termination before a crash restart (reaped=%s)',
   async (reaped) => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
     boundary.reap.mockResolvedValue({ reaped })
     const operation = boundary.fixture(
       { windowMode: 'hidden' },
@@ -285,22 +286,26 @@ it.each([true, false])(
   }
 )
 
-it.each([
-  { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
-  { name: 'a child survived', complete: true, survivors: [[12346, 12345]], succeeds: false },
-  { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: false },
-  { name: 'a child was reparented', complete: true, survivors: [[12346, 1]], succeeds: false },
-  {
-    name: 'a new grandchild survived',
-    complete: true,
-    survivors: [[12347, 12346]],
-    succeeds: false
-  },
-  { name: 'the process query failed', complete: false, survivors: [], succeeds: false }
-])(
-  'checks Windows crash termination when taskkill reports failure: $name',
-  async ({ complete, survivors, succeeds }) => {
+it.each(
+  [
+    { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
+    { name: 'a child survived', complete: true, survivors: [[12346, 12345]], succeeds: false },
+    { name: 'the root survived', complete: true, survivors: [[12345, 1]], succeeds: false },
+    { name: 'a child was reparented', complete: true, survivors: [[12346, 1]], succeeds: false },
+    {
+      name: 'a new grandchild survived',
+      complete: true,
+      survivors: [[12347, 12346]],
+      succeeds: false
+    },
+    { name: 'the process query failed', complete: false, survivors: [], succeeds: false }
+  ].flatMap((scenario) => [true, false].map((reaped) => ({ ...scenario, reaped })))
+)(
+  'checks Windows crash termination regardless of taskkill status: $name',
+  async ({ complete, survivors, succeeds, reaped }) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     Object.defineProperty(process, 'platform', { value: 'win32' })
+    boundary.reap.mockResolvedValue({ reaped })
     boundary.processTree.mockResolvedValue({
       complete: true,
       processes: [
@@ -319,11 +324,66 @@ it.each([
       },
       { status: succeeds ? 'passed' : 'failed', expectedStatus: 'passed', attach }
     )
-    if (succeeds) await operation
-    else await expect(operation).rejects.toThrow('crash simulation did not reap')
+    const assertion = succeeds
+      ? expect(operation).resolves.toBeUndefined()
+      : expect(operation).rejects.toThrow('crash simulation did not reap')
+    await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(10_000)
+    await assertion
     expect(boundary.launch).toHaveBeenCalledTimes(succeeds ? 2 : 1)
   }
 )
+
+it.each([true, false])(
+  'waits for delayed Windows descendants before relaunching (taskkill reaped=%s)',
+  async (reaped) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    boundary.reap.mockResolvedValue({ reaped })
+    boundary.processTree.mockResolvedValue({
+      complete: true,
+      processes: [
+        { pid: 12345, parentPid: 1 },
+        { pid: 12346, parentPid: 12345 }
+      ]
+    })
+    boundary.processTable.mockResolvedValue({
+      complete: true,
+      processes: [{ pid: 12346, parentPid: 1 }]
+    })
+    const operation = boundary.fixture(
+      { windowMode: 'hidden' },
+      async (app) => {
+        await app.restartAfterCrash()
+      },
+      { status: 'passed', expectedStatus: 'passed', attach }
+    )
+    await vi.waitFor(() => expect(boundary.processTable).toHaveBeenCalled())
+    expect(boundary.launch).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(boundary.launch).toHaveBeenCalledOnce()
+    boundary.processTable.mockResolvedValue({ complete: true, processes: [] })
+    await vi.advanceTimersByTimeAsync(100)
+    await operation
+    expect(boundary.launch).toHaveBeenCalledTimes(2)
+  }
+)
+
+it('refuses a Windows crash restart without a complete pre-termination snapshot', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  boundary.reap.mockResolvedValue({ reaped: true })
+  await expect(
+    boundary.fixture(
+      { windowMode: 'hidden' },
+      async (app) => {
+        await app.restartAfterCrash()
+      },
+      { status: 'failed', expectedStatus: 'passed', attach }
+    )
+  ).rejects.toThrow('crash simulation did not reap')
+  expect(boundary.launch).toHaveBeenCalledOnce()
+  expect(boundary.processTable).not.toHaveBeenCalled()
+})
 
 it.each([true, false])(
   'shares the startup deadline with settings loading (finishes=%s)',

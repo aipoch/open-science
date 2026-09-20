@@ -94,7 +94,7 @@ describe('production application command wiring', () => {
       between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const conversationExportService')
     )
     expect(phase).toContain(
-      'createSessionPersistenceElectronSurface({ sessionPersistenceBackend, reviewRepository, sessionPersistenceHandlers, sessionDetailsOwner, delegatedWork, sessionRepository })'
+      'createSessionPersistenceElectronSurface({ runtimeWriter, sessionPersistenceBackend, reviewRepository, sessionPersistenceHandlers, sessionDetailsOwner, delegatedWork, sessionRepository })'
     )
     expect(phase.indexOf("declareElectronAdapter('notebook-input-preview'")).toBeLessThan(
       phase.indexOf('createSessionPersistenceElectronSurface(')

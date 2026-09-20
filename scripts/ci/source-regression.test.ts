@@ -146,7 +146,7 @@ describe('trusted supplemental selection', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'requires the Windows browser suite on every runner shard',
+    'requires the selected Windows browser suite on every runner shard',
     () => {
       const enforce = pr.jobs.windows_e2e.steps.find(
         ({ name }) => name === 'Enforce selected Windows E2E checks'
@@ -157,9 +157,9 @@ describe('trusted supplemental selection', () => {
           encoding: 'utf8',
           env: {
             ...process.env,
+            E2E_BROWSER_SELECTED: 'true',
             RENDERER_LAYOUT_OUTCOME: outcome,
             SETUP_OUTCOME: 'success',
-            E2E_ACCESSIBILITY_OUTCOME: 'skipped',
             E2E_FUNCTIONAL_OUTCOME: 'skipped',
             E2E_WORKSPACE_OUTCOME: 'skipped'
           }
@@ -263,7 +263,7 @@ describe('independent source regression', () => {
   )
 
   it('batches main on a read-only schedule with one native runner and no package prerequisite', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 7,19 * * *' }])
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 5,17 * * *' }])
     expect(scheduled.on).toHaveProperty('workflow_dispatch')
     expect(scheduled.on).not.toHaveProperty('push')
     expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })
@@ -272,7 +272,7 @@ describe('independent source regression', () => {
       group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
-    expect(Object.keys(scheduled.jobs)).toEqual(['regression'])
+    expect(Object.keys(scheduled.jobs)).toEqual(['regression', 'report'])
     expect(scheduled.jobs.regression.needs).toBeUndefined()
     expect(scheduled.jobs.regression['runs-on']).toBe(pr.jobs.macos_e2e['runs-on'])
     expect(scheduled.jobs.regression['continue-on-error']).toBeUndefined()

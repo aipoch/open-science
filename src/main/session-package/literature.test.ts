@@ -250,7 +250,9 @@ it.each([false, true])(
     const reforked = await target.service.fork(forked)
     expect(reforked.sessionId).not.toBe(forked.sessionId)
   },
-  30_000
+  // This case migrates source/target databases and validates two imports plus two forks.
+  // Match the bounded Windows budget used by the adjacent package round-trip suites.
+  process.platform === 'win32' ? 120_000 : 30_000
 )
 
 it('keeps metadata-only Literature references', () => {

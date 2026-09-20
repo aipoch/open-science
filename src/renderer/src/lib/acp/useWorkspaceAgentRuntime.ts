@@ -1,3 +1,4 @@
+import { isRuntimeWriter } from './runtime-writer-client'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   createContext,
@@ -295,7 +296,7 @@ const useOwnedWorkspaceAgentRuntime = (
   }, [permissionResponseAttemptOwner, runtime.state.pendingPermissions])
 
   useEffect(() => {
-    if (liveRuntimeEvents) return
+    if (liveRuntimeEvents || !isRuntimeWriter()) return
     lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
       supportsImageRelay: visionRelayAvailable,
       getAgentTarget: getSessionAgentTarget,

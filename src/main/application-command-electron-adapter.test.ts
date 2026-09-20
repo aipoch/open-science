@@ -28,6 +28,7 @@ const validatedChannels = [
   'bookmarks:list',
   'bookmarks:resolve-pdf-source',
   'bookmarks:update-note',
+  'lifecycle:claim-runtime-writer',
   'literature:citation-styles',
   'literature:complete-metadata',
   'literature:export-record',

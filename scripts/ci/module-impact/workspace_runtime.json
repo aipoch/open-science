@@ -19,7 +19,9 @@
     "src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts",
     "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
     "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts",
-    "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts"
+    "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
+    "src/renderer/src/lib/acp/runtime-observer.test.ts",
+    "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts",
@@ -38,7 +40,9 @@
       "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
-      "src/renderer/src/lib/acp/workspace-events.test.ts"
+      "src/renderer/src/lib/acp/workspace-events.test.ts",
+      "src/renderer/src/lib/acp/runtime-observer.test.ts",
+      "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts"
     ],
     "contract": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"],
     "consumer": [

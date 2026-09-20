@@ -66,7 +66,12 @@
     "src/main/session-persistence/session-data-paths.ts",
     "src/main/session-persistence/session-update-publication.ts",
     "src/main/session-persistence/task-admission.ts",
-    "src/main/session-persistence/usage-regressions.test.ts"
+    "src/main/session-persistence/usage-regressions.test.ts",
+    "src/main/session-persistence/runtime-authority.test.ts",
+    "src/main/session-persistence/runtime-session-owner.test.ts",
+    "src/main/session-persistence/runtime-session-owner.ts",
+    "src/main/session-persistence/runtime-writer.test.ts",
+    "src/main/session-persistence/runtime-writer.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -91,7 +96,9 @@
     "src/main/session-persistence/runtime-lookup.ts",
     "src/main/session-persistence/session-data-paths.ts",
     "src/main/session-persistence/state-owner.ts",
-    "src/main/session-persistence/task-admission.ts"
+    "src/main/session-persistence/task-admission.ts",
+    "src/main/session-persistence/runtime-session-owner.ts",
+    "src/main/session-persistence/runtime-writer.ts"
   ],
   "consumerModules": ["project_lifecycle"],
   "testFiles": {
@@ -119,7 +126,10 @@
       "src/main/session-persistence/revision-conflict.test.ts",
       "src/main/session-persistence/runtime-lookup.test.ts",
       "src/main/session-persistence/save-session.test.ts",
-      "src/main/session-persistence/usage-regressions.test.ts"
+      "src/main/session-persistence/usage-regressions.test.ts",
+      "src/main/session-persistence/runtime-authority.test.ts",
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-persistence/runtime-writer.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",
@@ -130,6 +140,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/renderer/src/lib/acp/runtime-observer.test.ts",
+      "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/delegation/durable-delegated-work.test.ts",
       "src/main/delegation/session-record-adapter.test.ts",
       "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",

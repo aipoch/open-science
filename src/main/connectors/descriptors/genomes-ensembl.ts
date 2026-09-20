@@ -472,7 +472,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     id: 'ensembl_sequence',
     connector: 'genomes',
     description:
-      'Fetch sequence from Ensembl — by stable ID (gene/transcript/protein) or by genomic region. Pass EITHER stable_id OR region. Args: stable_id (ENSG.../ENST.../ENSP..., versioned accepted); region (1-based inclusive chrom:start..end or chrom:start-end, GRCh38 for human, max 10Mb); species (for region route, default homo_sapiens; ignored for stable IDs); seq_type (ID route: genomic default/cdna/cds/protein — protein only for ENST/ENSP; ignored for regions which always return genomic); max_bytes (payload guard default 400000 — larger sequences have `seq` omitted; length/sha256/metadata always returned; re-call with larger max_bytes for full text). Returns {found, query, seq_type, id, description, molecule, length, sha256, seq} — length in the unit implied by molecule (bases for dna, residues for protein); seq replaced by seq_omitted when capped; found:false with null fields for unknown stable IDs; malformed/oversized regions raise with the upstream message.',
+      'Fetch sequence from Ensembl — by stable ID (gene/transcript/protein) or by genomic region. Pass EITHER stable_id OR region. Args: stable_id (ENSG.../ENST.../ENSP..., versioned accepted); region (1-based inclusive chrom:start..end or chrom:start-end, GRCh38 for human, max 10Mb); species (for region route, default homo_sapiens; ignored for stable IDs); seq_type (ID route: genomic default/cdna/cds/protein; ignored for regions which always return genomic). This tool returns one sequence: for gene-level cdna/cds/protein requests that resolve to multiple sequences, specify a transcript/protein stable ID instead; max_bytes (payload guard default 400000 — larger sequences have `seq` omitted; length/sha256/metadata always returned; re-call with larger max_bytes for full text). Returns {found, query, seq_type, id, description, molecule, length, sha256, seq} — length in the unit implied by molecule (bases for dna, residues for protein); seq replaced by seq_omitted when capped; found:false with null fields only when Ensembl explicitly reports the requested stable ID as not found; multiple-sequence requests, incompatible sequence types, and other upstream failures raise errors.',
     input: {
       type: 'object',
       properties: {
@@ -488,7 +488,7 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      '{found, query, seq_type, id, description, molecule, length, sha256, seq} — seq replaced by seq_omitted:true when byte length exceeds max_bytes; found:false with null fields for unknown stable IDs.',
+      '{found, query, seq_type, id, description, molecule, length, sha256, seq} — seq replaced by seq_omitted:true when byte length exceeds max_bytes; found:false with null fields only for an explicit upstream ID-not-found response; other failures raise errors.',
     example:
       'const result = await host.mcp("genomes", "ensembl_sequence", {"stable_id": "ENSP00000288602", "seq_type": "protein"})',
     run: async (ctx, a) => {
@@ -504,12 +504,18 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
 
       let resp: Dict
       if (stableId) {
-        try {
-          resp = (await ctx.fetchJson(
-            `${ENSEMBL}/sequence/id/${encodeURIComponent(upstreamStableId(stableId))}?type=${encodeURIComponent(seqType)}`
-          )) as Dict
-        } catch (err) {
-          if (isNotFound(err)) {
+        const id = upstreamStableId(stableId)
+        const { body, status } = await ctx.fetchJsonWithHeaders(
+          `${ENSEMBL}/sequence/id/${encodeURIComponent(id)}?type=${encodeURIComponent(seqType)}`,
+          { allowHttpStatuses: [400] }
+        )
+        if (status === 400) {
+          const record =
+            body && typeof body === 'object' && !Array.isArray(body) ? (body as Dict) : null
+          const error = record?.error
+          // Ensembl also uses 400 for multiple sequences and incompatible sequence types.
+          // Only explicit absence of this exact ID is a negative lookup result.
+          if (error === `ID '${id}' not found`) {
             return {
               found: false,
               query,
@@ -521,8 +527,12 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
               sha256: null
             }
           }
-          throw err
+          if (typeof error === 'string') {
+            throw new Error(`Ensembl sequence failed: ${error.slice(0, 1000)}`)
+          }
+          throw new Error('Ensembl sequence returned an unrecognized HTTP 400 response')
         }
+        resp = body as Dict
       } else {
         // Region route: malformed/oversized regions raise the upstream 400 (not caught).
         resp = (await ctx.fetchJson(`${ENSEMBL}/sequence/region/${species}/${region}`)) as Dict

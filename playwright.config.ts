@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test'
+import { resolve } from 'node:path'
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,6 +23,9 @@ export default defineConfig({
   },
   reporter: process.env.CI
     ? [
+        ...(process.platform === 'win32'
+          ? [[resolve(__dirname, 'e2e/windows-shard-reporter.ts')] as [string]]
+          : []),
         ['line'],
         ['blob'],
         [

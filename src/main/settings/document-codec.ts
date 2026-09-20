@@ -1,3 +1,4 @@
+import { classificationSettingsSchema } from './classification-config'
 import { isAbsolute } from 'node:path'
 
 import {
@@ -249,10 +250,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     providerIds.add(provider.id)
     return true
   })
+  const classification = classificationSettingsSchema.safeParse(value.classification).data
   const visionModel = sanitizeVisionModel(value.visionModel)
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers,
+    ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
     sessionDetailsModel: sanitizeSessionDetailsModel(value.sessionDetailsModel),

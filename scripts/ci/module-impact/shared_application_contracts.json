@@ -121,7 +121,9 @@
     "src/shared/window-controls.test.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
-    "src/shared/config-root.ts"
+    "src/shared/config-root.ts",
+    "src/shared/classification.ts",
+    "src/shared/runtime-writer.ts"
   ],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",
@@ -206,7 +208,8 @@
     "src/shared/web-rpc-contract.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
-    "src/shared/config-root.ts"
+    "src/shared/config-root.ts",
+    "src/shared/runtime-writer.ts"
   ],
   "consumerModules": [],
   "testFiles": {

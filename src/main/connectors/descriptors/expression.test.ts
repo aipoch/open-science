@@ -153,7 +153,7 @@ describe('expression / gtex_resolve_genes', () => {
       )
     )
     expect(url).toBe(
-      'https://gtexportal.org/api/v2/reference/gene?itemsPerPage=1000&geneId=GAPDH&geneId=BRCA2&gencodeVersion=v26'
+      'https://gtexportal.org/api/v2/reference/gene?geneId=GAPDH&geneId=BRCA2&gencodeVersion=v26&page=0&itemsPerPage=1000'
     )
     expect(out).toEqual({
       total: 1,
@@ -172,6 +172,27 @@ describe('expression / gtex_resolve_genes', () => {
           gene_type: 'protein coding',
           description: 'glyceraldehyde-3-phosphate dehydrogenase'
         }
+      ]
+    })
+  })
+
+  it('walks all reference gene pages and verifies the total', async () => {
+    const page0 = paged([{ geneSymbol: 'GAPDH', gencodeId: 'ENSG00000111640.14' }], 2, 2, 0)
+    const page1 = paged([{ geneSymbol: 'BRCA2', gencodeId: 'ENSG00000139618.14' }], 2, 2, 1)
+    const { out, urls } = await callSeq('gtex_resolve_genes', { genes: ['GAPDH', 'BRCA2'] }, [
+      page0,
+      page1
+    ])
+
+    expect(urls[0]).toBe(
+      'https://gtexportal.org/api/v2/reference/gene?geneId=GAPDH&geneId=BRCA2&gencodeVersion=v26&page=0&itemsPerPage=1000'
+    )
+    expect(urls[1]).toContain('page=1')
+    expect(out).toMatchObject({
+      total: 2,
+      genes: [
+        { gene_symbol: 'GAPDH', gencode_id: 'ENSG00000111640.14' },
+        { gene_symbol: 'BRCA2', gencode_id: 'ENSG00000139618.14' }
       ]
     })
   })

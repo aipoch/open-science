@@ -2971,6 +2971,22 @@ describe('analyzeNotebookSourceFileAccess', () => {
     })
   })
 
+  it.each([
+    "json.load(open('input.json'), object_hook=custom)",
+    "json.load(open('input.json'), object_pairs_hook=custom)",
+    "json.load(open('input.json'), parse_int=custom)",
+    "json.load(open('input.json'), cls=custom)",
+    "json.load(open('input.json'), **options)",
+    "json.dump({}, open('output.json', 'w'), default=custom)"
+  ])('keeps JSON callback effects partial: %s', async (call) => {
+    const source = `import json\ndef custom(value):\n    return open('hidden.txt').read()\noptions = {'object_hook': custom}\n${call}`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
   it('keeps prior kernel variables conservative without a resolved same-epoch context', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'python',

@@ -191,6 +191,36 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     })
   }
 
+  it('retains annotation observers on existing replies while the session updates', async () => {
+    const observedContents: Node[] = []
+    const Original = globalThis.MutationObserver
+    vi.stubGlobal(
+      'MutationObserver',
+      class extends Original {
+        observe(target: Node, options?: MutationObserverInit): void {
+          if (
+            target instanceof Element &&
+            target.matches('[data-annotation-surface] > .contents')
+          ) {
+            observedContents.push(target)
+          }
+          super.observe(target, options)
+        }
+      }
+    )
+    const session = replySession()
+    const annotations: TextAnnotation[] = []
+    for (let i = 0; i < 21; i++) {
+      await renderScroller({
+        session: { ...session, updatedAt: session.updatedAt + i },
+        annotations
+      })
+    }
+    expect(container.textContent).toContain('agent reply body with quotable words')
+    expect(new Set(observedContents).size).toBe(1)
+    expect(observedContents).toHaveLength(1)
+  })
+
   const selectAndAnnotate = async (
     surface: HTMLElement,
     selectionTarget: Node = surface

@@ -123,6 +123,60 @@ describe('PreviewTextAnnotationSurface', () => {
     vi.unstubAllGlobals()
   })
 
+  it('retains observers for equivalent preview items during parent updates', async () => {
+    let mutationCount = 0
+    let resizeCount = 0
+    const Original = globalThis.MutationObserver
+    vi.stubGlobal(
+      'MutationObserver',
+      class extends Original {
+        constructor(callback: MutationCallback) {
+          super(callback)
+          mutationCount++
+        }
+      }
+    )
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor() {
+          resizeCount++
+        }
+        observe = vi.fn()
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    for (let i = 0; i < 21; i++) {
+      await act(async () =>
+        root.render(
+          <PreviewTextAnnotationSurface item={item()}>
+            <p>{`Preview text ${i}`}</p>
+          </PreviewTextAnnotationSurface>
+        )
+      )
+    }
+    expect(container.textContent).toContain('Preview text 20')
+    expect({ mutationCount, resizeCount }).toEqual({ mutationCount: 1, resizeCount: 1 })
+  })
+
+  it('does not measure an unmarked preview on window resize', async () => {
+    await act(async () =>
+      root.render(
+        <PreviewTextAnnotationSurface item={item()}>
+          <p>No markers</p>
+        </PreviewTextAnnotationSurface>
+      )
+    )
+    const measure = vi.spyOn(Element.prototype, 'getBoundingClientRect')
+    try {
+      await act(async () => window.dispatchEvent(new Event('resize')))
+      expect(measure).not.toHaveBeenCalled()
+    } finally {
+      measure.mockRestore()
+    }
+  })
+
   const renderSurface = async ({
     activeAnnotations = [],
     onAddAnnotation = vi.fn(() => undefined),

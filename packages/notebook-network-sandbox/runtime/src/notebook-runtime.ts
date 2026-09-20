@@ -488,7 +488,7 @@ const wrap = async (
         env,
         ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {})
       }
-      // Standard mode has no AppContainer, but opted-in short-lived workers still need reliable
+      // Standard mode has no AppContainer, but opted-in process trees still need reliable
       // process-tree ownership so a normal leader exit cannot poison the next cleanup attempt.
       if (!windowsGatewayPort && request.superviseProcessTree) {
         return {

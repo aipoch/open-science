@@ -791,6 +791,8 @@ describe('Compute service architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(computeService.testFiles.consumer).toEqual([
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/compute/job-runtime.test.ts',
       'src/main/compute/enabled-hosts-registry.test.ts',
       'src/main/acp/application-commands.test.ts',
@@ -1100,7 +1102,8 @@ describe('Compute service architecture', () => {
       'src/main/storage/brand-location.test.ts',
       'src/main/storage/migration-target-race.test.ts',
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/session-persistence/runtime-authority.test.ts'
     ])
   })
 

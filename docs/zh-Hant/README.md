@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.30.2 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.30.2 是一個穩定性版本：Windows 的 R 執行環境可靠復原（conda 啟動、可執行檔解析、核心恢復，以及已驗證的 pip 進入點），Notebook 同一輪次的輸入可正確重播，審閱者的修正也在關聯回饋之間保留上下文。文獻匯入會區分 PubMed 作者的姓氏與名字縮寫，並偵測撤稿關係；連接器收緊了 Ensembl、VEP、Reactome、UCSC 與 gnomAD 的行為；DeepSeek V4.1 Flash 也加入模型目錄。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.31.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.31.1 擴大了從工作階段可觸及的科學資料範圍：ENA 工具可將公開的 ENA/INSDC 登錄號解析為對應的定序資料，並附上由封存產生的 FASTQ 檔案；Genes 連接器新增由 g:Profiler 驅動的 GO 與路徑（pathway）富集分析，並可指定自訂的統計背景；新增的 NCBI 工具可解析分類群名稱、檢視帶版本的基因體組裝，以及查詢序列別名。設定可選擇性連接專責的分類模型服務，遠端存取配對則移至安全面板頂端，並可安全地撤銷受信任的瀏覽器。整體穩定性更加紮實——Windows 上的 R Notebook 會監督持續存在的核心並引導網路復原，遺失的 OpenCode 工作階段會在啟動時復原，核准卡、待處理訊息預覽與最近工作階段清單的行為也更可靠。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

@@ -46,6 +46,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/lib/acp/runtime-observer.test.ts",
+      "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
       "src/renderer/src/components/SessionPackageOperation.test.tsx",

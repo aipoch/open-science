@@ -74,6 +74,45 @@ const condaInventory = (...names: string[]): string =>
   )
 
 describe('captureNotebookEnvironmentLock', () => {
+  it.each(['array', 'envelope'] as const)(
+    'captures a restorable lock from the micromamba %s inventory format',
+    async (format) => {
+      const packages = JSON.parse(condaInventory('numpy'))
+      const result = await captureNotebookEnvironmentLock(
+        {
+          language: 'python',
+          environmentName: 'default-python',
+          runtimeSource: 'managed',
+          condaPrefix: '/runtime/envs/default-python'
+        },
+        manifest(),
+        {
+          micromamba: '/runtime/micromamba',
+          execute: async () =>
+            JSON.stringify(format === 'array' ? packages : { log_history: [], packages })
+        }
+      )
+      expect(result).toMatchObject({
+        state: 'captured',
+        captureStatus: 'complete',
+        lock: { components: [{ packages: ['numpy'], resolution: 'locked' }] }
+      })
+    }
+  )
+
+  it.each([
+    {},
+    { packages: [] },
+    { packages: null },
+    { packages: {} },
+    { packages: [{ name: 'numpy', version: '2.3.2' }] },
+    {
+      packages: [{ name: 'numpy', url: 'file:///tmp/numpy.conda', md5: 'a'.repeat(32) }]
+    }
+  ])('rejects an empty or nonrestorable micromamba envelope: %j', (inventory) => {
+    expect(() => parseCondaPackageNames(JSON.stringify(inventory))).toThrow()
+  })
+
   it.each(['python', 'r'] as const)(
     'does not require a rejected auxiliary %s lock unless native packages are needed',
     async (language) => {

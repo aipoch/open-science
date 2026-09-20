@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { load } from 'js-yaml'
 import { describe, expect, it, vi, type Mock } from 'vitest'
-import { cancelStaleQueueRuns } from './cancel-stale-queue-runs.mjs'
+import { QUEUE_WORKFLOW_IDS, cancelStaleQueueRuns } from './cancel-stale-queue-runs.mjs'
 
 const sha = 'a'.repeat(40)
 const run = {
@@ -67,6 +67,38 @@ describe('obsolete queue cleanup', () => {
     expect(f.getRef).not.toHaveBeenCalled()
     expect(f.cancelWorkflowRun).not.toHaveBeenCalled()
   })
+  it('enumerates every queue-triggered required workflow by default', async () => {
+    const f = fixture([])
+    await cancelStaleQueueRuns(f)
+    const listed = f.github.paginate.mock.calls.map(([, params]) => params.workflow_id)
+    expect(QUEUE_WORKFLOW_IDS).toEqual(['pr-gate.yml', 'ci-integrity.yml'])
+    expect(new Set(listed)).toEqual(new Set(QUEUE_WORKFLOW_IDS))
+    for (const [, params] of f.github.paginate.mock.calls) {
+      expect(params).toMatchObject({ ...repo, event: 'merge_group', per_page: 100 })
+    }
+  })
+  it('cancels obsolete CI Integrity runs alongside PR Gate runs', async () => {
+    const f = fixture([])
+    const integrityRun = { ...run, id: 12 }
+    f.github.paginate
+      .mockReset()
+      .mockImplementation(async (_list, params) =>
+        params.status === 'queued' && params.workflow_id === 'ci-integrity.yml'
+          ? [integrityRun]
+          : params.status === 'queued' && params.workflow_id === 'pr-gate.yml'
+            ? [run]
+            : []
+      )
+    f.getRef.mockRejectedValue({ status: 404 })
+    expect(await cancelStaleQueueRuns(f)).toEqual([10, 12])
+    expect(f.cancelWorkflowRun).toHaveBeenCalledWith({ ...repo, run_id: 12 })
+  })
+  it('honours an explicit workflow list', async () => {
+    const f = fixture([])
+    await cancelStaleQueueRuns({ ...f, workflowIds: ['pr-gate.yml'] })
+    const listed = f.github.paginate.mock.calls.map(([, params]) => params.workflow_id)
+    expect(new Set(listed)).toEqual(new Set(['pr-gate.yml']))
+  })
   it('tolerates completion during cancellation but reports permission errors', async () => {
     const f = fixture()
     f.getRef.mockRejectedValue({ status: 404 })
@@ -89,9 +121,10 @@ describe('obsolete queue cleanup', () => {
         }
       }
     }
+    // Both queue-triggered required workflows spawn cleanup; only a new run can make others stale.
     expect(workflow.on.workflow_run).toEqual({
-      workflows: ['PR Gate'],
-      types: ['requested', 'completed']
+      workflows: ['PR Gate', 'CI Integrity'],
+      types: ['requested']
     })
     expect(workflow.jobs.cleanup['runs-on']).toBe('ubuntu-latest')
     expect(workflow.jobs.cleanup.permissions).toEqual({ contents: 'read', actions: 'write' })

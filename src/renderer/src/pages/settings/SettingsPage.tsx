@@ -1,3 +1,4 @@
+import { SettingsFormFooter } from './SettingsLayout'
 import { Notice } from '@/components/notice'
 import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
@@ -779,6 +780,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         leaf
       }
     }
+    if (
+      activePanel === 'model' &&
+      (modelView.kind === 'classification-create' || modelView.kind === 'classification-edit')
+    )
+      return {
+        rootLabelKey: 'Model',
+        rootTo: { panel: 'model', view: { kind: 'classification' } },
+        leaf:
+          modelView.kind === 'classification-create'
+            ? t('Add model service')
+            : t('Edit model service')
+      }
     if (activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')) {
       const name =
         modelView.kind === 'edit'
@@ -920,7 +933,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             ? t('Marketplace')
             : specialistsView.kind === 'import'
               ? t('Import ZIP')
-              : (editingSpecialist?.name ?? t('Edit specialist'))
+              : specialistsView.kind === 'export'
+                ? t('Export ZIP')
+                : (editingSpecialist?.name ?? t('Edit specialist'))
       return {
         rootLabelKey: 'Specialists',
         rootTo,
@@ -1611,7 +1626,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-batch')
                       ? 'max-w-none'
                       : 'max-w-[880px]',
-                    activePanel === 'memory' ||
+                    (activePanel === 'model' &&
+                      (modelView.kind === 'classification-create' ||
+                        modelView.kind === 'classification-edit')) ||
+                      activePanel === 'memory' ||
                       activePanel === 'tags' ||
                       (activePanel === 'skills' &&
                         (skillsView.kind === 'marketplace-batch' ||
@@ -1627,7 +1645,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     }
                     panelKey={
                       activePanel === 'model' &&
-                      (modelView.kind === 'list' || modelView.kind === 'local-models')
+                      (modelView.kind === 'list' ||
+                        modelView.kind === 'local-models' ||
+                        modelView.kind === 'classification')
                         ? 'model:tabs'
                         : activePanel === 'skills' &&
                             (skillsView.kind === 'marketplace' ||
@@ -2049,6 +2069,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     ) : (
                       <ModelPanel
+                        view={modelView}
+                        navigate={(view) => navigate({ panel: 'model', view })}
                         local={modelView.kind === 'local-models'}
                         onChange={(local) =>
                           navigate({
@@ -2101,56 +2123,46 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 </div>
               </motion.div>
               {isProviderFormOpen ? (
-                <div
-                  className="shrink-0 border-t border-border bg-card"
-                  data-slot="provider-form-footer"
-                >
-                  <div className="mx-auto max-w-[880px] space-y-3 px-5 py-4">
-                    {connectionResult ? (
-                      <ProviderTestResultCard result={connectionResult} />
-                    ) : statusMessage ? (
-                      <ErrorNotice
-                        inline
-                        role={statusOk ? 'status' : 'alert'}
-                        level={statusOk ? 'success' : 'error'}
-                        description={statusMessage}
-                      />
-                    ) : null}
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        {canTestConnection ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={!canSave}
-                            onClick={() => void handleTestConnection()}
-                          >
-                            {isTestingConnection ? (
-                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                            ) : null}
-                            {isTestingConnection ? t('Testing…') : t('Test connection')}
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="flex gap-2">
+                <SettingsFormFooter data-slot="provider-form-footer">
+                  {connectionResult ? (
+                    <ProviderTestResultCard result={connectionResult} />
+                  ) : statusMessage ? (
+                    <ErrorNotice
+                      inline
+                      role={statusOk ? 'status' : 'alert'}
+                      level={statusOk ? 'success' : 'error'}
+                      description={statusMessage}
+                    />
+                  ) : null}
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      {canTestConnection ? (
                         <Button
                           type="button"
-                          variant="ghost"
-                          onClick={closeForm}
-                          disabled={isSaving}
+                          variant="outline"
+                          disabled={!canSave}
+                          onClick={() => void handleTestConnection()}
                         >
-                          {t('Cancel')}
-                        </Button>
-                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                          {isSaving ? (
+                          {isTestingConnection ? (
                             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                           ) : null}
-                          {isSaving ? t('Saving…') : t('Save')}
+                          {isTestingConnection ? t('Testing…') : t('Test connection')}
                         </Button>
-                      </div>
+                      ) : null}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
+                        {t('Cancel')}
+                      </Button>
+                      <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                        {isSaving ? (
+                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                        ) : null}
+                        {isSaving ? t('Saving…') : t('Save')}
+                      </Button>
                     </div>
                   </div>
-                </div>
+                </SettingsFormFooter>
               ) : null}
             </div>
           </motion.div>

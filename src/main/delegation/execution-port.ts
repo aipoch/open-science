@@ -22,6 +22,11 @@ class DelegateExecutionError extends Error {
   }
 }
 
+// Terminal execution failure whose process-owned resources must remain quarantined.
+class DelegateExecutionCleanupError extends Error {
+  readonly name = 'DelegateExecutionCleanupError'
+}
+
 class DelegateMessagePreAcceptanceError extends Error {
   constructor(
     message: string,
@@ -144,11 +149,17 @@ type DelegateCapacityReservation = Readonly<{
 }>
 
 type DelegateExecution = Readonly<{
+  recoverCleanup?(): Promise<void>
   reserve(count: number): Promise<DelegateCapacityReservation>
   run(input: DelegateExecutionInput, slotId: string): RunningDelegateExecution
 }>
 
-export { DelegateExecutionError, DelegateMessageParkedError, DelegateMessagePreAcceptanceError }
+export {
+  DelegateExecutionError,
+  DelegateExecutionCleanupError,
+  DelegateMessageParkedError,
+  DelegateMessagePreAcceptanceError
+}
 export type {
   DelegateCapacityReservation,
   DelegateExecutionBackendClaim,

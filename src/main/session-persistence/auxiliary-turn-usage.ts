@@ -9,7 +9,8 @@ const SESSION_AUXILIARY_TURN_USAGE_SOURCES = [
   'session-details',
   'host-llm',
   'artifact-code-reconstruction',
-  'context-compaction'
+  'context-compaction',
+  'classification'
 ] as const
 
 type SessionAuxiliaryTurnUsageSource = (typeof SESSION_AUXILIARY_TURN_USAGE_SOURCES)[number]

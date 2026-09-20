@@ -1703,6 +1703,41 @@ describe('notebook runtime service', () => {
     )
   })
 
+  it('executes REPL code when best-effort file-analysis context is unavailable', async () => {
+    const root = await createStorageRoot()
+    const sourceFileAccessContext = vi.fn(async () => {
+      throw new Error('analysis unavailable')
+    })
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+      status: 'completed' as const,
+      stdout: 'ran',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: []
+    }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      dependencyAnalyzer: {
+        project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+        sourceFileAccessContext
+      },
+      executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+    })
+    const result = await service.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1 + 1'
+    })
+    expect(sourceFileAccessContext).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: 'repl', code: '1 + 1' }))
+    expect(execute.mock.calls[0]?.[0].sourceFileAccessContext).toBeUndefined()
+    expect(result).toMatchObject({ status: 'completed', stdout: 'ran' })
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -4264,7 +4299,8 @@ describe('notebook runtime service', () => {
           profileId: 'profile-1',
           distro: 'Ubuntu-22.04',
           user: 'researcher'
-        }
+        },
+        grantedRoots: []
       })
       expect(result).toEqual({
         stdout: 'partial output',
@@ -5171,9 +5207,11 @@ describe('notebook runtime service', () => {
       const firstGate = new Promise<void>((resolve) => {
         releaseFirst = resolve
       })
+      const firstStarted = createDeferred<void>()
       const observedPaths: string[] = []
       const execute = vi.fn<NotebookShellProcess['execute']>(async (request) => {
         observedPaths.push(request.environment?.PATH ?? '')
+        if (request.command === 'first') firstStarted.resolve(undefined)
         if (request.command === 'first') await firstGate
         return { stdout: '', stderr: '', exitCode: 0 }
       })
@@ -5187,11 +5225,16 @@ describe('notebook runtime service', () => {
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       const first = service.executeShell({ ...scope, command: 'first' })
+      // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
+      await firstStarted.promise
       const second = service.executeShell({ ...scope, command: 'second' })
-      await vi.waitFor(async () => {
-        const state = await service.state(scope)
-        expect(state.runs.find((run) => run.script === 'second')?.status).toBe('queued')
-      })
+      await vi.waitFor(
+        async () => {
+          const state = await service.state(scope)
+          expect(state.runs.find((run) => run.script === 'second')?.status).toBe('queued')
+        },
+        { timeout: 10_000 }
+      )
       process.env.PATH = '/mutated-after-admission'
       try {
         releaseFirst()
@@ -5210,12 +5253,14 @@ describe('notebook runtime service', () => {
       const firstGate = new Promise<void>((resolve) => {
         releaseFirst = resolve
       })
+      const firstStarted = createDeferred<void>()
       const observedEpochs: string[] = []
       const prepare = vi.fn<NonNullable<NotebookShellProcess['prepare']>>(async (request) => {
         const frozenEpoch = permissionEpoch
         return {
           execute: async () => {
             observedEpochs.push(frozenEpoch)
+            if (request.command === 'first') firstStarted.resolve(undefined)
             if (request.command === 'first') await firstGate
             return { stdout: '', stderr: '', exitCode: 0 }
           },
@@ -5232,9 +5277,10 @@ describe('notebook runtime service', () => {
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       const first = service.executeShell({ ...scope, command: 'first' })
+      await firstStarted.promise
       const second = service.executeShell({ ...scope, command: 'second' })
 
-      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2), { timeout: 10_000 })
       permissionEpoch = 'mutated-after-admission'
       releaseFirst()
       await Promise.all([first, second])

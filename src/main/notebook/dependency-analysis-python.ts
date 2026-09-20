@@ -6431,6 +6431,7 @@ const pythonJoinPathParts = (
 }
 
 type PythonStaticPathContext = {
+  managedEnvironment?: Readonly<Record<string, string>>
   collections: ReadonlyMap<string, PythonStaticFileCollection>
   importedNames: ReadonlyMap<string, string>
   shadowedNames: ReadonlySet<string>
@@ -6449,6 +6450,15 @@ const pythonStaticString = (
   }
   if (node.type === 'Name' && node.id) return bindings.get(node.id)
   if (node.type === 'Subscript' && isPyNode(node.value)) {
+    const rawName = pythonDottedName(node.value)
+    const [root, ...members] = rawName?.split('.') ?? []
+    const imported = context?.importedNames.get(root ?? '')
+    const canonical = imported ? [imported, ...members].join('.') : undefined
+    if (canonical === 'os.environ') {
+      const key = evaluate(node.slice)
+      const value = key === undefined ? undefined : context?.managedEnvironment?.[key]
+      return typeof value === 'string' ? value : undefined
+    }
     const collection = pythonStaticStringCollection(
       node.value,
       bindings,
@@ -6489,6 +6499,17 @@ const pythonStaticString = (
       ? [imported ?? root, ...members].join('.')
       : undefined
   const args = Array.isArray(node.args) ? node.args : []
+  if (
+    name &&
+    ['os.getenv', 'os.environ.get'].includes(name) &&
+    imported &&
+    args.length <= 2 &&
+    !(node.keywords ?? []).length
+  ) {
+    const key = evaluate(args[0])
+    const value = key === undefined ? undefined : context?.managedEnvironment?.[key]
+    return typeof value === 'string' ? value : undefined
+  }
   if (name && ['Path', 'PurePath', 'pathlib.Path', 'pathlib.PurePath'].includes(name)) {
     if ((node.keywords ?? []).length) return undefined
     const parts = args.map(evaluate)
@@ -7042,7 +7063,11 @@ const analyzePythonFileAccessTree = (
     pythonStaticString(node, values, {
       collections,
       importedNames,
-      shadowedNames: shadowedStaticCalls
+      shadowedNames: shadowedStaticCalls,
+      managedEnvironment:
+        !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+          ? context?.managedEnvironment
+          : undefined
     })
   const inMemoryInputs = new Set<string>()
   const fileConnections = new Map<string, string>(
@@ -7284,6 +7309,11 @@ const analyzePythonFileAccessTree = (
       member
     )
     const libraryFileEffect = libraryMethodEffect?.file
+    if (
+      ['os.getenv', 'os.environ.get'].includes(canonicalName) &&
+      resolveStaticString(node, bindings) !== undefined
+    )
+      return
     // Callback containers can introduce I/O beyond the reader's explicit source.
     // Only a closed, read-only inline callback proves that no extra files are involved.
     for (const keyword of node.keywords ?? []) {
@@ -7906,6 +7936,49 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (canonicalName === 'json.load' || canonicalName === 'json.dump') {
+      // Named callbacks and custom codecs may perform I/O outside the explicit
+      // stream. **kwargs can hide these hooks, so it cannot establish completeness.
+      if (
+        (node.keywords ?? []).some(
+          (keyword) =>
+            keyword.arg === null ||
+            keyword.arg === undefined ||
+            ([
+              'cls',
+              'object_hook',
+              'object_pairs_hook',
+              'parse_int',
+              'parse_float',
+              'parse_constant',
+              'default'
+            ].includes(keyword.arg) &&
+              !(keyword.value.type === 'Constant' && keyword.value.value === null))
+        )
+      ) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+      const writing = canonicalName === 'json.dump'
+      const args = Array.isArray(node.args) ? node.args : []
+      const stream =
+        (node.keywords ?? []).find((keyword) => keyword.arg === 'fp')?.value ??
+        args[writing ? 1 : 0]
+      if (pythonInMemoryInput(stream, importedNames, inMemoryInputs)) return
+      const path = fileConnectionPath(stream)
+      if (path)
+        recordFileAccess(writing ? 'write' : 'read', {
+          type: 'Constant',
+          constKind: 'str',
+          value: path,
+          _fields: []
+        })
+      else if (writing) unresolvedWrites = true
+      else unresolvedReads = true
+      return
+    }
+
     if (canonicalName === 'tarfile.open') {
       const args = Array.isArray(node.args) ? node.args : []
       const fileObject = (node.keywords ?? []).find((keyword) => keyword.arg === 'fileobj')?.value
@@ -8069,7 +8142,11 @@ const analyzePythonFileAccessTree = (
       const collection = pythonStaticStringCollection(argument, bindings, collections, {
         collections,
         importedNames,
-        shadowedNames: shadowedStaticCalls
+        shadowedNames: shadowedStaticCalls,
+        managedEnvironment:
+          !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+            ? context?.managedEnvironment
+            : undefined
       })
       if (collection?.kind === 'sequence' || collection?.kind === 'rows') {
         if (effect.inputForm === 'lines' && collection.kind === 'sequence') return
@@ -8405,7 +8482,11 @@ const analyzePythonFileAccessTree = (
       const collection = pythonStaticStringCollection(valueNode, bindings, collections, {
         collections,
         importedNames,
-        shadowedNames: shadowedStaticCalls
+        shadowedNames: shadowedStaticCalls,
+        managedEnvironment:
+          !pythonTaintedNamespaces.has('os') && !pythonTaintedNamespaces.has('*')
+            ? context?.managedEnvironment
+            : undefined
       })
       const collectionRows = pythonStaticLoopRows(
         valueNode,

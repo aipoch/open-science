@@ -35,7 +35,9 @@
     "src/renderer/src/pages/settings/provider-icons.render.test.tsx",
     "src/renderer/src/pages/settings/provider-icons.tsx",
     "src/renderer/src/pages/settings/provider-key-security.ts",
-    "src/renderer/src/pages/settings/skill-marketplace-model.ts"
+    "src/renderer/src/pages/settings/skill-marketplace-model.ts",
+    "src/renderer/src/pages/settings/ClassificationPanel.tsx",
+    "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AgentHomeImportView.tsx",
@@ -68,7 +70,8 @@
       "src/renderer/src/pages/settings/agent-panel-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/model-panel-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/provider-form-value.test.ts",
-      "src/renderer/src/pages/settings/provider-icons.render.test.tsx"
+      "src/renderer/src/pages/settings/provider-icons.render.test.tsx",
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -101,6 +104,7 @@
       "src/renderer/src/lib/acp/useWorkspaceElicitation.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
+      "src/renderer/src/lib/session-fork.test.ts",
       "src/renderer/src/lib/session-package-export.test.ts",
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
@@ -181,6 +185,7 @@
       "src/renderer/src/pages/workspace/MobilePreviewSheet.annotation.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.follow-scroll.test.tsx",
       "src/renderer/src/pages/workspace/NotebookPreview.gate.render.test.tsx",
+      "src/renderer/src/pages/workspace/NotebookRunOutputs.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.render.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-delete.render.test.tsx",
@@ -193,6 +198,9 @@
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.test.tsx",
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.accessibility.test.tsx",
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/SessionNotebookDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/SpecialistSubmenu.render.test.tsx",
       "src/renderer/src/pages/workspace/SubagentReleaseSurfaces.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.annotations.test.tsx",
@@ -245,8 +253,7 @@
       "src/renderer/src/stores/settings-navigation-slice.test.ts",
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/lib/session-fork.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": [],

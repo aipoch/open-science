@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -73,23 +73,26 @@ describe('locateApp', () => {
     'requires explicit selection for old or mixed-name installations on %s: %s',
     async (platform, command) => {
       vi.stubGlobal('process', { ...process, platform })
+      const explicitCommand = resolve(command)
       vi.mocked(fs.access).mockImplementation(async (path) => {
-        if (String(path) !== command) throw new Error('ENOENT')
+        if (resolve(String(path)) !== explicitCommand) throw new Error('ENOENT')
       })
       await expect(locateApp({ env: { LOCALAPPDATA: '/fixture' } })).rejects.toThrow(
         /--app-path.*OPEN_SCIENCE_APP_PATH/
       )
-      expect((await locateApp({ appPath: command, env: {} })).command).toBe(command)
-      expect((await locateApp({ env: { OPEN_SCIENCE_APP_PATH: command } })).command).toBe(command)
+      expect((await locateApp({ appPath: command, env: {} })).command).toBe(explicitCommand)
+      expect((await locateApp({ env: { OPEN_SCIENCE_APP_PATH: command } })).command).toBe(
+        explicitCommand
+      )
     }
   )
   it('prefers the new installed bundle while an explicit old bundle remains selectable', async () => {
     vi.stubGlobal('process', { ...process, platform: 'darwin' })
-    const current = '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
-    const legacy = '/Applications/Open Science.app/Contents/MacOS/Open Science'
-    const candidates = new Set([legacy, current])
+    const current = join('/Applications', 'Open-Science.app', 'Contents', 'MacOS', 'Open-Science')
+    const legacy = resolve('/Applications/Open Science.app/Contents/MacOS/Open Science')
+    const candidates = new Set([legacy, resolve(current)])
     vi.mocked(fs.access).mockImplementation(async (path) => {
-      if (!candidates.has(String(path))) throw new Error('ENOENT')
+      if (!candidates.has(resolve(String(path)))) throw new Error('ENOENT')
     })
     expect((await locateApp({ env: {} })).command).toBe(current)
     expect((await locateApp({ appPath: legacy, env: {} })).command).toBe(legacy)
@@ -102,8 +105,10 @@ describe('locateApp', () => {
     ['linux', '/opt/Open-Science/open-science']
   ])('discovers only the new default on %s: %s', async (platform, command) => {
     vi.stubGlobal('process', { ...process, platform })
+    // Changing process.platform does not change node:path's host-platform implementation.
+    const candidate = platform === 'linux' ? command : join(command)
     vi.mocked(fs.access).mockImplementation(async (path) => {
-      if (String(path) !== command) throw new Error('ENOENT')
+      if (String(path) !== candidate) throw new Error('ENOENT')
     })
     expect(
       (
@@ -111,7 +116,7 @@ describe('locateApp', () => {
           env: { HOME: '/fixture', LOCALAPPDATA: '/fixture', PROGRAMFILES: '/programs' }
         })
       ).command
-    ).toBe(command)
+    ).toBe(candidate)
   })
 
   it.each(['/usr/bin/open-science', '/usr/local/bin/open-science', '/custom/bin/open-science'])(

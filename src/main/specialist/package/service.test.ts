@@ -141,6 +141,72 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageService', () => {
+  it('keeps newly imported Skills off for Main and preserves later user choices on overwrite', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const settings = new SettingsRepository(storageDir, (operation) =>
+      skillPort.runMutationExclusive(operation)
+    )
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      skillSettings: settings,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false,
+          mainEnabled: true
+        }))
+      })
+    })
+    const preview = await service.preview(bundledZip())
+    await expect(
+      service.install({ candidateToken: preview.candidateToken })
+    ).resolves.toMatchObject({
+      status: 'installed',
+      specialist: { enabled: false, setupPending: true }
+    })
+    expect((await settings.getSettings()).disabledSkillIds).toEqual(['personal-analysis-tools'])
+    await settings.setSkillEnabled('personal-analysis-tools', true)
+    const overwrite = await service.preview(bundledZip())
+    expect(overwrite.summary?.skills[0].disposition).toBe('reuse-owned')
+    await expect(
+      service.install({ candidateToken: overwrite.candidateToken, confirmOverwrite: true })
+    ).resolves.toMatchObject({ status: 'installed' })
+    expect((await settings.getSettings()).disabledSkillIds).toBeUndefined()
+    const withAdditionalSkill = zipSync({
+      ...unzipSync(bundledZip()),
+      'manifest.json': encoder.encode(
+        JSON.stringify({
+          schema_version: 1,
+          id: 'research-synth',
+          version: '1.4.0',
+          exported_with_app_version: '0.9.2'
+        })
+      ),
+      'skills/new-analysis/SKILL.md': encoder.encode(
+        '---\nname: new-analysis\ndescription: Additional analysis\nversion: 1.0.0\n---\nNew analysis.'
+      )
+    })
+    const adding = await service.preview(withAdditionalSkill)
+    expect(adding.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    await expect(
+      service.install({ candidateToken: adding.candidateToken, confirmOverwrite: true })
+    ).resolves.toMatchObject({ status: 'installed' })
+    expect((await settings.getSettings()).disabledSkillIds).toEqual(['personal-new-analysis'])
+    const exportPreview = await service.previewExport('research-synth')
+    expect(
+      exportPreview.diagnostics.some((item) => item.code === 'specialist.export-unbundled-skills')
+    ).toBe(false)
+    const unchecked = await service.previewExport('research-synth', [])
+    expect(unchecked.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'specialist.export-unbundled-skills' })
+    )
+  })
+
   it('requires a conflict decision and can keep the installed Skill', async () => {
     const repository = new SpecialistRepository(storageDir)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)

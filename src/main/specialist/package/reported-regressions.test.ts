@@ -11,6 +11,7 @@ import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialis
 import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
 import { UserSkillRepository } from '../../skills/user-skill-repository'
 import { SpecialistRepository } from '../repository'
+import { SettingsRepository } from '../../settings/repository'
 import { MarketplaceRepository, type MarketplaceInstallProvenance } from '../marketplace/repository'
 import { MarketplaceService } from '../marketplace/service'
 import { SpecialistPackageService } from './service'
@@ -356,17 +357,13 @@ describe('reported Specialist package regressions', () => {
     async (failures) => {
       const { packages, repository, skillPort, storageDir, userSkills } = await fixture()
       const marketRepository = new MarketplaceRepository(storageDir)
-      const disabled = new Set<string>()
+      const settings = new SettingsRepository(storageDir)
       const market = new MarketplaceService({
         repository: marketRepository,
         packages,
         fetch: vi.fn() as never,
-        getDisabledSkillIds: async () => [...disabled],
         setSkillsMainEnabled: async (ids, enabled) => {
-          for (const id of ids) {
-            if (enabled) disabled.delete(id)
-            else disabled.add(id)
-          }
+          await settings.setSkillsEnabled([...ids], enabled)
         },
         getInstalledSpecialists: async () =>
           (await repository.getAll()).specialists.map((item) => ({
@@ -410,7 +407,9 @@ describe('reported Specialist package regressions', () => {
       expect(await userSkills.list()).toHaveLength(1)
       // Either an installed result or the existing recovery-failed result can preserve the obligation.
       if (result.status === 'failed') expect(result.code).toBe('recovery-failed')
-      expect.soft([...disabled]).toEqual(['personal-analysis-tools'])
+      expect
+        .soft((await settings.getSettings()).disabledSkillIds)
+        .toEqual(['personal-analysis-tools'])
       const pending = await marketRepository.getAll()
       expect.soft(pending.pendingInstallations.length + pending.installations.length).toBe(1)
       // Retry through the market public boundary, including after a previous recovery attempt failed.
@@ -421,7 +420,9 @@ describe('reported Specialist package regressions', () => {
       await market.recover()
       await market.recover()
       expect.soft((await marketRepository.getAll()).installations).toHaveLength(1)
-      expect.soft([...disabled]).toEqual(['personal-analysis-tools'])
+      expect
+        .soft((await settings.getSettings()).disabledSkillIds)
+        .toEqual(['personal-analysis-tools'])
     }
   )
 

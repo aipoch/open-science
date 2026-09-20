@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，�
 
 AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.30.2 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.30.2 是一个以稳定性为主的版本：Windows 上的 R 运行时得以可靠恢复（conda 启动、可执行文件解析、内核恢复与已验证的 pip 入口点），Notebook 同回合输入可以正确重放，审阅者的修改在关联反馈之间保留上下文。文献导入将 PubMed 作者姓氏与名字缩写区分开并检查撤稿关系，连接器收紧了 Ensembl、VEP、Reactome、UCSC 与 gnomAD 的行为，DeepSeek V4.1 Flash 也加入了模型目录。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.31.1 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.31.1 扩展了从一个会话即可触达的科学数据：ENA 工具可将公开的 ENA/INSDC 登录号解析为对应的测序运行并附带归档生成的 FASTQ 文件，Genes 连接器新增由 g:Profiler 驱动的 GO 与通路富集分析并支持自定义统计背景，新的 NCBI 工具可解析分类单元名称、查看带版本号的基因组组装以及查询序列别名。设置中可以选择性接入专用的分类模型服务，远程访问配对请求移至安全面板顶部并支持安全撤销可信浏览器。整体稳定性更上一层——Windows 下的 R Notebook 会监督持久内核并引导网络恢复，丢失的 OpenCode 会话可在启动时找回，批准卡片、待处理消息预览与最近会话列表的表现也更加可靠。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

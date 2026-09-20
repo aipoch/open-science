@@ -504,6 +504,7 @@ const sendIntentKeys = [
   'expectedFrameworkId',
   'sessionId',
   'messageId',
+  'onMessageAppended',
   'branchSourceSessionId',
   'branchSourceMessageId',
   'text',
@@ -872,7 +873,9 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts'
+      'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
+      'src/renderer/src/lib/acp/runtime-observer.test.ts',
+      'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
