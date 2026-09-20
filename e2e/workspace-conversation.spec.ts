@@ -683,7 +683,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await page.screenshot({ path: testInfo.outputPath('source-preview-loading.png') })
   await expect(sourceFrame).toHaveAttribute(
     'sandbox',
-    'allow-same-origin allow-scripts allow-forms'
+    'allow-same-origin allow-scripts allow-forms allow-storage-access-by-user-activation'
   )
   await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
   await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')

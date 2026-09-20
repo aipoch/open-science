@@ -73,6 +73,10 @@ const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
 const sourcePreviewLoadMonitors = new WeakMap<BrowserWindow, SourcePreviewLoadMonitor>()
 const sourcePreviewEmbedPolicies = new WeakMap<BrowserWindow, SourcePreviewEmbedPolicy>()
 const sourcePreviewNavigationGuards = new WeakMap<BrowserWindow, SourcePreviewNavigationGuard>()
+const sourcePreviewStorageChecks = new WeakMap<
+  WebContents,
+  (requestingUrl: string, originOnly: boolean) => boolean
+>()
 
 type SourcePreviewLoadMonitor = ReturnType<typeof createSourcePreviewLoadMonitor>
 type SourcePreviewEmbedPolicy = ReturnType<typeof createSourcePreviewEmbedPolicy>
@@ -126,6 +130,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     permission: string,
     details: { isMainFrame: boolean; requestingUrl?: string }
   ): boolean => {
+    if (window.isDestroyed() || requestingWebContents !== window.webContents) return false
     const rendererUrl = window.webContents.getURL()
     return (
       rendererUrl !== '' &&
@@ -135,15 +140,36 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       ALLOWED_RENDERER_PERMISSIONS.has(permission)
     )
   }
-  // Remote source pages share the main window Session but never need Chromium permissions. The
-  // trusted renderer only needs sanitized clipboard writes; fail every other capability closed.
+  // Session handlers are shared across windows. Resolve storage access against the requesting
+  // window's live, admitted frames rather than whichever window installed the handler last.
+  const isAllowedStorageAccess = (
+    requestingWebContents: WebContents | null,
+    permission: string,
+    details: { isMainFrame: boolean; requestingUrl?: string },
+    requestingOrigin?: string
+  ): boolean =>
+    permission === 'storage-access' &&
+    !details.isMainFrame &&
+    requestingWebContents !== null &&
+    (sourcePreviewStorageChecks.get(requestingWebContents)?.(
+      details.requestingUrl ?? requestingOrigin ?? '',
+      details.requestingUrl === undefined
+    ) ??
+      false)
+
+  // Only source storage access and trusted-renderer clipboard writes are granted. Camera,
+  // microphone, filesystem, top-level storage delegation and other capabilities remain denied.
   window.webContents.session.setPermissionRequestHandler(
     (webContents, permission, callback, details) =>
-      callback(isAllowedRendererPermission(webContents, permission, details))
+      callback(
+        isAllowedRendererPermission(webContents, permission, details) ||
+          isAllowedStorageAccess(webContents, permission, details)
+      )
   )
   window.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, _requestingOrigin, details) =>
-      isAllowedRendererPermission(webContents, permission, details)
+    (webContents, permission, requestingOrigin, details) =>
+      isAllowedRendererPermission(webContents, permission, details) ||
+      isAllowedStorageAccess(webContents, permission, details, requestingOrigin)
   )
   const sourcePreviewLoadMonitor = createSourcePreviewLoadMonitor((state) => {
     window.webContents.send(SOURCE_PREVIEW_LOAD_STATE_CHANNEL, state)
@@ -158,7 +184,10 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   const unregisterPreviewContextMenuBridge = installPreviewContextMenuBridge(
     window.webContents as unknown as PreviewContextMenuWebContents
   )
+  const storageWebContents = window.webContents
   window.on('closed', () => {
+    // BrowserWindow.webContents is no longer readable once the native window has closed.
+    sourcePreviewStorageChecks.delete(storageWebContents)
     clearSourcePreviewState(window)
     unregisterSourcePreviewWebRequestOwner()
     unregisterPreviewContextMenuBridge()
@@ -173,6 +202,20 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     }
   )
   sourcePreviewNavigationGuards.set(window, isAllowedFrameNavigation)
+  sourcePreviewStorageChecks.set(window.webContents, (requestingUrl, originOnly) => {
+    const url = parseHttpsSourceUrl(requestingUrl)
+    if (!url) return false
+    try {
+      return window.webContents.mainFrame.framesInSubtree.some(
+        (frame) =>
+          isAllowedFrameNavigation.isSourceFrame(frame) &&
+          (originOnly ? new URL(frame.url).origin === url.origin : frame.url === url.href)
+      )
+    } catch {
+      // A detached frame or destroyed window cannot authorize a pending permission request.
+      return false
+    }
+  })
   type FrameNavigationDetails = {
     url: string
     isMainFrame: boolean

@@ -334,6 +334,7 @@ type ElectronApp = {
   findOverlayIsVisible: () => Promise<boolean>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
+  trustSourcePreviewCertificate: (certificate: string) => Promise<void>
   markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   readFakeAgentPrompts: () => Promise<
@@ -978,6 +979,19 @@ class ElectronAppHarness implements ElectronApp {
 
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
+  }
+
+  // Trust only the current test's loopback certificate; retain normal verification elsewhere.
+  async trustSourcePreviewCertificate(certificate: string): Promise<void> {
+    await this.runningApplication.evaluate(({ session }, certificate) => {
+      session.defaultSession.setCertificateVerifyProc((request, callback) => {
+        callback(
+          request.hostname === '127.0.0.1' && request.certificate.data.trim() === certificate.trim()
+            ? 0
+            : -3
+        )
+      })
+    }, certificate)
   }
 
   async showMainWindow(): Promise<void> {

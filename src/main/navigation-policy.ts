@@ -16,6 +16,7 @@ type NavigationFrame = {
 
 type FrameNavigationGuard = {
   (url: string, isMainFrame: boolean, currentUrl?: string, frame?: NavigationFrame | null): boolean
+  isSourceFrame: (frame: NavigationFrame) => boolean
   releaseSource: (sourceUrl: string) => void
   clearAll: () => void
 }
@@ -109,6 +110,14 @@ const createFrameNavigationGuard = (
     onSourcePreviewRoot?.(frame, url)
     return true
   }) as FrameNavigationGuard
+  // Permission checks must inspect admission without registering a new frame or navigating it.
+  guard.isSourceFrame = (frame) => {
+    if (getProtocol(frame.url) !== 'https:') return false
+    for (let ancestor: NavigationFrame | null = frame; ancestor; ancestor = ancestor.parent) {
+      if (sourceUrlsByRootFrameId.has(ancestor.frameTreeNodeId)) return true
+    }
+    return false
+  }
   guard.releaseSource = releaseSource
   guard.clearAll = () => sourceUrlsByRootFrameId.clear()
   return guard

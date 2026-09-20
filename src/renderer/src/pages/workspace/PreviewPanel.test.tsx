@@ -643,7 +643,8 @@ describe('PreviewPanel', () => {
     expect(iframe?.getAttribute('sandbox')?.split(/\s+/u)).toEqual([
       'allow-same-origin',
       'allow-scripts',
-      'allow-forms'
+      'allow-forms',
+      'allow-storage-access-by-user-activation'
     ])
   })
 

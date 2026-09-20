@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import {
   SOURCE_PREVIEW_FRAME_NAME,
+  SOURCE_PREVIEW_SANDBOX,
   parseHttpsSourceUrl,
   type SourcePreviewLoadState
 } from '../../../../../shared/source-preview'
@@ -279,7 +280,7 @@ const SourceWebPreviewContent = ({
             name={SOURCE_PREVIEW_FRAME_NAME}
             title={t('Source preview: {{title}}', { title: item.title })}
             src={sourceUrl.href}
-            sandbox="allow-same-origin allow-scripts allow-forms"
+            sandbox={SOURCE_PREVIEW_SANDBOX}
             referrerPolicy="no-referrer"
             aria-hidden={loadState.phase === 'failed' || undefined}
             className={cn(

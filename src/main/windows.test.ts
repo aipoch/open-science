@@ -120,7 +120,18 @@ class FakeBrowserWindow {
   hidden = false
   destroyed = false
   hideCalls = 0
-  mainFrame = { frameTreeNodeId: 1, name: '', url: 'file:///app/index.html', parent: null }
+  mainFrame = {
+    frameTreeNodeId: 1,
+    name: '',
+    url: 'file:///app/index.html',
+    parent: null,
+    framesInSubtree: [] as Array<{
+      frameTreeNodeId: number
+      name: string
+      url: string
+      parent: unknown
+    }>
+  }
   webContents = {
     id: 101,
     setWindowOpenHandler: (handler: (details: WindowOpenDetails) => unknown): void => {
@@ -1025,6 +1036,94 @@ describe('window navigation policy', () => {
       })
     }
   )
+
+  it('grants storage access only to live admitted HTTPS source frames, across windows', () => {
+    createMainWindow()
+    const first = lastWindow!
+    const source = {
+      frameTreeNodeId: 2,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: first.mainFrame
+    }
+    first.mainFrame.framesInSubtree.push(source)
+    first.webContentsHandlers.get('will-frame-navigate')?.({
+      url: 'https://citation.example/paper',
+      isMainFrame: false,
+      frame: source,
+      preventDefault: vi.fn()
+    })
+    source.url = 'https://citation.example/paper'
+    const releaseHandler = ipcMainOnMock.mock.calls
+      .filter(([channel]) => channel === SOURCE_PREVIEW_RELEASE_CHANNEL)
+      .at(-1)?.[1]
+    // Session permission handlers are shared: opening another app window must not revoke access.
+    createMainWindow()
+    const request = (url: string, permission = 'storage-access', isMainFrame = false): boolean => {
+      const callback = vi.fn()
+      permissionRequestHandler?.(first.webContents, permission, callback, {
+        isMainFrame,
+        requestingUrl: url
+      })
+      return callback.mock.calls[0]?.[0]
+    }
+    expect(request(source.url)).toBe(true)
+    const second = lastWindow!
+    second.destroy()
+    Object.defineProperty(second, 'webContents', {
+      get: () => {
+        throw new Error('Object has been destroyed')
+      }
+    })
+    for (const closed of second.handlers.get('closed') ?? []) {
+      closed({ preventDefault: vi.fn(), defaultPrevented: false })
+    }
+    expect(request(source.url)).toBe(true)
+    expect(
+      permissionCheckHandler?.(first.webContents, 'storage-access', 'https://citation.example', {
+        isMainFrame: false
+      })
+    ).toBe(true)
+    expect(request(source.url, 'media')).toBe(false)
+    expect(request(source.url, 'top-level-storage-access')).toBe(false)
+    expect(request(source.url, 'storage-access', true)).toBe(false)
+    expect(request('https://unregistered.example/page')).toBe(false)
+    expect(
+      permissionCheckHandler?.(null, 'storage-access', 'https://citation.example', {
+        isMainFrame: false
+      })
+    ).toBe(false)
+    expect(
+      permissionCheckHandler?.(first.webContents, 'storage-access', 'http://citation.example', {
+        isMainFrame: false
+      })
+    ).toBe(false)
+    // Redirects retain frame identity, but permission requests must match the live document.
+    source.url = 'https://publisher.example/paper'
+    expect(request(source.url)).toBe(true)
+    expect(request('https://citation.example/paper')).toBe(false)
+    const nested = {
+      frameTreeNodeId: 3,
+      name: '',
+      url: 'https://embedded.example/widget',
+      parent: source
+    }
+    first.mainFrame.framesInSubtree.push(nested)
+    expect(request(nested.url)).toBe(true)
+    const unrelated = {
+      frameTreeNodeId: 4,
+      name: 'open-science-source-preview',
+      url: 'https://unregistered.example/page',
+      parent: first.mainFrame
+    }
+    first.mainFrame.framesInSubtree.push(unrelated)
+    expect(request(unrelated.url)).toBe(false)
+    releaseHandler?.({ sender: first.webContents }, 'https://citation.example/paper')
+    expect(request(source.url)).toBe(false)
+    expect(request(nested.url)).toBe(false)
+    first.mainFrame.framesInSubtree.length = 0
+    expect(request(source.url)).toBe(false)
+  })
 
   it('denies sensitive Chromium permissions regardless of frame', () => {
     createMainWindow()
