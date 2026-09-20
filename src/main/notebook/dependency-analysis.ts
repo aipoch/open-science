@@ -1892,17 +1892,17 @@ class NotebookDependencyAnalyzer {
             (candidate) => helperContextKey(candidate) === helperContextKey(module)
           ) === index
       )
+      const contextWithoutHelpers = priorContext
+        ? { ...priorContext }
+        : { staticStrings: [], staticCollections: [], localFileWrappers: [] }
+      delete contextWithoutHelpers.pythonHelperModules
       const analysisContext =
-        helperModules.length > 0
+        helperModules.length > 0 || helperEvidenceIncomplete
           ? {
-              ...(priorContext ?? {
-                staticStrings: [],
-                staticCollections: [],
-                localFileWrappers: []
-              }),
-              pythonHelperModules: helperModules
+              ...contextWithoutHelpers,
+              ...(helperModules.length ? { pythonHelperModules: helperModules } : {})
             }
-          : priorContext
+          : contextWithoutHelpers
       const analysis = externalFacts
         ? {
             facts: externalFacts[index] ?? unknownFacts('analysis-unavailable'),
@@ -1929,9 +1929,20 @@ class NotebookDependencyAnalyzer {
           }
         : normalizedFacts
       const fileAccess = analysis.fileAccess
+      const invalidatedNames = new Set([
+        ...(persistedFacts.definedNames ?? []),
+        ...(persistedFacts.conditionallyDefinedNames ?? []),
+        ...(persistedFacts.mutatedNames ?? []),
+        ...(persistedFacts.possiblyMutatedNames ?? []),
+        ...(persistedFacts.receiverCalls ?? [])
+          .filter(({ kind }) => kind === 'mutating')
+          .map(({ receiver }) => receiver),
+        ...(persistedFacts.memberWrites ?? []).map(({ receiver }) => receiver)
+      ])
       const persistedHelperModules =
         run.kernelKind === 'python'
           ? (analysisContext?.pythonHelperModules ?? [])
+              .filter((module) => !module.exports.some((name) => invalidatedNames.has(name)))
               .filter((module) => module.source.length > 0 && module.source.length <= 512 * 1024)
               .slice(0, 32)
           : []

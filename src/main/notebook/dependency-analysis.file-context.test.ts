@@ -347,6 +347,56 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it.each([
+    ['path="input.csv"', '', ['input.csv']],
+    ['unused, path="input.csv"', '1', ['input.csv']],
+    ['path="input.csv", /', '', ['input.csv']],
+    ['*, path="input.csv"', '', ['input.csv']],
+    ['path="input.csv"', '"override.csv"', ['override.csv']],
+    ['*, path="input.csv"', 'path="override.csv"', ['override.csv']]
+  ])('binds literal helper defaults: %s (%s)', async (parameters, arguments_, reads) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs(${parameters}):\n    return open(path)`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `read_inputs(${arguments_})`, context)
+    ).toMatchObject({
+      reads,
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('does not resolve helper defaults against caller bindings', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [{ name: 'DEFAULT_PATH', value: 'caller.csv' }],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'DEFAULT_PATH = "module.csv"\ndef read_inputs(path=DEFAULT_PATH):\n    return open(path)',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
   it('keeps recursive helper replay partial', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
@@ -532,7 +582,7 @@ describe('file context after mutable path collections', () => {
     }
     const context = await fileContext(
       'python',
-      ['value = read_inputs()', 'value = 1'],
+      ['value = read_inputs()', 'value = read_inputs()\nlabel = "retained"'],
       [
         { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } },
         {
@@ -541,6 +591,17 @@ describe('file context after mutable path collections', () => {
         }
       ]
     )
+    const sidecar = JSON.parse(
+      await readFile(
+        join(roots.at(-1)!, 'notebooks/default-project/session-1/cache/dependency-analysis.json'),
+        'utf8'
+      )
+    )
+    expect(sidecar.runs['run-1'].fileContext.pythonHelperModules).toBeUndefined()
+    expect(sidecar.runs['run-1'].fileContext.staticStrings).toContainEqual({
+      name: 'label',
+      value: 'retained'
+    })
     expect(
       await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
     ).toMatchObject({
@@ -641,6 +702,10 @@ def read_inputs():
           helperEvidenceStatus: { state: 'complete' }
         }
       ]
+    )
+    expect(context?.pythonHelperModules).toBeUndefined()
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: [] }
     )
     expect(
       await analyzeNotebookSourceFileAccess(

@@ -7370,7 +7370,25 @@ const analyzePythonFileAccessTree = (
       const argument =
         keywords.get(parameter.arg ?? '') ??
         (index < positionalParameters.length ? positional[index] : undefined)
-      const value = resolveStaticString(argument, bindings)
+      const positionalDefaultStart = positionalParameters.length - (fnArgs?.defaults.length ?? 0)
+      const defaultValue =
+        index < positionalParameters.length
+          ? index >= positionalDefaultStart
+            ? fnArgs?.defaults[index - positionalDefaultStart]
+            : undefined
+          : fnArgs?.kw_defaults[index - positionalParameters.length]
+      // Defaults are evaluated at definition time. Only literals can be recovered
+      // without accidentally resolving their names against the caller's current scope.
+      const value = argument
+        ? resolveStaticString(argument, bindings)
+        : defaultValue?.type === 'Constant' && defaultValue.constKind === 'str'
+          ? (defaultValue.value as string)
+          : undefined
+      if (!argument && defaultValue && defaultValue.type !== 'Constant') {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
       if (parameter.arg && value !== undefined) parameterValues.set(parameter.arg, value)
     })
     const bindingsSnapshot = new Map(bindings)
