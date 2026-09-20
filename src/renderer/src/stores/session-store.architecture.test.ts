@@ -1085,6 +1085,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/components/WebEventRecoveryDialog.test.tsx',
           'src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx',
           'src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx',
+          'src/renderer/src/components/global-search/search-loading.test.tsx',
           'src/renderer/src/components/job-observation-ui.test.tsx',
           'src/renderer/src/components/notification-inbox-presentation.test.ts',
           'src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx',
