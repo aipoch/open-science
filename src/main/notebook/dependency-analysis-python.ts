@@ -141,7 +141,7 @@ const SIMPLE_FORMULA_PATTERN = /^[A-Za-z0-9_~+*:/.-]+(?:\s+[A-Za-z0-9_~+*:/.-]+)
 type PyCtx = 'Load' | 'Store' | 'Del'
 type ConstKind = 'int' | 'float' | 'bool' | 'str' | 'bytes' | 'none' | 'complex'
 
-type PyArg = { type: 'arg'; arg: string }
+type PyArg = { type: 'arg'; arg: string; annotation?: PyNode }
 type PyKeyword = { type: 'keyword'; arg: string | null; value: PyNode; _fields: string[] }
 type PyAlias = { type: 'alias'; name: string; asname: string | null }
 type PyComprehension = { target: PyNode; iter: PyNode; ifs: PyNode[]; isAsync?: boolean }
@@ -792,22 +792,29 @@ const convertParameters = (node: Node | null): PyArguments => {
       currentArgs = kwonlyargs
       continue
     }
-    if (child.type === 'list_splat' || child.type === 'list_splat_pattern') {
-      const name = child.namedChildren[0]?.text
-      if (name) vararg = { type: 'arg', arg: name }
+    const pattern = child.type === 'typed_parameter' ? child.namedChildren[0] : child
+    const annotationNode = fieldChild(child, 'type')
+    const annotation = annotationNode ? convertExpr(annotationNode, 'Load') : undefined
+    if (pattern?.type === 'list_splat' || pattern?.type === 'list_splat_pattern') {
+      const name = pattern.namedChildren[0]?.text
+      if (name) vararg = { type: 'arg', arg: name, annotation }
       seenStar = true
       currentArgs = kwonlyargs
       continue
     }
-    if (child.type === 'dictionary_splat' || child.type === 'dictionary_splat_pattern') {
-      const name = child.namedChildren[0]?.text
-      if (name) kwarg = { type: 'arg', arg: name }
+    if (pattern?.type === 'dictionary_splat' || pattern?.type === 'dictionary_splat_pattern') {
+      const name = pattern.namedChildren[0]?.text
+      if (name) kwarg = { type: 'arg', arg: name, annotation }
       continue
     }
-    const nameNode = child.type === 'identifier' ? child : fieldChild(child, 'name')
+    const nameNode = pattern?.type === 'identifier' ? pattern : fieldChild(child, 'name')
     const argName = nameNode?.type === 'identifier' ? nameNode.text : nameNode?.text
     if (!argName) continue
-    const arg = { type: 'arg' as const, arg: argName }
+    const arg = {
+      type: 'arg' as const,
+      arg: argName,
+      ...(annotation ? { annotation } : {})
+    }
     const defaultValue = fieldChild(child, 'value')
     if (seenStar) {
       kwonlyargs.push(arg)
@@ -1436,6 +1443,9 @@ const convertFunction = (node: Node, asyncFn = false): PyNode => {
         name: fieldChild(node, 'name')?.text ?? '',
         args: convertParameters(fieldChild(node, 'parameters')),
         body: convertBlock(fieldChild(node, 'body')),
+        annotation: fieldChild(node, 'return_type')
+          ? convertExpr(fieldChild(node, 'return_type')!, 'Load')
+          : undefined,
         decorator_list: decorators
       },
       ['decorator_list', 'args', 'body']
@@ -7342,7 +7352,13 @@ const analyzePythonFileAccessTree = (
     const nestedInvocation = helperScopeDepth > 0
     const preserveCallerScope = nestedInvocation && !helper.topLevel
     const fnArgs = helper.function.args as PyArguments | undefined
-    const parameters = [...(fnArgs?.posonlyargs ?? []), ...(fnArgs?.args ?? [])]
+    const positionalParameters = [...(fnArgs?.posonlyargs ?? []), ...(fnArgs?.args ?? [])]
+    const parameters = [...positionalParameters, ...(fnArgs?.kwonlyargs ?? [])]
+    const allParameters = [
+      ...parameters,
+      ...(fnArgs?.vararg ? [fnArgs.vararg] : []),
+      ...(fnArgs?.kwarg ? [fnArgs.kwarg] : [])
+    ]
     const positional = Array.isArray(call.args) ? call.args : []
     const keywords = new Map(
       (call.keywords ?? [])
@@ -7351,7 +7367,9 @@ const analyzePythonFileAccessTree = (
     )
     const parameterValues = new Map<string, string>()
     parameters.forEach((parameter, index) => {
-      const argument = keywords.get(parameter.arg ?? '') ?? positional[index]
+      const argument =
+        keywords.get(parameter.arg ?? '') ??
+        (index < positionalParameters.length ? positional[index] : undefined)
       const value = resolveStaticString(argument, bindings)
       if (parameter.arg && value !== undefined) parameterValues.set(parameter.arg, value)
     })
@@ -7408,16 +7426,43 @@ const analyzePythonFileAccessTree = (
       shadowedStaticCalls.clear()
       shadowedHelperNames.clear()
     }
+    const markOpaqueImportTimeEffect = (): void => {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+    }
+    const visitFunctionImportTimeEffects = (statement: PyNode): void => {
+      const args = statement.args as PyArguments | undefined
+      for (const value of [
+        ...(args?.defaults ?? []),
+        ...(args?.kw_defaults ?? []).filter(isPyNode)
+      ])
+        if (value.type !== 'Constant') markOpaqueImportTimeEffect()
+      for (const parameter of [
+        ...(args?.posonlyargs ?? []),
+        ...(args?.args ?? []),
+        ...(args?.kwonlyargs ?? []),
+        ...(args?.vararg ? [args.vararg] : []),
+        ...(args?.kwarg ? [args.kwarg] : [])
+      ]) {
+        if (parameter.annotation) markOpaqueImportTimeEffect()
+      }
+      if (statement.annotation || (statement.decorator_list ?? []).length)
+        markOpaqueImportTimeEffect()
+    }
     const loadModuleGlobals = (): void => {
       // Module-level imports and static assignments execute when the helper is imported. Keep
       // function/class definitions as callable bindings, but do not execute their bodies here.
       for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
-        if (
-          statement.type !== 'FunctionDef' &&
-          statement.type !== 'AsyncFunctionDef' &&
-          statement.type !== 'ClassDef'
-        )
-          visit(statement)
+        if (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') {
+          visitFunctionImportTimeEffects(statement)
+          continue
+        }
+        if (statement.type === 'ClassDef') {
+          markOpaqueImportTimeEffect()
+          continue
+        }
+        visit(statement)
       }
     }
     const mergeCallerScope = (): void => {
@@ -7453,6 +7498,11 @@ const analyzePythonFileAccessTree = (
       shadowedStaticCalls.clear()
       shadowedHelperNames.clear()
     }
+    const parameterNames = new Set(
+      allParameters
+        .map((parameter) => parameter.arg)
+        .filter((name): name is string => Boolean(name))
+    )
     helperScopeDepth += 1
     activeHelperFunctions.add(helper.function)
     const scope = new Map<string, HelperFunction>()
@@ -7480,6 +7530,18 @@ const analyzePythonFileAccessTree = (
     try {
       loadModuleGlobals()
       if (preserveCallerScope) mergeCallerScope()
+      for (const name of parameterNames) {
+        shadowedStaticCalls.add(name)
+        shadowedHelperNames.add(name)
+        bindings.delete(name)
+        collections.delete(name)
+        partialMappingKeys.delete(name)
+        partialCollectionRows.delete(name)
+        inMemoryInputs.delete(name)
+        fileConnections.delete(name)
+        importedNames.delete(name)
+        scientificObjectTypes.delete(name)
+      }
       for (const [name, value] of parameterValues) bindings.set(name, value)
       for (const statement of Array.isArray(helper.function.body) ? helper.function.body : [])
         visit(statement)
@@ -7494,6 +7556,12 @@ const analyzePythonFileAccessTree = (
   const analyzeCall = (node: PyNode, awaitedCall: boolean): void => {
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
+    if (helperScopeDepth > 0 && node.func?.type === 'Name' && shadowedHelperNames.has(rawName)) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     const canonicalName = canonicalCallName(node) ?? rawName
     const helper = helperScopes.at(-1)?.get(rawName) ?? helperFunctions.get(rawName)
     if (

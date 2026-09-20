@@ -316,6 +316,61 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it.each([
+    'class Loader:\n    source = open("class.csv")',
+    'def decorate(fn):\n    open("decorator.csv")\n    return fn\n@decorate\ndef registered():\n    pass',
+    'def registered(value=open("default.csv")):\n    pass',
+    'def registered(value: factory()):\n    pass',
+    'def registered() -> factory():\n    pass'
+  ])('keeps unmodeled helper import effects partial: %s', async (definition) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `${definition}\ndef read_inputs():\n    return open("input.csv")`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['input.csv'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    ['reader', 'reader', 'lambda: open("callback.csv")'],
+    ['*, reader', 'reader', 'reader=lambda: open("callback.csv")'],
+    ['open', 'open', 'lambda: open("callback.csv")']
+  ])(
+    'does not dispatch a callable helper parameter to a same-named binding: %s',
+    async (signature, name, argument) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `def reader():\n    return open("private.csv")\ndef read_inputs(${signature}):\n    return ${name}()`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      const result = await analyzeNotebookSourceFileAccess(
+        'python',
+        `value = read_inputs(${argument})`,
+        context
+      )
+      expect(result).toMatchObject({ readState: 'partial', externalState: 'partial' })
+      expect(result?.reads).not.toContain('private.csv')
+    }
+  )
+
   it('replays an async helper when its call is awaited', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
