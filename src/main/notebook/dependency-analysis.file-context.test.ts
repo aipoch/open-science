@@ -90,6 +90,57 @@ const fileContext = async (
 }
 
 describe('file context after mutable path collections', () => {
+  it('keeps private functions in their defining helper module', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def _read():\n    return open("first.csv")\ndef first():\n    return _read()',
+          exports: ['first']
+        },
+        {
+          source: 'def _read():\n    return open("second.csv")\ndef second():\n    return _read()',
+          exports: ['second']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'first()', context)).toMatchObject({
+      reads: ['first.csv']
+    })
+  })
+
+  it('resolves a nested helper reader against its enclosing local bindings', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    path = "nested.csv"\n    def read():\n        return open(path)\n    return read()',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: ['nested.csv'], readState: 'complete' }
+    )
+  })
+
+  it('does not certify an export without a matching callable body', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [{ source: 'value = 1', exports: ['read_inputs'] }]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { readState: 'partial', externalState: 'partial' }
+    )
+  })
+
   it('preserves a pure Python helper across cells and cache reload', async () => {
     const context = await fileContext('python', [
       'scale = 2\ndef label(value):\n    return str(value * scale)'

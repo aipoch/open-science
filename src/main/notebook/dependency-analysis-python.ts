@@ -7009,14 +7009,21 @@ const analyzePythonFileAccessTree = (
   const localWrappers = pythonLocalFileWrappers(tree)
   const helperFunctions = new Map<string, { function: PyNode; module: PyNode }>()
   const exportedHelperNames = new Set<string>()
+  const helperScopes: Array<Map<string, { function: PyNode; module: PyNode }>> = []
   for (const { module, exports } of helperModules) {
-    for (const name of exports) exportedHelperNames.add(name)
+    const topLevelFunctions = new Map<string, PyNode>()
     for (const statement of Array.isArray(module.body) ? module.body : []) {
-      if (statement.type !== 'FunctionDef' && statement.type !== 'AsyncFunctionDef') continue
-      for (const nested of walkPy(statement)) {
-        if ((nested.type === 'FunctionDef' || nested.type === 'AsyncFunctionDef') && nested.name)
-          helperFunctions.set(nested.name, { function: nested, module })
-      }
+      if (
+        (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+        statement.name
+      )
+        topLevelFunctions.set(statement.name, statement)
+    }
+    for (const name of exports) {
+      const fn = topLevelFunctions.get(name)
+      if (!fn) continue
+      exportedHelperNames.add(name)
+      helperFunctions.set(name, { function: fn, module })
     }
   }
   const activeHelperNames = new Set<string>()
@@ -7311,6 +7318,7 @@ const analyzePythonFileAccessTree = (
   }
 
   const invokeHelper = (helper: { function: PyNode; module: PyNode }, call: PyNode): void => {
+    const nestedInvocation = helperScopeDepth > 0
     const fnArgs = helper.function.args as PyArguments | undefined
     const parameters = [...(fnArgs?.posonlyargs ?? []), ...(fnArgs?.args ?? [])]
     const positional = Array.isArray(call.args) ? call.args : []
@@ -7365,35 +7373,57 @@ const analyzePythonFileAccessTree = (
       pythonTaintedNamespaces.clear()
       for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
     }
-    bindings.clear()
-    collections.clear()
-    partialMappingKeys.clear()
-    partialCollectionRows.clear()
-    inMemoryInputs.clear()
-    fileConnections.clear()
-    archiveNames.clear()
-    importedNames.clear()
-    scientificObjectTypes.clear()
-    shadowedStaticCalls.clear()
-    shadowedHelperNames.clear()
-    pythonTaintedNamespaces.clear()
+    if (!nestedInvocation) {
+      bindings.clear()
+      collections.clear()
+      partialMappingKeys.clear()
+      partialCollectionRows.clear()
+      inMemoryInputs.clear()
+      fileConnections.clear()
+      archiveNames.clear()
+      importedNames.clear()
+      scientificObjectTypes.clear()
+      shadowedStaticCalls.clear()
+      shadowedHelperNames.clear()
+      pythonTaintedNamespaces.clear()
+    }
     helperScopeDepth += 1
     activeHelperNames.add(helper.function.name!)
+    const scope = new Map<string, { function: PyNode; module: PyNode }>()
+    if (nestedInvocation) {
+      for (const candidate of helperScopes.at(-1)?.values() ?? [])
+        scope.set(candidate.function.name!, candidate)
+    }
+    for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
+      if (
+        (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+        statement.name
+      )
+        scope.set(statement.name, { function: statement, module: helper.module })
+    }
+    for (const nested of walkPy(helper.function)) {
+      if ((nested.type === 'FunctionDef' || nested.type === 'AsyncFunctionDef') && nested.name)
+        scope.set(nested.name, { function: nested, module: helper.module })
+    }
+    helperScopes.push(scope)
     try {
-      // Module-level imports and static assignments execute when the helper is imported. Keep
-      // function/class definitions as callable bindings, but do not execute their bodies here.
-      for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
-        if (
-          statement.type !== 'FunctionDef' &&
-          statement.type !== 'AsyncFunctionDef' &&
-          statement.type !== 'ClassDef'
-        )
-          visit(statement)
+      if (!nestedInvocation) {
+        // Module-level imports and static assignments execute when the helper is imported. Keep
+        // function/class definitions as callable bindings, but do not execute their bodies here.
+        for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
+          if (
+            statement.type !== 'FunctionDef' &&
+            statement.type !== 'AsyncFunctionDef' &&
+            statement.type !== 'ClassDef'
+          )
+            visit(statement)
+        }
       }
       for (const [name, value] of parameterValues) bindings.set(name, value)
       for (const statement of Array.isArray(helper.function.body) ? helper.function.body : [])
         visit(statement)
     } finally {
+      helperScopes.pop()
       activeHelperNames.delete(helper.function.name!)
       helperScopeDepth -= 1
       restore()
@@ -7406,12 +7436,12 @@ const analyzePythonFileAccessTree = (
     const canonicalName = canonicalCallName(node) ?? rawName
     if (
       node.func?.type === 'Name' &&
-      helperFunctions.has(rawName) &&
+      (helperScopes.at(-1)?.has(rawName) || helperFunctions.has(rawName)) &&
       (helperScopeDepth > 0 || exportedHelperNames.has(rawName)) &&
       !shadowedHelperNames.has(rawName) &&
       !activeHelperNames.has(rawName)
     ) {
-      invokeHelper(helperFunctions.get(rawName)!, node)
+      invokeHelper(helperScopes.at(-1)?.get(rawName) ?? helperFunctions.get(rawName)!, node)
       return
     }
     if (
@@ -8815,11 +8845,26 @@ const analyzePythonNotebookSource = async (
 }> => {
   const parsedHelpers = await Promise.all(
     (context?.pythonHelperModules ?? []).map(async (helper) => {
-      const parsed = await withParsedNotebookSource('python', helper.source, (root) => ({
-        module: convertModule(root),
-        exports: new Set(helper.exports)
-      }))
-      return parsed.state === 'ok' ? { descriptor: helper, ...parsed.value } : undefined
+      const parsed = await withParsedNotebookSource('python', helper.source, (root) => {
+        const module = convertModule(root)
+        const available = new Set(
+          (Array.isArray(module.body) ? module.body : [])
+            .filter(
+              (statement) =>
+                statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef'
+            )
+            .flatMap((statement) => (statement.name ? [statement.name] : []))
+        )
+        return {
+          module,
+          exports: new Set(helper.exports.filter((name) => available.has(name))),
+          descriptor: {
+            ...helper,
+            exports: helper.exports.filter((name) => available.has(name))
+          }
+        }
+      })
+      return parsed.state === 'ok' ? parsed.value : undefined
     })
   )
   const parsed = await withParsedNotebookSource('python', source, (root) => {
