@@ -39,6 +39,8 @@ model Project {
   memoryEntries    MemoryEntry[]
   literatureItems  ProjectLiterature[]
   bookmarks        Bookmark[]
+  pdfAnnotations   PdfAnnotation[]
+  pdfAnnotationImports PdfAnnotationImport[]
 }
 
 // A private, Session-scoped saved source location. Session identity deliberately has no foreign key:
@@ -61,6 +63,52 @@ model Bookmark {
   @@index([projectId, sessionId, createdAt, id])
   @@index([projectId, sessionId, sourceKind, sourceId])
   @@map("bookmarks")
+}
+
+// PDF annotations are owned independently from generic Bookmarks. The selector is versioned JSON
+// so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
+model PdfAnnotation {
+  id              String   @id
+  projectId       String?
+  sessionId       String?
+  sourceSessionId String?
+  sourceKind      String
+  sourceFileId    String
+  versionId       String
+  checksum        String
+  name            String
+  path            String
+  kind            String
+  selectorJson    String
+  color           String?
+  origin          String   @default("user")
+  externalSubtype String?
+  note            String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  project         Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sessionId, createdAt, id])
+  @@index([projectId, sourceKind, sourceFileId, versionId, createdAt, id])
+  @@index([sourceKind, sourceFileId, versionId, createdAt, id])
+  @@map("pdf_annotations")
+}
+
+// Receipt survives individual annotation deletion, so exports can remove only imported originals.
+model PdfAnnotationImport {
+  id String @id
+  projectId String?
+  sessionId String?
+  sourceKind String
+  sourceFileId String
+  versionId String
+  checksum String
+  resultJson String
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sessionId])
+  @@index([sourceKind, sourceFileId, versionId])
+  @@map("pdf_annotation_imports")
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when
@@ -459,41 +507,41 @@ model ContentBlob {
 // Mutable bibliographic identity. Item-specific fields that do not belong in the indexed core are
 // retained as validated JSON so Zotero-compatible imports can round-trip without a wide nullable table.
 model LiteratureItem {
-  normalizedTitle          String                     @default("")
-  normalizedAbstract       String                     @default("")
-  normalizedContainerTitle String                     @default("")
-  id                       String                     @id @default(cuid())
+  normalizedTitle          String                            @default("")
+  normalizedAbstract       String                            @default("")
+  normalizedContainerTitle String                            @default("")
+  id                       String                            @id @default(cuid())
   itemType                 String
   title                    String
-  abstract                 String                     @default("")
-  issuedText               String                     @default("")
+  abstract                 String                            @default("")
+  issuedText               String                            @default("")
   issuedYear               Int?
-  containerTitle           String                     @default("")
-  shortTitle               String                     @default("")
-  language                 String                     @default("")
-  rights                   String                     @default("")
-  url                      String                     @default("")
+  containerTitle           String                            @default("")
+  shortTitle               String                            @default("")
+  language                 String                            @default("")
+  rights                   String                            @default("")
+  url                      String                            @default("")
   accessedAt               DateTime?
   citationKey              String?
-  extra                    String                     @default("")
-  rating                   Int                        @default(0)
-  personalNote             String                     @default("")
-  typeFieldsJson           String                     @default("{}")
-  metadataRevision         Int                        @default(1)
-  createdAt                DateTime                   @default(now())
-  updatedAt                DateTime                   @updatedAt
+  extra                    String                            @default("")
+  rating                   Int                               @default(0)
+  personalNote             String                            @default("")
+  typeFieldsJson           String                            @default("{}")
+  metadataRevision         Int                               @default(1)
+  createdAt                DateTime                          @default(now())
+  updatedAt                DateTime                          @updatedAt
   deletedAt                DateTime?
   mergedIntoItemId         String?
-  mergedInto               LiteratureItem?            @relation("LiteratureItemMerge", fields: [mergedIntoItemId], references: [id], onDelete: Restrict)
-  mergedItems              LiteratureItem[]           @relation("LiteratureItemMerge")
+  mergedInto               LiteratureItem?                   @relation("LiteratureItemMerge", fields: [mergedIntoItemId], references: [id], onDelete: Restrict)
+  mergedItems              LiteratureItem[]                  @relation("LiteratureItemMerge")
   creators                 LiteratureItemCreator[]
   identifiers              LiteratureIdentifier[]
   sourceRecords            LiteratureSourceRecord[]
   collections              LiteratureCollectionItem[]
   projects                 ProjectLiterature[]
   attachments              LiteratureAttachment[]
-  acceptedInboxCandidates  LiteratureInboxCandidate[] @relation("AcceptedLiteratureItem")
-  metadataCommitReceipts LiteratureMetadataCommitReceipt[]
+  acceptedInboxCandidates  LiteratureInboxCandidate[]        @relation("AcceptedLiteratureItem")
+  metadataCommitReceipts   LiteratureMetadataCommitReceipt[]
 
   @@index([deletedAt, updatedAt])
   @@index([mergedIntoItemId])
@@ -582,12 +630,12 @@ model LiteratureIdentifier {
 }
 
 model LiteratureInboxCandidate {
-  id               String                   @id @default(cuid())
-  dedupeKey        String                   @unique
-  state            String                   @default("pending")
+  id               String                         @id @default(cuid())
+  dedupeKey        String                         @unique
+  state            String                         @default("pending")
   itemType         String
   title            String
-  abstract         String                   @default("")
+  abstract         String                         @default("")
   issuedYear       Int?
   candidateJson    String
   metadataChecksum String
@@ -596,9 +644,9 @@ model LiteratureInboxCandidate {
   sourceSessionId  String?
   acceptedItemId   String?
   settledAt        DateTime?
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
-  acceptedItem     LiteratureItem?          @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
+  createdAt        DateTime                       @default(now())
+  updatedAt        DateTime                       @updatedAt
+  acceptedItem     LiteratureItem?                @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
   sourceRecords    LiteratureSourceRecord[]
   discoveries      LiteratureCandidateDiscovery[]
   pdfs             LiteratureInboxPdf[]
@@ -610,13 +658,13 @@ model LiteratureInboxCandidate {
 
 // Distinct discovery contexts survive global candidate deduplication and acceptance.
 model LiteratureCandidateDiscovery {
-  id          String @id @default(cuid())
+  id          String                   @id @default(cuid())
   candidateId String
   contextKey  String
   origin      String
   projectId   String?
   sessionId   String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime                 @default(now())
   candidate   LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@unique([candidateId, contextKey])
@@ -1201,11 +1249,11 @@ model BackgroundResultDelivery {
 // Immutable proof of a metadata application. Retain while the reference exists, including soft
 // deletion/merge; removing a JSON task must not invalidate checkpoints that can still replay.
 model LiteratureMetadataCommitReceipt {
-  operationId                String         @id
-  itemId                     String
-  expectedMetadataRevision   Int
-  committedMetadataRevision  Int
-  item                       LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  operationId               String         @id
+  itemId                    String
+  expectedMetadataRevision  Int
+  committedMetadataRevision Int
+  item                      LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@index([itemId])
 }

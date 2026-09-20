@@ -1,3 +1,5 @@
+import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 // @vitest-environment jsdom
 import { act, createRef, Profiler, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -23,6 +25,20 @@ import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+
+vi.mock('../workspace/FilePreviewDialog', () => ({
+  FilePreviewDialog: ({
+    item,
+    onClose
+  }: {
+    item: { name: string; path: string }
+    onClose: () => void
+  }) => (
+    <div role="dialog" aria-label={item.name} data-preview-path={item.path}>
+      <button onClick={onClose}>Close tagged PDF</button>
+    </div>
+  )
+}))
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -655,6 +671,138 @@ describe('SettingsPage layout', () => {
     })
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it.each(['literature', 'project', 'missing', 'location-unavailable'] as const)(
+    'opens a tagged PDF annotation at its saved location (%s)',
+    async (kind) => {
+      const annotation: PdfAnnotation = {
+        id: 'marked-1',
+        version: 1,
+        origin: 'user',
+        kind: 'page-note',
+        note: 'Review methods',
+        tagIds: ['tag-favorite'],
+        ...(kind === 'project'
+          ? { projectId: 'project-a', sessionId: 'session-a' }
+          : { literatureVersionId: 'pdf-version' }),
+        target: {
+          source: {
+            kind: kind === 'project' ? 'upload-version' : 'literature-attachment-version',
+            ...(kind === 'project' ? { projectId: 'project-a', sessionId: 'session-a' } : {}),
+            sourceFileId: 'pdf-file',
+            versionId: 'pdf-version',
+            checksum: 'a'.repeat(64),
+            name: 'Tagged.pdf',
+            path:
+              kind === 'project'
+                ? 'upload-version:project-a/session-a/pdf-version'
+                : 'literature-attachment-version:pdf-version'
+          },
+          selector: { kind: 'page-note', pageNumber: 3, pageRotation: 0, coordinateVersion: 1 }
+        },
+        createdAt: '2026-09-20T00:00:00.000Z',
+        updatedAt: '2026-09-20T00:00:00.000Z'
+      }
+      vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+        revision: 20,
+        tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+        assignments: [
+          {
+            tagId: 'tag-favorite',
+            resourceType: 'pdf.annotation',
+            resourceId: annotation.id,
+            createdAt: 1
+          }
+        ],
+        pdfAnnotations: [
+          {
+            id: annotation.id,
+            name: 'Tagged.pdf',
+            note: 'Review methods',
+            versionId: 'pdf-version',
+            ...(kind === 'project'
+              ? { projectId: 'project-a', sessionId: 'session-a' }
+              : { literatureItemId: 'paper-1' })
+          }
+        ]
+      })
+      const list = vi.fn().mockResolvedValue({
+        items: kind === 'missing' ? [] : [annotation],
+        total: kind === 'missing' ? 0 : 1
+      })
+      window.api.pdfAnnotations = { list } as unknown as Window['api']['pdfAnnotations']
+      const openLibrary = vi
+        .spyOn(useNavigationStore.getState(), 'openLiteratureItem')
+        .mockImplementation((_id, _origin, _annotation, done) => done?.())
+      const openSession = vi
+        .spyOn(useNavigationStore.getState(), 'openSession')
+        .mockImplementation((_project, _session, _origin, done) => {
+          done?.()
+          return true
+        })
+      const reveal = vi
+        .spyOn(annotationReveal, 'requestPdfAnnotationReveal')
+        .mockResolvedValue(kind === 'location-unavailable' ? 'locator-unsupported' : 'revealed')
+      try {
+        const onClose = vi.fn()
+        await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+        await act(async () => navButton('Tags')?.click())
+        await waitFor(() =>
+          expect(document.body.querySelector('[data-slot="tag-resource-row"]')).not.toBeNull()
+        )
+        await act(async () =>
+          (
+            document.body.querySelector('[data-slot="tag-resource-row"]') as HTMLButtonElement
+          ).click()
+        )
+        expect(list).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: annotation.id,
+            limit: 1,
+            ...(kind === 'project'
+              ? { projectId: 'project-a', sessionId: 'session-a' }
+              : { literatureVersionId: 'pdf-version' })
+          })
+        )
+        expect(openLibrary).not.toHaveBeenCalled()
+        expect(openSession).not.toHaveBeenCalled()
+        expect(onClose).not.toHaveBeenCalled()
+        if (kind !== 'missing') {
+          await waitFor(() =>
+            expect(reveal).toHaveBeenCalledWith(
+              annotation,
+              expect.objectContaining({ activatePreview: false })
+            )
+          )
+          expect(
+            document.querySelector('[data-preview-path]')?.getAttribute('data-preview-path')
+          ).toBe(annotation.target.source.path)
+          if (kind === 'location-unavailable') {
+            expect(document.body.textContent).toContain(
+              'The exact annotation location could not be found.'
+            )
+          }
+          await act(async () => {
+            Array.from(document.querySelectorAll('button'))
+              .find((button) => button.textContent === 'Close tagged PDF')
+              ?.click()
+          })
+          expect(document.querySelector('[data-preview-path]')).toBeNull()
+          expect(document.body.querySelector('[data-slot="tag-resource-row"]')).not.toBeNull()
+          expect(onClose).not.toHaveBeenCalled()
+        } else {
+          expect(onClose).not.toHaveBeenCalled()
+          expect(document.body.textContent).toContain(
+            'PDF annotations are unavailable for this source.'
+          )
+        }
+      } finally {
+        openLibrary.mockRestore()
+        openSession.mockRestore()
+        reveal.mockRestore()
+      }
+    }
+  )
 
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({

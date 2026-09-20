@@ -1,3 +1,4 @@
+import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
@@ -417,6 +418,7 @@ const PreviewFileHeader = ({
               <ManagedFileDownloadButton
                 source={item.source ?? 'artifact'}
                 path={item.path}
+                versionId={item.selectedVersionId}
                 {...(item.projectId && item.managedFileId
                   ? {
                       projectId: item.projectId,
@@ -636,7 +638,7 @@ const ManagedVersionNavigation = ({
 
 // The content slot is shared by both presentations so every supported file type follows the same
 // renderer path. Callers can temporarily suppress it while another surface owns the preview.
-const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
+const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
   (
     {
       item,
@@ -1878,6 +1880,15 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
   }
 )
 
+PreviewFileSurfaceContent.displayName = 'PreviewFileSurfaceContent'
+
+const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
+  (props, ref) => (
+    <PdfExportProvider>
+      <PreviewFileSurfaceContent {...props} ref={ref} />
+    </PdfExportProvider>
+  )
+)
 PreviewFileSurface.displayName = 'PreviewFileSurface'
 
 export { PreviewFileSurface }

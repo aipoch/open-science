@@ -303,3 +303,30 @@ describe('TagService', () => {
     ])
   })
 })
+
+it('delegates PDF tag changes to annotation authority outside the Tag publication queue', async () => {
+  const repository = {
+    snapshot: vi.fn((revision: number) => Promise.resolve(snapshot(revision))),
+    setAssignment: vi.fn()
+  }
+  const delegate = vi.fn(async () => {
+    await service.notifyAssignmentsChanged()
+  })
+  const service = new TagService(
+    repository as unknown as TagRepository,
+    {
+      snapshot: vi.fn().mockRejectedValue(new Error('catalog temporarily unavailable'))
+    } as unknown as TagResourceCatalog,
+    { publish: vi.fn() },
+    delegate
+  )
+  const request = {
+    resourceType: 'pdf.annotation' as const,
+    resourceId: 'a1',
+    tagId: 't1',
+    assigned: false
+  }
+  await expect(service.setAssignment(request)).resolves.toEqual(snapshot(1))
+  expect(delegate).toHaveBeenCalledWith(request)
+  expect(repository.setAssignment).not.toHaveBeenCalled()
+})

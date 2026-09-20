@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   requestAnnotationReveal,
   requestBookmarkReveal,
+  requestPdfAnnotationReveal,
   annotationRevealScrollBehavior,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
@@ -22,6 +23,7 @@ import type { Annotation } from '../../../../../shared/annotations'
 import { createUploadVersionReference } from '../../../../../shared/uploads'
 import { createManagedPreviewRequest } from '../previews/preview-file-reader'
 import type { Bookmark } from '../../../../../shared/bookmarks'
+import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../shared/pdf-annotations'
 
 class TestHighlight extends Set<Range> {}
 
@@ -62,6 +64,50 @@ describe('annotation reveal', () => {
     target: 'agent',
     quote: 'quoted evidence',
     source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+  })
+
+  it('reveals inside a modal without opening workspace tabs and cancels delivery when closed', async () => {
+    const annotation: SavedPdfAnnotation = {
+      id: 'saved-note',
+      version: 1,
+      origin: 'user',
+      kind: 'page-note',
+      note: 'Review',
+      tagIds: [],
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      createdAt: '2026-09-21T00:00:00Z',
+      updatedAt: '2026-09-21T00:00:00Z',
+      target: {
+        source: {
+          kind: 'upload-version',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          sourceFileId: 'file-1',
+          versionId: 'version-1',
+          checksum: 'a'.repeat(64),
+          path: 'upload-version:project-1/session-1/version-1',
+          name: 'paper.pdf'
+        },
+        selector: { kind: 'page-note', pageNumber: 1, pageRotation: 0, coordinateVersion: 1 }
+      }
+    }
+    const controller = new AbortController()
+    const pending = requestPdfAnnotationReveal(annotation, {
+      activatePreview: false,
+      signal: controller.signal
+    })
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    controller.abort()
+    expect(await pending).toBe('locator-unsupported')
+    const listener = vi.fn(() => true)
+    const unsubscribe = subscribeBookmarkReveal(listener)
+    expect(listener).not.toHaveBeenCalled()
+    const result = await requestPdfAnnotationReveal(annotation, { activatePreview: false })
+    expect(result).toBe('revealed')
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ id: annotation.id }))
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    unsubscribe()
   })
 
   it.each([false, true])(

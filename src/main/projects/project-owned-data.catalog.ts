@@ -92,6 +92,38 @@ const optionalOwner = (name: ProjectOwnerFieldName): ProjectOwnerField => ({
 
 const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
+    id: 'pdf-annotations',
+    medium: 'sqlite',
+    resources: ['PdfAnnotation', 'PdfAnnotationImport'],
+    prismaModels: [
+      {
+        name: 'PdfAnnotationImport',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sessionId')],
+        relationContracts: [
+          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
+        ]
+      },
+      {
+        name: 'PdfAnnotation',
+        ownerFields: [
+          optionalOwner('projectId'),
+          optionalOwner('sessionId'),
+          optionalOwner('sourceSessionId')
+        ],
+        relationContracts: [
+          { field: 'project', target: 'Project', fromFields: ['projectId'], onDelete: 'Cascade' }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Private PDF annotations are removed before the Project metadata row is retained as history.'
+    }
+  },
+  {
     id: 'bookmarks',
     medium: 'sqlite',
     resources: ['Bookmark'],

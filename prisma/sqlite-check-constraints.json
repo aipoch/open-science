@@ -834,6 +834,46 @@
       "tableName": "BackgroundResultDelivery",
       "name": "BackgroundResultDelivery_continuation_check",
       "expression": "(\"continuationMessageId\" IS NULL OR length(trim(\"continuationMessageId\")) > 0) AND (\"state\" <> 'dispatching' OR \"continuationMessageId\" IS NOT NULL) AND (\"state\" <> 'waiting-result' OR \"continuationMessageId\" IS NULL)"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_identity_check",
+      "expression": "length(trim(\"id\")) > 0 AND length(trim(\"projectId\")) > 0 AND length(trim(\"sourceFileId\")) > 0 AND length(trim(\"versionId\")) > 0 AND length(trim(\"name\")) > 0 AND length(trim(\"path\")) > 0 AND length(trim(\"sessionId\")) > 0"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_source_check",
+      "expression": "\"sourceKind\" IN ('artifact-version', 'upload-version', 'literature-attachment-version') AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_kind_check",
+      "expression": "\"kind\" IN ('highlight', 'underline', 'squiggly', 'strikethrough', 'area', 'page-note', 'document-note') AND (\"color\" IS NULL OR \"color\" IN ('yellow', 'blue', 'green', 'pink', 'purple'))"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_origin_check",
+      "expression": "\"origin\" IN ('user', 'imported') AND (\"origin\" = 'imported' OR \"externalSubtype\" IS NULL) AND (\"externalSubtype\" IS NULL OR (length(trim(\"externalSubtype\")) > 0 AND length(\"externalSubtype\") <= 64))"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_json_check",
+      "expression": "json_valid(\"selectorJson\") AND json_type(\"selectorJson\") = 'object' AND length(\"selectorJson\") <= 65536"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_content_check",
+      "expression": "length(\"note\") <= 20000"
+    },
+    {
+      "tableName": "pdf_annotations",
+      "name": "PdfAnnotation_scope_check",
+      "expression": "(\"projectId\" IS NOT NULL AND \"sessionId\" IS NOT NULL) OR (\"projectId\" IS NULL AND \"sessionId\" IS NULL AND \"sourceKind\" = 'literature-attachment-version' AND \"sourceSessionId\" IS NULL)"
+    },
+    {
+      "tableName": "pdf_annotation_imports",
+      "name": "PdfAnnotationImport_json_check",
+      "expression": "json_valid(\"resultJson\")"
     }
   ],
   "indexes": [

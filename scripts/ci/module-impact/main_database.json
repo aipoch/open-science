@@ -80,7 +80,13 @@
     "src/main/database/startup-diagnostics.ts",
     "src/main/database/tag-ordering-migration.test.ts",
     "src/main/database/migrations/0042-classification-usage.ts",
-    "src/main/database/classification-usage.test.ts"
+    "src/main/database/classification-usage.test.ts",
+    "src/main/database/migrations/0042-pdf-annotations.ts",
+    "src/main/database/pdf-annotations-migration.test.ts",
+    "src/main/database/migrations/0043-pdf-annotation-tags.ts",
+    "src/main/database/migrations/0044-literature-pdf-annotations.ts",
+    "src/main/database/migrations/0045-pdf-annotation-origin.ts",
+    "src/main/database/migrations/0046-pdf-annotation-import-receipt.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -121,7 +127,8 @@
       "src/main/database/project-session-defaults-migration.test.ts",
       "src/main/database/startup-diagnostics.test.ts",
       "src/main/database/tag-ordering-migration.test.ts",
-      "src/main/database/classification-usage.test.ts"
+      "src/main/database/classification-usage.test.ts",
+      "src/main/database/pdf-annotations-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -327,7 +334,8 @@
       "src/main/acp/runtime-plan-composition.test.ts",
       "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
-      "src/main/compute/cancellation.real-ssh.integration.test.ts"
+      "src/main/compute/cancellation.real-ssh.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

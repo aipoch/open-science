@@ -1,0 +1,200 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4
+ * component: annotation controls · genre: modern-minimal · theme: Open-Science
+ * Reference: user toolbar screenshot and recording; project typography and semantic colors retained.
+ * States reuse owner feedback: busy/disabled, retryable error and visible saved marks.
+ */
+.annotation-popover,
+.annotation-selection-toolbar,
+.pdf-annotation-toolbar {
+  --annotation-enter-duration: 160ms;
+  --annotation-exit-duration: 100ms;
+  --annotation-enter-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --annotation-exit-ease: cubic-bezier(0.7, 0, 0.84, 0);
+}
+
+.pdf-annotation-toolbar,
+[data-pdf-controls='view'] {
+  min-height: 2.5rem;
+}
+
+.pdf-area-action,
+.pdf-area-menu-trigger {
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pdf-toolbar-tooltip {
+  animation: annotation-toolbar-enter var(--annotation-enter-duration) var(--annotation-enter-ease);
+}
+
+.annotation-popover {
+  --annotation-offset-x: 0px;
+  --annotation-offset-y: -6px;
+}
+.annotation-popover[data-side='top'] {
+  --annotation-offset-y: 6px;
+}
+.annotation-popover[data-side='left'] {
+  --annotation-offset-x: 6px;
+  --annotation-offset-y: 0px;
+}
+.annotation-popover[data-side='right'] {
+  --annotation-offset-x: -6px;
+  --annotation-offset-y: 0px;
+}
+
+.annotation-style-split[data-open='true'] {
+  background: var(--muted);
+}
+.annotation-style-trigger[data-state='open'] {
+  background: color-mix(in oklch, var(--muted), var(--foreground) 12%);
+}
+@media (hover: hover) {
+  .annotation-style-split:hover {
+    background: var(--muted);
+  }
+  .annotation-style-apply:hover {
+    background: color-mix(in oklch, var(--muted), var(--foreground) 6%);
+  }
+  .annotation-style-trigger:hover {
+    background: color-mix(in oklch, var(--muted), var(--foreground) 12%);
+  }
+}
+
+.annotation-style-trigger > svg {
+  transition: transform var(--annotation-enter-duration) var(--annotation-enter-ease);
+}
+.annotation-style-trigger[data-state='open'] > svg {
+  transform: rotate(180deg);
+}
+
+.annotation-popover[data-state='open'] {
+  animation: annotation-panel-enter var(--annotation-enter-duration) var(--annotation-enter-ease);
+}
+
+.annotation-popover[data-state='closed'] {
+  pointer-events: none;
+  animation: annotation-panel-exit var(--annotation-exit-duration) var(--annotation-exit-ease);
+}
+
+.annotation-selection-toolbar[data-positioned='true'] {
+  animation: annotation-toolbar-enter var(--annotation-enter-duration) var(--annotation-enter-ease);
+}
+
+/* Position updates remain immediate; only the first appearance moves. */
+@keyframes annotation-panel-enter {
+  from {
+    opacity: 0;
+    transform: translate(var(--annotation-offset-x), var(--annotation-offset-y));
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+}
+@keyframes annotation-panel-exit {
+  from {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--annotation-offset-x), var(--annotation-offset-y));
+  }
+}
+@keyframes annotation-toolbar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes annotation-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes annotation-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Focus and selection colors update immediately, without animating the ring. */
+.pdf-annotation-toolbar button,
+.annotation-tool-button,
+.annotation-color-button {
+  transition-property: transform;
+  transition-duration: 100ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pdf-annotation-toolbar button[data-size='icon-sm'] {
+  width: 2rem;
+  height: 2rem;
+}
+[data-pdf-controls='view'] button[data-size='icon-sm'] {
+  width: 2rem;
+  height: 2rem;
+}
+.annotation-tool-button:active:not(:disabled),
+.annotation-color-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+@media (hover: hover) {
+  .pdf-area-action:hover {
+    background: color-mix(in oklch, var(--muted), var(--foreground) 6%);
+  }
+  .pdf-area-menu-trigger:hover {
+    background: color-mix(in oklch, var(--muted), var(--foreground) 12%);
+  }
+  .annotation-color-button:hover {
+    outline: 1px solid var(--border);
+    outline-offset: 3px;
+  }
+}
+@media (pointer: coarse) {
+  .pdf-annotation-toolbar button,
+  .annotation-tool-button,
+  .annotation-color-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .annotation-popover[data-state='open'],
+  .annotation-selection-toolbar[data-positioned='true'] {
+    animation-name: annotation-fade-in;
+    animation-duration: 100ms;
+  }
+  .annotation-popover[data-state='closed'] {
+    animation-name: annotation-fade-out;
+    animation-duration: 75ms;
+  }
+  .annotation-style-trigger > svg {
+    transition: none;
+  }
+  .pdf-area-action,
+  .pdf-area-menu-trigger,
+  .pdf-toolbar-tooltip {
+    transition: none;
+    animation: none;
+  }
+  .pdf-annotation-toolbar button,
+  .annotation-tool-button,
+  .annotation-color-button,
+  .annotation-tool-button:active:not(:disabled),
+  .annotation-color-button:active:not(:disabled) {
+    transition: none;
+    transform: none;
+  }
+}

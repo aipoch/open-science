@@ -101,10 +101,15 @@ describe('notification attention metadata migration', () => {
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
         '0041_bookmarks',
-        '0042_classification_usage'
+        '0042_classification_usage',
+        '0042_pdf_annotations',
+        '0043_pdf_annotation_tags',
+        '0044_literature_pdf_annotations',
+        '0045_pdf_annotation_origin',
+        '0046_pdf_annotation_import_receipt'
       ],
       from: '0006_database_domain_constraints',
-      to: '0042_classification_usage'
+      to: '0046_pdf_annotation_import_receipt'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

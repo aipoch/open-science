@@ -873,6 +873,7 @@ describe('LiteratureCatalog', () => {
           listSkills: async () => [],
           listConnectors: async () => ({ connectors: [], customServers: [] }),
           listSpecialists: async () => [],
+          listPdfAnnotations: async () => [],
           listLiteratureItems: async () => client!.literatureItem.findMany({ select: { id: true } })
         }),
         { publish }

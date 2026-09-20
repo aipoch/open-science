@@ -1113,7 +1113,9 @@ describe('Compute service architecture', () => {
       'src/main/session-persistence/runtime-resume-recovery.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
-      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts'
     ])
   })
 

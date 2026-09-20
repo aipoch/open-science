@@ -1,3 +1,4 @@
+import type { PdfAnnotation } from '../../../shared/pdf-annotations'
 import { create } from 'zustand'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
@@ -86,6 +87,7 @@ type NavigationStore = {
   // One user-level Literature Item selected outside Workspace Preview. Library consumes this once
   // and opens its detail without encoding transient UI selection into a route or persisted state.
   pendingLiteratureItemId: string | undefined
+  pendingLiteratureAnnotation: PdfAnnotation | undefined
   // One explicit Project scope selected outside the Library. Library consumes this once instead of
   // inferring scope from the retained activeProjectId, which also survives user-level Library opens.
   pendingLiteratureProjectId: string | undefined
@@ -98,7 +100,12 @@ type NavigationStore = {
   goHome: (origin: NavigationOrigin) => void
   returnFromLibrary: (origin: NavigationOrigin) => void
   openLibrary: (origin: NavigationOrigin) => void
-  openLiteratureItem: (itemId: string, origin: NavigationOrigin) => void
+  openLiteratureItem: (
+    itemId: string,
+    origin: NavigationOrigin,
+    annotation?: PdfAnnotation,
+    afterNavigate?: () => void
+  ) => void
   openProjectLiterature: (projectId: string, origin: NavigationOrigin) => boolean
   openCollectionLiterature: (collectionId: string, origin: NavigationOrigin) => boolean
   openProject: (projectId: string, origin: NavigationOrigin, afterNavigate?: () => void) => boolean
@@ -234,6 +241,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   pendingWslSetupAfterProjectCreation: false,
   pendingArtifactMention: undefined,
   pendingLiteratureItemId: undefined,
+  pendingLiteratureAnnotation: undefined,
   pendingLiteratureProjectId: undefined,
   pendingLiteratureCollectionId: undefined,
   artifactMentionAvailability: undefined,
@@ -278,15 +286,17 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
       }))
     ),
 
-  openLiteratureItem: (itemId, origin) =>
-    requestPreviewLeaveForNavigation({ view: 'library' }, () =>
+  openLiteratureItem: (itemId, origin, annotation, afterNavigate) =>
+    requestPreviewLeaveForNavigation({ view: 'library' }, () => {
       set((state) => ({
         ...navigationState(state, origin, { view: 'library' }),
         pendingLiteratureItemId: itemId,
+        pendingLiteratureAnnotation: annotation,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: undefined
       }))
-    ),
+      afterNavigate?.()
+    }),
 
   openProjectLiterature: (projectId, origin) => {
     if (!isActiveProject(projectId)) return false
@@ -543,7 +553,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   consumeLiteratureItem: (expectedItemId) => {
     const itemId = get().pendingLiteratureItemId
     if (expectedItemId !== undefined && itemId !== expectedItemId) return undefined
-    set({ pendingLiteratureItemId: undefined })
+    set({ pendingLiteratureItemId: undefined, pendingLiteratureAnnotation: undefined })
     return itemId
   },
 

@@ -1,6 +1,7 @@
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { RemoveScroll } from 'react-remove-scroll'
 import * as Dialog from '@/components/ui/dialog'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -135,79 +136,102 @@ const FilePreviewDialog = ({
           data-state={open ? 'open' : 'closed'}
           className={`${dialogOverlayClassName} z-[60]`}
         />
-        <Dialog.Content
+        {/* Own the top scroll lock when previewing over another modal (e.g. Settings).
+            React capture also admits child portals; fullscreen content keeps its own boundary. */}
+        <RemoveScroll
           ref={setContentRef}
-          data-slot="file-preview-dialog"
-          aria-describedby={undefined}
-          aria-modal="true"
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          // The inner FocusScope owns mount focus; without this the outer scope races it to the
-          // first header button.
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onInteractOutside={(event) => event.preventDefault()}
-          onAnimationEnd={(event) => {
-            if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
-          }}
-          className={dialogPanelClassName(
-            'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0'
-          )}
+          enabled={open}
+          allowPinchZoom
+          noIsolation={hasNestedFullscreen}
+          forwardProps
         >
-          <Dialog.Title className="sr-only">
-            {dialogItem ? t('Preview {{title}}', { title: dialogItem.title }) : t('File preview')}
-          </Dialog.Title>
-          <FocusScope
-            asChild
-            loop
-            trapped={!(open && hasNestedFullscreen)}
-            onMountAutoFocus={(event) => {
-              returnFocusRef.current =
-                document.activeElement instanceof HTMLElement ? document.activeElement : null
-              // Open with nothing selected: an auto-focused header button shows a focus ring and
-              // its tooltip, and the first Escape dies on that control instead of closing the
-              // dialog. Focus the dialog shell (tabIndex -1 via the outer FocusScope) instead.
-              event.preventDefault()
-              contentElementRef.current?.focus()
-            }}
-            onUnmountAutoFocus={(event) => {
-              releaseBackgroundIsolation()
-              const trigger = returnFocusRef.current
+          <Dialog.Content
+            data-slot="file-preview-dialog"
+            aria-describedby={undefined}
+            aria-modal="true"
+            onCloseAutoFocus={(event) => event.preventDefault()}
+            // The inner FocusScope owns mount focus; without this the outer scope races it to the
+            // first header button.
+            onOpenAutoFocus={(event) => event.preventDefault()}
+            onEscapeKeyDown={(event) => {
+              // Radix handles Escape at document capture, before the PDF tool's
+              // bubbling handler can exit its mode. Preserve that inner action.
               if (
-                !trigger?.isConnected ||
-                trigger.matches(':disabled, [inert], [aria-disabled="true"]')
+                event.target instanceof Element &&
+                event.target.closest(
+                  '[data-pdf-tool-active="true"], [data-preview-escape-boundary]'
+                )
               ) {
-                if (onFocusFallback) {
-                  event.preventDefault()
-                  onFocusFallback()
-                }
+                event.preventDefault()
               }
             }}
+            onInteractOutside={(event) => event.preventDefault()}
+            onAnimationEnd={(event) => {
+              if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
+            }}
+            className={dialogPanelClassName(
+              'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0'
+            )}
           >
-            <div className="flex size-full min-h-0 min-w-0">
-              {dialogItem ? (
-                <PreviewFileSurface
-                  ref={previewSurfaceRef}
-                  item={dialogItem}
-                  onClose={() => requestClose(false)}
-                  {...(onItemChange
-                    ? { onItemChange: (nextItem: PreviewFileItem) => onItemChange(nextItem, true) }
-                    : {})}
-                  provenanceEntry="trailing"
-                  // The modal overlays the conversation panel, so a View in context navigation must
-                  // also close the dialog for the switched session to become visible.
-                  onViewInContextNavigate={onViewInContextNavigate ?? onClose}
-                  allowReadingContext={allowReadingContext}
-                  onReadWithAgent={onReadWithAgent}
-                  onPdfContextError={onPdfContextError}
-                  tooltipClassName="z-[70]"
-                  actionMenuContentClassName="z-[70]"
-                  leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
-                  retryResolutionEnabled={open}
-                  {...annotationPort}
-                />
-              ) : null}
-            </div>
-          </FocusScope>
-        </Dialog.Content>
+            <Dialog.Title className="sr-only">
+              {dialogItem ? t('Preview {{title}}', { title: dialogItem.title }) : t('File preview')}
+            </Dialog.Title>
+            <FocusScope
+              asChild
+              loop
+              trapped={!(open && hasNestedFullscreen)}
+              onMountAutoFocus={(event) => {
+                returnFocusRef.current =
+                  document.activeElement instanceof HTMLElement ? document.activeElement : null
+                // Open with nothing selected: an auto-focused header button shows a focus ring and
+                // its tooltip, and the first Escape dies on that control instead of closing the
+                // dialog. Focus the dialog shell (tabIndex -1 via the outer FocusScope) instead.
+                event.preventDefault()
+                contentElementRef.current?.focus()
+              }}
+              onUnmountAutoFocus={(event) => {
+                releaseBackgroundIsolation()
+                const trigger = returnFocusRef.current
+                if (
+                  !trigger?.isConnected ||
+                  trigger.matches(':disabled, [inert], [aria-disabled="true"]')
+                ) {
+                  if (onFocusFallback) {
+                    event.preventDefault()
+                    onFocusFallback()
+                  }
+                }
+              }}
+            >
+              <div className="flex size-full min-h-0 min-w-0">
+                {dialogItem ? (
+                  <PreviewFileSurface
+                    ref={previewSurfaceRef}
+                    item={dialogItem}
+                    onClose={() => requestClose(false)}
+                    {...(onItemChange
+                      ? {
+                          onItemChange: (nextItem: PreviewFileItem) => onItemChange(nextItem, true)
+                        }
+                      : {})}
+                    provenanceEntry="trailing"
+                    // The modal overlays the conversation panel, so a View in context navigation must
+                    // also close the dialog for the switched session to become visible.
+                    onViewInContextNavigate={onViewInContextNavigate ?? onClose}
+                    allowReadingContext={allowReadingContext}
+                    onReadWithAgent={onReadWithAgent}
+                    onPdfContextError={onPdfContextError}
+                    tooltipClassName="z-[70]"
+                    actionMenuContentClassName="z-[70]"
+                    leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
+                    retryResolutionEnabled={open}
+                    {...annotationPort}
+                  />
+                ) : null}
+              </div>
+            </FocusScope>
+          </Dialog.Content>
+        </RemoveScroll>
       </Dialog.Portal>
     </Dialog.Root>
   )

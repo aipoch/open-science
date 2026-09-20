@@ -21,12 +21,22 @@ it('installs the Bookmark table with durable ownership, JSON, and paging constra
   await migrateApplicationDatabase(client)
   await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
   await client.$executeRawUnsafe(
-    "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0041_bookmarks', '0042_classification_usage')"
+    'DELETE FROM "_open_science_migrations" WHERE id >= \'0041_bookmarks\''
   )
 
   await expect(
     migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
-  ).resolves.toMatchObject({ applied: ['0041_bookmarks', '0042_classification_usage'] })
+  ).resolves.toMatchObject({
+    applied: [
+      '0041_bookmarks',
+      '0042_classification_usage',
+      '0042_pdf_annotations',
+      '0043_pdf_annotation_tags',
+      '0044_literature_pdf_annotations',
+      '0045_pdf_annotation_origin',
+      '0046_pdf_annotation_import_receipt'
+    ]
+  })
 
   const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
     'PRAGMA index_list("bookmarks")'

@@ -1485,7 +1485,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/classification-settings.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
-      'src/main/compute/cancellation-runtime.integration.test.ts'
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts'
     ])
     expect(
       [

@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+  <meta charset="utf-8" /><link rel="stylesheet" href="/pdfjs/web/pdf_viewer.css" /><style>
+    body {
+      margin: 0;
+      padding: 18px;
+      background: #e9eef0;
+      font: 16px Arial;
+    }
+    header {
+      margin: 0 0 12px;
+      color: #234;
+    }
+    #page {
+      position: relative;
+      background: white;
+      --scale-round-x: 1px;
+      --scale-round-y: 1px;
+    }
+    canvas {
+      display: block;
+    }
+    /* Shared diagnostic UI for both writers; exported PDF comments remain complete. */
+    .annotationLayer .popupContent {
+      max-height: min(320px, 40vh);
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+  </style>
+  <header id="status">Loading PDF...</header>
+  <main id="page">
+    <canvas></canvas>
+    <div class="annotationLayer"></div>
+  </main>
+  <script type="module">
+    try {
+      const args = new URLSearchParams(location.search)
+      const pdfjs = (globalThis.pdfjsLib = await import('/pdfjs/build/pdf.mjs'))
+      const { SimpleLinkService, DownloadManager } = await import('/pdfjs/web/pdf_viewer.mjs')
+      pdfjs.GlobalWorkerOptions.workerSrc = '/pdfjs/build/pdf.worker.mjs'
+      const doc = await pdfjs.getDocument({
+        url: '/sample.pdf',
+        standardFontDataUrl: '/pdfjs/standard_fonts/'
+      }).promise
+      const page = await doc.getPage(Number(args.get('page') || 1))
+      const viewport = page.getViewport({ scale: 1 })
+      const host = document.querySelector('#page')
+      host.style.width = viewport.width + 'px'
+      host.style.height = viewport.height + 'px'
+      host.style.setProperty('--total-scale-factor', String(viewport.scale))
+      const canvas = document.querySelector('canvas')
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport }).promise
+      const div = document.querySelector('.annotationLayer')
+      const linkService = new SimpleLinkService()
+      const annotations = await page.getAnnotations()
+      const layer = new pdfjs.AnnotationLayer({
+        div,
+        page,
+        viewport: viewport.clone({ dontFlip: true }),
+        linkService,
+        annotationStorage: doc.annotationStorage
+      })
+      await layer.render({
+        annotations,
+        linkService,
+        downloadManager: new DownloadManager(),
+        renderForms: false,
+        imageResourcesPath: '/pdfjs/web/images/'
+      })
+      document.querySelector('#status').textContent = 'PDF preview'
+      window.renderCheck = {
+        ready: true,
+        version: pdfjs.version,
+        marks: [...document.querySelectorAll('.overlaidText')].map((e) => ({
+          text: e.textContent,
+          width: e.getBoundingClientRect().width,
+          height: e.getBoundingClientRect().height,
+          overflow: getComputedStyle(e).overflow
+        }))
+      }
+      if (
+        window.renderCheck.marks.some(
+          (m) => m.width !== 0 || m.height !== 0 || m.overflow !== 'hidden'
+        )
+      )
+        throw new Error('PDF annotation assistive text is visually exposed')
+    } catch (e) {
+      if (window.renderCheck) window.renderCheck.ready = false
+      document.querySelector('#status').textContent = e.stack
+      window.renderError = String(e)
+    }
+  </script>
+</html>

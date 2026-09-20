@@ -1,3 +1,4 @@
+import * as nativeImport from '../pdf-annotations/native-import'
 import * as attachmentMedia from '../uploads/attachment-media'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -172,6 +173,72 @@ describe('LiteraturePdfImporter', () => {
       importer.import({ itemId: item.id, attachment: attachment(path) })
     ).rejects.toThrow('Selected file is not a PDF.')
     expect(options.content.withPublishedContent).not.toHaveBeenCalled()
+    expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
+  })
+  it('reports the actual persisted native annotation count and provenance', async () => {
+    const { importer, options, path } = await setup()
+    const createMany = vi.fn().mockResolvedValue(1)
+    Object.assign(options, { annotations: { createMany }, onNativeImportProgress: vi.fn() })
+    vi.spyOn(nativeImport, 'parseNativePdfAnnotations').mockResolvedValue({
+      pageCount: 1,
+      unsupportedCount: 2,
+      truncated: false,
+      annotations: [
+        {
+          stableKey: 'foreign-note',
+          pageNumber: 1,
+          kind: 'area',
+          color: 'yellow',
+          note: 'Imported note',
+          subtype: 'Text',
+          selector: {
+            kind: 'region',
+            pageRotation: 0,
+            pageNumber: 1,
+            coordinateVersion: 1,
+            rect: { x: 0, y: 0, width: 0.1, height: 0.1 }
+          }
+        }
+      ]
+    })
+    expect(
+      await importer.import({
+        operationId: 'operation-1',
+        itemId: item.id,
+        attachment: attachment(path)
+      })
+    ).toMatchObject({ nativeAnnotations: { importedCount: 1, unsupportedCount: 2 } })
+    expect(createMany).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          origin: 'imported',
+          externalSubtype: 'Text',
+          literatureVersionId: 'version-1'
+        })
+      ],
+      expect.objectContaining({
+        result: expect.objectContaining({ pageCount: expect.any(Number) })
+      })
+    )
+    expect(options.onNativeImportProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'completed', importedCount: 1 })
+    )
+  })
+
+  it('cancels before attaching the file or saving annotations and removes staging content', async () => {
+    const { importer, options, path } = await setup()
+    const createMany = vi.fn()
+    Object.assign(options, { annotations: { createMany } })
+    vi.spyOn(nativeImport, 'parseNativePdfAnnotations').mockImplementation(async () => {
+      expect(importer.cancelImport('operation-1')).toEqual({ cancelled: true })
+      return { pageCount: 1, annotations: [], unsupportedCount: 0, truncated: false }
+    })
+    await expect(
+      importer.import({ operationId: 'operation-1', itemId: item.id, attachment: attachment(path) })
+    ).rejects.toThrow('cancelled')
+    expect(options.catalog.attachContent).not.toHaveBeenCalled()
+    expect(createMany).not.toHaveBeenCalled()
+    expect(options.content.sweep).toHaveBeenCalled()
     expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
   })
 })

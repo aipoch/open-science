@@ -2,7 +2,7 @@ import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
-import { uploadedAttachmentSchema, type UploadedAttachment } from './uploads'
+import { uploadedAttachmentSchema } from './uploads'
 
 const LITERATURE_ITEM_TYPES = [
   'journalArticle',
@@ -677,11 +677,26 @@ const literatureCatalogReceiptSchema = z
 const literaturePdfImportRequestSchema = z
   .object({
     itemId: nonEmptyTextSchema,
-    attachment: uploadedAttachmentSchema
+    attachment: uploadedAttachmentSchema,
+    operationId: nonEmptyTextSchema.optional()
   })
   .strict()
 
-const literaturePdfImportReceiptSchema = z.object({ item: literatureItemViewSchema }).strict()
+const literaturePdfImportReceiptSchema = z
+  .object({
+    item: literatureItemViewSchema,
+    nativeAnnotations: z
+      .object({
+        importedCount: z.number().int().nonnegative(),
+        unsupportedCount: z.number().int().nonnegative(),
+        truncated: z.boolean()
+      })
+      .optional()
+  })
+  .strict()
+const literaturePdfCancelImportRequestSchema = z
+  .object({ operationId: nonEmptyTextSchema })
+  .strict()
 
 const literatureFormatReferencesRequestSchema = z
   .object({
@@ -1066,6 +1081,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literaturePdfImportRequestSchema])),
     validationCodec(literaturePdfImportReceiptSchema)
   ),
+  cancelPdfImport: defineApplicationCommandContract(
+    validationCodec(z.tuple([literaturePdfCancelImportRequestSchema])),
+    validationCodec(z.object({ cancelled: z.boolean() }).strict())
+  ),
   transact: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureCatalogCommandSchema])),
     validationCodec(literatureCatalogReceiptSchema)
@@ -1125,8 +1144,9 @@ type LiteratureCatalogSearchRequest = z.infer<typeof literatureCatalogSearchRequ
 type LiteratureCatalogSearchPage = z.infer<typeof literatureCatalogSearchPageSchema>
 type LiteratureCatalogCommand = z.infer<typeof literatureCatalogCommandSchema>
 type LiteratureCatalogReceipt = z.infer<typeof literatureCatalogReceiptSchema>
-type LiteraturePdfImportRequest = Readonly<{ itemId: string; attachment: UploadedAttachment }>
+type LiteraturePdfImportRequest = z.infer<typeof literaturePdfImportRequestSchema>
 type LiteraturePdfImportReceipt = z.infer<typeof literaturePdfImportReceiptSchema>
+type LiteraturePdfCancelImportRequest = z.infer<typeof literaturePdfCancelImportRequestSchema>
 type LiteratureCitationStyle = string
 type LiteratureCitationLocale = (typeof LITERATURE_CITATION_LOCALES)[number]
 type LiteratureCitationStyleView = z.infer<typeof literatureCitationStyleViewSchema>
@@ -1221,6 +1241,7 @@ export {
   literatureMetadataCompletionRequestSchema,
   literatureMetadataCompletionResultSchema,
   literaturePdfImportReceiptSchema,
+  literaturePdfCancelImportRequestSchema,
   createLiteratureIdentifierUrl,
   createLiteratureAttachmentVersionReference,
   literaturePdfImportRequestSchema,
@@ -1276,6 +1297,7 @@ export type {
   LiteratureRecordImportResult,
   LiteraturePdfImportReceipt,
   LiteraturePdfImportRequest,
+  LiteraturePdfCancelImportRequest,
   LiteratureSourceInput
 }
 

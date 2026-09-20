@@ -8,6 +8,7 @@ import { parseLiteratureAttachmentVersionReference } from '../../../../../shared
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../shared/pdf-annotations'
 import type { Bookmark, BookmarkTarget } from '../../../../../shared/bookmarks'
 
 import { createPreviewFileItem, LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
@@ -26,7 +27,13 @@ let restoreRevealLayout: (() => void) | undefined
 let revealedRange: Range | undefined
 let revealTimer: ReturnType<typeof setTimeout> | undefined
 let pendingRevealId: string | undefined
-type BookmarkRevealTarget = Readonly<{ id: string }> & BookmarkTarget
+type BookmarkRevealTarget = Readonly<{ id: string }> &
+  (
+    | BookmarkTarget
+    | (Omit<Extract<BookmarkTarget, { kind: 'pdf' }>, 'source'> & {
+        source: SavedPdfAnnotation['target']['source']
+      })
+  )
 type BookmarkRevealOutcome = 'revealed' | 'source-unavailable' | 'locator-unsupported'
 
 let pendingRevealAnnotation: Annotation | undefined
@@ -330,10 +337,14 @@ const subscribeBookmarkReveal = (
   return () => bookmarkRevealListeners.delete(listener)
 }
 
-const requestBookmarkReveal = async (bookmark: Bookmark): Promise<BookmarkRevealOutcome> => {
-  const target: BookmarkRevealTarget = { id: bookmark.id, ...bookmark.target }
+const requestSavedSourceReveal = async (
+  target: BookmarkRevealTarget,
+  activatePreview = true,
+  signal?: AbortSignal
+): Promise<BookmarkRevealOutcome> => {
+  if (signal?.aborted) return 'locator-unsupported'
   const source = bookmarkFileSource(target)
-  if (source) {
+  if (activatePreview && source?.projectId) {
     const workbench = usePreviewWorkbenchStore.getState()
     // Reuse the exact-Version tab: replacing it with a minimal item discards metadata and
     // remounts its renderer after the old renderer has already acknowledged this reveal.
@@ -349,16 +360,40 @@ const requestBookmarkReveal = async (bookmark: Bookmark): Promise<BookmarkReveal
     clearTimeout(pendingBookmarkReveal.timeout)
     pendingBookmarkReveal.finish('locator-unsupported')
   }
-  return new Promise((finish) => {
+  return new Promise((resolve) => {
+    const finish = (outcome: BookmarkRevealOutcome): void => {
+      signal?.removeEventListener('abort', abort)
+      resolve(outcome)
+    }
+    const abort = (): void => {
+      if (pendingBookmarkReveal?.finish !== finish) return
+      clearTimeout(pendingBookmarkReveal.timeout)
+      pendingBookmarkReveal = undefined
+      finish('locator-unsupported')
+    }
     const timeout = setTimeout(() => {
       if (pendingBookmarkReveal?.target.id !== target.id) return
       pendingBookmarkReveal = undefined
       finish('locator-unsupported')
     }, 5_000)
     pendingBookmarkReveal = { target, finish, timeout }
+    signal?.addEventListener('abort', abort, { once: true })
     deliverBookmarkReveal()
   })
 }
+
+// Both saved-source surfaces share navigation and locator delivery, not persistence.
+const requestBookmarkReveal = (bookmark: Bookmark): Promise<BookmarkRevealOutcome> =>
+  requestSavedSourceReveal({ id: bookmark.id, ...bookmark.target })
+const requestPdfAnnotationReveal = (
+  annotation: SavedPdfAnnotation,
+  options?: { activatePreview: boolean; signal?: AbortSignal }
+): Promise<BookmarkRevealOutcome> =>
+  requestSavedSourceReveal(
+    { id: annotation.id, kind: 'pdf', ...annotation.target },
+    options?.activatePreview,
+    options?.signal
+  )
 
 const annotationRevealScrollBehavior = (): ScrollBehavior =>
   typeof globalThis.matchMedia === 'function' && globalThis.matchMedia(REDUCED_MOTION_QUERY).matches
@@ -431,8 +466,10 @@ const revealTextAnnotationRange = (range: Range): void => {
 
 export {
   annotationRevealScrollBehavior,
+  createBookmarkPreviewItem,
   requestAnnotationReveal,
   requestBookmarkReveal,
+  requestPdfAnnotationReveal,
   retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,

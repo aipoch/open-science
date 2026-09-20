@@ -1,3 +1,4 @@
+import { deletePdfAnnotations } from '../pdf-annotations/repository'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   LITERATURE_OVERSIZED_REFERENCE,
@@ -1543,9 +1544,10 @@ class LiteratureCatalog {
   ): Promise<LiteratureCatalogReceipt> {
     if (!this.content) throw new Error('Literature content operations are unavailable.')
     // The session barrier protects reference confirmation and the deletion transaction only.
-    const contentIds = await this.withAttachmentRemoval((assertUnreferenced) =>
-      this.deleteUnreferencedAttachment(command, assertUnreferenced)
+    const { contentIds, annotationsDeleted } = await this.withAttachmentRemoval(
+      (assertUnreferenced) => this.deleteUnreferencedAttachment(command, assertUnreferenced)
     )
+    if (annotationsDeleted) await this.publishTagAssignmentsChanged()
     let cleanupPending = false
     try {
       const sweep = await this.content.sweep({
@@ -1562,7 +1564,7 @@ class LiteratureCatalog {
   private async deleteUnreferencedAttachment(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>,
     assertUnreferenced: (attachmentIds: readonly string[]) => void
-  ): Promise<string[]> {
+  ): Promise<{ contentIds: string[]; annotationsDeleted: number }> {
     const client = await this.getClient()
     return this.commit(
       client,
@@ -1577,8 +1579,15 @@ class LiteratureCatalog {
         })
         if (!attachment) throw new Error('Literature Attachment is unavailable.')
         assertUnreferenced([command.attachmentId])
+        const annotationsDeleted = await deletePdfAnnotations(transaction, {
+          sourceKind: 'literature-attachment-version',
+          sourceFileId: command.attachmentId
+        })
         await transaction.literatureAttachment.delete({ where: { id: command.attachmentId } })
-        return attachment.versions.map(({ contentBlobId }) => contentBlobId)
+        return {
+          contentIds: attachment.versions.map(({ contentBlobId }) => contentBlobId),
+          annotationsDeleted
+        }
       },
       { itemIds: [command.itemId] }
     )
@@ -2340,7 +2349,11 @@ class LiteratureCatalog {
           const removedTags = await transaction.tagAssignment.deleteMany({
             where: { resourceType: 'literature.item', resourceId: { in: deletionIds } }
           })
-          tagsChanged = removedTags.count > 0
+          const annotationsDeleted = await deletePdfAnnotations(transaction, {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: { in: attachments.map(({ id }) => id) }
+          })
+          tagsChanged = removedTags.count > 0 || annotationsDeleted > 0
           await transaction.literatureItem.updateMany({
             where: { id: { in: deletionIds } },
             data: { mergedIntoItemId: null }

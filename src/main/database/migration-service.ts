@@ -1,6 +1,11 @@
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
+import { pdfAnnotationImportReceiptMigration } from './migrations/0046-pdf-annotation-import-receipt'
+import { literaturePdfAnnotationsMigration } from './migrations/0044-literature-pdf-annotations'
+import { pdfAnnotationOriginMigration } from './migrations/0045-pdf-annotation-origin'
+import { pdfAnnotationTagsMigration } from './migrations/0043-pdf-annotation-tags'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
+import { pdfAnnotationsMigration } from './migrations/0042-pdf-annotations'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -830,6 +835,61 @@ const MIGRATION_MANIFEST = [
       classificationUsageMigration.statements,
       classificationUsageMigration.verifiers,
       classificationUsageMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfAnnotationsMigration,
+    checksum: checksumMigrationPayload(
+      pdfAnnotationsMigration.id,
+      pdfAnnotationsMigration.statements,
+      pdfAnnotationsMigration.verifiers,
+      pdfAnnotationsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfAnnotationTagsMigration,
+    checksum: checksumMigrationPayload(
+      pdfAnnotationTagsMigration.id,
+      pdfAnnotationTagsMigration.statements,
+      pdfAnnotationTagsMigration.verifiers,
+      pdfAnnotationTagsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literaturePdfAnnotationsMigration,
+    checksum: checksumMigrationPayload(
+      literaturePdfAnnotationsMigration.id,
+      literaturePdfAnnotationsMigration.statements,
+      literaturePdfAnnotationsMigration.verifiers,
+      literaturePdfAnnotationsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfAnnotationOriginMigration,
+    checksum: checksumMigrationPayload(
+      pdfAnnotationOriginMigration.id,
+      pdfAnnotationOriginMigration.statements,
+      pdfAnnotationOriginMigration.verifiers,
+      pdfAnnotationOriginMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfAnnotationImportReceiptMigration,
+    checksum: checksumMigrationPayload(
+      pdfAnnotationImportReceiptMigration.id,
+      pdfAnnotationImportReceiptMigration.statements,
+      pdfAnnotationImportReceiptMigration.verifiers,
+      pdfAnnotationImportReceiptMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
@@ -1836,6 +1896,24 @@ const applyManifestMigration = async (
           new Set(['LiteratureSourceRecord'])
         )
         return
+      }
+    }
+    if (
+      migration.id === pdfAnnotationsMigration.id &&
+      MIGRATION_MANIFEST.some(
+        (entry) => entry.id === migration.id && entry.checksum === migration.checksum
+      )
+    ) {
+      // Adoption of the current shape must also accept the successor's retired tag-name column.
+      try {
+        await verifyCurrentRuntimeSchemaTables(targetClient, ['pdf_annotations'])
+        return
+      } catch (error) {
+        if (
+          classifyDatabaseFailure(error, 'validation', migration.id).code !==
+          'database_validation_failed'
+        )
+          throw error
       }
     }
     if (!canVerifyAsCurrentSchema) {

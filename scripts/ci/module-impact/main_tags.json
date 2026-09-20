@@ -46,7 +46,10 @@
       "src/main/web-service/http-server.test.ts",
       "src/main/web-service/task-api.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

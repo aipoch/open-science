@@ -1,6 +1,6 @@
 import { Notice } from '@/components/notice'
 import { Check, Plus, Search, Tags, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { TAG_NAME_MAX_LENGTH, type TagResourceRef } from '../../../../shared/tags'
@@ -19,9 +19,20 @@ const ResourceTagMenu = ({
   trigger,
   open,
   onOpenChange,
-  keepOpenOnSelect = true
-}: {
-  reference: TagResourceRef
+  keepOpenOnSelect = true,
+  selection
+}: (
+  | { reference: TagResourceRef; selection?: never }
+  | {
+      reference?: never
+      selection: {
+        ids: readonly string[]
+        onChange: (ids: string[]) => void
+        max: number
+        disabled?: boolean
+      }
+    }
+) & {
   trigger?: ReactNode
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -39,6 +50,10 @@ const ResourceTagMenu = ({
   const [activeKey, setActiveKey] = useState<string>()
   const [creating, setCreating] = useState(false)
   const createPending = useRef(false)
+  const selectionRef = useRef(selection)
+  useLayoutEffect(() => {
+    selectionRef.current = selection
+  }, [selection])
   const interactionVersion = useRef(0)
   const saveBatch = useRef<
     | {
@@ -58,7 +73,7 @@ const ResourceTagMenu = ({
     setLocalOpen(nextOpen)
     onOpenChange?.(nextOpen)
   }
-  const scope = JSON.stringify([isOpen, reference.resourceType, reference.resourceId])
+  const scope = JSON.stringify([isOpen, reference?.resourceType, reference?.resourceId])
   const [previousScope, setPreviousScope] = useState(scope)
   if (previousScope !== scope) {
     setPreviousScope(scope)
@@ -75,12 +90,14 @@ const ResourceTagMenu = ({
     }
   }, [scope])
   const assignedIds = new Set(
-    assignments
-      .filter(
-        (item) =>
-          item.resourceType === reference.resourceType && item.resourceId === reference.resourceId
-      )
-      .map((item) => item.tagId)
+    selection?.ids ??
+      assignments
+        .filter(
+          (item) =>
+            item.resourceType === reference?.resourceType &&
+            item.resourceId === reference?.resourceId
+        )
+        .map((item) => item.tagId)
   )
   const normalizeName = (value: string): string =>
     value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
@@ -110,6 +127,13 @@ const ResourceTagMenu = ({
   }, [isOpen, activeId, normalizedQuery])
 
   const activate = async (option: (typeof options)[number]): Promise<void> => {
+    if (selection?.disabled || (!selection && !reference)) return
+    if (
+      selection &&
+      !assignedIds.has(option.tag?.id ?? '') &&
+      selection.ids.length >= selection.max
+    )
+      return
     if (!option.tag) {
       if (createPending.current) return
       createPending.current = true
@@ -126,17 +150,23 @@ const ResourceTagMenu = ({
     batch.operations.set(operationKey, operation)
     batch.pending += 1
     try {
-      if (option.tag) {
+      if (option.tag && selection) {
+        selection.onChange(
+          assignedIds.has(option.tag.id)
+            ? selection.ids.filter((id) => id !== option.tag!.id)
+            : [...selection.ids, option.tag.id]
+        )
+      } else if (option.tag) {
         await setAssignment({
-          ...reference,
+          ...reference!,
           tagId: option.tag.id,
           assigned: !useTagStore
             .getState()
             .assignments.some(
               (assignment) =>
                 assignment.tagId === option.tag?.id &&
-                assignment.resourceType === reference.resourceType &&
-                assignment.resourceId === reference.resourceId
+                assignment.resourceType === reference!.resourceType &&
+                assignment.resourceId === reference!.resourceId
             )
         })
       } else {
@@ -145,7 +175,16 @@ const ResourceTagMenu = ({
         batch.operations.delete(operationKey)
         operationKey = `tag:${tagId}`
         batch.operations.set(operationKey, operation)
-        await setAssignment({ ...reference, tagId, assigned: true })
+        if (selection) {
+          const current = selectionRef.current
+          if (
+            version === interactionVersion.current &&
+            current &&
+            !current.disabled &&
+            current.ids.length < current.max
+          )
+            current.onChange([...new Set([...current.ids, tagId])])
+        } else await setAssignment({ ...reference!, tagId, assigned: true })
       }
       if (version === interactionVersion.current) {
         if (!option.tag) {
@@ -203,7 +242,7 @@ const ResourceTagMenu = ({
           <PopoverContent
             align="end"
             aria-label={t('Manage Tags')}
-            className="w-64 max-w-[calc(100vw-1rem)] overflow-hidden border border-border bg-popover p-1 text-popover-foreground shadow-menu"
+            className="z-[130] w-64 max-w-[calc(100vw-1rem)] overflow-hidden border border-border bg-popover p-1 text-popover-foreground shadow-menu"
             onOpenAutoFocus={(event) => {
               event.preventDefault()
               inputRef.current?.focus()
@@ -230,6 +269,7 @@ const ResourceTagMenu = ({
                 aria-invalid={Boolean(error)}
                 aria-describedby={error ? errorId : undefined}
                 autoComplete="off"
+                disabled={selection?.disabled}
                 maxLength={TAG_NAME_MAX_LENGTH}
                 value={query}
                 onChange={(event) => {
@@ -279,7 +319,11 @@ const ResourceTagMenu = ({
                     id={`${listboxId}-${index}`}
                     role="option"
                     aria-selected={assigned}
-                    aria-disabled={!option.tag && creating}
+                    aria-disabled={
+                      selection?.disabled ||
+                      (!option.tag && creating) ||
+                      Boolean(selection && !assigned && selection.ids.length >= selection.max)
+                    }
                     data-active={index === activeIndex || undefined}
                     onPointerMove={() => setActiveKey(option.key)}
                     onMouseDown={(event) => event.preventDefault()}
@@ -319,6 +363,83 @@ const ResourceTagMenu = ({
         <TooltipContent>{t('Manage Tags')}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
+  )
+}
+
+const TagSelection = ({
+  value,
+  onChange,
+  disabled,
+  max = 24
+}: {
+  value: readonly string[]
+  onChange: (ids: string[]) => void
+  disabled?: boolean
+  max?: number
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const tags = useTagStore((state) => state.tags)
+  const status = useTagStore((state) => state.status)
+  const load = useTagStore((state) => state.load)
+  useEffect(() => {
+    if (status === 'idle') void load()
+  }, [status, load])
+  useEffect(() => {
+    if (status !== 'ready') return
+    const live = new Set(tags.map(({ id }) => id))
+    if (value.some((id) => !live.has(id))) onChange(value.filter((id) => live.has(id)))
+  }, [status, tags, value, onChange])
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-2" role="group" aria-label={t('Tags')}>
+      {status === 'error' ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={disabled}
+          onClick={() => void load()}
+        >
+          {t('Retry')}
+        </Button>
+      ) : (
+        <ResourceTagMenu
+          selection={{ ids: value, onChange, max, disabled }}
+          trigger={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={disabled || status !== 'ready'}
+            >
+              <Plus className="mr-1 size-3.5" aria-hidden="true" />
+              {t('Add or remove Tags')}
+            </Button>
+          }
+        />
+      )}
+      {value.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {tags
+            .filter((tag) => value.includes(tag.id))
+            .map((tag) => (
+              <span key={tag.id} className="group/tag relative inline-flex min-w-0">
+                <TagBadge tag={tag} />
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={t('Remove {{tag}} from this resource', {
+                    tag: tagPresentation(tag, t).name
+                  })}
+                  onClick={() => onChange(value.filter((id) => id !== tag.id))}
+                  className="pointer-events-auto absolute top-1/2 right-1.5 inline-flex size-3.5 -translate-y-1/2 items-center justify-center rounded-full bg-background text-foreground opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 sm:pointer-events-none sm:opacity-0 sm:group-hover/tag:pointer-events-auto sm:group-hover/tag:opacity-100 sm:group-focus-within/tag:pointer-events-auto sm:group-focus-within/tag:opacity-100"
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -518,4 +639,4 @@ const ResourceTagSummary = ({
   )
 }
 
-export { ResourceTagBadges, ResourceTagMenu, ResourceTagSummary, TagFilter }
+export { TagSelection, ResourceTagBadges, ResourceTagMenu, ResourceTagSummary, TagFilter }
