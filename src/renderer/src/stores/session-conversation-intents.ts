@@ -14,7 +14,8 @@ const appendPending = (sessionId: string, commands: SessionConversationCommand[]
 
 export const captureSessionConversationIntents = (
   before: PersistedChatSession | undefined,
-  after: PersistedChatSession | undefined
+  after: PersistedChatSession | undefined,
+  runIntent: 'start-run' | 'resume-run' = 'start-run'
 ): void => {
   if (!before || !after || before.runtimeTranscriptOwner !== 'main' || !after.conversationGraph)
     return
@@ -89,7 +90,7 @@ export const captureSessionConversationIntents = (
   ) {
     commands.push({
       id: commandId(),
-      kind: 'start-run',
+      kind: runIntent,
       timestamp: after.activeRun.startedAt,
       run: after.activeRun
     })

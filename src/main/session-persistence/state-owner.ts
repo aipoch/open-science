@@ -671,6 +671,23 @@ class SessionPersistenceStateOwner {
     }
   }
 
+  // Restore reads synthesize restart recovery until a runtime attaches. Commit that
+  // evidence before attachment makes subsequent reads preserve the old runtime state.
+  async prepareRuntimeResume(scope: { projectId: string; sessionId: string }): Promise<void> {
+    const restored = await this.options.repository.loadSessionWithDiagnostics(
+      scope.projectId,
+      scope.sessionId
+    )
+    if (restored.status !== 'found') throw new Error('Session could not be loaded for Resume.')
+    if (restored.session.resumeRecovery?.cause !== 'app-restart') return
+    await this.mutateRuntimeSession(scope, (latest) => {
+      if (sessionRevision(latest) !== sessionRevision(restored.session)) {
+        throw new Error('Session changed before restart recovery could be committed.')
+      }
+      return restored.session
+    })
+  }
+
   async saveSession(
     session: PersistedChatSession,
     options: SaveSessionOptions = {},

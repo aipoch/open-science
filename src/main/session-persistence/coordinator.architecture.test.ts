@@ -485,6 +485,7 @@ describe('Session persistence coordinator architecture', () => {
         'settleMessage',
         'settleTaskCompletion',
         'bindTaskSession',
+        'prepareRuntimeResume',
         'admitTaskTurn',
         'stageTaskCompletion',
         'startAttemptRuntime',
@@ -726,6 +727,7 @@ describe('Session persistence coordinator architecture', () => {
         'setSessionComputeConcurrencyLimit',
         'settleTaskCompletion',
         'bindTaskSession',
+        'prepareRuntimeResume',
         'admitTaskTurn',
         'stageTaskCompletion',
         'setSessionDelegationPolicy',
@@ -801,7 +803,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(48)
+    expect(expectedSchedulerRoute.size).toBe(49)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -952,6 +954,7 @@ describe('Session persistence coordinator architecture', () => {
         'setEnabledComputeHosts',
         'settleTaskCompletion',
         'bindTaskSession',
+        'prepareRuntimeResume',
         'admitTaskTurn',
         'stageTaskCompletion',
         'updateSessionConfiguration'
@@ -1057,6 +1060,7 @@ describe('Session persistence coordinator architecture', () => {
       settleMessage: ['delegatedWorkOwner.settleMessage'],
       settleTaskCompletion: ['stateOwner.settleTaskCompletion'],
       bindTaskSession: ['stateOwner.bindTaskSession'],
+      prepareRuntimeResume: ['stateOwner.prepareRuntimeResume'],
       admitTaskTurn: ['stateOwner.admitTaskTurn'],
       stageTaskCompletion: ['stateOwner.stageTaskCompletion'],
       startMessageDispatch: ['delegatedWorkOwner.startMessageDispatch'],

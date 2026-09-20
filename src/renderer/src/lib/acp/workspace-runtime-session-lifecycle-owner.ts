@@ -588,6 +588,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
   const overflowRecoveryCooldownSessionIds = new Set<string>()
   const activeOverflowRecoverySessionIds = new Set<string>()
   const cancelledOverflowRecoverySessionIds = new Set<string>()
+  const resumeOperations = new Map<string, Promise<void>>()
   const memoryReconfigurationTails = new Map<string, Promise<void>>()
   const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
   const pruneAdmittedAgentTargets = (): void => {
@@ -685,7 +686,20 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       drainRuntimeEvents: RuntimeEventDrain,
       options: ResumeInterruptedWorkspaceSessionOptions
     ): Promise<void> {
-      return resumeInterruptedWorkspaceSession(runtime, sessionId, drainRuntimeEvents, options)
+      const existing = resumeOperations.get(sessionId)
+      if (existing) return existing
+      const operation = resumeInterruptedWorkspaceSession(
+        runtime,
+        sessionId,
+        drainRuntimeEvents,
+        options
+      )
+      resumeOperations.set(sessionId, operation)
+      const clear = (): void => {
+        if (resumeOperations.get(sessionId) === operation) resumeOperations.delete(sessionId)
+      }
+      void operation.then(clear, clear)
+      return operation
     },
     cancel(runtime: WorkspaceCancellationRuntime, sessionId: string): Promise<void> {
       admittedAgentTargetBySessionId.delete(sessionId)

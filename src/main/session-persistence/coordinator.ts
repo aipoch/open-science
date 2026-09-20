@@ -675,6 +675,12 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
+  prepareRuntimeResume(projectId: string, sessionId: string): Promise<void> {
+    return this.operationScheduler.runSession(projectId, sessionId, () =>
+      this.stateOwner.prepareRuntimeResume({ projectId, sessionId })
+    )
+  }
+
   admitTaskTurn(command: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(command.session.projectId, command.session.id, () =>
       this.stateOwner.admitTaskTurn(command)
