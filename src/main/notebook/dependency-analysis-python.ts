@@ -7008,14 +7008,15 @@ const analyzePythonFileAccessTree = (
   const consoleRedirected = pythonRedirectsConsole(tree)
   const localWrappers = pythonLocalFileWrappers(tree)
   const helperFunctions = new Map<string, { function: PyNode; module: PyNode }>()
+  const exportedHelperNames = new Set<string>()
   for (const { module, exports } of helperModules) {
+    for (const name of exports) exportedHelperNames.add(name)
     for (const statement of Array.isArray(module.body) ? module.body : []) {
-      if (
-        (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
-        statement.name &&
-        exports.has(statement.name)
-      )
-        helperFunctions.set(statement.name, { function: statement, module })
+      if (statement.type !== 'FunctionDef' && statement.type !== 'AsyncFunctionDef') continue
+      for (const nested of walkPy(statement)) {
+        if ((nested.type === 'FunctionDef' || nested.type === 'AsyncFunctionDef') && nested.name)
+          helperFunctions.set(nested.name, { function: nested, module })
+      }
     }
   }
   const activeHelperNames = new Set<string>()
@@ -7379,8 +7380,15 @@ const analyzePythonFileAccessTree = (
     helperScopeDepth += 1
     activeHelperNames.add(helper.function.name!)
     try {
+      // Module-level imports and static assignments execute when the helper is imported. Keep
+      // function/class definitions as callable bindings, but do not execute their bodies here.
       for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
-        if (statement.type === 'Import' || statement.type === 'ImportFrom') visit(statement)
+        if (
+          statement.type !== 'FunctionDef' &&
+          statement.type !== 'AsyncFunctionDef' &&
+          statement.type !== 'ClassDef'
+        )
+          visit(statement)
       }
       for (const [name, value] of parameterValues) bindings.set(name, value)
       for (const statement of Array.isArray(helper.function.body) ? helper.function.body : [])
@@ -7399,6 +7407,7 @@ const analyzePythonFileAccessTree = (
     if (
       node.func?.type === 'Name' &&
       helperFunctions.has(rawName) &&
+      (helperScopeDepth > 0 || exportedHelperNames.has(rawName)) &&
       !shadowedHelperNames.has(rawName) &&
       !activeHelperNames.has(rawName)
     ) {
@@ -8336,7 +8345,8 @@ const analyzePythonFileAccessTree = (
       node.type === 'ClassDef'
     ) {
       if (node.name) {
-        if (helperFunctions.has(node.name)) shadowedHelperNames.add(node.name)
+        if (helperScopeDepth === 0 && helperFunctions.has(node.name))
+          shadowedHelperNames.add(node.name)
         importedNames.delete(node.name)
         scientificObjectTypes.delete(node.name)
       }
@@ -8809,11 +8819,8 @@ const analyzePythonNotebookSource = async (
         module: convertModule(root),
         exports: new Set(helper.exports)
       }))
-      return parsed.state === 'ok' ? parsed.value : undefined
+      return parsed.state === 'ok' ? { descriptor: helper, ...parsed.value } : undefined
     })
-  )
-  const helperTrees: { module: PyNode; exports: ReadonlySet<string> }[] = parsedHelpers.flatMap(
-    (helper) => (helper ? [helper] : [])
   )
   const parsed = await withParsedNotebookSource('python', source, (root) => {
     const acceptedSerializedReads = new Map<string, string>()
@@ -8827,12 +8834,40 @@ const analyzePythonNotebookSource = async (
       context?.verifiedSerializedValues,
       acceptedSerializedReads
     )
+    const fileContext = fileContextForFacts ? fileContextForFacts(facts) : context
+    const helperKeys = new Set(
+      (fileContext?.pythonHelperModules ?? []).map(
+        (helper) => `${helper.source}\0${helper.exports.join('\0')}`
+      )
+    )
+    const usableHelpers = parsedHelpers.flatMap((helper) => {
+      if (
+        !helper ||
+        !helperKeys.has(`${helper.descriptor.source}\0${helper.descriptor.exports.join('\0')}`)
+      )
+        return []
+      return [helper]
+    })
+    const helperTrees: { module: PyNode; exports: ReadonlySet<string> }[] = usableHelpers.map(
+      ({ module, exports }) => ({ module, exports })
+    )
+    const effectiveFileContext = fileContext
+      ? {
+          ...fileContext,
+          ...(fileContext.pythonHelperModules
+            ? { pythonHelperModules: usableHelpers.map(({ descriptor }) => descriptor) }
+            : {})
+        }
+      : undefined
     const fileAccess = analyzePythonFileAccessTree(
       root,
-      fileContextForFacts ? fileContextForFacts(facts) : context,
+      effectiveFileContext,
       acceptedSerializedReads,
       helperTrees
     )
+    if (effectiveFileContext?.pythonHelperModules) {
+      fileAccess.context.pythonHelperModules = effectiveFileContext.pythonHelperModules
+    }
     // Static subscripting only produces a collection here for a slice of flat
     // strings. It owns its sequence; keep the read dependency without linking
     // the source and copy as shared mutable references in either projection.

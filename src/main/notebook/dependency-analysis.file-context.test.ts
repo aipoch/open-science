@@ -130,7 +130,46 @@ describe('file context after mutable path collections', () => {
     expect(
       await analyzeNotebookSourceFileAccess('python', 'data = read_inputs()', context)
     ).toMatchObject({
-      reads: ['left.csv', 'right.csv']
+      reads: ['left.csv', 'right.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('replays helper module constants and private reader functions', async () => {
+    const helperSource = `import pandas as pd
+INPUT_PATH = "left.csv"
+def _read(path):
+    return pd.read_csv(path)
+def read_inputs():
+    return _read(INPUT_PATH)`
+    const context = await fileContext(
+      'python',
+      ['data = read_inputs()'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: helperSource,
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'data = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['left.csv'],
+      readState: 'complete',
+      externalState: 'complete'
     })
   })
 

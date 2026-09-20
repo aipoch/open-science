@@ -88,6 +88,14 @@ const analyzeNotebookSourceFileAccess = async (
   for (const { name } of activeContext?.staticCollections ?? []) unresolvedPriorNames.delete(name)
   for (const { name } of activeContext?.localFileWrappers ?? []) unresolvedPriorNames.delete(name)
   for (const name of activeContext?.resolvedKernelNames ?? []) unresolvedPriorNames.delete(name)
+  const shadowedNames = new Set([
+    ...(dependencyFacts?.definedNames ?? []),
+    ...(dependencyFacts?.conditionallyDefinedNames ?? [])
+  ])
+  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
+    []) {
+    if (!shadowedNames.has(name)) unresolvedPriorNames.delete(name)
+  }
   const dependencyAnalysisUnavailable =
     !dependencyFacts ||
     (dependencyFacts.state === 'unknown' &&
