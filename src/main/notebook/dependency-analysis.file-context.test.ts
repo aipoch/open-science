@@ -130,6 +130,37 @@ describe('file context after mutable path collections', () => {
     )
   })
 
+  it.each([
+    ['path = "global.csv"', 'path = "local.csv"', 'return open(path)', ['local.csv']],
+    [
+      'paths = ["global.csv"]',
+      'paths = ["local.csv"]',
+      'for path in paths:\n            open(path)',
+      ['local.csv']
+    ]
+  ])(
+    'preserves captured locals over same-named module bindings: %s',
+    async (global, local, body, reads) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `${global}\ndef read_inputs():\n    ${local}\n    def read():\n        ${body}\n    return read()`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({
+        reads,
+        readState: 'complete'
+      })
+    }
+  )
+
   it('loads globals from a separately recorded helper module during nested calls', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
@@ -467,6 +498,37 @@ describe('file context after mutable path collections', () => {
       reads: ['left.csv', 'right.csv'],
       readState: 'complete',
       externalState: 'complete'
+    })
+  })
+
+  it('does not reuse prior helper evidence after an incomplete helper load', async () => {
+    const helper = {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("left.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+    const context = await fileContext(
+      'python',
+      ['value = read_inputs()', 'value = 1'],
+      [
+        { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } },
+        {
+          helperModules: [helper],
+          helperEvidenceStatus: { state: 'incomplete', reasons: ['payload-limit'] }
+        }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      externalState: 'partial'
     })
   })
 

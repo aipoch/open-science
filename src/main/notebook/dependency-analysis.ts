@@ -1867,9 +1867,13 @@ class NotebookDependencyAnalyzer {
           .filter((previous) => previous.kernelEpochId === run.kernelEpochId)
           .flatMap((previous) => (previous.helperModules ?? []).map(helperEvidenceKey))
       )
-      const projectedHelperModules = priorContext?.pythonHelperModules ?? []
+      const helperEvidenceIncomplete = run.helperEvidenceStatus?.state === 'incomplete'
+      const projectedHelperModules = helperEvidenceIncomplete
+        ? []
+        : (priorContext?.pythonHelperModules ?? [])
       const projectedHelperKeys = new Set(projectedHelperModules.map(helperContextKey))
-      const currentHelperModules = language === 'python' ? (run.helperModules ?? []) : []
+      const currentHelperModules =
+        language === 'python' && !helperEvidenceIncomplete ? (run.helperModules ?? []) : []
       const helperModules = [
         ...projectedHelperModules,
         ...currentHelperModules
@@ -1911,6 +1915,16 @@ class NotebookDependencyAnalyzer {
                 : analyzeRNotebookSource
           )(run.script, analysisContext)
       const normalizedFacts = normalizeFacts(analysis.facts)
+      const persistedFacts = helperEvidenceIncomplete
+        ? {
+            ...normalizedFacts,
+            state: 'unknown' as const,
+            reasons: [
+              ...(normalizedFacts.state === 'unknown' ? normalizedFacts.reasons : []),
+              'execution-incomplete'
+            ]
+          }
+        : normalizedFacts
       const fileAccess = analysis.fileAccess
       const persistedHelperModules =
         run.kernelKind === 'python'
@@ -1933,8 +1947,8 @@ class NotebookDependencyAnalyzer {
           : undefined
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),
-        facts: normalizedFacts,
-        ...(fileContext ? { fileContext: boundedFileContext(fileContext, normalizedFacts) } : {})
+        facts: persistedFacts,
+        ...(fileContext ? { fileContext: boundedFileContext(fileContext, persistedFacts) } : {})
       }
     }
     return true

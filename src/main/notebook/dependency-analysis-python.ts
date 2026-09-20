@@ -7467,39 +7467,6 @@ const analyzePythonFileAccessTree = (
         visit(statement)
       }
     }
-    const mergeCallerScope = (): void => {
-      for (const [key, value] of bindingsSnapshot) if (!bindings.has(key)) bindings.set(key, value)
-      for (const [key, value] of collectionsSnapshot)
-        if (!collections.has(key)) collections.set(key, value)
-      for (const [key, value] of partialMappingKeysSnapshot)
-        if (!partialMappingKeys.has(key)) partialMappingKeys.set(key, value)
-      for (const [key, value] of partialCollectionRowsSnapshot)
-        if (!partialCollectionRows.has(key)) partialCollectionRows.set(key, value)
-      for (const [key, value] of fileConnectionsSnapshot)
-        if (!fileConnections.has(key)) fileConnections.set(key, value)
-      for (const [key, value] of importedNamesSnapshot)
-        if (!importedNames.has(key)) importedNames.set(key, value)
-      for (const [key, value] of scientificObjectTypesSnapshot)
-        if (!scientificObjectTypes.has(key)) scientificObjectTypes.set(key, value)
-      for (const value of inMemoryInputsSnapshot) inMemoryInputs.add(value)
-      for (const value of archiveNamesSnapshot) archiveNames.add(value)
-      for (const value of shadowedStaticCallsSnapshot) shadowedStaticCalls.add(value)
-      for (const value of shadowedHelperNamesSnapshot) shadowedHelperNames.add(value)
-      for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
-    }
-    if (preserveCallerScope) {
-      bindings.clear()
-      collections.clear()
-      partialMappingKeys.clear()
-      partialCollectionRows.clear()
-      inMemoryInputs.clear()
-      fileConnections.clear()
-      archiveNames.clear()
-      importedNames.clear()
-      scientificObjectTypes.clear()
-      shadowedStaticCalls.clear()
-      shadowedHelperNames.clear()
-    }
     const parameterNames = new Set(
       allParameters
         .map((parameter) => parameter.arg)
@@ -7530,8 +7497,9 @@ const analyzePythonFileAccessTree = (
     }
     helperScopes.push(scope)
     try {
-      loadModuleGlobals()
-      if (preserveCallerScope) mergeCallerScope()
+      // Nested helpers inherit the enclosing bindings, including shadowed globals.
+      // Their module has already been loaded by the enclosing helper invocation.
+      if (!preserveCallerScope) loadModuleGlobals()
       for (const name of parameterNames) {
         shadowedStaticCalls.add(name)
         shadowedHelperNames.add(name)
