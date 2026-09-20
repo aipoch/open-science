@@ -938,7 +938,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
-      'src/main/session-persistence/runtime-authority.test.ts'
+      'src/main/session-persistence/runtime-authority.test.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

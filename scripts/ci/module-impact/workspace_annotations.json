@@ -153,7 +153,8 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/lib/session-fork.test.ts"
+      "src/renderer/src/lib/session-fork.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts"
     ]
   },
   "capabilityOverlays": [],

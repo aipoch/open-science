@@ -399,7 +399,8 @@
       "src/main/credential-identity/recovery.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts"
     ]
   },
   "capabilityOverlays": ["i18n_catalog"],
