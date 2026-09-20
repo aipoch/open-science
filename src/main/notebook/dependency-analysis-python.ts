@@ -7534,6 +7534,14 @@ const analyzePythonFileAccessTree = (
     }
     const canonicalName = canonicalCallName(node) ?? rawName
     const helper = helperScopes.at(-1)?.get(rawName) ?? helperFunctions.get(rawName)
+    if (helper && activeHelperFunctions.has(helper.function)) {
+      // Re-entrant calls may use different arguments and cannot be safely replayed
+      // without a cycle-aware invocation graph.
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     if (
       node.func?.type === 'Name' &&
       helper &&

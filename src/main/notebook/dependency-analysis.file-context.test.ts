@@ -347,6 +347,24 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it('keeps recursive helper replay partial', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs(path):\n    if path == "done":\n        return open(path)\n    return read_inputs("done")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs("start")', context)
+    ).toMatchObject({ readState: 'partial', externalState: 'partial' })
+  })
+
   it('does not leak helper-local possible aliases into caller analysis', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
