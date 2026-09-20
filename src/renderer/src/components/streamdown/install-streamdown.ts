@@ -844,8 +844,23 @@ const decorateCodeBlockChips = (roots: Iterable<Node> = [document]): void => {
 const installCodeLanguageBadges = (): (() => void) => {
   decorateCodeBlockChips()
   const observer = new MutationObserver((mutations) => {
-    const addedNodes = mutations.flatMap(({ addedNodes }) => [...addedNodes])
-    if (addedNodes.length > 0) decorateCodeBlockChips(addedNodes)
+    const roots = new Set<Node>()
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        roots.add(node)
+        if (node instanceof Element) {
+          const actions = node.closest(CODE_BLOCK_ACTION_NODE)
+          if (actions) roots.add(actions)
+        }
+      }
+
+      if (mutation.target instanceof Element) {
+        const actions = mutation.target.closest(CODE_BLOCK_ACTION_NODE)
+        if (actions) roots.add(actions)
+      }
+    }
+
+    if (roots.size > 0) decorateCodeBlockChips(roots)
   })
   observer.observe(document.body, { childList: true, subtree: true })
 

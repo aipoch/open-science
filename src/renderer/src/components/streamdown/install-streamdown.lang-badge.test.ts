@@ -100,6 +100,24 @@ describe('code block language badge', () => {
     querySelectorAll.mockRestore()
   })
 
+  it('decorates an action bar appended to an existing code block', async () => {
+    const root = document.createElement('div')
+    root.className = 'agent-markdown-root'
+    const block = document.createElement('div')
+    block.dataset.streamdown = 'code-block'
+    block.dataset.language = 'python'
+    root.appendChild(block)
+    document.body.appendChild(root)
+    await flushMutations()
+
+    const actions = document.createElement('div')
+    actions.dataset.streamdown = 'code-block-actions'
+    block.appendChild(actions)
+    await flushMutations()
+
+    expect(actions.querySelector('[data-lang-icon]')).not.toBeNull()
+  })
+
   it('leaves code blocks outside agent Markdown undecorated', async () => {
     const actions = createCodeBlock('python')
     actions.closest('.agent-markdown-root')!.className = ''
