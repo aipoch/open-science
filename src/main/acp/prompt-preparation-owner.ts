@@ -433,6 +433,7 @@ class AcpPromptPreparationOwner {
       if (
         input.classificationEnabled &&
         hasActiveLinkedPdf &&
+        (input.backend.framework.id === 'codex' || input.backend.framework.id === 'codebuddy') &&
         !hasFullDocumentIntent(input.request.text) &&
         !hasCurrentPageIntent(input.request.text) &&
         this.options.classifyReadingRoute
@@ -485,6 +486,7 @@ class AcpPromptPreparationOwner {
         projectId: input.projectId,
         connectionGeneration: input.connectionGeneration,
         text: promptText,
+        readingIntentText: input.request.text,
         historyImages: input.request.historyImages ?? [],
         currentImages: input.request.currentImages ?? [],
         historyUploads,

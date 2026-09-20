@@ -6,6 +6,7 @@ import { createLogger, flushLogs, initLogger } from '../logger'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
+import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { codexFramework } from '../agent-framework/codex'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
@@ -246,6 +247,42 @@ describe('AcpPromptPreparationOwner', () => {
           }
         ]
       })
+    })
+
+    expect(classifyReadingRoute).not.toHaveBeenCalled()
+  })
+
+  it('does not classify reading routes for unsupported frameworks', async () => {
+    const classifyReadingRoute = vi.fn(async () => 'full-document' as const)
+    const fixture = setup(undefined, undefined, undefined, { classifyReadingRoute })
+
+    await fixture.prepare({
+      request: request({
+        text: 'What are the main contributions?',
+        referencedArtifacts: [
+          {
+            id: 'paper-1',
+            source: 'literature',
+            name: 'paper.pdf',
+            path: 'literature-attachment-version:paper-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true
+          }
+        ]
+      }),
+      backend: {
+        framework: claudeCodeFramework,
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'baked instructions' },
+        context: { window: 100_000, supportsImageInput: true },
+        adapter: {
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          codexHome: '/codex'
+        }
+      }
     })
 
     expect(classifyReadingRoute).not.toHaveBeenCalled()

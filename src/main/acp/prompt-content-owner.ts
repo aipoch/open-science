@@ -96,6 +96,7 @@ type PrepareAcpPromptContentInput = {
   skillImportTurnToken?: string
   onSkillImportAttachmentEligible?: (attachmentUri: string) => void
   pdfPreparationScope?: Extract<PdfPreparationScope, 'full-document'>
+  readingIntentText?: string
 }
 
 type AcpPromptTurnInputs = {
@@ -847,7 +848,9 @@ class AcpPromptContentOwner {
           ]
         : []
       if (linkedPdfContext && pdfScope === 'full-document') {
-        const collectionRequested = PDF_COLLECTION_INTENT.test(input.text)
+        const collectionRequested = PDF_COLLECTION_INTENT.test(
+          input.readingIntentText ?? input.text
+        )
         const text = [
           ...(pdfReadingPosition ? [buildPdfReadingContext(name, pdfReadingPosition)] : []),
           '<linked_pdf_reading_route>',
