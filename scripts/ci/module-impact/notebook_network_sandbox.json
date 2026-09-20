@@ -487,6 +487,7 @@
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
+      "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/notebook/package-process-sandbox.test.ts",
       "src/main/notebook/package-mutation.test.ts",
       "src/main/notebook/package-admission.test.ts",
