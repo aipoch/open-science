@@ -92,9 +92,10 @@ const analyzeNotebookSourceFileAccess = async (
     ...(dependencyFacts?.definedNames ?? []),
     ...(dependencyFacts?.conditionallyDefinedNames ?? [])
   ])
+  const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
   for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
     []) {
-    if (!shadowedNames.has(name)) unresolvedPriorNames.delete(name)
+    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
   }
   const dependencyAnalysisUnavailable =
     !dependencyFacts ||

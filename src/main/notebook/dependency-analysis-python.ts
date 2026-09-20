@@ -7034,7 +7034,8 @@ const analyzePythonFileAccessTree = (
     for (const statement of Array.isArray(module.body) ? module.body : []) {
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
-        statement.name
+        statement.name &&
+        !statement.decorator_list?.length
       )
         topLevelFunctions.set(statement.name, statement)
     }
@@ -7130,6 +7131,7 @@ const analyzePythonFileAccessTree = (
   )
   const reads = new Set<string>()
   const pythonTaintedNamespaces = new Set(context?.pythonTaintedNamespaces ?? [])
+  const replayedHelperNames = new Set<string>()
   const knownDiagnosticValue = (name: string): PythonDiagnosticKind | undefined =>
     bindings.has(name)
       ? scientificObjectTypes.get(name) === 'pathlib.PurePath'
@@ -7462,12 +7464,17 @@ const analyzePythonFileAccessTree = (
     for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
-        statement.name
+        statement.name &&
+        !statement.decorator_list?.length
       )
         scope.set(statement.name, { function: statement, module: helper.module, topLevel: true })
     }
     for (const nested of walkPy(helper.function)) {
-      if ((nested.type === 'FunctionDef' || nested.type === 'AsyncFunctionDef') && nested.name)
+      if (
+        (nested.type === 'FunctionDef' || nested.type === 'AsyncFunctionDef') &&
+        nested.name &&
+        !nested.decorator_list?.length
+      )
         scope.set(nested.name, { function: nested, module: helper.module, topLevel: false })
     }
     helperScopes.push(scope)
@@ -7502,6 +7509,7 @@ const analyzePythonFileAccessTree = (
         unresolvedWrites = true
         return
       }
+      replayedHelperNames.add(rawName)
       invokeHelper(helper, node)
       return
     }
@@ -8836,6 +8844,7 @@ const analyzePythonFileAccessTree = (
   return {
     reads: [...reads].sort(),
     writes: [...writes].sort(),
+    ...(replayedHelperNames.size ? { replayedHelperNames: [...replayedHelperNames].sort() } : {}),
     ...(writeScopes.size ? { writeScopes: [...writeScopes.values()] } : {}),
     unresolvedReads,
     unresolvedWrites,

@@ -282,6 +282,8 @@ type NotebookSourceFileWriteScope = {
 type NotebookSourceFileAccessExtraction = {
   reads: string[]
   writes: string[]
+  // Transient names whose recorded helper bodies were actually replayed for this source.
+  replayedHelperNames?: string[]
   writeScopes?: NotebookSourceFileWriteScope[]
   unresolvedReads: boolean
   unresolvedWrites: boolean

@@ -252,6 +252,45 @@ describe('file context after mutable path collections', () => {
     }
     expect(
       await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({ reads: [], readState: 'partial' })
+  })
+
+  it('keeps helper aliases unresolved when the alias is not replayed', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return open("aliased.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'reader = read_inputs\nvalue = reader()',
+        context
+      )
+    ).toMatchObject({ reads: [], readState: 'partial' })
+  })
+
+  it('does not certify decorated helper exports from their raw function body', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def decorate(fn):\n    return fn\n@decorate\ndef read_inputs():\n    return open("decorated.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
     ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
   })
 
