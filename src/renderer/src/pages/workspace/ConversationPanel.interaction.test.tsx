@@ -29,6 +29,8 @@ import {
 import {
   useSessionStore,
   createInitialSessionState,
+  createSessionStore,
+  toPersistedSession,
   type ChatSession
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
@@ -5605,6 +5607,53 @@ describe('ConversationPanel fix loop lock', () => {
 
     expect(onCancelRun).toHaveBeenCalledTimes(1)
   })
+
+  it.each(['completed', 'cancelled'] as const)(
+    'keeps Stop stable across durable idle echoes and tool updates until the prompt is %s',
+    (outcome) => {
+      const store = createSessionStore()
+      store.getState().hydrateSessions([idleSession])
+      store.getState().appendUserMessage({ sessionId: idleSession.id, content: 'Continue' })
+      store.getState().setAgentPromptInFlight(idleSession.id, true)
+      const running = store.getState().sessions[0]
+      const durable = toPersistedSession(running)
+      const renderCurrent = (): void => {
+        renderPanel({ view: { activeSession: store.getState().sessions[0] } })
+      }
+      renderCurrent()
+      const originalStop = container.querySelector('[aria-label="Cancel run"]')
+      expect(originalStop).not.toBeNull()
+
+      // Main's live prompt ownership stays unchanged while the two projection lanes interleave.
+      for (const revision of [2, 3, 4]) {
+        store.getState().applyDurableSessionProjection({
+          source: store.getState().sessions[0],
+          session: { ...durable, revision, status: 'idle' },
+          mode: 'runtime-transcript-authority'
+        })
+        renderCurrent()
+        expect(container.querySelector('[aria-label="Cancel run"]')).toBe(originalStop)
+        expect(container.querySelector('[aria-label="Send message"]')).toBeNull()
+
+        store.getState().upsertToolActivity({
+          sessionId: idleSession.id,
+          toolCallId: 'notebook-tool',
+          eventId: `tool-event-${revision}`,
+          promptMessageId: running.activeRun!.promptMessageId,
+          title: 'Notebook',
+          status: 'in_progress'
+        })
+        renderCurrent()
+        expect(container.querySelector('[aria-label="Cancel run"]')).toBe(originalStop)
+      }
+
+      if (outcome === 'completed') store.getState().finishRun(idleSession.id)
+      else store.getState().interruptRun(idleSession.id, 'cancelled', 'Cancelled')
+      renderCurrent()
+      expect(container.querySelector('[aria-label="Cancel run"]')).toBeNull()
+      expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+    }
+  )
 
   it('uses the running composer submit action to add the draft to the queue', () => {
     const onQueueMessage = vi.fn()

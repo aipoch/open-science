@@ -402,6 +402,36 @@ describe('session store', () => {
     })
   })
 
+  it.each(['idle', 'error'] as const)(
+    'keeps foreground actions locked while runtime ownership outlives a %s projection',
+    (status) => {
+      const projection = projectSessionActionability({ status, agentPromptInFlight: true })
+
+      expect(projection).toMatchObject({
+        presentedStatus: 'running',
+        activity: 'running',
+        attentionOwner: 'agent'
+      })
+      for (const action of Object.values(projection.actions)) {
+        expect(action).toEqual({ allowed: false, disabledReason: 'session-running' })
+      }
+      expect(projectSessionActionability({ status }).activity).toBe('inactive')
+    }
+  )
+
+  it.each(['waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as const)(
+    'preserves %s while Main still owns the foreground prompt',
+    (status) => {
+      expect(projectSessionActionability({ status, agentPromptInFlight: true })).toMatchObject({
+        presentedStatus: status,
+        activity: 'waiting',
+        attentionOwner: 'user',
+        waitReason: status,
+        actions: { startTurn: { allowed: false } }
+      })
+    }
+  )
+
   it('keeps delegated Permission actionable without giving it the main Composer lane', () => {
     const actionability = projectSessionActionability(
       {
