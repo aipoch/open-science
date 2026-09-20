@@ -295,6 +295,27 @@ describe('file context after mutable path collections', () => {
     ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
   })
 
+  it('keeps helper delegation to opaque callables partial', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return transform("input.dat")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
   it('replays an async helper when its call is awaited', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],

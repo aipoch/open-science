@@ -8251,6 +8251,18 @@ const analyzePythonFileAccessTree = (
     }
     if (!call) {
       if (
+        helperScopeDepth > 0 &&
+        !libraryMethodEffect &&
+        (!SAFE_CALLS.has(rawName) || shadowedStaticCalls.has(rawName)) &&
+        !helperFunctions.has(rawName)
+      ) {
+        // Helper bodies are replayed outside the dependency-facts pass. An opaque
+        // callable inside one may perform I/O that this visitor cannot attribute.
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+      if (
         !libraryMethodEffect &&
         (!SAFE_CALLS.has(rawName) ||
           shadowedStaticCalls.has(rawName) ||
