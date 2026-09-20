@@ -134,6 +134,33 @@ it('offers provider choices and an API key link without a manual model ID field'
     'https://openrouter.ai/workspaces/default/keys'
   )
 })
+
+it('configures a custom typed-decision endpoint without requiring a loopback key', async () => {
+  render(<Harness />)
+  fireEvent.click(await screen.findByText('Add service'))
+  fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'Custom HTTP service' }))
+  expect(await screen.findByText(/Open-Science Typed Decisions HTTP/)).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('Endpoint URL'), {
+    target: { value: 'http://localhost:8000/classify' }
+  })
+  fireEvent.change(screen.getByLabelText('Model'), {
+    target: { value: 'laya-typed-decisions' }
+  })
+  fireEvent.change(screen.getByLabelText('Service name'), { target: { value: 'Local Laya' } })
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false)
+  fireEvent.click(screen.getByText('Save'))
+  await waitFor(() =>
+    expect(api.updateClassification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: 'custom',
+        baseUrl: 'http://localhost:8000/classify',
+        modelId: 'laya-typed-decisions',
+        apiKey: undefined
+      })
+    )
+  )
+})
 it('shows the shared validation failure without saving, preserves the draft, and allows retry', async () => {
   let finish!: (result: ClassificationMutationResult) => void
   api.updateClassification.mockImplementationOnce(

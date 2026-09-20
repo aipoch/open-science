@@ -6457,6 +6457,12 @@
     "Account unavailable": "Аккаунт недоступен",
     "Use a new API key": "Использовать новый API-ключ",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "При удалении этого сервиса общий аккаунт и ключ сохраняются. Для выбора возможностей снова используется способ по умолчанию.",
-    "OpenRouter": "OpenRouter"
+    "OpenRouter": "OpenRouter",
+    "Custom HTTP service": "Пользовательский HTTP-сервис",
+    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Laya and other native model APIs need an adaptor or wrapper.": "Протокол: Open-Science Typed Decisions HTTP. Конечная точка должна принимать state и типизированные вопросы, а затем возвращать model, answers и usage. Для Laya и других нативных API моделей нужен адаптер или обёртка.",
+    "Endpoint URL": "URL конечной точки",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Введите корректную защищённую HTTP-конечную точку. Для удалённых конечных точек требуется HTTPS.",
+    "Model ID exposed by the endpoint": "Идентификатор модели, предоставляемый конечной точкой",
+    "This is not a Chat Completions endpoint. Use an adaptor for Laya or native model APIs.": "Это не конечная точка Chat Completions. Для Laya и нативных API моделей используйте адаптер."
   }
 }

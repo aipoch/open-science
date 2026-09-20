@@ -5984,6 +5984,12 @@
     "Account unavailable": "账户不可用",
     "Use a new API key": "使用新的 API 密钥",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "移除此服务会保留共用的账户和密钥。技能和连接器将恢复默认选择方式。",
-    "OpenRouter": "OpenRouter"
+    "OpenRouter": "OpenRouter",
+    "Custom HTTP service": "自定义 HTTP 服务",
+    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Laya and other native model APIs need an adaptor or wrapper.": "协议：Open-Science Typed Decisions HTTP。端点必须接受 state 和类型化问题，然后返回 model、answers 和 usage。Laya 及其他原生模型 API 需要适配器或包装器。",
+    "Endpoint URL": "端点 URL",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "请输入有效且安全的 HTTP 端点。远程端点必须使用 HTTPS。",
+    "Model ID exposed by the endpoint": "端点提供的模型 ID",
+    "This is not a Chat Completions endpoint. Use an adaptor for Laya or native model APIs.": "此端点不是 Chat Completions 端点。对于 Laya 或原生模型 API，请使用适配器。"
   }
 }

@@ -6316,6 +6316,12 @@
     "Account unavailable": "Cuenta no disponible",
     "Use a new API key": "Usar una nueva clave API",
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "Al eliminar este servicio, se conservan la cuenta compartida y su clave. La selección de habilidades y conectores vuelve al método predeterminado.",
-    "OpenRouter": "OpenRouter"
+    "OpenRouter": "OpenRouter",
+    "Custom HTTP service": "Servicio HTTP personalizado",
+    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Laya and other native model APIs need an adaptor or wrapper.": "Protocolo: Open-Science Typed Decisions HTTP. El endpoint debe aceptar state y preguntas tipadas, y devolver model, answers y usage. Laya y otras API de modelos nativas necesitan un adaptador o wrapper.",
+    "Endpoint URL": "URL del endpoint",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Introduzca un endpoint HTTP seguro válido. Los endpoints remotos deben usar HTTPS.",
+    "Model ID exposed by the endpoint": "ID de modelo expuesto por el endpoint",
+    "This is not a Chat Completions endpoint. Use an adaptor for Laya or native model APIs.": "Este no es un endpoint de Chat Completions. Use un adaptador para Laya u otras API de modelos nativas."
   }
 }
