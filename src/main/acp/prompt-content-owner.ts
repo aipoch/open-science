@@ -95,6 +95,7 @@ type PrepareAcpPromptContentInput = {
   fileTextBudget?: number
   skillImportTurnToken?: string
   onSkillImportAttachmentEligible?: (attachmentUri: string) => void
+  pdfPreparationScope?: Extract<PdfPreparationScope, 'full-document'>
 }
 
 type AcpPromptTurnInputs = {
@@ -405,7 +406,8 @@ class AcpPromptContentOwner {
           input,
           reference,
           fileTextBudget,
-          snapshots
+          snapshots,
+          input.pdfPreparationScope
         )
         // Linked PDF context is read through the Literature MCP, so it must not also be
         // registered as a Notebook artifact input.
@@ -612,7 +614,8 @@ class AcpPromptContentOwner {
     input: PrepareAcpPromptContentInput,
     reference: FileReference,
     fileTextBudget: PromptFileTextBudget,
-    snapshots: TurnResourceSnapshotStore
+    snapshots: TurnResourceSnapshotStore,
+    pdfPreparationScope?: Extract<PdfPreparationScope, 'full-document'>
   ): Promise<{ blocks: ContentBlock[]; reference: FileReference }> {
     const resolvedReference = await this.options.fileReferenceResolver.resolve(
       {
@@ -679,7 +682,8 @@ class AcpPromptContentOwner {
                 documentId: reference.pdfContextDocumentId,
                 documentCount: Math.min(Math.max(reference.pdfContextDocumentCount ?? 1, 1), 3),
                 active: reference.pdfContextActive === true
-              }
+              },
+          pdfPreparationScope
         ),
         reference: exactReference
       }
@@ -707,7 +711,8 @@ class AcpPromptContentOwner {
     isHistoryUpload: boolean,
     source: PromptFileSource,
     pdfReadingPosition?: PdfReadingPosition,
-    linkedPdfContext?: LinkedPdfContext
+    linkedPdfContext?: LinkedPdfContext,
+    pdfPreparationScope?: Extract<PdfPreparationScope, 'full-document'>
   ): Promise<ContentBlock[]> {
     const { absolutePath, uri, skillImportUri, name, mimeType, size, allowSkillImportReference } =
       descriptor
@@ -826,7 +831,10 @@ class AcpPromptContentOwner {
     }
 
     if (this.isPdfFile(name, mimeType)) {
-      const pdfScope = resolvePdfPreparationScope(input.text, pdfReadingPosition)
+      const pdfScope =
+        linkedPdfContext?.active && pdfPreparationScope
+          ? pdfPreparationScope
+          : resolvePdfPreparationScope(input.text, pdfReadingPosition)
       const targetPageNumber =
         pdfScope === 'current-page' ? pdfReadingPosition?.pageNumber : undefined
       const retrievalMode = targetPageNumber ? 'page-snapshot' : 'document-extraction'

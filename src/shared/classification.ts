@@ -79,3 +79,10 @@ export type ClassifySkills = (input: {
   signal: AbortSignal
   observeUsage?: (value: ClassificationUsage) => void
 }) => Promise<{ name: string; path: string }[] | undefined>
+
+export type ClassificationReadingRoute = 'full-document' | 'auto'
+export type ClassifyReadingRoute = (input: {
+  text: string
+  signal?: AbortSignal
+  observeUsage?: (value: ClassificationUsage) => void
+}) => Promise<ClassificationReadingRoute | undefined>

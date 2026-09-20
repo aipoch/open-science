@@ -40,6 +40,17 @@ const response = (noul = 0.95): Response =>
       usage: { input_tokens: 20, output_tokens: 1 }
     })
   )
+const readingResponse = (full: number, auto: number): Response =>
+  new Response(
+    JSON.stringify({
+      model: 'jev-latest',
+      answers: {
+        full: { type: 'noul', noul: full },
+        auto: { type: 'noul', noul: auto }
+      },
+      usage: { input_tokens: 20, output_tokens: 2 }
+    })
+  )
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'classification-'))
   initLogger({ logDir: join(dir, 'logs'), mirrorToConsole: false })
@@ -271,6 +282,39 @@ it('sends only text and candidate metadata, maps paths locally, and separates us
       usage: { inputTokens: 20, outputTokens: 1, cacheTokens: 0, turnCount: 1 }
     })
   )
+})
+it('classifies ambiguous linked-PDF requests conservatively', async () => {
+  await configure()
+  fetchMock.mockResolvedValueOnce(readingResponse(0.92, 0.52))
+  expect(await owner.selectReadingRoute({ text: 'What are the main contributions?' })).toBe(
+    'full-document'
+  )
+
+  fetchMock.mockResolvedValueOnce(readingResponse(0.56, 0.86))
+  expect(await owner.selectReadingRoute({ text: 'How does the method work?' })).toBe('auto')
+
+  fetchMock.mockResolvedValueOnce(readingResponse(0.68, 0.66))
+  expect(await owner.selectReadingRoute({ text: 'Is the approach valid?' })).toBeUndefined()
+})
+it('keeps reading-route classification unconfigured and invalid results on the resolver fallback', async () => {
+  expect(
+    await owner.selectReadingRoute({ text: 'What are the main contributions?' })
+  ).toBeUndefined()
+  expect(fetchMock).not.toHaveBeenCalled()
+
+  await configure()
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        model: 'jev-latest',
+        answers: { full: { type: 'noul', noul: 0.95 } },
+        usage: { input_tokens: 20, output_tokens: 1 }
+      })
+    )
+  )
+  expect(
+    await owner.selectReadingRoute({ text: 'What are the main contributions?' })
+  ).toBeUndefined()
 })
 it('uses one selection read and one settings read before and after the request', async () => {
   await configure()

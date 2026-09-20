@@ -177,6 +177,80 @@ const setup = (
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it('uses the optional reading classifier only for an ambiguous active linked PDF request', async () => {
+    const classifyReadingRoute = vi.fn(async ({ text }: { text: string }) => {
+      expect(text).toBe('What are the main contributions?')
+      return 'full-document' as const
+    })
+    const fixture = setup(undefined, undefined, undefined, { classifyReadingRoute })
+
+    await fixture.prepare({
+      request: request({
+        text: 'What are the main contributions?',
+        referencedArtifacts: [
+          {
+            id: 'paper-1',
+            source: 'literature',
+            name: 'paper.pdf',
+            path: 'literature-attachment-version:paper-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true
+          }
+        ]
+      })
+    })
+
+    expect(classifyReadingRoute).toHaveBeenCalledOnce()
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ pdfPreparationScope: 'full-document' })
+    )
+  })
+
+  it('keeps explicit reading intents out of the classifier', async () => {
+    const classifyReadingRoute = vi.fn(async () => 'full-document' as const)
+    const fixture = setup(undefined, undefined, undefined, { classifyReadingRoute })
+
+    await fixture.prepare({
+      request: request({
+        text: 'Summarize the whole paper.',
+        referencedArtifacts: [
+          {
+            id: 'paper-1',
+            source: 'literature',
+            name: 'paper.pdf',
+            path: 'literature-attachment-version:paper-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true
+          }
+        ]
+      })
+    })
+
+    await fixture.prepare({
+      request: request({
+        text: 'Explain this figure on the current page.',
+        referencedArtifacts: [
+          {
+            id: 'paper-1',
+            source: 'literature',
+            name: 'paper.pdf',
+            path: 'literature-attachment-version:paper-1',
+            mimeType: 'application/pdf',
+            pdfContextDocumentId: 'binding-1',
+            pdfContextDocumentCount: 1,
+            pdfContextActive: true
+          }
+        ]
+      })
+    })
+
+    expect(classifyReadingRoute).not.toHaveBeenCalled()
+  })
+
   it('adds immutable Literature metadata to provider-neutral prompt text', async () => {
     const fixture = setup()
 

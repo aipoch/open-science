@@ -3358,6 +3358,7 @@ const createApplicationModules = async (
       imageInputCompatibility,
       memory: memoryService,
       classifySkills: settingsService.classification.selectSkills,
+      classifyReadingRoute: settingsService.classification.selectReadingRoute,
       auxiliaryUsage: {
         projectIdForSession: (sessionId) =>
           sessionPersistenceCoordinator.sessionProjectId(sessionId),

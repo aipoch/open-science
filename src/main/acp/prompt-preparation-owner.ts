@@ -1,4 +1,8 @@
-import type { ClassifySkills, ClassificationUsage } from '../../shared/classification'
+import type {
+  ClassifyReadingRoute,
+  ClassifySkills,
+  ClassificationUsage
+} from '../../shared/classification'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile } from 'node:fs/promises'
 
@@ -32,6 +36,7 @@ import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-ow
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
+import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
 
 const log = createLogger('acp-prompt-preparation-owner')
 type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
@@ -61,6 +66,7 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     | 'refreshUsage'
   >
   classifySkills?: ClassifySkills
+  classifyReadingRoute?: ClassifyReadingRoute
   recordClassificationUsage?: (
     input: ClassificationUsage & { projectId: string; sessionId: string; frameworkId: string }
   ) => Promise<unknown>
@@ -417,6 +423,63 @@ class AcpPromptPreparationOwner {
           filteredCount: requestedHistoryUploads.length - historyUploads.length
         })
       }
+      let pdfPreparationScope: 'full-document' | undefined
+      const hasActiveLinkedPdf = references.some(
+        (reference) =>
+          'pdfContextDocumentId' in reference &&
+          reference.pdfContextActive === true &&
+          Boolean(reference.pdfContextDocumentId)
+      )
+      if (
+        input.classificationEnabled &&
+        hasActiveLinkedPdf &&
+        !hasFullDocumentIntent(input.request.text) &&
+        !hasCurrentPageIntent(input.request.text) &&
+        this.options.classifyReadingRoute
+      ) {
+        const context = {
+          projectId: input.projectId,
+          sessionId: input.request.sessionId,
+          frameworkId: input.backend.framework.id
+        }
+        log.info('classification reading route started', context)
+        const usage: ClassificationUsage[] = []
+        let classified: Awaited<ReturnType<ClassifyReadingRoute>>
+        try {
+          classified = await this.options.classifyReadingRoute({
+            text: input.request.text,
+            signal: input.signal,
+            observeUsage: (entry) => usage.push(entry)
+          })
+        } catch (error) {
+          classified = undefined
+          log.warn('classification reading route unavailable', {
+            ...context,
+            ...diagnosticErrorFields(error)
+          })
+        }
+        for (const entry of usage) {
+          await this.options
+            .recordClassificationUsage?.({ ...entry, ...context })
+            .catch((error) => {
+              log.warn('classification usage recording failed', {
+                ...context,
+                eventId: entry.eventId,
+                ...diagnosticErrorFields(error)
+              })
+            })
+        }
+        if (input.signal.aborted || !input.isCurrent()) return cancelPrepared()
+        if (classified === 'full-document') {
+          pdfPreparationScope = classified
+          log.info('classification reading route applied', { ...context, route: classified })
+        } else {
+          log.info('classification reading route fallback', {
+            ...context,
+            reason: 'unavailable-or-auto'
+          })
+        }
+      }
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
@@ -433,6 +496,7 @@ class AcpPromptPreparationOwner {
           input.backend.context.supportsImageInput === false &&
           this.options.imageInputCompatibility !== undefined,
         fileTextBudget: resolveFileTextBudget(input.backend.context.window),
+        pdfPreparationScope,
         skillImportTurnToken: input.skillImportTurnToken,
         onSkillImportAttachmentEligible: (attachmentUri) => {
           skillImportAttachmentPaths.add(attachmentUri)
