@@ -1,0 +1,93 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useSpecialistStore } from '@/stores/specialist-store'
+import { ResourceAssignmentControls } from './ResourceAssignmentControls'
+
+const profile = {
+  kind: 'custom' as const,
+  id: 'research',
+  name: 'RESEARCH',
+  description: '',
+  systemPrompt: '',
+  enabled: false,
+  revision: 2,
+  capabilityMode: 'selected' as const,
+  fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+  selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] }
+}
+const resource = {
+  id: 'alpha',
+  name: 'Alpha',
+  kind: 'skill' as const,
+  group: 'featured',
+  mainEnabled: false
+}
+const update = vi.fn()
+
+beforeEach(() => {
+  useSpecialistStore.setState({
+    items: [profile],
+    isLoaded: true,
+    integrity: { status: 'ok' },
+    loadError: undefined
+  })
+  update.mockReset().mockImplementation(async (input) => ({ ...profile, ...input, revision: 3 }))
+  window.api = {
+    specialist: {
+      list: vi.fn().mockResolvedValue({ items: [profile], integrity: { status: 'ok' } }),
+      update
+    }
+  } as unknown as typeof window.api
+})
+afterEach(cleanup)
+
+describe('resource assignment controls', () => {
+  it('opens separate Main Agent and Specialist switches and changes only the requested profile', async () => {
+    const setMain = vi.fn()
+    render(<ResourceAssignmentControls resource={resource} onSetMain={setMain} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    expect(screen.getAllByRole('switch')).toHaveLength(2)
+    expect(screen.getByRole('switch', { name: 'Main Agent' }).getAttribute('aria-checked')).toBe(
+      'false'
+    )
+    expect(screen.getByRole('switch', { name: 'RESEARCH' }).getAttribute('aria-checked')).toBe(
+      'true'
+    )
+    fireEvent.click(screen.getByRole('switch', { name: 'RESEARCH' }))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith({
+        id: 'research',
+        revision: 2,
+        selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+      })
+    )
+    expect(setMain).not.toHaveBeenCalled()
+  })
+  it('searches the scrollable agent list and protects required Main Agent skills', async () => {
+    render(
+      <ResourceAssignmentControls
+        resource={{ ...resource, mainEnabled: true, mainRequired: true }}
+        onSetMain={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    expect(screen.getByRole('switch', { name: 'Main Agent' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search agents' }), {
+      target: { value: 'research' }
+    })
+    expect(screen.queryByRole('switch', { name: 'Main Agent' })).toBeNull()
+    expect(screen.getByRole('switch', { name: 'RESEARCH' })).toBeTruthy()
+    await act(async () => {})
+  })
+  it('keeps the prior state and reports a rejected update', async () => {
+    update.mockRejectedValue(new Error('revision conflict'))
+    render(<ResourceAssignmentControls resource={resource} onSetMain={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'RESEARCH' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+    expect(screen.getByRole('switch', { name: 'RESEARCH' }).getAttribute('aria-checked')).toBe(
+      'true'
+    )
+  })
+})

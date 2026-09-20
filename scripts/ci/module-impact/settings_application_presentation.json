@@ -304,6 +304,8 @@
       "src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx",
       "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
       "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
+      "src/renderer/src/pages/settings/ResourceAssignmentControls.render.test.tsx",
+      "src/renderer/src/pages/settings/ResourceCatalogSelection.render.test.tsx",
       "src/renderer/src/pages/settings/ScenarioModelList.render.test.tsx",
       "src/renderer/src/pages/settings/SkillBulkManageView.render.test.tsx",
       "src/renderer/src/pages/settings/SkillDetailView.render.test.tsx",

@@ -16,7 +16,6 @@ import { ConnectorGlyph } from './connector-icons'
 import { SettingsLoadNotice, SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
 import { ResourceAvailability } from './ResourceAvailability'
-import { specialistsUsingConnector } from './specialist-resource-scope'
 
 type ConnectorDetailViewProps = {
   id: string
@@ -55,7 +54,6 @@ const ConnectorDetailView = ({
   // enabled/autoAllow from the store (falling back to the initial detail) keeps the two header
   // switches live after a toggle, mirroring how SkillDetailView derives enabled from the store.
   const storeConnector = useSettingsStore((state) => state.connectors.find((c) => c.id === id))
-  const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const permissionGrants = usePermissionGrantsStore((state) => state.grants)
   const loadPermissionGrants = usePermissionGrantsStore((state) => state.load)
@@ -163,7 +161,6 @@ const ConnectorDetailView = ({
 
   const enabled = storeConnector?.enabled ?? detail.enabled
   const autoAllow = storeConnector?.autoAllow ?? detail.autoAllow
-  const usages = specialistsUsingConnector(specialistItems, storeConnector ?? detail)
 
   return (
     <div className="p-5">
@@ -211,14 +208,15 @@ const ConnectorDetailView = ({
       ) : null}
 
       <ResourceAvailability
-        mainEnabled={enabled}
-        mainToggleLabel={t('Toggle {{name}}', { name: detail.displayName })}
-        usages={usages}
-        onToggleMain={() =>
-          void savePolicy(async () => {
-            await setConnectorEnabled(id, !enabled)
-          })
-        }
+        resource={{
+          id,
+          name: detail.name,
+          displayName: detail.displayName,
+          kind: 'connector',
+          group: storeConnector?.group ?? 'featured',
+          mainEnabled: enabled
+        }}
+        onSetMain={(value) => setConnectorEnabled(id, value)}
       />
 
       {/* Skip approvals: allow every tool without a per-call approval card. */}

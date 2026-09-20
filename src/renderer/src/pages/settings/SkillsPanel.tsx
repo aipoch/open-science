@@ -1,9 +1,10 @@
+import { useResourceSelection, useStickyResourceFilters } from './use-resource-selection'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   ChevronDown,
   Download,
   Info,
-  ListChecks,
+  ChevronRight,
   MessagesSquare,
   Pencil,
   Plus,
@@ -46,7 +47,12 @@ import {
   type SpecialistUsage
 } from './specialist-resource-scope'
 import { SkillUsageAgents } from './SkillUsageAgents'
-import { RequiredSkillToggle } from './RequiredSkillToggle'
+import { ResourceAssignmentControls } from './ResourceAssignmentControls'
+import {
+  ResourceCategorySelection,
+  ResourceSelectionBar,
+  ResourceSelectionCheckbox
+} from './ResourceCatalogSelection'
 import { SkillMarketplace, type SkillMarketplaceView } from './SkillMarketplace'
 import {
   ResourceTagBadges,
@@ -150,9 +156,29 @@ const SkillsPanel = ({
   const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>(
     skillsLoaded ? 'ready' : 'loading'
   )
-  const [toggleError, setToggleError] = useState<string | undefined>()
   const loadRequestRef = useRef(0)
   const exportInFlightRef = useRef(false)
+  const { panelRef, filterRef } = useStickyResourceFilters()
+  const selection = useResourceSelection({
+    resources: skills
+      .filter((skill) => skill.available !== false)
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.displayName,
+        kind: 'skill',
+        group: skill.source,
+        mainEnabled: skill.enabled,
+        mainRequired: skill.activationPolicy === 'always-on',
+        deletable: skill.source !== 'featured'
+      })),
+    onSetMain: setSkillEnabled,
+    onDelete: async (id) => {
+      const current = useSettingsStore.getState().skills.find((skill) => skill.id === id)
+      if (!current || current.available === false || current.source === 'featured')
+        throw new Error('Skill unavailable')
+      await deleteSkill(id, current.source, current.directoryName)
+    }
+  })
   const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -364,15 +390,6 @@ const SkillsPanel = ({
 
   const groups = SOURCE_GROUPS.filter((group) => filter === 'all' || filter === group.source)
 
-  const toggleSkill = async (id: string, enabled: boolean): Promise<void> => {
-    setToggleError(undefined)
-    try {
-      await setSkillEnabled(id, enabled)
-    } catch {
-      setToggleError(t('Could not save this setting. The previous value was restored.'))
-    }
-  }
-
   if (skills.length === 0 && catalogState !== 'ready') {
     return (
       <div className="p-5">
@@ -387,7 +404,7 @@ const SkillsPanel = ({
   }
 
   return (
-    <div className="p-5">
+    <div ref={panelRef} className="p-5">
       <div
         className="mb-4 flex flex-wrap items-center justify-between gap-3"
         data-slot="skills-header"
@@ -402,10 +419,6 @@ const SkillsPanel = ({
           <Button onClick={() => onNavigate({ kind: 'marketplace' })}>
             <Store data-icon="inline-start" aria-hidden="true" />
             {t('Browse Marketplace')}
-          </Button>
-          <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
-            <ListChecks data-icon="inline-start" aria-hidden="true" />
-            {t('Manage')}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -451,7 +464,10 @@ const SkillsPanel = ({
           </DropdownMenu>
         </div>
       </div>
-      <div className="mb-4 space-y-2">
+      <div
+        ref={filterRef}
+        className="sticky top-0 z-20 -mx-5 mb-2 space-y-2 border-b border-border/60 bg-background px-5 py-3"
+      >
         <div data-slot="skills-filter-bar" className="flex flex-wrap items-center gap-2">
           <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
             <SelectTrigger aria-label={t('Filter skills by source')} className="w-36">
@@ -499,10 +515,6 @@ const SkillsPanel = ({
         <ErrorNotice inline role="alert" tone="amber" className="mb-3" description={exportError} />
       ) : null}
 
-      {toggleError ? (
-        <ErrorNotice inline role="alert" tone="amber" className="mb-3" description={toggleError} />
-      ) : null}
-
       {catalogState === 'error' && skills.length > 0 ? (
         <SettingsLoadNotice
           state="error"
@@ -520,7 +532,7 @@ const SkillsPanel = ({
 
           return (
             <div key={group.source} data-slot="skills-source-group" data-source={group.source}>
-              <div className="flex items-start justify-between gap-3">
+              <div className="sticky top-[var(--resource-filter-height,0px)] z-10 flex items-center justify-between gap-3 bg-background py-2">
                 <button
                   type="button"
                   aria-expanded={expanded}
@@ -540,6 +552,14 @@ const SkillsPanel = ({
                   </span>
                   <span className="text-xs text-muted-foreground">{t(group.subtitleKey)}</span>
                 </button>
+                <ResourceCategorySelection
+                  selection={selection}
+                  group={group.source}
+                  label={t(group.labelKey)}
+                  ids={rows
+                    .filter(({ skill }) => skill.available !== false)
+                    .map(({ skill }) => skill.id)}
+                />
                 {group.source === 'imported' ? (
                   <SkillImportMenu
                     onUploadSkills={() => onNavigate({ kind: 'upload' })}
@@ -584,8 +604,20 @@ const SkillsPanel = ({
                         <li
                           key={skill.catalogEntryKey ?? skill.id}
                           data-slot="settings-list-row"
-                          className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
+                          className="group/row -mx-2 flex min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
                         >
+                          {available ? (
+                            <ResourceSelectionCheckbox
+                              selection={selection}
+                              resource={{
+                                id: skill.id,
+                                name: skill.displayName,
+                                kind: 'skill',
+                                group: skill.source,
+                                mainEnabled: skill.enabled
+                              }}
+                            />
+                          ) : null}
                           <div className="min-w-0 flex-1">
                             <button
                               type="button"
@@ -731,27 +763,29 @@ const SkillsPanel = ({
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             ) : null}
-                            {skill.activationPolicy === 'always-on' ? (
-                              <RequiredSkillToggle
-                                label={t('Toggle {{name}}', { name: skill.displayName })}
-                              />
-                            ) : (
-                              <SettingsToggle
-                                enabled={skill.enabled}
-                                disabled={!available}
-                                aria-label={t('Toggle {{name}}', { name: skill.displayName })}
-                                title={
-                                  !available
-                                    ? t('This Skill has an identity conflict and cannot be used.')
-                                    : skill.enabled
-                                      ? t('Available to Main Agent')
-                                      : t('Unavailable to Main Agent')
-                                }
-                                onToggle={() => {
-                                  if (available) void toggleSkill(skill.id, !skill.enabled)
-                                }}
-                              />
-                            )}
+                            <ResourceAssignmentControls
+                              resource={{
+                                id: skill.id,
+                                name: skill.displayName,
+                                kind: 'skill',
+                                group: skill.source,
+                                mainEnabled: skill.enabled,
+                                mainRequired: skill.activationPolicy === 'always-on'
+                              }}
+                              disabled={!available || selection.locked}
+                              onSetMain={(enabled) => setSkillEnabled(skill.id, enabled)}
+                            />
+                            <button
+                              type="button"
+                              aria-label={t('View details for {{name}}', {
+                                name: skill.displayName
+                              })}
+                              disabled={!available}
+                              onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                              className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
+                            >
+                              <ChevronRight className="size-4" aria-hidden="true" />
+                            </button>
                           </div>
                           {deleteError?.id === skill.id ? (
                             <ErrorNotice
@@ -809,6 +843,12 @@ const SkillsPanel = ({
           </div>
         </SettingsRow>
       </SettingsSection>
+      <ResourceSelectionBar
+        selection={selection}
+        visibleIds={visible
+          .filter(({ skill }) => groups.some((group) => group.source === skill.source))
+          .map(({ skill }) => skill.id)}
+      />
     </div>
   )
 }

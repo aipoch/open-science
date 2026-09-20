@@ -171,6 +171,8 @@
       "src/renderer/src/pages/settings/ProviderForm.render.test.tsx",
       "src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx",
       "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
+      "src/renderer/src/pages/settings/ResourceAssignmentControls.render.test.tsx",
+      "src/renderer/src/pages/settings/ResourceCatalogSelection.render.test.tsx",
       "src/renderer/src/pages/settings/RuntimesPanel.render.test.tsx",
       "src/renderer/src/pages/settings/ScenarioModelList.render.test.tsx",
       "src/renderer/src/pages/settings/SettingsGlobalSearch.test.tsx",

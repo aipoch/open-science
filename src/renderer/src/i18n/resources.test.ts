@@ -1029,7 +1029,6 @@ describe('mandatory product glossary', () => {
       scratch: de.renderer.Scratch,
       scratchRoot: de.renderer['Scratch root'],
       scratchRootPath: de.renderer['Scratch root path'],
-      mainOnly: de.renderer['Main only'],
       tool: de.renderer.Tool,
       tools: de.renderer.Tools,
       review: de.renderer.Review,
@@ -1052,7 +1051,6 @@ describe('mandatory product glossary', () => {
       scratch: 'Scratch',
       scratchRoot: 'Scratch-Verzeichnis',
       scratchRootPath: 'Pfad zum Scratch-Verzeichnis',
-      mainOnly: 'Nur Hauptagent',
       tool: 'Tool',
       tools: 'Tools',
       review: 'Review',
@@ -3009,11 +3007,6 @@ describe('Russian catalog quality', () => {
     ['All Agents/Specialists', 'Все агенты и специалисты'],
     ['Export', 'Экспортировать'],
     ['Remove', 'Удалить'],
-    ['Agents with access', 'Агенты с доступом'],
-    [
-      'Hover to preview. Click to view every agent.',
-      'Наведите курсор для предпросмотра. Нажмите, чтобы увидеть всех агентов.'
-    ],
     [
       'This Provider no longer exists. Your draft has not been saved.',
       'Этот поставщик моделей больше не существует. Черновик не сохранён.'

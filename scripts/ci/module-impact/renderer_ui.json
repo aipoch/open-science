@@ -202,6 +202,8 @@
       "src/renderer/src/pages/settings/ReasoningEffortSelect.render.test.tsx",
       "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
       "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx",
+      "src/renderer/src/pages/settings/ResourceAssignmentControls.render.test.tsx",
+      "src/renderer/src/pages/settings/ResourceCatalogSelection.render.test.tsx",
       "src/renderer/src/pages/settings/ResourceTagControls.render.test.tsx",
       "src/renderer/src/pages/settings/RuntimeUninstallControl.render.test.tsx",
       "src/renderer/src/pages/settings/RuntimesPanel.render.test.tsx",
