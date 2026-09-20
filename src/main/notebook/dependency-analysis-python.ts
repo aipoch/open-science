@@ -198,6 +198,7 @@ type PyNode = {
   left?: PyNode
   right?: PyNode
   alternate?: PyNode
+  argument?: PyNode
   context_expr?: PyNode
   optional_vars?: PyNode
   items?: PyNode[]
@@ -1125,6 +1126,20 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
         ])
       )
     }
+    case 'await':
+      return locate(
+        node,
+        py(
+          'Await',
+          {
+            argument:
+              (fieldChild(node, 'argument') ?? node.namedChildren[0])
+                ? convertExpr(fieldChild(node, 'argument') ?? node.namedChildren[0]!, 'Load')
+                : py('Constant', { value: null, constKind: 'none' }, [])
+          },
+          ['argument']
+        )
+      )
     case 'call': {
       const func = fieldChild(node, 'function')
       const { args, keywords } = convertCallArgs(fieldChild(node, 'arguments'))
@@ -1468,7 +1483,10 @@ const convertStmt = (node: Node): PyNode | undefined => {
     case 'augmented_assignment':
       return convertExpr(node, 'Load')
     case 'function_definition':
-      return convertFunction(node)
+      return convertFunction(
+        node,
+        node.children.some((child) => child.type === 'async')
+      )
     case 'class_definition':
       return convertClass(node)
     case 'decorated_definition': {
@@ -7029,6 +7047,7 @@ const analyzePythonFileAccessTree = (
   }
   const activeHelperFunctions = new Set<PyNode>()
   let helperScopeDepth = 0
+  let awaitDepth = 0
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
   const collections = new Map(
     context?.staticCollections.map((collection) => [
@@ -7478,6 +7497,11 @@ const analyzePythonFileAccessTree = (
       !shadowedHelperNames.has(rawName) &&
       !activeHelperFunctions.has(helper.function)
     ) {
+      if (helper.function.type === 'AsyncFunctionDef' && awaitDepth === 0) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        return
+      }
       invokeHelper(helper, node)
       return
     }
@@ -8394,6 +8418,12 @@ const analyzePythonFileAccessTree = (
         if (isPyNode(branch)) visit(branch)
         return
       }
+    }
+    if (node.type === 'Await') {
+      awaitDepth += 1
+      if (isPyNode(node.argument)) visit(node.argument)
+      awaitDepth -= 1
+      return
     }
     if (
       !consoleRedirected &&

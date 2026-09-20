@@ -238,6 +238,40 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it('does not replay an async helper before it is awaited', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'async def read_inputs():\n    return open("async.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it('replays an async helper when its call is awaited', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'async def read_inputs():\n    return open("async.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = await read_inputs()', context)
+    ).toMatchObject({ reads: ['async.csv'], readState: 'complete', externalState: 'complete' })
+  })
+
   it('captures fixed input paths inside a recorded Python helper called in a later cell', async () => {
     const helperSource =
       'import pandas as pd\ndef read_inputs():\n    left = pd.read_csv("left.csv")\n    right = pd.read_csv("right.csv")\n    return left'
@@ -365,6 +399,36 @@ def read_inputs():
     expect(
       await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
     ).toMatchObject({ reads: [] })
+  })
+
+  it('does not restore invalidated helper evidence from sticky run metadata', async () => {
+    const helperModules = [
+      {
+        helperId: 'csv-helper',
+        skillIdentity: 'skill://csv-helper',
+        packageOrigin: 'test',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: ['read_inputs'],
+        source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("left.csv")',
+        sourceDigest: 'digest-csv-helper'
+      }
+    ]
+    const context = await fileContext(
+      'python',
+      ['value = 1', 'read_inputs = lambda: None', 'value = read_inputs()'],
+      [
+        { helperModules, helperEvidenceStatus: { state: 'complete' } },
+        { helperModules, helperEvidenceStatus: { state: 'complete' } },
+        { helperModules, helperEvidenceStatus: { state: 'complete' } }
+      ]
+    )
+    expect(context?.pythonHelperModules).toBeUndefined()
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: []
+    })
   })
 
   it.each(['python', 'r'] as const)(

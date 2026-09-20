@@ -1844,13 +1844,46 @@ class NotebookDependencyAnalyzer {
           run.runId,
           priorContext
         )
-      const helperModules =
-        language === 'python'
-          ? (run.helperModules ?? []).map(({ source, exports }) => ({
-              source,
-              exports: [...exports]
-            }))
-          : []
+      const helperContextKey = (module: { source: string; exports: readonly string[] }): string =>
+        JSON.stringify([module.source, [...module.exports].sort()])
+      const helperEvidenceKey = (module: {
+        helperId: string
+        sourceDigest: string
+        exports: readonly string[]
+        interfaceRevision: string
+        registeredGeneration: string
+      }): string =>
+        JSON.stringify([
+          module.helperId,
+          module.sourceDigest,
+          [...module.exports].sort(),
+          module.interfaceRevision,
+          module.registeredGeneration
+        ])
+      const priorRunIndex = sessionRuns.findIndex((candidate) => candidate.runId === run.runId)
+      const priorHelperEvidence = new Set(
+        sessionRuns
+          .slice(0, priorRunIndex < 0 ? sessionRuns.length : priorRunIndex)
+          .flatMap((previous) => (previous.helperModules ?? []).map(helperEvidenceKey))
+      )
+      const projectedHelperModules = priorContext?.pythonHelperModules ?? []
+      const projectedHelperKeys = new Set(projectedHelperModules.map(helperContextKey))
+      const currentHelperModules = language === 'python' ? (run.helperModules ?? []) : []
+      const helperModules = [
+        ...projectedHelperModules,
+        ...currentHelperModules
+          .filter(
+            (module) =>
+              projectedHelperKeys.has(helperContextKey(module)) ||
+              !priorHelperEvidence.has(helperEvidenceKey(module))
+          )
+          .map(({ source, exports }) => ({ source, exports: [...exports] }))
+      ].filter(
+        (module, index, modules) =>
+          modules.findIndex(
+            (candidate) => helperContextKey(candidate) === helperContextKey(module)
+          ) === index
+      )
       const analysisContext =
         helperModules.length > 0
           ? {
