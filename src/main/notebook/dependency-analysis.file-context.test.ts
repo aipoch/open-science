@@ -532,6 +532,39 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it('does not suppress helper evidence recorded by an unsuccessful run', async () => {
+    const helper = {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("left.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+    const context = await fileContext(
+      'python',
+      ['value = 1', 'value = read_inputs()'],
+      [
+        {
+          status: 'failed',
+          kernelDispatched: true,
+          helperModules: [helper],
+          helperEvidenceStatus: { state: 'complete' }
+        },
+        { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['left.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
   it('replays helper module constants and private reader functions', async () => {
     const helperSource = `import pandas as pd
 INPUT_PATH = "left.csv"
