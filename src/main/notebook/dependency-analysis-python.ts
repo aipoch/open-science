@@ -7387,7 +7387,6 @@ const analyzePythonFileAccessTree = (
       scientificObjectTypes.clear()
       shadowedStaticCalls.clear()
       shadowedHelperNames.clear()
-      pythonTaintedNamespaces.clear()
     }
     const loadModuleGlobals = (): void => {
       // Module-level imports and static assignments execute when the helper is imported. Keep
@@ -7433,7 +7432,6 @@ const analyzePythonFileAccessTree = (
       scientificObjectTypes.clear()
       shadowedStaticCalls.clear()
       shadowedHelperNames.clear()
-      pythonTaintedNamespaces.clear()
     }
     helperScopeDepth += 1
     activeHelperFunctions.add(helper.function)
@@ -8509,7 +8507,10 @@ const analyzePythonFileAccessTree = (
         return source?.kind === 'sequence' || source?.kind === 'mapping'
       })()
       const body = Array.isArray(node.body) ? node.body : node.body ? [node.body] : []
-      for (const targetName of targetNames) shadowedStaticCalls.add(targetName)
+      for (const targetName of targetNames) {
+        shadowedStaticCalls.add(targetName)
+        if (helperFunctions.has(targetName)) shadowedHelperNames.add(targetName)
+      }
       for (const targetName of targetNames) inMemoryInputs.delete(targetName)
       for (const targetName of targetNames) fileConnections.delete(targetName)
       for (const targetName of targetNames) {
@@ -8592,6 +8593,7 @@ const analyzePythonFileAccessTree = (
         }
       } else {
         for (const targetName of targetNames) {
+          if (helperFunctions.has(targetName)) shadowedHelperNames.add(targetName)
           bindings.delete(targetName)
           collections.delete(targetName)
           fileConnections.delete(targetName)

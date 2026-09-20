@@ -151,6 +151,49 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it('keeps caller namespace taints while replaying recorded helpers', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['pandas'],
+      pythonHelperModules: [
+        {
+          source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("input.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it('does not expand a helper after a loop target rebinds its export', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return open("input.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'for read_inputs in [None]:\n    pass\nvalue = read_inputs()',
+        context
+      )
+    ).toMatchObject({ reads: [] })
+  })
+
   it('does not certify an export without a matching callable body', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
