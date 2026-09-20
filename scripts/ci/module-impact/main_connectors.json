@@ -304,7 +304,8 @@
       "src/main/credential-identity/probe-logging.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/connectors/descriptors/omics-ena.test.ts"
+      "src/main/connectors/descriptors/omics-ena.test.ts",
+      "src/main/connectors/descriptors/genomes-blast.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

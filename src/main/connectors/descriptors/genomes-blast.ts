@@ -386,6 +386,20 @@ export const GENOMES_BLAST_TOOLS: ToolDescriptor[] = [
         }
       } else if (format === 'xml2') {
         validReport = /<BlastXML2(?:\s|>)/.test(text) && /<\/BlastXML2>\s*$/.test(text)
+      } else if (format === 'tabular') {
+        // NCBI's real tabular reports use a program-only header such as `# blastp`.
+        // Require the READY protocol envelope, the tabular field declaration, and either
+        // a hit-count declaration (including zero hits) or at least one tab-delimited row.
+        const hasProgramHeader =
+          /(?:^|<PRE>[ \t]*)#[ \t]*(?:blastn|blastp|blastx|tblastn|tblastx)[ \t]*$/im.test(text)
+        const hasFields = /^[ \t]*#[ \t]*Fields:[ \t]*\S.+$/im.test(text)
+        const hasHitCount = /^[ \t]*#[ \t]*\d+[ \t]+hits?[ \t]+found[ \t]*$/im.test(text)
+        const hasTabularRow = /^(?![ \t]*#)(?:[^\r\n]*\t){1,}[^\r\n]*$/m.test(text)
+        validReport =
+          responseStatus(text) === 'READY' &&
+          hasProgramHeader &&
+          hasFields &&
+          (hasHitCount || hasTabularRow)
       } else {
         validReport =
           /^\s*(?:<!--[\s\S]*?-->\s*)*(?:<PRE>\s*)?(?:#\s*)?BLAST[NPX]?\s+\d+\.\d+/i.test(text) ||

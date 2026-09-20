@@ -1075,7 +1075,9 @@
       "src/main/delegation/process-ownership.test.ts",
       "src/main/delegation/frame-workspace.test.ts",
       "src/main/settings/classification-settings.test.ts",
-      "src/main/notebook/dependency-analysis.repl.test.ts"
+      "src/main/notebook/dependency-analysis.repl.test.ts",
+      "src/main/connectors/descriptors/genomes-blast.test.ts",
+      "src/main/connectors/descriptors/genomes.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

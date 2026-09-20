@@ -19,6 +19,26 @@ const ctx: ToolContext = {
 const args = { sequence: '>query\nATGCATGC', molecule_type: 'nucleotide', database: 'nt' }
 const receipt = 'QBlastInfoBegin\n RID = RID123\n RTOE = 12\nQBlastInfoEnd'
 const report = JSON.stringify({ BlastOutput2: [{ report: { results: { search: { hits: [] } } } }] })
+const realTabularReport = `<p><!--
+QBlastInfoBegin
+\tStatus=READY
+QBlastInfoEnd
+--><p>
+<PRE>
+# blastp
+# Iteration: 0
+# Query: public_P69905_HBA_HUMAN Status=WAITING
+# RID: AYZN08MF016
+# Database: swissprot
+# Fields: query acc.ver, subject acc.ver, % identity, alignment length, mismatches, gap opens, q. start, q. end, s. start, s. end, evalue, bit score, % positives
+# 5 hits found
+public_P69905_HBA_HUMAN\tP69905.2\t100.000\t142\t0\t0\t1\t142\t1\t142\t1.99e-100\t286\t100.00
+public_P69905_HBA_HUMAN\tP01923.1\t99.291\t141\t1\t0\t2\t142\t1\t141\t1.07e-98\t282\t100.00
+public_P69905_HBA_HUMAN\tQ9TS35.2\t98.592\t142\t2\t0\t1\t142\t1\t142\t2.38e-98\t281\t99.30
+public_P69905_HBA_HUMAN\tP06635.2\t97.887\t142\t3\t0\t1\t142\t1\t142\t3.58e-98\t281\t98.59
+public_P69905_HBA_HUMAN\tP01924.1\t97.872\t141\t3\t0\t2\t142\t1\t141\t3.00e-97\t278\t98.58
+</PRE>
+`
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -218,11 +238,15 @@ describe('BLAST results format contract', () => {
     ['json2', 'JSON2_S', report],
     ['xml2', 'XML2_S', '<?xml version="1.0"?><BlastXML2><BlastOutput2/></BlastXML2>'],
     ['text', 'Text', '<!-- Status=READY --><PRE>BLASTN 2.17.0+\nNo hits found</PRE>'],
-    ['tabular', 'Text', '<!-- Status=READY --><PRE>BLASTN 2.17.0+\nquery\tsubject\t100</PRE>'],
     [
       'tabular',
       'Text',
-      '<html><body><!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># BLASTN 2.17.0+\n# Query: Status=WAITING\n# 0 hits found</PRE></body></html>'
+      '<!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># blastn\n# Fields: query, subject\n# 1 hit found\nquery\tsubject</PRE>'
+    ],
+    [
+      'tabular',
+      'Text',
+      '<html><body><!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># blastn\n# Query: Status=WAITING\n# Fields: query, subject\n# 0 hits found\n</PRE></body></html>'
     ]
   ])(
     'preserves %s report bytes and selects the documented upstream format',
@@ -259,7 +283,7 @@ describe('BLAST results format contract', () => {
         ['text', `BLASTN 2.17.0+\nQuery= ${title}\nNo hits found`],
         [
           'tabular',
-          `<!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># BLASTN 2.17.0+\n# Query: ${title}\n# 0 hits found</PRE>`
+          `<!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># blastn\n# Query: ${title}\n# Fields: query, subject\n# 0 hits found\n</PRE>`
         ]
       ]
       for (const [format, payload] of reports) {
@@ -274,6 +298,30 @@ describe('BLAST results format contract', () => {
       }
     }
   )
+
+  it('accepts the real NCBI tabular report with a program-only header', async () => {
+    const fetchText = vi.fn().mockResolvedValue(realTabularReport)
+    await expect(
+      results.run!({ ...ctx, fetchText }, { rid: 'AYZN08MF016', format: 'tabular' })
+    ).resolves.toEqual({
+      rid: 'AYZN08MF016',
+      status: 'READY',
+      ready: true,
+      format: 'tabular',
+      results: realTabularReport
+    })
+  })
+
+  it('rejects a READY tabular envelope without fields or tabular structure', async () => {
+    const fetchText = vi
+      .fn()
+      .mockResolvedValue(
+        '<!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd --><PRE># blastp\n# 0 hits found</PRE>'
+      )
+    await expect(
+      results.run!({ ...ctx, fetchText }, { rid: 'RID123', format: 'tabular' })
+    ).rejects.toThrow('invalid result report')
+  })
 
   it.each(['WAITING', 'FAILED', 'UNKNOWN'])(
     'reads %s only from the protocol block in HTML',
