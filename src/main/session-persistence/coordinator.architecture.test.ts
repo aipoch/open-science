@@ -1192,7 +1192,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-session-owner.test.ts',
       'src/main/session-persistence/runtime-session-owner.ts',
       'src/main/session-persistence/runtime-writer.test.ts',
-      'src/main/session-persistence/runtime-writer.ts'
+      'src/main/session-persistence/runtime-writer.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1249,7 +1250,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/usage-regressions.test.ts',
       'src/main/session-persistence/runtime-authority.test.ts',
       'src/main/session-persistence/runtime-session-owner.test.ts',
-      'src/main/session-persistence/runtime-writer.test.ts'
+      'src/main/session-persistence/runtime-writer.test.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',

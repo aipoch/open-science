@@ -875,7 +875,8 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
       'src/renderer/src/lib/acp/runtime-observer.test.ts',
-      'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts'
+      'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
