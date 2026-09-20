@@ -28,7 +28,8 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      {/* Keep the hover-mode bar mounted so focus-within can reveal it without pointer input. */}
+      {/* Keep Radix's outer hover Presence mounted for keyboard focus. Its nested Auto
+          scrollbar still checks overflow; the Thumb has a separate, unset forceMount prop. */}
       <ScrollBar forceMount />
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>

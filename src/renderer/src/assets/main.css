@@ -666,7 +666,8 @@
       scrollbar-color: color-mix(in srgb, var(--border) 60%, transparent) transparent;
     }
 
-    /* Radix owns overflow detection; a mounted thumb means there is content to scroll. */
+    /* ScrollBar's forceMount does not force its Thumb: Radix's separate Thumb Presence
+       still requires hasThumb, so a mounted thumb remains an overflow signal. */
     .scrollbar-auto-hide:not(.scrollbar-message)
       > [data-slot='scroll-area-scrollbar'][data-state='hidden']:has(
         [data-slot='scroll-area-thumb']
