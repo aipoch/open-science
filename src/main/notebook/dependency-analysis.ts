@@ -1864,6 +1864,7 @@ class NotebookDependencyAnalyzer {
       const priorHelperEvidence = new Set(
         sessionRuns
           .slice(0, priorRunIndex < 0 ? sessionRuns.length : priorRunIndex)
+          .filter((previous) => previous.kernelEpochId === run.kernelEpochId)
           .flatMap((previous) => (previous.helperModules ?? []).map(helperEvidenceKey))
       )
       const projectedHelperModules = priorContext?.pythonHelperModules ?? []

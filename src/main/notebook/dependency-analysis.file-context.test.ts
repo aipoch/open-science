@@ -41,7 +41,8 @@ const fileContext = async (
   scripts: string[],
   overrides: Array<Partial<NotebookRunRecord>> = [],
   precompute = true,
-  corruptCache?: (json: string) => string
+  corruptCache?: (json: string) => string,
+  currentKernelEpochId = 'epoch-1'
 ): Promise<NotebookSourceFileAccessContext | undefined> => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-file-context-'))
   roots.push(storageRoot)
@@ -85,7 +86,7 @@ const fileContext = async (
     currentRunId: 'next-run',
     language,
     environment: `default-${language}`,
-    kernelEpochId: 'epoch-1'
+    kernelEpochId: currentKernelEpochId
   })
 }
 
@@ -309,6 +310,24 @@ describe('file context after mutable path collections', () => {
     expect(
       await analyzeNotebookSourceFileAccess('python', 'value = await read_inputs()', context)
     ).toMatchObject({ reads: ['async.csv'], readState: 'complete', externalState: 'complete' })
+  })
+
+  it('does not inherit await status inside an async helper body', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'async def outer():\n    return inner()\nasync def inner():\n    return open("inner.csv")',
+          exports: ['outer', 'inner']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = await outer()', context)
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
   })
 
   it('captures fixed input paths inside a recorded Python helper called in a later cell', async () => {
@@ -1031,6 +1050,46 @@ it.each([
   expect(
     await analyzeNotebookSourceFileAccess('python', 'sitk.ReadImage("unused.nii.gz")', context)
   ).toMatchObject({ reads: [] })
+})
+
+it('rebuilds helper evidence after a kernel epoch restart', async () => {
+  const helperModules = [
+    {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("restarted.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+  ]
+  const context = await fileContext(
+    'python',
+    ['value = 1', 'value = read_inputs()'],
+    [
+      {
+        kernelEpochId: 'epoch-old',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      },
+      {
+        kernelEpochId: 'epoch-new',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      }
+    ],
+    true,
+    undefined,
+    'epoch-new'
+  )
+  expect(context?.pythonHelperModules).toEqual([
+    { source: helperModules[0]!.source, exports: ['read_inputs'] }
+  ])
+  expect(
+    await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+  ).toMatchObject({ reads: ['restarted.csv'], readState: 'complete' })
 })
 
 it('keeps a read before same-cell reassignment, but does not apply it after reassignment', async () => {

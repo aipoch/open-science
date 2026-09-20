@@ -7048,7 +7048,6 @@ const analyzePythonFileAccessTree = (
   }
   const activeHelperFunctions = new Set<PyNode>()
   let helperScopeDepth = 0
-  let awaitDepth = 0
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
   const collections = new Map(
     context?.staticCollections.map((collection) => [
@@ -7492,7 +7491,7 @@ const analyzePythonFileAccessTree = (
     }
   }
 
-  const analyzeCall = (node: PyNode): void => {
+  const analyzeCall = (node: PyNode, awaitedCall: boolean): void => {
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
     const canonicalName = canonicalCallName(node) ?? rawName
@@ -7504,7 +7503,7 @@ const analyzePythonFileAccessTree = (
       !shadowedHelperNames.has(rawName) &&
       !activeHelperFunctions.has(helper.function)
     ) {
-      if (helper.function.type === 'AsyncFunctionDef' && awaitDepth === 0) {
+      if (helper.function.type === 'AsyncFunctionDef' && !awaitedCall) {
         unresolvedReads = true
         unresolvedWrites = true
         return
@@ -8390,7 +8389,7 @@ const analyzePythonFileAccessTree = (
     }
   }
 
-  const visit = (node: PyNode): void => {
+  const visit = (node: PyNode, awaitedCall = false): void => {
     const consoleControl =
       !consoleRedirected &&
       pythonConsoleControlDiagnostic(
@@ -8428,9 +8427,7 @@ const analyzePythonFileAccessTree = (
       }
     }
     if (node.type === 'Await') {
-      awaitDepth += 1
-      if (isPyNode(node.argument)) visit(node.argument)
-      awaitDepth -= 1
+      if (isPyNode(node.argument)) visit(node.argument, true)
       return
     }
     if (
@@ -8586,7 +8583,7 @@ const analyzePythonFileAccessTree = (
         for (const row of rows) {
           staticLoopIterations += 1
           pythonBindLoopTarget(node.target, row, bindings, collections)
-          body.forEach(visit)
+          body.forEach((child) => visit(child))
         }
         activeStaticLoops.pop()
         if (loop.invalidated) {
@@ -8639,7 +8636,7 @@ const analyzePythonFileAccessTree = (
           importedNames.delete(targetName)
         }
         conditionalDepth += 1
-        body.forEach(visit)
+        body.forEach((child) => visit(child))
         conditionalDepth -= 1
       }
       for (const child of node.orelse ?? []) visit(child)
@@ -8652,7 +8649,7 @@ const analyzePythonFileAccessTree = (
       node.type === 'Match'
     ) {
       conditionalDepth += 1
-      pyChildren(node).forEach(visit)
+      pyChildren(node).forEach((child) => visit(child))
       conditionalDepth -= 1
       return
     }
@@ -8678,7 +8675,7 @@ const analyzePythonFileAccessTree = (
         else fileConnections.delete(target)
       }
       const body = Array.isArray(node.body) ? node.body : node.body ? [node.body] : []
-      body.forEach(visit)
+      body.forEach((child) => visit(child))
       return
     }
     if (node.type === 'Import') {
@@ -8748,7 +8745,7 @@ const analyzePythonFileAccessTree = (
           : scientificObjectType(valueNode)
       const importedAlias =
         valueNode?.type === 'Name' && valueNode.id ? importedNames.get(valueNode.id) : undefined
-      pyChildren(node).forEach(visit)
+      pyChildren(node).forEach((child) => visit(child))
       for (const target of targets) {
         if (target.type !== 'Name' || !target.id) continue
         if (helperFunctions.has(target.id)) shadowedHelperNames.add(target.id)
@@ -8835,9 +8832,9 @@ const analyzePythonFileAccessTree = (
       }
       return
     } else if (node.type === 'Call') {
-      analyzeCall(node)
+      analyzeCall(node, awaitedCall)
     }
-    pyChildren(node).forEach(visit)
+    pyChildren(node).forEach((child) => visit(child))
   }
   visit(tree)
 
