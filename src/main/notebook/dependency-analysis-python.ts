@@ -7007,9 +7007,10 @@ const analyzePythonFileAccessTree = (
   const diagnosticNamespaceLoads = namespaceLoadLines(tree)
   const consoleRedirected = pythonRedirectsConsole(tree)
   const localWrappers = pythonLocalFileWrappers(tree)
-  const helperFunctions = new Map<string, { function: PyNode; module: PyNode }>()
+  type HelperFunction = { function: PyNode; module: PyNode; topLevel: boolean }
+  const helperFunctions = new Map<string, HelperFunction>()
   const exportedHelperNames = new Set<string>()
-  const helperScopes: Array<Map<string, { function: PyNode; module: PyNode }>> = []
+  const helperScopes: Array<Map<string, HelperFunction>> = []
   for (const { module, exports } of helperModules) {
     const topLevelFunctions = new Map<string, PyNode>()
     for (const statement of Array.isArray(module.body) ? module.body : []) {
@@ -7023,10 +7024,10 @@ const analyzePythonFileAccessTree = (
       const fn = topLevelFunctions.get(name)
       if (!fn) continue
       exportedHelperNames.add(name)
-      helperFunctions.set(name, { function: fn, module })
+      helperFunctions.set(name, { function: fn, module, topLevel: true })
     }
   }
-  const activeHelperNames = new Set<string>()
+  const activeHelperFunctions = new Set<PyNode>()
   let helperScopeDepth = 0
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
   const collections = new Map(
@@ -7317,8 +7318,9 @@ const analyzePythonFileAccessTree = (
     recordFileAccess(kind, node)
   }
 
-  const invokeHelper = (helper: { function: PyNode; module: PyNode }, call: PyNode): void => {
+  const invokeHelper = (helper: HelperFunction, call: PyNode): void => {
     const nestedInvocation = helperScopeDepth > 0
+    const preserveCallerScope = nestedInvocation && !helper.topLevel
     const fnArgs = helper.function.args as PyArguments | undefined
     const parameters = [...(fnArgs?.posonlyargs ?? []), ...(fnArgs?.args ?? [])]
     const positional = Array.isArray(call.args) ? call.args : []
@@ -7373,7 +7375,53 @@ const analyzePythonFileAccessTree = (
       pythonTaintedNamespaces.clear()
       for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
     }
-    if (!nestedInvocation) {
+    if (!preserveCallerScope) {
+      bindings.clear()
+      collections.clear()
+      partialMappingKeys.clear()
+      partialCollectionRows.clear()
+      inMemoryInputs.clear()
+      fileConnections.clear()
+      archiveNames.clear()
+      importedNames.clear()
+      scientificObjectTypes.clear()
+      shadowedStaticCalls.clear()
+      shadowedHelperNames.clear()
+      pythonTaintedNamespaces.clear()
+    }
+    const loadModuleGlobals = (): void => {
+      // Module-level imports and static assignments execute when the helper is imported. Keep
+      // function/class definitions as callable bindings, but do not execute their bodies here.
+      for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
+        if (
+          statement.type !== 'FunctionDef' &&
+          statement.type !== 'AsyncFunctionDef' &&
+          statement.type !== 'ClassDef'
+        )
+          visit(statement)
+      }
+    }
+    const mergeCallerScope = (): void => {
+      for (const [key, value] of bindingsSnapshot) if (!bindings.has(key)) bindings.set(key, value)
+      for (const [key, value] of collectionsSnapshot)
+        if (!collections.has(key)) collections.set(key, value)
+      for (const [key, value] of partialMappingKeysSnapshot)
+        if (!partialMappingKeys.has(key)) partialMappingKeys.set(key, value)
+      for (const [key, value] of partialCollectionRowsSnapshot)
+        if (!partialCollectionRows.has(key)) partialCollectionRows.set(key, value)
+      for (const [key, value] of fileConnectionsSnapshot)
+        if (!fileConnections.has(key)) fileConnections.set(key, value)
+      for (const [key, value] of importedNamesSnapshot)
+        if (!importedNames.has(key)) importedNames.set(key, value)
+      for (const [key, value] of scientificObjectTypesSnapshot)
+        if (!scientificObjectTypes.has(key)) scientificObjectTypes.set(key, value)
+      for (const value of inMemoryInputsSnapshot) inMemoryInputs.add(value)
+      for (const value of archiveNamesSnapshot) archiveNames.add(value)
+      for (const value of shadowedStaticCallsSnapshot) shadowedStaticCalls.add(value)
+      for (const value of shadowedHelperNamesSnapshot) shadowedHelperNames.add(value)
+      for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
+    }
+    if (preserveCallerScope) {
       bindings.clear()
       collections.clear()
       partialMappingKeys.clear()
@@ -7388,9 +7436,9 @@ const analyzePythonFileAccessTree = (
       pythonTaintedNamespaces.clear()
     }
     helperScopeDepth += 1
-    activeHelperNames.add(helper.function.name!)
-    const scope = new Map<string, { function: PyNode; module: PyNode }>()
-    if (nestedInvocation) {
+    activeHelperFunctions.add(helper.function)
+    const scope = new Map<string, HelperFunction>()
+    if (preserveCallerScope) {
       for (const candidate of helperScopes.at(-1)?.values() ?? [])
         scope.set(candidate.function.name!, candidate)
     }
@@ -7399,32 +7447,22 @@ const analyzePythonFileAccessTree = (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
         statement.name
       )
-        scope.set(statement.name, { function: statement, module: helper.module })
+        scope.set(statement.name, { function: statement, module: helper.module, topLevel: true })
     }
     for (const nested of walkPy(helper.function)) {
       if ((nested.type === 'FunctionDef' || nested.type === 'AsyncFunctionDef') && nested.name)
-        scope.set(nested.name, { function: nested, module: helper.module })
+        scope.set(nested.name, { function: nested, module: helper.module, topLevel: false })
     }
     helperScopes.push(scope)
     try {
-      if (!nestedInvocation) {
-        // Module-level imports and static assignments execute when the helper is imported. Keep
-        // function/class definitions as callable bindings, but do not execute their bodies here.
-        for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
-          if (
-            statement.type !== 'FunctionDef' &&
-            statement.type !== 'AsyncFunctionDef' &&
-            statement.type !== 'ClassDef'
-          )
-            visit(statement)
-        }
-      }
+      loadModuleGlobals()
+      if (preserveCallerScope) mergeCallerScope()
       for (const [name, value] of parameterValues) bindings.set(name, value)
       for (const statement of Array.isArray(helper.function.body) ? helper.function.body : [])
         visit(statement)
     } finally {
       helperScopes.pop()
-      activeHelperNames.delete(helper.function.name!)
+      activeHelperFunctions.delete(helper.function)
       helperScopeDepth -= 1
       restore()
     }
@@ -7434,14 +7472,15 @@ const analyzePythonFileAccessTree = (
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
     const canonicalName = canonicalCallName(node) ?? rawName
+    const helper = helperScopes.at(-1)?.get(rawName) ?? helperFunctions.get(rawName)
     if (
       node.func?.type === 'Name' &&
-      (helperScopes.at(-1)?.has(rawName) || helperFunctions.has(rawName)) &&
+      helper &&
       (helperScopeDepth > 0 || exportedHelperNames.has(rawName)) &&
       !shadowedHelperNames.has(rawName) &&
-      !activeHelperNames.has(rawName)
+      !activeHelperFunctions.has(helper.function)
     ) {
-      invokeHelper(helperScopes.at(-1)?.get(rawName) ?? helperFunctions.get(rawName)!, node)
+      invokeHelper(helper, node)
       return
     }
     if (

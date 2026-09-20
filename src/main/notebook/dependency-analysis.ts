@@ -1282,7 +1282,15 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.script,
         run.fileEvidence?.checksum,
         run.helperEvidenceStatus,
-        run.helperModules?.map(({ helperId, sourceDigest }) => [helperId, sourceDigest])
+        run.helperModules?.map(
+          ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
+            helperId,
+            sourceDigest,
+            [...exports].sort(),
+            interfaceRevision,
+            registeredGeneration
+          ]
+        )
       ])
     )
     .digest('hex')

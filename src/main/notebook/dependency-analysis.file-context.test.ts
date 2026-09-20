@@ -129,6 +129,28 @@ describe('file context after mutable path collections', () => {
     )
   })
 
+  it('loads globals from a separately recorded helper module during nested calls', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def first():\n    return second()',
+          exports: ['first']
+        },
+        {
+          source: 'INPUT_PATH = "second.csv"\ndef second():\n    return open(INPUT_PATH)',
+          exports: ['second']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'first()', context)).toMatchObject({
+      reads: ['second.csv'],
+      readState: 'complete'
+    })
+  })
+
   it('does not certify an export without a matching callable body', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
@@ -139,6 +161,25 @@ describe('file context after mutable path collections', () => {
     expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
       { readState: 'partial', externalState: 'partial' }
     )
+  })
+
+  it('drops recorded helper evidence after an unsafe entry', () => {
+    const context = projectNotebookFileContext('python', [
+      {
+        facts: { state: 'available', definedNames: [], usedNames: [], mutatedNames: [] },
+        fileContext: {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonHelperModules: [{ source: 'def read_inputs(): pass', exports: ['read_inputs'] }]
+        }
+      },
+      {
+        facts: { state: 'unknown', reasons: ['opaque-mutation'] },
+        fileContext: { staticStrings: [], staticCollections: [], localFileWrappers: [] }
+      }
+    ])
+    expect(context?.pythonHelperModules).toBeUndefined()
   })
 
   it('preserves a pure Python helper across cells and cache reload', async () => {

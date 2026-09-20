@@ -125,6 +125,7 @@ const projectNotebookFileContext = (
       staticStrings.clear()
       staticCollections.clear()
       localFileWrappers.clear()
+      pythonHelperModules.clear()
       resolvedKernelNames.clear()
       replContainerNames.clear()
       rAtomicValueNames.clear()
