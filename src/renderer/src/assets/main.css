@@ -664,6 +664,15 @@
     .scrollbar-auto-hide:not(.scrollbar-message) {
       scrollbar-color: color-mix(in srgb, var(--border) 60%, transparent) transparent;
     }
+
+    /* Radix owns overflow detection; a mounted thumb means there is content to scroll. */
+    .scrollbar-auto-hide:not(.scrollbar-message)
+      > [data-slot='scroll-area-scrollbar'][data-state='hidden']:has(
+        [data-slot='scroll-area-thumb']
+      ) {
+      opacity: 0.65;
+      pointer-events: auto;
+    }
   }
 
   /*
