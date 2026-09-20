@@ -6148,10 +6148,10 @@
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "Beim Entfernen dieses Dienstes bleiben das gemeinsam genutzte Konto und der Schlüssel erhalten. Fähigkeiten und Konnektoren werden wieder mit der Standardmethode ausgewählt.",
     "OpenRouter": "OpenRouter",
     "Custom HTTP service": "Benutzerdefinierter HTTP-Dienst",
-    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.": "Protokoll: Open-Science Typed Decisions HTTP. Der Endpunkt muss state und typisierte Fragen akzeptieren und anschließend model, answers und usage zurückgeben. Für native Modell-APIs kann ein Adapter oder Wrapper erforderlich sein.",
+    "Custom services use the TypeSafe classification request and response format.": "Benutzerdefinierte Dienste verwenden das Anfrage- und Antwortformat der TypeSafe-Klassifikation.",
     "Endpoint URL": "Endpunkt-URL",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Geben Sie einen gültigen sicheren HTTP-Endpunkt ein. Entfernte Endpunkte müssen HTTPS verwenden.",
     "Model ID exposed by the endpoint": "Vom Endpunkt bereitgestellte Modell-ID",
-    "This is not a Chat Completions endpoint. Use an adaptor for native model APIs.": "Dies ist kein Chat-Completions-Endpunkt. Verwenden Sie für native Modell-APIs einen Adapter."
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Dies ist kein Chat-Completions-Endpunkt. Dienste mit einem anderen API-Format benötigen einen Adapter."
   }
 }

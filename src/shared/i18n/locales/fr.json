@@ -6318,10 +6318,10 @@
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "La suppression de ce service conserve le compte partagé et sa clé. La sélection des compétences et connecteurs revient à la méthode par défaut.",
     "OpenRouter": "OpenRouter",
     "Custom HTTP service": "Service HTTP personnalisé",
-    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.": "Protocole: Open-Science Typed Decisions HTTP. Le point de terminaison doit accepter state et des questions typées, puis renvoyer model, answers et usage. Les API de modèles natives peuvent nécessiter un adaptateur ou un wrapper.",
+    "Custom services use the TypeSafe classification request and response format.": "Les services personnalisés utilisent le format de requête et de réponse de classification TypeSafe.",
     "Endpoint URL": "URL du point de terminaison",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Saisissez un point de terminaison HTTP sécurisé valide. Les points de terminaison distants doivent utiliser HTTPS.",
     "Model ID exposed by the endpoint": "ID du modèle exposé par le point de terminaison",
-    "This is not a Chat Completions endpoint. Use an adaptor for native model APIs.": "Il ne s’agit pas d’un point de terminaison Chat Completions. Utilisez un adaptateur pour les API de modèles natives."
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Il ne s’agit pas d’un point de terminaison Chat Completions. Les services utilisant un autre format d’API nécessitent un adaptateur."
   }
 }

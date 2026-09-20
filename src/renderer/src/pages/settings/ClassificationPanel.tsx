@@ -538,12 +538,12 @@ const ClassificationEditor = ({
               <>
                 <p>
                   {t(
-                    'Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.'
+                    'Custom services use the TypeSafe classification request and response format.'
                   )}
                 </p>
                 <p className="mt-1">
                   {t(
-                    'This is not a Chat Completions endpoint. Use an adaptor for native model APIs.'
+                    'This is not a Chat Completions endpoint. Services using another API format need an adaptor.'
                   )}
                 </p>
               </>

@@ -6459,10 +6459,10 @@
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "При удалении этого сервиса общий аккаунт и ключ сохраняются. Для выбора возможностей снова используется способ по умолчанию.",
     "OpenRouter": "OpenRouter",
     "Custom HTTP service": "Пользовательский HTTP-сервис",
-    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.": "Протокол: Open-Science Typed Decisions HTTP. Конечная точка должна принимать state и типизированные вопросы, а затем возвращать model, answers и usage. Для нативных API моделей может потребоваться адаптер или обёртка.",
+    "Custom services use the TypeSafe classification request and response format.": "Пользовательские службы используют формат запросов и ответов классификации TypeSafe.",
     "Endpoint URL": "URL конечной точки",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Введите корректную защищённую HTTP-конечную точку. Для удалённых конечных точек требуется HTTPS.",
     "Model ID exposed by the endpoint": "Идентификатор модели, предоставляемый конечной точкой",
-    "This is not a Chat Completions endpoint. Use an adaptor for native model APIs.": "Это не конечная точка Chat Completions. Для нативных API моделей используйте адаптер."
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Это не конечная точка Chat Completions. Службам с другим форматом API требуется адаптер."
   }
 }

@@ -135,12 +135,16 @@ it('offers provider choices and an API key link without a manual model ID field'
   )
 })
 
-it('configures a custom typed-decision endpoint without requiring a loopback key', async () => {
+it('configures a custom TypeSafe-compatible endpoint without requiring a loopback key', async () => {
   render(<Harness />)
   fireEvent.click(await screen.findByText('Add service'))
   fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
   fireEvent.click(await screen.findByRole('option', { name: 'Custom HTTP service' }))
-  expect(await screen.findByText(/Open-Science Typed Decisions HTTP/)).toBeTruthy()
+  expect(
+    await screen.findByText(
+      'Custom services use the TypeSafe classification request and response format.'
+    )
+  ).toBeTruthy()
   fireEvent.change(screen.getByLabelText('Endpoint URL'), {
     target: { value: 'http://localhost:8000/classify' }
   })

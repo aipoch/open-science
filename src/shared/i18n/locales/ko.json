@@ -5984,10 +5984,10 @@
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "이 서비스를 삭제해도 공유 계정과 키는 유지됩니다. 스킬 및 커넥터 선택은 기본 방식으로 돌아갑니다.",
     "OpenRouter": "OpenRouter",
     "Custom HTTP service": "사용자 지정 HTTP 서비스",
-    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.": "프로토콜: Open-Science Typed Decisions HTTP. 엔드포인트는 state와 형식화된 질문을 받아 model, answers, usage를 반환해야 합니다. 네이티브 모델 API에는 어댑터 또는 래퍼가 필요할 수 있습니다.",
+    "Custom services use the TypeSafe classification request and response format.": "사용자 지정 서비스는 TypeSafe 분류 요청 및 응답 형식을 사용합니다.",
     "Endpoint URL": "엔드포인트 URL",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "유효한 보안 HTTP 엔드포인트를 입력하세요. 원격 엔드포인트에는 HTTPS가 필요합니다.",
     "Model ID exposed by the endpoint": "엔드포인트가 제공하는 모델 ID",
-    "This is not a Chat Completions endpoint. Use an adaptor for native model APIs.": "이 엔드포인트는 Chat Completions용이 아닙니다. 네이티브 모델 API에는 어댑터를 사용하세요."
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "이 엔드포인트는 Chat Completions용이 아닙니다. 다른 API 형식을 사용하는 서비스에는 어댑터가 필요합니다."
   }
 }

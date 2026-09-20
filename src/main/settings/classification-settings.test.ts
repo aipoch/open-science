@@ -856,7 +856,7 @@ it('distinguishes skipped and ambiguous selections from confident empty decision
   )
 })
 
-it('supports a loopback custom typed-decision endpoint without an API key', async () => {
+it('supports a loopback custom TypeSafe-compatible endpoint without an API key', async () => {
   const endpoint = 'http://127.0.0.1:8000/classify'
   const model = 'local-typed-decisions'
   const saved = await owner.mutate({
@@ -888,7 +888,7 @@ it('supports a loopback custom typed-decision endpoint without an API key', asyn
   expect(bound.capabilitySelection).toEqual({ serviceId, modelId: model })
 })
 
-it('requires a key for a remote custom typed-decision endpoint', async () => {
+it('requires a key for a remote custom TypeSafe-compatible endpoint', async () => {
   await expect(
     owner.mutate({
       revision: 0,
