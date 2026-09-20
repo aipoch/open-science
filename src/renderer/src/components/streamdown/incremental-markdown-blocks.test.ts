@@ -18,7 +18,16 @@ describe('incremental Markdown block semantics', () => {
     'A footnote[^a].\n\nAnother block.\n\n[^a]: definition\n\n    continuation',
     '[^a]: early definition\n\nSome text.\n\nReference[^a].',
     'Tabs\r\n\r\n    indented\r\n\r\nend',
-    '<artifact-image artifact_ref="image-1"></artifact-image>\n\nend'
+    '<artifact-image artifact_ref="image-1"></artifact-image>\n\nend',
+    '\tcode\n\nend',
+    ' \tcode\n\nend',
+    '- item\n\tcontinued\n\nend',
+    '-\titem\n\t- nested\n\nend',
+    '1.\titem\n\tcontinued\n\nend',
+    '```text\na\tb\n```\n\nend',
+    'Prose\twith\ttabs.\n\nend',
+    '>\tquoted\n>\tcontinued\n\nend',
+    '\tcode\r\n\r\nend'
   ]
 
   it.each(samples)('matches full segmentation at every appended character: %s', (sample) => {
@@ -79,6 +88,15 @@ describe('Markdown segmentation work', () => {
 // Captured from unpatched Streamdown 2.5.0; keep an oracle independent of the patched lexer.
 describe('Streamdown segmentation compatibility', () => {
   it.each([
+    { input: '\tcode\n\nend', blocks: ['\tcode\n\n', 'end'] },
+    { input: ' \tcode\n\nend', blocks: [' \tcode\n\n', 'end'] },
+    { input: '- item\n\tcontinued\n\nend', blocks: ['- item\n\tcontinued', '\n\n', 'end'] },
+    { input: '-\titem\n\t- nested\n\nend', blocks: ['-\titem\n\t- nested', '\n\n', 'end'] },
+    { input: '1.\titem\n\tcontinued\n\nend', blocks: ['1.\titem\n\tcontinued', '\n\n', 'end'] },
+    { input: '```text\na\tb\n```\n\nend', blocks: ['```text\na\tb\n```', '\n\n', 'end'] },
+    { input: 'Prose\twith\ttabs.\n\nend', blocks: ['Prose\twith\ttabs.', '\n\n', 'end'] },
+    { input: '>\tquoted\n>\tcontinued\n\nend', blocks: ['>\tquoted\n>\tcontinued', '\n\n', 'end'] },
+    { input: '\tcode\r\n\r\nend', blocks: ['\tcode\n\n', 'end'] },
     {
       input: '- one\n\n- two\n\n  continued\n\n  - nested\n\nend',
       blocks: ['- one\n\n- two\n\n  continued\n\n  - nested', '\n\n', 'end']
