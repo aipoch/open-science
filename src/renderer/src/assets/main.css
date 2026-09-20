@@ -660,7 +660,8 @@
     pointer-events: auto;
   }
 
-  @media (hover: none) {
+  /* Include hybrid devices: a mouse can be primary while a touchscreen is also available. */
+  @media (hover: none), (any-pointer: coarse) {
     .scrollbar-auto-hide:not(.scrollbar-message) {
       scrollbar-color: color-mix(in srgb, var(--border) 60%, transparent) transparent;
     }
