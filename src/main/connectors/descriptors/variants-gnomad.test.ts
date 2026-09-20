@@ -1218,6 +1218,49 @@ query Variant($variantId: String!, $dataset: DatasetId!) {
     })
   })
 
+  it('mitochondrial_variants: accepts only GRCh38 mitochondrial dataset pins', async () => {
+    for (const dataset of ['gnomad_r3', 'gnomad_r4']) {
+      expect(() =>
+        validateToolArguments(tool('mitochondrial_variants'), {
+          gene_symbol: 'MT-TL1',
+          dataset
+        })
+      ).not.toThrow()
+    }
+
+    for (const dataset of [
+      'gnomad_r4_non_ukb',
+      'gnomad_r3_controls_and_biobanks',
+      'gnomad_r3_non_cancer',
+      'gnomad_r3_non_neuro',
+      'gnomad_r3_non_topmed',
+      'gnomad_r3_non_v2',
+      'gnomad_r2_1',
+      'gnomad_r2_1_controls',
+      'gnomad_r2_1_non_cancer',
+      'gnomad_r2_1_non_neuro',
+      'gnomad_r2_1_non_topmed',
+      'exac'
+    ]) {
+      expect(() =>
+        validateToolArguments(tool('mitochondrial_variants'), {
+          gene_symbol: 'MT-TL1',
+          dataset
+        })
+      ).toThrow(/must be equal to one of/)
+
+      const fetchImpl = vi.fn()
+      await expect(
+        new ParserEngine({ fetchImpl }).call(
+          tool('mitochondrial_variants'),
+          { gene_symbol: 'MT-TL1', dataset },
+          {}
+        )
+      ).rejects.toThrow(/unknown dataset/)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  })
+
   it('mitochondrial_variants: throws when a gene and a region are both given', async () => {
     await expect(
       new ParserEngine({ fetchImpl: vi.fn() }).call(

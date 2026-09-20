@@ -25,6 +25,10 @@ const DATASETS = [
   'exac'
 ] as const
 const SV_DATASETS = ['gnomad_sv_r4', 'gnomad_sv_r2_1'] as const
+// gnomAD's mitochondrial callset is exposed only through the GRCh38 gnomAD r3/r4 dataset pins.
+// Keep the mitochondrial tool from accepting other short-variant pins, which have no compatible
+// mtDNA callset upstream.
+const MITO_DATASETS = ['gnomad_r4', 'gnomad_r3'] as const
 // Keep parent gene/region coordinates on the same assembly as the selected call set.
 const DATASET_REFERENCE_GENOMES: Record<
   (typeof DATASETS)[number] | (typeof SV_DATASETS)[number],
@@ -923,7 +927,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     id: 'mitochondrial_variants',
     connector: 'variants',
     description:
-      'List gnomAD mitochondrial variants with heteroplasmy-aware counts (`ac_het`, `ac_hom`, `max_heteroplasmy`) for a mitochondrial gene OR a chrM coordinate window. Pass a gene (`gene_symbol` like `MT-TL1`, or `gene_id`) OR a region (`region_start` + `region_stop`), not both.',
+      'List gnomAD mitochondrial variants with heteroplasmy-aware counts (`ac_het`, `ac_hom`, `max_heteroplasmy`) for a mitochondrial gene OR a chrM coordinate window. The mitochondrial callset is available only through the GRCh38 gnomAD r3/r4 dataset pins: use dataset `gnomad_r3` or `gnomad_r4`. Pass a gene (`gene_symbol` like `MT-TL1`, or `gene_id`) OR a region (`region_start` + `region_stop`), not both.',
     input: {
       type: 'object',
       properties: {
@@ -931,7 +935,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
         gene_id: { type: 'string' },
         region_start: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
         region_stop: { type: 'integer', minimum: 1, maximum: MAX_REGION_COORDINATE },
-        dataset: { type: 'string', enum: [...DATASETS], default: DEFAULT_DATASET }
+        dataset: { type: 'string', enum: [...MITO_DATASETS], default: DEFAULT_DATASET }
       }
     },
     returns:
@@ -939,7 +943,7 @@ export const VARIANTS_GNOMAD_TOOLS: ToolDescriptor[] = [
     example:
       'const result = await host.mcp("variants", "mitochondrial_variants", {"gene_symbol": "MT-TL1", "dataset": "gnomad_r4"})',
     run: async (ctx, a) => {
-      const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), DATASETS)
+      const dataset = checkDataset(String(a.dataset ?? DEFAULT_DATASET), MITO_DATASETS)
       const hasStart = a.region_start != null
       const hasStop = a.region_stop != null
       // Both region bounds go together (upstream ValueError), and a region excludes a gene.
