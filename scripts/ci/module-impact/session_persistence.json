@@ -71,7 +71,8 @@
     "src/main/session-persistence/runtime-session-owner.test.ts",
     "src/main/session-persistence/runtime-session-owner.ts",
     "src/main/session-persistence/runtime-writer.test.ts",
-    "src/main/session-persistence/runtime-writer.ts"
+    "src/main/session-persistence/runtime-writer.ts",
+    "src/main/session-persistence/runtime-resume-recovery.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -129,7 +130,8 @@
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/main/session-persistence/runtime-authority.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
-      "src/main/session-persistence/runtime-writer.test.ts"
+      "src/main/session-persistence/runtime-writer.test.ts",
+      "src/main/session-persistence/runtime-resume-recovery.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",
