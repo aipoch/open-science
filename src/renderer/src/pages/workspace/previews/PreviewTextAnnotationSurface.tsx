@@ -352,6 +352,7 @@ export const PreviewTextAnnotationSurface = ({
   const bookmarks = useBookmarks()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const contentObserverRef = useRef<MutationObserver | null>(null)
   const ownedRanges = useRef(new Map<string, Range>())
   const ownedBookmarkRanges = useRef(new Map<string, Range>())
   const [bookmarkMarkers, setBookmarkMarkers] = useState<
@@ -546,6 +547,9 @@ export const PreviewTextAnnotationSurface = ({
   useLayoutEffect(() => {
     reconcilePreviewHighlights()
     retargetDraftSelection()
+    // This commit's DOM changes are already reconciled. Keep observing later async highlighting,
+    // but do not deliver the same changes again after the layout effect.
+    contentObserverRef.current?.takeRecords()
   }, [children, reconcilePreviewHighlights, retargetDraftSelection])
 
   useLayoutEffect(() => {
@@ -563,10 +567,12 @@ export const PreviewTextAnnotationSurface = ({
         retargetDraftSelection()
       })
     })
+    contentObserverRef.current = observer
     observer.observe(content, { childList: true, characterData: true, subtree: true })
     return () => {
       disconnected = true
       observer.disconnect()
+      contentObserverRef.current = null
     }
   }, [reconcilePreviewHighlights, retargetDraftSelection])
 

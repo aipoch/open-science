@@ -177,6 +177,40 @@ describe('PreviewTextAnnotationSurface', () => {
     }
   })
 
+  it('does not reconcile preview ranges twice for one React content commit', async () => {
+    const active = [annotation({ quote: 'confidence intervals overlap' })]
+    await renderSurface({ activeAnnotations: active })
+
+    const surface = container.querySelector('[data-preview-text-annotation-surface]')!
+    const measure = vi.spyOn(surface, 'getBoundingClientRect')
+    try {
+      await renderSurface({
+        activeAnnotations: active,
+        content: 'Updated result: confidence intervals overlap.'
+      })
+      expect([...registeredRanges].map((range) => range.toString())).toContain(active[0].quote)
+      expect(measure).toHaveBeenCalledTimes(1)
+    } finally {
+      measure.mockRestore()
+    }
+  })
+
+  it('reanchors saved highlights after a same-turn asynchronous DOM replacement', async () => {
+    const active = [annotation()]
+    await renderSurface({ activeAnnotations: active })
+    await act(async () => {
+      // Child highlighters can replace text nodes after the parent's layout effect.
+      const paragraph = container.querySelector('p')!
+      paragraph.innerHTML = 'Experiment result: <strong>confidence intervals overlap</strong>.'
+    })
+    expect([...registeredRanges].map((range) => range.toString())).toContain(active[0].quote)
+    expect(
+      [...registeredRanges].some(
+        (range) => range.startContainer.parentElement?.tagName === 'STRONG'
+      )
+    ).toBe(true)
+  })
+
   const renderSurface = async ({
     activeAnnotations = [],
     onAddAnnotation = vi.fn(() => undefined),

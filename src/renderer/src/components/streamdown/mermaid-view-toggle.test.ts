@@ -219,6 +219,21 @@ describe('installMermaidViewToggle', () => {
     expect(mutations).toBe(0)
   })
 
+  it('does not rescan the document for unrelated child mutations', async () => {
+    const { actions } = createMermaidBlock('r-10')
+    await flushMutations()
+    expect(findToggle(actions)).not.toBeNull()
+
+    const querySelectorAll = vi.spyOn(document, 'querySelectorAll')
+    querySelectorAll.mockClear()
+
+    document.body.appendChild(document.createElement('aside'))
+    await flushMutations()
+
+    expect(querySelectorAll).not.toHaveBeenCalled()
+    querySelectorAll.mockRestore()
+  })
+
   it('translates the label when the language changes', async () => {
     rememberMermaidSource('r-7', SOURCE)
     const { actions } = createMermaidBlock('r-7')
@@ -230,6 +245,29 @@ describe('installMermaidViewToggle', () => {
 
     await i18next.changeLanguage('zh-Hans')
     expect(findToggle(actions)?.title).toBe('查看源码')
+  })
+
+  it('leaves diagrams outside agent Markdown undecorated', async () => {
+    const { block, actions } = createMermaidBlock('outside-root')
+    block.parentElement!.className = ''
+    await flushMutations()
+    expect(findToggle(actions)).toBeNull()
+  })
+
+  it('does not revisit a settled diagram when a sibling paragraph is appended', async () => {
+    rememberMermaidSource('sibling-mutation', SOURCE)
+    const { block, actions } = createMermaidBlock('sibling-mutation')
+    await flushMutations()
+    await flushMutations()
+    expect(findToggle(actions)).not.toBeNull()
+    const query = vi.spyOn(block, 'querySelector')
+    try {
+      block.parentElement!.appendChild(document.createElement('p'))
+      await flushMutations()
+      expect(query).not.toHaveBeenCalled()
+    } finally {
+      query.mockRestore()
+    }
   })
 
   it('restores the source view and removes buttons on uninstall', async () => {

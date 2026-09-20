@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { installStreamdown } from './install-streamdown'
 import { resolveLanguageIconPath } from './language-icons'
@@ -87,6 +87,24 @@ describe('code block language badge', () => {
     await flushMutations()
 
     expect(actions.querySelectorAll('[data-lang-icon]')).toHaveLength(1)
+  })
+
+  it('does not rescan the document for unrelated child mutations', async () => {
+    const querySelectorAll = vi.spyOn(document, 'querySelectorAll')
+    querySelectorAll.mockClear()
+
+    document.body.appendChild(document.createElement('aside'))
+    await flushMutations()
+
+    expect(querySelectorAll).not.toHaveBeenCalled()
+    querySelectorAll.mockRestore()
+  })
+
+  it('leaves code blocks outside agent Markdown undecorated', async () => {
+    const actions = createCodeBlock('python')
+    actions.closest('.agent-markdown-root')!.className = ''
+    await flushMutations()
+    expect(actions.querySelector('[data-lang-icon]')).toBeNull()
   })
 
   it('covers the TIOBE top-10 languages and common aliases', () => {
