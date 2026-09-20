@@ -28,7 +28,9 @@ export type SideChatSendMessageResult = Readonly<{
   messageId: string
   targetState: SideChatTargetState
   delivery: 'next-user-turn' | 'current-turn'
-  persisted: true
+  // Whether saving the queued advisory or accepted delivery record is confirmed.
+  // False with persistenceError means unconfirmed, not proof that the write rolled back.
+  persisted: boolean
   persistenceError?: string
   systemHint: string
 }>

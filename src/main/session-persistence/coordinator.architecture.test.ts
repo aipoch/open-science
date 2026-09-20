@@ -1595,6 +1595,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/workflows/connectors-diagnostic.test.ts',
       'src/main/side-chat/ipc.test.ts',
       'src/main/side-chat/runtime-owner.test.ts',
+      'src/main/side-chat/session-lifetime.test.ts',
       'src/main/skills/conversation-import.test.ts',
       'src/main/skills/registered-helper-catalog.test.ts',
       'src/main/specialist/application-commands.test.ts',
@@ -1645,7 +1646,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/storage/brand-location.test.ts',
       'src/main/session-plan/plan-legacy-compatibility.test.ts',
       'src/main/session-plan/plan-context-file.shell.integration.test.ts',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/session-details/startup-catalog.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

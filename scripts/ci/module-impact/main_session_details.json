@@ -1,9 +1,20 @@
 {
-  "ownerPaths": ["src/main/session-details/owner.test.ts", "src/main/session-details/owner.ts"],
-  "interfacePaths": ["src/main/session-details/owner.ts"],
+  "ownerPaths": [
+    "src/main/session-details/owner.test.ts",
+    "src/main/session-details/owner.ts",
+    "src/main/session-details/startup-catalog.test.ts",
+    "src/main/session-details/startup-catalog.ts"
+  ],
+  "interfacePaths": [
+    "src/main/session-details/owner.ts",
+    "src/main/session-details/startup-catalog.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/session-details/owner.test.ts"],
+    "owner": [
+      "src/main/session-details/owner.test.ts",
+      "src/main/session-details/startup-catalog.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",

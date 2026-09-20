@@ -1,9 +1,9 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 
-// Real Electron + Radix + independent side-chat runtime. No renderer-store injection:
-// the permission wait is produced by the deterministic agent through the production protocol.
-test('opens and sends an independent Side chat while main is waiting for permission', async ({
+// Real Electron + Radix. No renderer-store injection: the permission wait is produced by the
+// deterministic agent through the production protocol.
+test('offers Side chat while idle and hides its new-chat entry while main awaits permission', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -39,20 +39,40 @@ test('opens and sends an independent Side chat while main is waiting for permiss
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect(page.getByTestId('permission-composer')).toBeVisible()
   await expect(mainComposer).toBeHidden()
-  const open = page.getByTestId('blocked-composer-side-chat')
-  await expect(open).toBeVisible()
-  await expect(open).toBeEnabled()
-  await open.click()
-  const followUp = page.getByPlaceholder('Follow up…')
-  await expect(followUp).toBeVisible()
-  await followUp.fill('Discuss alternatives without approving main.')
-  await page.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
-  await expect(
-    page.getByText('Deterministic reply: Discuss alternatives without approving main.', {
-      exact: false
-    })
-  ).toBeVisible()
-  // Side chat must not answer, approve, cancel or otherwise consume the main permission request.
-  await expect(page.getByTestId('permission-composer')).toBeVisible()
+  await expect(page.getByTestId('blocked-composer-side-chat')).toHaveCount(0)
+  await expect(page.getByTestId('blocking-composer-overlay')).not.toContainText('New side chat')
   await page.screenshot({ path: testInfo.outputPath('side-chat-main-permission.png') })
+})
+
+test('keeps Side chat across renderer reload but discards it on application restart', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await page.setViewportSize({ width: 1400, height: 1000 })
+  await page.getByRole('button', { name: 'New project' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill('Ephemeral side chat regression')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Summarize the deterministic fixture.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  const mainReply = 'Deterministic reply: Summarize the deterministic fixture.'
+  await expect(page.getByText(mainReply, { exact: true })).toBeVisible()
+  await page.getByTestId('branch-send-menu-trigger').click()
+  await page.getByTestId('menu-side-chat').click()
+  await page.getByPlaceholder('Follow up…').fill('Discuss alternatives without approving main.')
+  await page.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
+  const sideReply = 'Deterministic reply: Discuss alternatives without approving main.'
+  await expect(page.getByText(sideReply, { exact: false })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Ephemeral side chat regression', exact: true }).click()
+  await expect(page.getByText(sideReply, { exact: false })).toBeVisible()
+  page = await app.restart()
+  await page.getByRole('button', { name: 'Ephemeral side chat regression', exact: true }).click()
+  await expect(page.getByText(mainReply, { exact: true })).toBeVisible()
+  await expect(page.getByPlaceholder('Follow up…')).toHaveCount(0)
+  await expect(page.getByText(sideReply, { exact: false })).toHaveCount(0)
+  expect(await page.evaluate(() => window.api.sideChat.list())).toMatchObject({ chats: [] })
 })

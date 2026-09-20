@@ -598,6 +598,7 @@
       "src/main/settings/xai-provider-account-owner.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
+      "src/main/side-chat/session-lifetime.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/skills/export.test.ts",
       "src/main/skills/host-skills-service.test.ts",
@@ -681,7 +682,8 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/main/session-persistence/runtime-authority.test.ts",
       "src/main/settings/classification-settings.test.ts",
-      "src/main/notebook/dependency-analysis.repl.test.ts"
+      "src/main/notebook/dependency-analysis.repl.test.ts",
+      "src/main/notebook/compute-evidence-recovery.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

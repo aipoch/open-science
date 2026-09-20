@@ -9,6 +9,7 @@ import type { PersistedSideChatRelay } from '../../shared/session-persistence'
 import { createLogger } from '../logger'
 
 const MAX_SIDE_CHAT_MESSAGE_CHARS = SIDE_CHAT_MESSAGE_LIMIT
+const MAX_PENDING_ADVISORIES = 100
 const log = createLogger('side-chat-relay')
 
 type SideChatRelayBinding = Readonly<{
@@ -41,7 +42,7 @@ type SideChatRelayClaimOptions = Readonly<{
 
 type SideChatRelayOwnerOptions = Readonly<{
   targetState: (parentSessionId: string) => SideChatTargetState
-  appendRelay: (input: {
+  appendRelay?: (input: {
     projectId: string
     parentSessionId: string
     sideChatId: string
@@ -52,6 +53,7 @@ type SideChatRelayOwnerOptions = Readonly<{
 class SideChatRelayOwner {
   private readonly bindings = new Map<string, SideChatRelayBinding>()
   private readonly queued = new Map<string, SideChatRelayMessage[]>()
+  private readonly outstandingCounts = new Map<string, number>()
   private readonly claims = new Map<string, symbol>()
 
   constructor(private readonly options: SideChatRelayOwnerOptions) {}
@@ -72,6 +74,7 @@ class SideChatRelayOwner {
   ): void {
     for (const record of records) {
       if (record.relays.length === 0) continue
+      this.outstandingCounts.set(record.parentSessionId, record.relays.length)
       this.queued.set(
         record.parentSessionId,
         record.relays.map((relay) => ({
@@ -99,19 +102,31 @@ class SideChatRelayOwner {
       throw new Error('Side chat message text must not exceed 12,000 characters.')
     }
 
+    if ((this.outstandingCounts.get(binding.parentSessionId) ?? 0) >= MAX_PENDING_ADVISORIES) {
+      throw new Error('Side chat advisory queue is full (100 messages). No advisory was queued.')
+    }
+
     const message: SideChatRelayMessage = {
       id: `side-chat-message-${randomUUID()}`,
       ...binding,
       text,
       createdAt: Date.now()
     }
-    await this.options.appendRelay({
-      projectId: binding.projectId,
-      parentSessionId: binding.parentSessionId,
-      sideChatId: binding.sideChatId,
-      relay: { id: message.id, text: message.text, createdAt: message.createdAt }
-    })
+    if (this.options.appendRelay)
+      await this.options.appendRelay({
+        projectId: binding.projectId,
+        parentSessionId: binding.parentSessionId,
+        sideChatId: binding.sideChatId,
+        relay: { id: message.id, text: message.text, createdAt: message.createdAt }
+      })
+    if (this.bindings.get(input.sideSessionId) !== binding) {
+      throw new Error('Side chat sender is no longer bound to its parent Session.')
+    }
     const messages = this.queued.get(binding.parentSessionId) ?? []
+    this.outstandingCounts.set(
+      binding.parentSessionId,
+      (this.outstandingCounts.get(binding.parentSessionId) ?? 0) + 1
+    )
     messages.push(message)
     this.queued.set(binding.parentSessionId, messages)
     const targetState = this.options.targetState(binding.parentSessionId)
@@ -126,9 +141,10 @@ class SideChatRelayOwner {
       messageId: message.id,
       targetState,
       delivery: 'next-user-turn',
-      persisted: true,
-      systemHint:
-        'Main is not interrupted or awakened. This advisory is persisted and will be delivered with its next user turn.'
+      persisted: Boolean(this.options.appendRelay),
+      systemHint: this.options.appendRelay
+        ? 'Main is not interrupted or awakened. This advisory is persisted and will be delivered with its next user turn.'
+        : 'Main is not interrupted or awakened. This advisory is queued in memory for its next user turn during this application run. Restarting the application discards undelivered advisories.'
     }
   }
 
@@ -159,6 +175,9 @@ class SideChatRelayOwner {
         if (settled || !ownsClaim()) return []
         settled = true
         this.claims.delete(parentSessionId)
+        const remaining = (this.outstandingCounts.get(parentSessionId) ?? 0) - messages.length
+        if (remaining > 0) this.outstandingCounts.set(parentSessionId, remaining)
+        else this.outstandingCounts.delete(parentSessionId)
         return messages
       },
       restore: () => {
@@ -179,6 +198,7 @@ class SideChatRelayOwner {
       if (binding.parentSessionId === parentSessionId) this.bindings.delete(sideSessionId)
     }
     this.queued.delete(parentSessionId)
+    this.outstandingCounts.delete(parentSessionId)
     this.claims.delete(parentSessionId)
   }
 }

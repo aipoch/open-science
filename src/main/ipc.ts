@@ -303,6 +303,7 @@ import { linkPdfContextWithCapability } from './session-persistence/pdf-context-
 import { LiteratureDocumentReader } from './literature/document-reader'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
+import { selectSessionDetailsStartupCandidates } from './session-details/startup-catalog'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL } from './settings/ipc'
 import { createCoreElectronSurfaces } from './ipc-surfaces/core'
@@ -1606,14 +1607,7 @@ const createApplicationModules = async (
         return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
-    },
-    appendRelay: ({ projectId, parentSessionId, sideChatId, relay }) =>
-      sessionPersistenceCoordinator.appendSideChatRelay({
-        projectId,
-        sessionId: parentSessionId,
-        sideChatId,
-        relay
-      })
+    }
   })
   const mainPromptSideChatRelay = createMainPromptSideChatRelay({
     relay: sideChatRelay,
@@ -1821,6 +1815,9 @@ const createApplicationModules = async (
     sessionLoader: sessionPersistenceCoordinator
   })
   const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
+  // Consume only during composition, before client adapters are installed. Keep just details
+  // recovery candidates, not a long-lived cache of every historical transcript.
+  let startupSessionDetails: LoadAllSessionsResult['sessions'] | undefined
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
   let wslSetupSessionsReconciliation: Promise<void> | undefined
   const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
@@ -3441,20 +3438,6 @@ const createApplicationModules = async (
       relay: sideChatRelay,
       deliverRelay: (parentSessionId, queued) =>
         mainPromptSideChatRelay.tryInject(parentSessionId, queued),
-      persistence: {
-        save: ({ projectId, parentSessionId, sideChat }) =>
-          sessionPersistenceCoordinator.saveSideChatProjection({
-            projectId,
-            sessionId: parentSessionId,
-            sideChat
-          }),
-        clear: ({ projectId, parentSessionId, sideChatId }) =>
-          sessionPersistenceCoordinator.clearSideChat({
-            projectId,
-            sessionId: parentSessionId,
-            sideChatId
-          })
-      },
       recordUsage: recordAuxiliaryUsage,
       onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
@@ -3490,20 +3473,14 @@ const createApplicationModules = async (
       }
     }
   })
-  try {
-    const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
-    sideChatRuntime.hydrate(persistedSideChats.sideChats)
-    sideChatRelay.hydrate(persistedSideChats.relays)
-    await sideChatRuntime.sweepStaleProfiles(
-      new Set(persistedSideChats.sideChats.map(({ sideChat }) => sideChat.id)),
-      persistedSideChats.isComplete
-    )
-  } catch (error) {
-    sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
-  }
+  // Side chats and undelivered advisories belong to this application run only. Never scan
+  // Session JSON to recover them. Profile cleanup is independent of startup readiness.
+  void sideChatRuntime.sweepStaleProfiles().catch((error) => {
+    sideChatLog.warn('temporary Side chat profile cleanup failed', diagnosticErrorFields(error))
+  })
   composition.phase('side-chat')
   // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
-  // Side Chat recovery are available. Queue startup loads the Session catalog, which may first need
+  // Side Chat ownership are available. Queue startup loads the Session catalog, which may first need
   // to finish a pending Project deletion through those owners before restoring concurrency limits.
   await modules.add(
     {
@@ -3540,6 +3517,7 @@ const createApplicationModules = async (
         name: 'compute-job-runtime',
         capability: undefined,
         start: async () => {
+          composition.phase('compute-file-evidence')
           try {
             const owners = await jobRepository.listOwners()
             const jobs = (
@@ -3583,6 +3561,7 @@ const createApplicationModules = async (
               diagnosticErrorFields(error)
             )
           }
+          composition.phase('compute-result-delivery')
           try {
             await computeJobResultDelivery.takeOver(
               await computeIpcModule.handlers.jobsList({ nonTerminal: true })
@@ -3603,14 +3582,19 @@ const createApplicationModules = async (
           }
           // Catalog hydration also restores non-Compute projections and enabled Host selections.
           // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          composition.phase('session-catalog')
           await Promise.all([
             jobPoller.start(),
-            loadAllSessions().catch((error) => {
-              createLogger('session-persistence').warn(
-                'Startup Session hydration failed',
-                errorLogFields(error)
-              )
-            })
+            loadAllSessions()
+              .then((catalog) => {
+                startupSessionDetails = selectSessionDetailsStartupCandidates(catalog)
+              })
+              .catch((error) => {
+                createLogger('session-persistence').warn(
+                  'Startup Session hydration failed',
+                  errorLogFields(error)
+                )
+              })
           ])
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
@@ -3618,6 +3602,7 @@ const createApplicationModules = async (
       }
     }
   )
+  composition.phase('compute-runtime-ready')
   // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
@@ -4173,7 +4158,11 @@ const createApplicationModules = async (
             .catch((error) =>
               log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
             )
-          await owner.start()
+          composition.phase('session-details-recovery')
+          const candidates = startupSessionDetails
+          startupSessionDetails = undefined
+          await owner.start(candidates)
+          composition.phase('session-details-ready')
         },
         dispose: async () => {
           await owner.shutdown()
