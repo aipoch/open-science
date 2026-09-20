@@ -10,7 +10,7 @@ import { canEditResourceAssignments, type AssignableResource } from './resource-
 import type { ResourceSelection as Selection } from './use-resource-selection'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SpecialistAvatar } from './specialist-avatar'
-import { BatchManageReview } from './BatchManageLayout'
+import { BatchManageReview } from './BatchManageReview'
 
 export const ResourceCategorySelection = ({
   selection,
@@ -106,6 +106,21 @@ export const ResourceSelectionBar = ({
         .includes(query.trim().toLocaleLowerCase())
   )
   const { selected, actions, busy, review } = selection
+  const bar = useRef<HTMLDivElement>(null)
+  const deleteTrigger = useRef<HTMLButtonElement>(null)
+  const clearTrigger = useRef<HTMLButtonElement>(null)
+  const wasReviewing = useRef(false)
+  useLayoutEffect(() => {
+    // Replacing the action row removes its focused button. Keep keyboard users in the review flow.
+    if (review && !wasReviewing.current) {
+      bar.current?.querySelector<HTMLElement>('[data-slot="batch-review-title"]')?.focus()
+    } else if (!review && wasReviewing.current) {
+      if (busy) return
+      const target = deleteTrigger.current
+      ;(target && !target.disabled ? target : clearTrigger.current)?.focus()
+    }
+    wasReviewing.current = Boolean(review)
+  }, [review, busy])
   const hidden = visibleIds
     ? selected.filter((resource) => !visibleIds.includes(resource.id)).length
     : 0
@@ -114,6 +129,7 @@ export const ResourceSelectionBar = ({
   if (!selected.length && !busy && !selection.error && !selection.completed) return null
   return (
     <div
+      ref={bar}
       data-slot="resource-selection-bar"
       role="region"
       aria-label={t('Selected resources')}
@@ -284,6 +300,7 @@ export const ResourceSelectionBar = ({
                   className="text-destructive hover:text-destructive"
                   disabled={busy || !selection.available}
                   aria-label={t('Delete selected')}
+                  ref={deleteTrigger}
                   onClick={selection.openReview}
                 >
                   <Trash2 className="size-3.5" aria-hidden="true" />
@@ -298,6 +315,7 @@ export const ResourceSelectionBar = ({
             size="icon-sm"
             disabled={busy}
             aria-label={t('Clear selection')}
+            ref={clearTrigger}
             onClick={selection.clear}
           >
             <X className="size-4" aria-hidden="true" />

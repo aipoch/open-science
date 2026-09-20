@@ -21,11 +21,13 @@ import {
 export const ResourceAssignmentControls = ({
   resource,
   onSetMain,
+  onErrorChange,
   disabled = false,
   mainBlocked = false
 }: {
   resource: AssignableResource
   onSetMain: (enabled: boolean) => Promise<void>
+  onErrorChange?: (failed: boolean) => void
   disabled?: boolean
   mainBlocked?: boolean
 }): React.JSX.Element => {
@@ -49,10 +51,13 @@ export const ResourceAssignmentControls = ({
     pending.current = true
     setBusy(true)
     setError(false)
+    onErrorChange?.(false)
     try {
       await action()
     } catch {
       setError(true)
+      // A filtered row may already be unmounted after the optimistic Main Agent update.
+      onErrorChange?.(true)
     } finally {
       pending.current = false
       setBusy(false)
@@ -62,7 +67,6 @@ export const ResourceAssignmentControls = ({
     <Popover
       onOpenChange={() => {
         setQuery('')
-        setError(false)
       }}
     >
       <PopoverTrigger asChild>
@@ -164,7 +168,7 @@ export const ResourceAssignmentControls = ({
             </p>
           ) : null}
         </div>
-        {error || loadError || integrity.status !== 'ok' ? (
+        {(error && !onErrorChange) || loadError || integrity.status !== 'ok' ? (
           <ErrorNotice
             inline
             role="alert"

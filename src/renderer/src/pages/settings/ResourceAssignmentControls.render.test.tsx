@@ -90,4 +90,19 @@ describe('resource assignment controls', () => {
       'true'
     )
   })
+  it('preserves a save failure when the popover is dismissed during the request', async () => {
+    let reject!: (error: Error) => void
+    const request = new Promise<void>((_, fail) => {
+      reject = fail
+    })
+    render(<ResourceAssignmentControls resource={resource} onSetMain={() => request} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    fireEvent.click(screen.getByRole('switch', { name: 'Main Agent' }))
+    fireEvent.keyDown(screen.getByRole('switch', { name: 'Main Agent' }), { key: 'Escape' })
+    await act(async () => {
+      reject(new Error('write rejected'))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    expect(screen.getByRole('alert').textContent).toContain('Could not update resource access')
+  })
 })

@@ -37,7 +37,6 @@ import { SkillEditor, SkillEditLoader } from './SkillEditor'
 import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
-import { SkillBulkManageView } from './SkillBulkManageView'
 import { SkillImportMenu, SkillImportMenuItems } from './SkillImportMenu'
 import { SettingsLoadNotice, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
@@ -65,7 +64,6 @@ import {
 export type SkillsView =
   | SkillMarketplaceView
   | { kind: 'list' }
-  | { kind: 'manage' }
   | { kind: 'detail'; id: string }
   | { kind: 'create' }
   | { kind: 'edit'; id: string }
@@ -151,6 +149,7 @@ const SkillsPanel = ({
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
   const [deleteError, setDeleteError] = useState<{ id: string; message: string } | undefined>()
   const [exportError, setExportError] = useState<string | undefined>()
+  const [accessError, setAccessError] = useState(false)
   const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
   const [exportingId, setExportingId] = useState<string | undefined>()
   const [catalogState, setCatalogState] = useState<'loading' | 'ready' | 'error'>(
@@ -384,10 +383,6 @@ const SkillsPanel = ({
       />
     )
   }
-  if (view.kind === 'manage') {
-    return <SkillBulkManageView />
-  }
-
   const groups = SOURCE_GROUPS.filter((group) => filter === 'all' || filter === group.source)
 
   if (skills.length === 0 && catalogState !== 'ready') {
@@ -511,6 +506,15 @@ const SkillsPanel = ({
         </div>
       </div>
 
+      {accessError ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="amber"
+          className="mb-3"
+          description={t('Could not update resource access. Refresh and try again.')}
+        />
+      ) : null}
       {exportError ? (
         <ErrorNotice inline role="alert" tone="amber" className="mb-3" description={exportError} />
       ) : null}
@@ -773,6 +777,7 @@ const SkillsPanel = ({
                                 mainRequired: skill.activationPolicy === 'always-on'
                               }}
                               disabled={!available || selection.locked}
+                              onErrorChange={setAccessError}
                               onSetMain={(enabled) => setSkillEnabled(skill.id, enabled)}
                             />
                             <button

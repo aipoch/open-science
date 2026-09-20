@@ -3817,29 +3817,24 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
-  it('opens Connector management through the shared breadcrumb and returns to the catalog', async () => {
+  it('selects Connectors in their category without leaving the catalog', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Connectors')?.click())
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+        .click()
     )
-    expect(manage).toBeDefined()
-    await act(async () => manage?.click())
-    expect(document.body.textContent).toContain('Manage connectors')
-    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).not.toBeNull()
-    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')
-    expect(
-      layout
-        ?.closest('[data-slot="settings-content-scroll"]')
-        ?.firstElementChild?.classList.contains('h-full')
-    ).toBe(true)
-    expect(document.body.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
-    const crumb = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Back to connectors"]'
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Chemistry"]')!.click()
     )
-    expect(crumb).not.toBeNull()
-    await act(async () => crumb?.click())
-    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Back to connectors"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')!.click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
     expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
   })
 
@@ -3858,24 +3853,17 @@ describe('SettingsPage layout', () => {
     const onClose = vi.fn()
     await act(async () => root.render(<SettingsPage open onClose={onClose} />))
     await act(async () => navButton('Skills')?.click())
-    const clickText = async (label: string): Promise<void> => {
-      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (item) => item.textContent?.trim() === label
-      )!
-      expect(button).toBeDefined()
-      await act(async () => button.click())
-    }
-    await clickText('Manage')
-    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')!
-    expect(
-      layout
-        .closest('[data-slot="settings-content-scroll"]')
-        ?.firstElementChild?.classList.contains('h-full')
-    ).toBe(true)
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Personal"]')!
+        .click()
+    )
     await act(async () =>
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
     )
-    await clickText('Delete…')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Delete selected"]')!.click()
+    )
     const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
     expect(document.activeElement).toBe(title)
     await act(async () =>
@@ -3885,7 +3873,9 @@ describe('SettingsPage layout', () => {
     )
     expect(onClose).not.toHaveBeenCalled()
     expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
-    expect(document.activeElement).toBe(document.body.querySelector('[data-batch-delete-trigger]'))
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[aria-label="Delete selected"]')
+    )
   })
 
   it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {
@@ -4064,29 +4054,27 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="skill-marketplace"]')).toBeNull()
   })
 
-  it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-
+  it('selects Featured Skills in place while keeping deletion unavailable', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Skills')?.click())
-    await act(async () => {
-      await Promise.resolve()
-    })
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+        .click()
     )
-    await act(async () => manage?.click())
-
-    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')
-    expect(crumb).not.toBeNull()
-    expect(document.body.textContent).toContain('Manage skills')
-    expect(document.body.textContent).toContain('Featured Skills are not changed.')
-    expect(document.body.textContent).not.toContain('Alpha')
-
-    await act(async () => crumb?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
+    )
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
     expect(document.body.textContent).toContain('Alpha')
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Finish selection in Featured"]')!
+        .click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
   })
 
   it('opens directly on a skill detail when the store has a pending skill', async () => {
@@ -4469,9 +4457,14 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(document.body.textContent).toContain('Specialists')
-    expect(document.body.textContent).toContain('Researcher')
-    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Manage access for Chemistry"]')!
+        .click()
+    )
+    const researcherSwitch = document.body.querySelector('[role="switch"][aria-label="Researcher"]')
+    expect(researcherSwitch?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => fireEvent.keyDown(researcherSwitch!, { key: 'Escape' }))
 
     // Back to the editor (capability tabs reset to Skills on remount), then a
     // custom server lands on its edit page.

@@ -1,6 +1,6 @@
 import { useResourceSelection } from './use-resource-selection'
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -150,5 +150,59 @@ describe('category resource selection', () => {
     expect(
       (screen.getByRole('checkbox', { name: 'Select Unused skill' }) as HTMLInputElement).checked
     ).toBe(true)
+  })
+  it('focuses deletion review and restores the trigger after Escape', () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+    const trigger = screen.getByRole('button', { name: 'Delete selected' })
+    act(() => trigger.focus())
+    fireEvent.click(trigger)
+    expect(document.activeElement?.closest('[data-slot="batch-manage-review"]')).not.toBeNull()
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete selected' }))
+  })
+  it('restores focus to a live control after deleting the entire selection', async () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull()
+    )
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Clear selection' }))
+  })
+  it('restores focus to Clear when a catalog failure disables deletion', async () => {
+    vi.mocked(window.api.specialist.list).mockRejectedValue(new Error('catalog unavailable'))
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Clear selection' }))
+  })
+  it('keeps a pending deletion review open when Escape is pressed', async () => {
+    let finish!: () => void
+    remove.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    await waitFor(() => expect(finish).toBeTypeOf('function'))
+    fireEvent.keyDown(screen.getByRole('heading', { name: 'Delete selected resources?' }), {
+      key: 'Escape'
+    })
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Cancel' }).disabled).toBe(true)
+    await act(async () => finish())
+    expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull()
   })
 })

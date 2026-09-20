@@ -74,7 +74,6 @@ import { localizeCredentialError } from './credential-error-message'
 // are separate components owned by SettingsPage; this panel only renders the catalog list.
 export type ConnectorsView =
   | { kind: 'list' }
-  | { kind: 'manage' }
   | { kind: 'detail'; id: string }
   | {
       kind: 'add'
@@ -201,6 +200,7 @@ export function ConnectorsPanel({
     connectorsLoaded ? 'ready' : 'loading'
   )
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [accessError, setAccessError] = useState(false)
   const loadRequestRef = useRef(0)
   const removalCheckSequence = useRef(0)
   const removalCheckInFlight = useRef<number | undefined>(undefined)
@@ -529,6 +529,7 @@ export function ConnectorsPanel({
                           mainEnabled: connector.enabled
                         }}
                         disabled={selection.locked}
+                        onErrorChange={setAccessError}
                         onSetMain={(enabled) => setConnectorEnabled(connector.id, enabled)}
                       />
                       <button
@@ -697,6 +698,15 @@ export function ConnectorsPanel({
               loading: retryingProjection,
               onClick: () => void retrySkillProjection()
             }}
+          />
+        ) : null}
+        {accessError ? (
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="amber"
+            className="mb-3"
+            description={t('Could not update resource access. Refresh and try again.')}
           />
         ) : null}
         {operationError ? (
@@ -939,6 +949,7 @@ export function ConnectorsPanel({
                               mainEnabled: server.enabled
                             }}
                             disabled={selection.locked}
+                            onErrorChange={setAccessError}
                             mainBlocked={cannotEnableCustomServer(server)}
                             onSetMain={(enabled) => setCustomServerEnabled(server.id, enabled)}
                           />

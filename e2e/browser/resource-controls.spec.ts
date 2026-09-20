@@ -105,3 +105,43 @@ for (const width of [375, 880]) {
     })
   }
 }
+
+for (const kind of ['skills', 'connectors']) {
+  test(`${kind}: rejected filtered switch reports failure`, async ({ page }) => {
+    await page.goto(`/resource-controls.html${kind === 'connectors' ? '?connectors' : ''}`)
+    await page.evaluate((kind) => {
+      const command = kind === 'skills' ? 'setSkillEnabled' : 'setConnectorEnabled'
+      window.api.settings[command] = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        throw new Error('review simulated save failure')
+      }
+    }, kind)
+    await page
+      .getByRole('combobox', {
+        name: kind === 'skills' ? 'Filter Skills by agent' : 'Filter Connectors by agent'
+      })
+      .click()
+    await page.getByRole('option', { name: 'Main Agent', exact: true }).click()
+    const name = kind === 'skills' ? 'AlphaFold2' : 'Chemistry'
+    const trigger = page.getByRole('button', { name: `Manage access for ${name}` })
+    await trigger.click()
+    await page.getByRole('switch', { name: 'Main Agent', exact: true }).click()
+    await expect(trigger).toHaveCount(0)
+    await expect(trigger).toBeVisible()
+    await expect(page.getByRole('alert')).toBeVisible({ timeout: 1500 })
+  })
+}
+test('delete review accepts keyboard focus', async ({ page }) => {
+  await page.goto('/resource-controls.html')
+  await page.getByRole('button', { name: 'Select multiple in Personal' }).click()
+  await page.getByRole('checkbox', { name: 'Select Personal workflow 2', exact: true }).check()
+  const trigger = page.getByRole('button', { name: 'Delete selected' })
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: 'Confirm deletion' })).toBeVisible()
+  expect(
+    await page.evaluate(
+      () => !!document.activeElement?.closest('[data-slot="batch-manage-review"]')
+    )
+  ).toBe(true)
+})
