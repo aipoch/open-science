@@ -77,6 +77,8 @@ const sessionLinkComponents = { a: SessionMessageLink } satisfies Components
 // Import previews render untrusted Markdown. Removing every element that can initiate a media fetch
 // prevents opening a candidate from disclosing viewer activity to an external host. `use` is
 // included because an SVG use element may reference a remote document.
+// Stable references let completed blocks skip unchanged media-policy props during streaming.
+const EMBEDDED_DOCUMENT_ELEMENTS = ['iframe', 'object', 'embed']
 const NETWORK_FETCHING_MEDIA_ELEMENTS = [
   'img',
   'video',
@@ -295,7 +297,7 @@ const RichAgentMarkdown = memo(
           allowedTags={allowedTags}
           literalTagContent={extension?.literalTagContent}
           disallowedElements={
-            allowMedia ? ['iframe', 'object', 'embed'] : NETWORK_FETCHING_MEDIA_ELEMENTS
+            allowMedia ? EMBEDDED_DOCUMENT_ELEMENTS : NETWORK_FETCHING_MEDIA_ELEMENTS
           }
           shikiTheme={plugins.code ? shikiThemes : undefined}
           mermaid={plugins.mermaid ? mermaidOptions : undefined}

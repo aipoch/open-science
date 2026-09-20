@@ -1,13 +1,19 @@
-import { createContext, useContext, useState, type ComponentProps, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { Streamdown, type ExtraProps } from 'streamdown'
-import type { Root } from 'hast'
+import type { Properties, Root } from 'hast'
+import type { PluggableList, Plugin } from 'unified'
 
 // Approval is local to this rendered media element, and bound to the complete URL set. A streaming
 // replacement or added poster/source must never inherit consent for a different request.
 const MediaUrls = createContext<readonly string[]>([])
-// The rehype transform replaces this seed with exactly one image; it is never displayed.
-const imageSeed = '![]()'
 type MediaNode = NonNullable<ExtraProps['node']>
 const remoteUrls = (node?: MediaNode): string[] => {
   if (!node) return []
@@ -60,6 +66,24 @@ const MediaGate = ({
   return <MediaUrls.Provider value={urls}>{children}</MediaUrls.Provider>
 }
 
+// Streamdown caches processors by plugin name and memoizes by children. Pass image properties
+// through the document input, never a captured closure, so every image gets its current data.
+// This transform emits exactly one image; alt/URL text cannot inject Markdown or extra requests.
+const renderApprovedImage: Plugin<[], Root> =
+  () =>
+  (_tree, file): Root => ({
+    type: 'root',
+    children: [
+      {
+        type: 'element',
+        tagName: 'img',
+        properties: JSON.parse(String(file)) as Properties,
+        children: []
+      }
+    ]
+  })
+const approvedImagePlugins: PluggableList = [renderApprovedImage]
+
 const DeferredImage = ({
   node,
   src,
@@ -67,38 +91,25 @@ const DeferredImage = ({
   width,
   height,
   title
-}: ComponentProps<'img'> & ExtraProps): ReactNode => (
-  <MediaGate node={node} alt={alt}>
-    {/* The public renderer retains Streamdown's image wrapper, controls and download behavior.
-        Supply only one image node, so alt/URL text cannot introduce more Markdown or requests. */}
-    <Streamdown
-      mode="static"
-      className="contents"
-      rehypePlugins={[
-        () => (): Root => ({
-          type: 'root',
-          children: [
-            {
-              type: 'element',
-              tagName: 'img',
-              properties: {
-                src,
-                alt: alt ?? '',
-                width,
-                height,
-                title,
-                referrerPolicy: 'no-referrer'
-              },
-              children: []
-            }
-          ]
-        })
-      ]}
-    >
-      {imageSeed}
-    </Streamdown>
-  </MediaGate>
-)
+}: ComponentProps<'img'> & ExtraProps): ReactNode => {
+  const content = useMemo(
+    () =>
+      JSON.stringify({ src, alt: alt ?? '', width, height, title, referrerPolicy: 'no-referrer' }),
+    [src, alt, width, height, title]
+  )
+  return (
+    <MediaGate node={node} alt={alt}>
+      <Streamdown
+        mode="static"
+        className="contents"
+        parseIncompleteMarkdown={false}
+        rehypePlugins={approvedImagePlugins}
+      >
+        {content}
+      </Streamdown>
+    </MediaGate>
+  )
+}
 const DeferredVideo = ({
   node,
   src,

@@ -1,6 +1,9 @@
 import { parseMarkdownIntoBlocks } from 'streamdown'
 
-// Streamdown's blocks retain their source, including whitespace. Keep two unsettled blocks:
+// The Streamdown patch uses Marked block tokens only: segmentation never consumes inline
+// tokens. Rendering still runs the complete GFM/CJK/math parser through its existing adapter.
+
+// Streamdown usually retains source whitespace. Keep two unsettled blocks:
 // a newly arriving list continuation or heading underline can still reinterpret the last one.
 // The parser itself owns fences, HTML and math grouping; do not split on blank lines here.
 export const createIncrementalMarkdownBlocks = (): ((markdown: string) => string[]) => {

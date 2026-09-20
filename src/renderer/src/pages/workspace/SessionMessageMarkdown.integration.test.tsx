@@ -10,6 +10,7 @@ import {
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 import { SessionMessageMarkdown } from './SessionMessageMarkdown'
+import { ArtifactPreview } from './artifact-preview'
 import { createCachedImageFetchResponse } from './previews/cached-preview-image.test-support'
 import type { MessageArtifact } from './session-message-artifact-reference'
 
@@ -75,6 +76,86 @@ describe('SessionMessageMarkdown integration', () => {
     act(() => root.unmount())
     container.remove()
     vi.unstubAllGlobals()
+  })
+
+  it('shares image bytes with Generated through streaming, visibility changes and version updates', async () => {
+    // Use a unique logical file so module-level cache entries from other cases cannot mask reads.
+    const imageArtifact = { ...artifact, artifactId: 'streaming-lifecycle-image' }
+    const preview = vi.fn()
+    let blobNumber = 0
+    vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:lifecycle-${++blobNumber}`)
+    const render = async (
+      current: MessageArtifact,
+      suffix = '',
+      thumbnailVisible = true
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <>
+            <SessionMessageMarkdown
+              content={`![Chart](chart.png)\n\n${suffix}`}
+              isAnimating
+              artifacts={[current]}
+              onPreviewArtifact={preview}
+              onPreviewArtifactModal={preview}
+            />
+            <div data-testid="generated-thumbnail">
+              <ArtifactPreview
+                artifact={current}
+                projectId={current.resolvedProjectId}
+                sessionId={current.resolvedSessionId}
+                managedFileId={current.artifactId}
+                selectedVersionId={current.versionId}
+                isVisible={thumbnailVisible}
+              />
+            </div>
+          </>
+        )
+      })
+    }
+    const inline = (): HTMLImageElement | null =>
+      container.querySelector('[data-session-artifact-image] img')
+    const thumbnail = (): HTMLImageElement | null =>
+      container.querySelector('[data-testid="generated-thumbnail"] img')
+
+    await render(imageArtifact)
+    const originalImage = inline()
+    expect(originalImage).not.toBeNull()
+    expect(thumbnail()?.src).toBe(originalImage?.src)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    let suffix = ''
+    for (let chunk = 0; chunk < 20; chunk += 1) {
+      suffix += `Explanation ${chunk}. `
+      await render({ ...imageArtifact }, suffix)
+      expect(inline()).toBe(originalImage)
+      expect(thumbnail()?.src).toBe(originalImage?.src)
+    }
+    await render(imageArtifact, suffix, false)
+    await render(imageArtifact, suffix, true)
+    expect(inline()).toBe(originalImage)
+    expect(thumbnail()?.src).toBe(originalImage?.src)
+    await act(async () => root.render(null))
+    await render(imageArtifact, suffix)
+    expect(inline()?.src).toBe(originalImage?.src)
+    expect(thumbnail()?.src).toBe(originalImage?.src)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+
+    await render({ ...imageArtifact, id: 'version-2', versionId: 'version-2' }, suffix)
+    expect(inline()?.src).toBe('blob:lifecycle-2')
+    expect(thumbnail()?.src).toBe('blob:lifecycle-2')
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: imageArtifact.artifactId,
+      versionId: 'version-2',
+      mimeType: 'image/png'
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('preserves an HTTPS source title through the message artifact link renderer', async () => {

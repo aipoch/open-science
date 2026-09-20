@@ -75,7 +75,8 @@ describe('AgentMarkdown streaming presentation', () => {
       root.render(<PresentedAgentMarkdown content={prefix + 'Live text'} isAnimating />)
     )
     const firstParagraph = container.querySelector('p')
-    const lexer = vi.spyOn(Lexer, 'lex')
+    const lexer = vi.spyOn(Lexer.prototype, 'blockTokens')
+    const parse = vi.spyOn(Object.getPrototypeOf(unified) as typeof unified, 'parse')
     try {
       for (let count = 1; count <= 20; count++) {
         await act(async () =>
@@ -89,11 +90,17 @@ describe('AgentMarkdown streaming presentation', () => {
       }
       expect(container.textContent).toContain('Live text' + ' continuation'.repeat(20))
       expect(container.querySelector('p')).toBe(firstParagraph)
+      expect(parse.mock.calls.length).toBeGreaterThan(0)
+      expect(
+        parse.mock.calls.some(([source]) => String(source).includes('Completed paragraph 0.'))
+      ).toBe(false)
+      expect(lexer.mock.calls.length).toBeGreaterThan(0)
       expect(lexer.mock.calls.some(([source]) => source.includes('Completed paragraph 0.'))).toBe(
         false
       )
     } finally {
       lexer.mockRestore()
+      parse.mockRestore()
     }
   })
 
