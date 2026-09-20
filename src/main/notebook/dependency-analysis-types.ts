@@ -94,6 +94,11 @@ type NotebookFileCallEffectSummary = Pick<NotebookFileCallEffect, 'kind' | 'inpu
   dependencyNames: string[]
 }
 
+type NotebookPythonHelperModule = {
+  source: string
+  exports: string[]
+}
+
 type NotebookSourceFileAccessContext = {
   // Live analysis only; these fields are deliberately omitted from the sidecar.
   managedEnvironment?: Readonly<Record<string, string>>
@@ -132,9 +137,9 @@ type NotebookSourceFileAccessContext = {
   verifiedSerializedValues?: NotebookSerializedValue[]
   // Transient reference identities for Python collections; rebuilt from same-epoch facts.
   staticCollectionAliases?: Array<{ target: string; source: string }>
-  // Recorded helper source is bounded identity evidence used to analyze later calls. It is never
-  // executed or treated as a name whitelist.
-  pythonHelperSources?: string[]
+  // Recorded helper source is bounded identity evidence used to analyze later exported calls. It
+  // is parsed in an isolated scope and is never executed or treated as a name whitelist.
+  pythonHelperModules?: NotebookPythonHelperModule[]
 }
 
 // Only source-proven value categories. These descriptors contain no serialized contents.
@@ -309,6 +314,7 @@ export type {
   NotebookDependencyTypeBinding,
   NotebookDependencyTypeSummary,
   NotebookFileCallEffectSummary,
+  NotebookPythonHelperModule,
   NotebookRunDependencyFacts,
   NotebookSourceFileAccessAnalysis,
   NotebookSourceFileAccessContext,

@@ -33,7 +33,8 @@ import type {
   NotebookSourceFileAccessContext,
   NotebookSourceFileAccessExtraction,
   NotebookFileCallEffectSummary,
-  NotebookSourceFileWriteScope
+  NotebookSourceFileWriteScope,
+  NotebookPythonHelperModule
 } from './dependency-analysis-types'
 
 const MUTATING_METHODS = new Set([
@@ -6999,21 +7000,26 @@ const pythonLocalFileWrappers = (
 const analyzePythonFileAccessTree = (
   root: Node,
   context?: NotebookSourceFileAccessContext,
-  acceptedSerializedReads = new Map<string, string>()
+  acceptedSerializedReads = new Map<string, string>(),
+  helperModules: readonly { module: PyNode; exports: ReadonlySet<string> }[] = []
 ): NotebookSourceFileAccessExtraction => {
   const tree = convertModule(root)
   const diagnosticNamespaceLoads = namespaceLoadLines(tree)
   const consoleRedirected = pythonRedirectsConsole(tree)
   const localWrappers = pythonLocalFileWrappers(tree)
-  const functionBodies = new Map<string, PyNode>()
-  for (const statement of Array.isArray(tree.body) ? tree.body : []) {
-    if (
-      (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
-      statement.name
-    )
-      functionBodies.set(statement.name, statement)
+  const helperFunctions = new Map<string, { function: PyNode; module: PyNode }>()
+  for (const { module, exports } of helperModules) {
+    for (const statement of Array.isArray(module.body) ? module.body : []) {
+      if (
+        (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+        statement.name &&
+        exports.has(statement.name)
+      )
+        helperFunctions.set(statement.name, { function: statement, module })
+    }
   }
-  const activeFunctionNames = new Set<string>()
+  const activeHelperNames = new Set<string>()
+  let helperScopeDepth = 0
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
   const collections = new Map(
     context?.staticCollections.map((collection) => [
@@ -7027,6 +7033,7 @@ const analyzePythonFileAccessTree = (
   const activeStaticLoops: Array<{ names: Set<string>; invalidated: boolean }> = []
   const invalidateStaticValue = (name: string | undefined, taintIdentity = true): void => {
     if (!name) return
+    if (helperFunctions.has(name)) shadowedHelperNames.add(name)
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
       for (const { target, source } of possibleAliases) {
@@ -7057,6 +7064,7 @@ const analyzePythonFileAccessTree = (
     }
   }
   const shadowedStaticCalls = new Set(localWrappers.names)
+  const shadowedHelperNames = new Set(localWrappers.names)
   const contextualWrappers = new Map(
     context?.localFileWrappers.map((wrapper) => [wrapper.name, wrapper]) ?? []
   )
@@ -7301,23 +7309,100 @@ const analyzePythonFileAccessTree = (
     recordFileAccess(kind, node)
   }
 
+  const invokeHelper = (helper: { function: PyNode; module: PyNode }, call: PyNode): void => {
+    const fnArgs = helper.function.args as PyArguments | undefined
+    const parameters = [...(fnArgs?.posonlyargs ?? []), ...(fnArgs?.args ?? [])]
+    const positional = Array.isArray(call.args) ? call.args : []
+    const keywords = new Map(
+      (call.keywords ?? [])
+        .filter((keyword) => Boolean(keyword.arg) && isPyNode(keyword.value))
+        .map((keyword) => [keyword.arg!, keyword.value as PyNode])
+    )
+    const parameterValues = new Map<string, string>()
+    parameters.forEach((parameter, index) => {
+      const argument = keywords.get(parameter.arg ?? '') ?? positional[index]
+      const value = resolveStaticString(argument, bindings)
+      if (parameter.arg && value !== undefined) parameterValues.set(parameter.arg, value)
+    })
+    const bindingsSnapshot = new Map(bindings)
+    const collectionsSnapshot = new Map(collections)
+    const partialMappingKeysSnapshot = new Map(partialMappingKeys)
+    const partialCollectionRowsSnapshot = new Map(partialCollectionRows)
+    const inMemoryInputsSnapshot = new Set(inMemoryInputs)
+    const fileConnectionsSnapshot = new Map(fileConnections)
+    const archiveNamesSnapshot = new Set(archiveNames)
+    const importedNamesSnapshot = new Map(importedNames)
+    const scientificObjectTypesSnapshot = new Map(scientificObjectTypes)
+    const shadowedStaticCallsSnapshot = new Set(shadowedStaticCalls)
+    const shadowedHelperNamesSnapshot = new Set(shadowedHelperNames)
+    const pythonTaintedNamespacesSnapshot = new Set(pythonTaintedNamespaces)
+    const restore = (): void => {
+      bindings.clear()
+      for (const [key, value] of bindingsSnapshot) bindings.set(key, value)
+      collections.clear()
+      for (const [key, value] of collectionsSnapshot) collections.set(key, value)
+      partialMappingKeys.clear()
+      for (const [key, value] of partialMappingKeysSnapshot) partialMappingKeys.set(key, value)
+      partialCollectionRows.clear()
+      for (const [key, value] of partialCollectionRowsSnapshot)
+        partialCollectionRows.set(key, value)
+      fileConnections.clear()
+      for (const [key, value] of fileConnectionsSnapshot) fileConnections.set(key, value)
+      importedNames.clear()
+      for (const [key, value] of importedNamesSnapshot) importedNames.set(key, value)
+      scientificObjectTypes.clear()
+      for (const [key, value] of scientificObjectTypesSnapshot)
+        scientificObjectTypes.set(key, value)
+      inMemoryInputs.clear()
+      for (const value of inMemoryInputsSnapshot) inMemoryInputs.add(value)
+      archiveNames.clear()
+      for (const value of archiveNamesSnapshot) archiveNames.add(value)
+      shadowedStaticCalls.clear()
+      for (const value of shadowedStaticCallsSnapshot) shadowedStaticCalls.add(value)
+      shadowedHelperNames.clear()
+      for (const value of shadowedHelperNamesSnapshot) shadowedHelperNames.add(value)
+      pythonTaintedNamespaces.clear()
+      for (const value of pythonTaintedNamespacesSnapshot) pythonTaintedNamespaces.add(value)
+    }
+    bindings.clear()
+    collections.clear()
+    partialMappingKeys.clear()
+    partialCollectionRows.clear()
+    inMemoryInputs.clear()
+    fileConnections.clear()
+    archiveNames.clear()
+    importedNames.clear()
+    scientificObjectTypes.clear()
+    shadowedStaticCalls.clear()
+    shadowedHelperNames.clear()
+    pythonTaintedNamespaces.clear()
+    helperScopeDepth += 1
+    activeHelperNames.add(helper.function.name!)
+    try {
+      for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
+        if (statement.type === 'Import' || statement.type === 'ImportFrom') visit(statement)
+      }
+      for (const [name, value] of parameterValues) bindings.set(name, value)
+      for (const statement of Array.isArray(helper.function.body) ? helper.function.body : [])
+        visit(statement)
+    } finally {
+      activeHelperNames.delete(helper.function.name!)
+      helperScopeDepth -= 1
+      restore()
+    }
+  }
+
   const analyzeCall = (node: PyNode): void => {
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
     const canonicalName = canonicalCallName(node) ?? rawName
     if (
       node.func?.type === 'Name' &&
-      functionBodies.has(rawName) &&
-      !activeFunctionNames.has(rawName)
+      helperFunctions.has(rawName) &&
+      !shadowedHelperNames.has(rawName) &&
+      !activeHelperNames.has(rawName)
     ) {
-      activeFunctionNames.add(rawName)
-      try {
-        const body = functionBodies.get(rawName)
-        if (body)
-          for (const statement of Array.isArray(body.body) ? body.body : []) visit(statement)
-      } finally {
-        activeFunctionNames.delete(rawName)
-      }
+      invokeHelper(helperFunctions.get(rawName)!, node)
       return
     }
     if (
@@ -8029,7 +8114,7 @@ const analyzePythonFileAccessTree = (
     let writeScopeKind: NotebookSourceFileWriteScope['kind'] | undefined
     if (!call && !localWrappers.names.has(rawName)) {
       call =
-        contextualWrappers.get(rawName) ??
+        (helperScopeDepth === 0 ? contextualWrappers.get(rawName) : undefined) ??
         PYTHON_FILE_CALL_EFFECTS.get(canonicalName) ??
         libraryFileEffect ??
         PYTHON_FILE_CALL_EFFECTS.get(member)
@@ -8251,6 +8336,7 @@ const analyzePythonFileAccessTree = (
       node.type === 'ClassDef'
     ) {
       if (node.name) {
+        if (helperFunctions.has(node.name)) shadowedHelperNames.add(node.name)
         importedNames.delete(node.name)
         scientificObjectTypes.delete(node.name)
       }
@@ -8480,6 +8566,7 @@ const analyzePythonFileAccessTree = (
       for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
         const localName = alias.asname || alias.name.split('.')[0] || alias.name
         importedNames.set(localName, alias.asname ? alias.name : localName)
+        if (helperFunctions.has(localName)) shadowedHelperNames.add(localName)
         archiveNames.delete(localName)
         inMemoryInputs.delete(localName)
         fileConnections.delete(localName)
@@ -8491,6 +8578,7 @@ const analyzePythonFileAccessTree = (
         if (alias.name !== '*') {
           const localName = alias.asname || alias.name
           importedNames.set(localName, `${node.module ?? ''}.${alias.name}`)
+          if (helperFunctions.has(localName)) shadowedHelperNames.add(localName)
           archiveNames.delete(localName)
           inMemoryInputs.delete(localName)
           fileConnections.delete(localName)
@@ -8544,6 +8632,7 @@ const analyzePythonFileAccessTree = (
       pyChildren(node).forEach(visit)
       for (const target of targets) {
         if (target.type !== 'Name' || !target.id) continue
+        if (helperFunctions.has(target.id)) shadowedHelperNames.add(target.id)
         if (conditionalDepth > 0) {
           // A skipped rebind leaves the old object alive through this name.
           for (const values of [collections, partialMappingKeys, partialCollectionRows]) {
@@ -8714,6 +8803,18 @@ const analyzePythonNotebookSource = async (
   facts: NotebookRunDependencyFacts
   fileAccess?: NotebookSourceFileAccessExtraction
 }> => {
+  const parsedHelpers = await Promise.all(
+    (context?.pythonHelperModules ?? []).map(async (helper) => {
+      const parsed = await withParsedNotebookSource('python', helper.source, (root) => ({
+        module: convertModule(root),
+        exports: new Set(helper.exports)
+      }))
+      return parsed.state === 'ok' ? parsed.value : undefined
+    })
+  )
+  const helperTrees: { module: PyNode; exports: ReadonlySet<string> }[] = parsedHelpers.flatMap(
+    (helper) => (helper ? [helper] : [])
+  )
   const parsed = await withParsedNotebookSource('python', source, (root) => {
     const acceptedSerializedReads = new Map<string, string>()
     const facts = analyzePythonTree(
@@ -8729,7 +8830,8 @@ const analyzePythonNotebookSource = async (
     const fileAccess = analyzePythonFileAccessTree(
       root,
       fileContextForFacts ? fileContextForFacts(facts) : context,
-      acceptedSerializedReads
+      acceptedSerializedReads,
+      helperTrees
     )
     // Static subscripting only produces a collection here for a slice of flat
     // strings. It owns its sequence; keep the read dependency without linking
@@ -8754,11 +8856,22 @@ const analyzePythonNotebookSource = async (
 
 const analyzePythonFileAccesses = async (
   sources: readonly string[],
-  context?: NotebookSourceFileAccessContext
+  context?: NotebookSourceFileAccessContext,
+  helperModules?: readonly NotebookPythonHelperModule[]
 ): Promise<Array<NotebookSourceFileAccessExtraction | undefined>> => {
   const results: Array<NotebookSourceFileAccessExtraction | undefined> = []
   for (const source of sources) {
-    results.push((await analyzePythonNotebookSource(source, context)).fileAccess)
+    const helperContext = helperModules?.length
+      ? {
+          ...(context ?? {
+            staticStrings: [],
+            staticCollections: [],
+            localFileWrappers: []
+          }),
+          pythonHelperModules: [...helperModules]
+        }
+      : context
+    results.push((await analyzePythonNotebookSource(source, helperContext)).fileAccess)
   }
   return results
 }

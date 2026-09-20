@@ -41,7 +41,10 @@ const projectNotebookFileContext = (
     string,
     NonNullable<NotebookSourceFileAccessContext['pythonBindings']>[number]
   >()
-  const pythonHelperSources = new Set<string>()
+  const pythonHelperModules = new Map<
+    string,
+    NonNullable<NotebookSourceFileAccessContext['pythonHelperModules']>[number]
+  >()
   const rFunctions = new Map<
     string,
     NonNullable<NotebookSourceFileAccessContext['rFunctions']>[number]['summary']
@@ -103,8 +106,8 @@ const projectNotebookFileContext = (
     }
     for (const namespace of entry?.fileContext.pythonTaintedNamespaces ?? [])
       pythonTaintedNamespaces.add(namespace)
-    for (const source of entry?.fileContext.pythonHelperSources ?? [])
-      pythonHelperSources.add(source)
+    for (const module of entry?.fileContext.pythonHelperModules ?? [])
+      pythonHelperModules.set(`${module.source}\0${module.exports.join('\0')}`, module)
     if (
       !entry ||
       (entry.facts.state === 'unknown' &&
@@ -343,7 +346,7 @@ const projectNotebookFileContext = (
       ? { rFunctions: [...rFunctions].map(([name, summary]) => ({ name, summary })) }
       : {}),
     ...(staticCollectionAliases.length ? { staticCollectionAliases } : {}),
-    ...(pythonHelperSources.size ? { pythonHelperSources: [...pythonHelperSources] } : {})
+    ...(pythonHelperModules.size ? { pythonHelperModules: [...pythonHelperModules.values()] } : {})
   }
 }
 

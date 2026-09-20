@@ -18,13 +18,9 @@ const analyzeNotebookSourceFileAccess = async (
   }
   let activeContext: NotebookSourceFileAccessContext | undefined
   const analyze = language === 'r' ? analyzeRNotebookSource : analyzePythonNotebookSource
-  const contextualSource =
-    language === 'python' && context?.pythonHelperSources?.length
-      ? `${context.pythonHelperSources.join('\n\n')}\n\n${source}`
-      : source
   const { facts: dependencyFacts, fileAccess } = await (language === 'repl'
     ? analyzeReplNotebookSource(source, context)
-    : analyze(contextualSource, context, (dependencyFacts) => {
+    : analyze(source, context, (dependencyFacts) => {
         const shadowedNames = new Set([
           ...(dependencyFacts?.definedNames ?? []),
           ...(dependencyFacts?.conditionallyDefinedNames ?? [])
@@ -46,6 +42,9 @@ const analyzeNotebookSourceFileAccess = async (
                 : {}),
               ...(context.staticCollectionAliases
                 ? { staticCollectionAliases: context.staticCollectionAliases }
+                : {}),
+              ...(context.pythonHelperModules
+                ? { pythonHelperModules: context.pythonHelperModules }
                 : {}),
               ...(context.resolvedKernelNames
                 ? {

@@ -134,6 +134,37 @@ describe('file context after mutable path collections', () => {
     })
   })
 
+  it('does not expand a recorded helper after its exported name is rebound', async () => {
+    const context = await fileContext(
+      'python',
+      ['read_inputs = lambda: None\nvalue = read_inputs()'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("left.csv")',
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'read_inputs = lambda: None\nvalue = read_inputs()',
+        context
+      )
+    ).toMatchObject({ reads: [], writeState: 'complete' })
+  })
+
   it.each(['python', 'r'] as const)(
     'restores %s diagnostic path bindings after cache reload',
     async (language) => {
