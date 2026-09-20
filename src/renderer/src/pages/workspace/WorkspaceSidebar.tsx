@@ -391,7 +391,7 @@ const SessionList = ({
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
   }, [activeSessionId, visible])
   return (
-    <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
+    <div ref={listRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto py-1">
       {children}
     </div>
   )

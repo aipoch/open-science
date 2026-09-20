@@ -769,7 +769,7 @@ const PreviewToolPanel = ({
             ? dialogPanelClassName(
                 'z-[56] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
               )
-            : 'h-full min-h-0 w-full overflow-y-auto'
+            : 'scrollbar-auto-hide h-full min-h-0 w-full overflow-y-auto'
         }
       >
         <PreviewActiveContent
