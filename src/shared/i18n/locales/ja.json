@@ -5986,10 +5986,10 @@
     "Removing this service keeps the shared account and key. Capability selection returns to the default method.": "このサービスを削除しても、共有アカウントとキーは保持されます。スキルとコネクタの選択は標準の方法に戻ります。",
     "OpenRouter": "OpenRouter",
     "Custom HTTP service": "カスタム HTTP サービス",
-    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Laya and other native model APIs need an adaptor or wrapper.": "プロトコル: Open-Science Typed Decisions HTTP。エンドポイントは state と型付き質問を受け取り、model、answers、usage を返す必要があります。Laya などのネイティブモデル API にはアダプターまたはラッパーが必要です。",
+    "Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.": "プロトコル: Open-Science Typed Decisions HTTP。エンドポイントは state と型付き質問を受け取り、model、answers、usage を返す必要があります。ネイティブモデル API にはアダプターまたはラッパーが必要な場合があります。",
     "Endpoint URL": "エンドポイント URL",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "有効で安全な HTTP エンドポイントを入力してください。リモートエンドポイントには HTTPS が必要です。",
     "Model ID exposed by the endpoint": "エンドポイントが公開するモデル ID",
-    "This is not a Chat Completions endpoint. Use an adaptor for Laya or native model APIs.": "これは Chat Completions エンドポイントではありません。Laya やネイティブモデル API にはアダプターを使用してください。"
+    "This is not a Chat Completions endpoint. Use an adaptor for native model APIs.": "これは Chat Completions エンドポイントではありません。ネイティブモデル API にはアダプターを使用してください。"
   }
 }

@@ -538,12 +538,12 @@ const ClassificationEditor = ({
               <>
                 <p>
                   {t(
-                    'Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Laya and other native model APIs need an adaptor or wrapper.'
+                    'Protocol: Open-Science Typed Decisions HTTP. The endpoint must accept state and typed questions, then return model, answers, and usage. Native model APIs may need an adaptor or wrapper.'
                   )}
                 </p>
                 <p className="mt-1">
                   {t(
-                    'This is not a Chat Completions endpoint. Use an adaptor for Laya or native model APIs.'
+                    'This is not a Chat Completions endpoint. Use an adaptor for native model APIs.'
                   )}
                 </p>
               </>

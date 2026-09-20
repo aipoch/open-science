@@ -858,13 +858,13 @@ it('distinguishes skipped and ambiguous selections from confident empty decision
 
 it('supports a loopback custom typed-decision endpoint without an API key', async () => {
   const endpoint = 'http://127.0.0.1:8000/classify'
-  const model = 'laya-typed-decisions'
+  const model = 'local-typed-decisions'
   const saved = await owner.mutate({
     revision: 0,
     kind: 'save',
     id: serviceId,
     adapter: 'custom',
-    name: 'Local Laya adaptor',
+    name: 'Local adaptor',
     baseUrl: endpoint,
     modelId: model
   })
@@ -897,7 +897,7 @@ it('requires a key for a remote custom typed-decision endpoint', async () => {
       adapter: 'custom',
       name: 'Remote adaptor',
       baseUrl: 'https://classifier.example.test/v1/decisions',
-      modelId: 'laya-typed-decisions'
+      modelId: 'local-typed-decisions'
     })
   ).rejects.toThrow('API key is required')
   expect(fetchMock).not.toHaveBeenCalled()
@@ -912,7 +912,7 @@ it('rejects insecure custom endpoints before attempting validation', async () =>
       adapter: 'custom',
       name: 'Insecure adaptor',
       baseUrl: 'http://classifier.example.test/decisions',
-      modelId: 'laya-typed-decisions',
+      modelId: 'local-typed-decisions',
       apiKey: 'remote-key'
     })
   ).rejects.toThrow('endpoint is invalid')

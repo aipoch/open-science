@@ -145,9 +145,9 @@ it('configures a custom typed-decision endpoint without requiring a loopback key
     target: { value: 'http://localhost:8000/classify' }
   })
   fireEvent.change(screen.getByLabelText('Model'), {
-    target: { value: 'laya-typed-decisions' }
+    target: { value: 'local-typed-decisions' }
   })
-  fireEvent.change(screen.getByLabelText('Service name'), { target: { value: 'Local Laya' } })
+  fireEvent.change(screen.getByLabelText('Service name'), { target: { value: 'Local classifier' } })
   expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false)
   fireEvent.click(screen.getByText('Save'))
   await waitFor(() =>
@@ -155,7 +155,7 @@ it('configures a custom typed-decision endpoint without requiring a loopback key
       expect.objectContaining({
         adapter: 'custom',
         baseUrl: 'http://localhost:8000/classify',
-        modelId: 'laya-typed-decisions',
+        modelId: 'local-typed-decisions',
         apiKey: undefined
       })
     )
