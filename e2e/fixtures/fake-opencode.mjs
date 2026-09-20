@@ -1035,6 +1035,26 @@ if (process.argv.includes('--version')) {
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
+      // Use the supported mid-response interruption wrapper: generic provider errors are terminal
+      // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.
+      if (
+        prompt.includes('Create a PNG after provider execution failure.') &&
+        !prompt.includes('Continue the interrupted turn from where it stopped.')
+      ) {
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text: 'PNG recovery checkpoint reached.' }
+          }
+        })
+        await delay(2_000)
+        throw acp.RequestError.internalError(
+          { errorKind: 'provider-error' },
+          'API Error: Connection closed mid-response'
+        )
+      }
 
       if (prompt.includes(DELEGATED_WAIT_MARKER)) {
         await captureDelegatedHandoff(
@@ -1591,6 +1611,49 @@ if (process.argv.includes('--version')) {
           reply = await verifyRealNotebookEnvironment(context.params.sessionId)
         } else if (prompt.includes(NOTEBOOK_PACKAGE_CANCELLATION_PROMPT)) {
           reply = await verifyNotebookPackageCancellation(context.params.sessionId)
+        } else if (
+          prompt.includes('Create a PNG without interruption.') ||
+          prompt.includes('Create a PNG after interrupted recovery.') ||
+          prompt.includes('Create a PNG after provider execution failure.')
+        ) {
+          if (
+            !prompt.includes('Create a PNG without interruption.') &&
+            !prompt.includes('Continue the interrupted turn from where it stopped.')
+          ) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+                content: { type: 'text', text: 'PNG recovery checkpoint reached.' }
+              }
+            })
+            await delay(5_000)
+            reply = 'PNG initial attempt finished.'
+          } else {
+            await withMcpClient(
+              context.params.sessionId,
+              'open-science-artifacts',
+              async (client) =>
+                toolResult(
+                  'write_artifact_file',
+                  await client.callTool({
+                    name: 'write_artifact_file',
+                    arguments: {
+                      // Fixed 160 × 112 chart makes manual full-preview acceptance visible.
+                      filename: 'resumed-figure.png',
+                      mimeType: 'image/png',
+                      content:
+                        'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
+                      encoding: 'base64'
+                    }
+                  })
+                )
+            )
+            reply = prompt.includes('Create a PNG without interruption.')
+              ? 'PNG artifact created.'
+              : 'Resumed PNG artifact created.'
+          }
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           if (prompt.includes('Observe the Task before publication.')) {
             await new Promise((resolve) => setTimeout(resolve, 8_000))

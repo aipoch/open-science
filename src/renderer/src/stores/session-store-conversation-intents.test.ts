@@ -44,6 +44,29 @@ const persistedSession = (): PersistedChatSession => {
 describe('Session store conversation intent capture', () => {
   beforeEach(resetSessionConversationIntentsForTests)
 
+  it.each([false, true])(
+    'persists interrupted continuation admission, reset=%s',
+    (contextReset) => {
+      const store = createSessionStore()
+      const interrupted = persistedSession()
+      interrupted.status = 'error'
+      interrupted.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'prompt-1'
+      }
+      store.getState().hydrateSessions([interrupted])
+      const prepared = store
+        .getState()
+        .prepareInterruptedTurnContinuation('session-1', 'prompt-1', undefined, contextReset)
+      expect(prepared).toBeDefined()
+      expect(store.getState().sessions[0].activeRun?.promptMessageId).toBe('prompt-1')
+      expect(pendingSessionConversationCommands('session-1').map(({ kind }) => kind)).toEqual(
+        contextReset ? ['open-segment', 'resume-run'] : ['resume-run']
+      )
+    }
+  )
+
   it('captures an explicit append and run without treating runtime output as user intent', () => {
     const store = createSessionStore()
     store.getState().hydrateSessions([persistedSession()])

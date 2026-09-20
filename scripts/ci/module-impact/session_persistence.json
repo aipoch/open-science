@@ -71,7 +71,9 @@
     "src/main/session-persistence/runtime-session-owner.test.ts",
     "src/main/session-persistence/runtime-session-owner.ts",
     "src/main/session-persistence/runtime-writer.test.ts",
-    "src/main/session-persistence/runtime-writer.ts"
+    "src/main/session-persistence/runtime-writer.ts",
+    "src/main/session-persistence/runtime-resume-recovery.test.ts",
+    "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-persistence/coordinator.ts",
@@ -129,7 +131,9 @@
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/main/session-persistence/runtime-authority.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
-      "src/main/session-persistence/runtime-writer.test.ts"
+      "src/main/session-persistence/runtime-writer.test.ts",
+      "src/main/session-persistence/runtime-resume-recovery.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
     ],
     "contract": [
       "src/shared/session-persistence.test.ts",
@@ -531,7 +535,9 @@
       "src/main/session-plan/plan-legacy-compatibility.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/session-details/startup-catalog.test.ts"
+      "src/main/session-details/startup-catalog.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

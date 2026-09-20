@@ -899,7 +899,9 @@
       "src/main/session-plan/plan-legacy-compatibility.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

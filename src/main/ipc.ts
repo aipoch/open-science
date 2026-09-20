@@ -3699,7 +3699,11 @@ const createApplicationModules = async (
     createSessionWorkflow,
     taskNotifications,
     archiveCoordinator,
-    sessionRepository,
+    {
+      loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
+      prepareRuntimeResume: (projectId, sessionId) =>
+        sessionPersistenceCoordinator.prepareRuntimeResume(projectId, sessionId)
+    },
     (sessionId) => {
       if (sideChatRuntime.hasForParent(sessionId)) {
         throw new Error('Close Side chat before saving this conversation as a Skill.')

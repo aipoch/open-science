@@ -62,7 +62,7 @@ const wireCommands = z
       z.object({ ...commandBase, kind: z.literal('open-segment'), segment: segmentSchema }),
       z.object({
         ...commandBase,
-        kind: z.literal('start-run'),
+        kind: z.enum(['start-run', 'resume-run']),
         run: z.object({ promptMessageId: identity, startedAt: z.number().finite().nonnegative() })
       })
     ])
@@ -118,7 +118,7 @@ export type SessionConversationCommand = {
     }
   | { kind: 'select-branch'; branchId: string; previousBranchId: string }
   | { kind: 'open-segment'; segment: Omit<PersistedRuntimeSegment, 'agentFrameId' | 'endedAt'> }
-  | { kind: 'start-run'; run: PersistedActiveRun }
+  | { kind: 'start-run' | 'resume-run'; run: PersistedActiveRun }
 )
 
 const sameValue = (left: unknown, right: unknown): boolean => {
@@ -303,12 +303,27 @@ export const applySessionConversationCommands = (
         })
         result = { ...result, pendingHistoryReplay: result.pendingHistoryReplay ?? { kind: 'all' } }
         break
+      case 'resume-run':
       case 'start-run': {
         const prompt = resolveActiveConversationMessages(graph).find(
           (message) => message.id === command.run.promptMessageId
         )
         if (prompt?.role !== 'user') throw new Error('Run prompt is not on the selected Branch.')
+        if (
+          command.kind === 'resume-run' &&
+          (result.resumeRecovery?.kind !== 'resume-required' ||
+            result.resumeRecovery.promptMessageId !== command.run.promptMessageId)
+        ) {
+          throw new Error('Resume no longer matches the interrupted turn.')
+        }
         if (result.activeRun) {
+          // Saving a recovery may succeed before its response or provider admission fails.
+          // Retrying that recovery reuses the durable run; it cannot replace another prompt.
+          if (
+            command.kind === 'resume-run' &&
+            result.activeRun.promptMessageId === command.run.promptMessageId
+          )
+            break
           if (
             result.activeRun.promptMessageId === command.run.promptMessageId &&
             result.activeRun.startedAt === command.run.startedAt
@@ -317,6 +332,7 @@ export const applySessionConversationCommands = (
           throw new Error('Session already has an active run.')
         }
         if (
+          command.kind === 'start-run' &&
           result.runtimeTranscriptLastRun?.promptMessageId === command.run.promptMessageId &&
           result.runtimeTranscriptLastRun.startedAt === command.run.startedAt
         )

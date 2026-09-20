@@ -56,8 +56,8 @@ type ArtifactProvenanceFinalizationRecoveryOptions = {
   >
 }
 
-// Prefer a complete durable claim on the declared Branch and Runtime Segment over the prompt-window
-// heuristic: an in-turn user feedback Message can separate commentary from the real output owner.
+// Prefer a complete durable claim over the prompt-window heuristic, then validate its ownership:
+// an in-turn user feedback Message can separate commentary from the real output owner.
 // Only an entirely unclaimed run may fall back to a single Message before the next user prompt.
 const inferDurableFinalizationMessageId = (
   session: PersistedChatSession,
@@ -96,9 +96,7 @@ const inferDurableFinalizationMessageId = (
     // Even a partial or competing claim blocks heuristic fallback. Otherwise an unrelated single
     // commentary Message could permanently acquire a Version already attached to its real owner.
     if (claimedMessageIds.size !== 1) return undefined
-    message = path
-      .slice(promptIndex + 1)
-      .find((candidate) => ownsRunOutput(candidate) && claimedMessageIds.has(candidate.id))
+    message = path.slice(promptIndex + 1).find((candidate) => claimedMessageIds.has(candidate.id))
     if (
       !message ||
       !versionIds.every((id) => isArtifactLinkedToDurableMessage(session, message!.id, id))

@@ -879,7 +879,9 @@
       "src/main/settings/classification-settings.test.ts",
       "src/main/notebook/dependency-analysis.repl.test.ts",
       "src/main/notebook/managed-path-context.test.ts",
-      "src/main/notebook/compute-evidence-recovery.integration.test.ts"
+      "src/main/notebook/compute-evidence-recovery.integration.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
