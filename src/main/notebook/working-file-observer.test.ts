@@ -29,6 +29,7 @@ import {
 } from '../artifacts/artifact-reproducibility-recipe'
 import { projectArtifactReproducibility } from '../artifacts/provenance-reproducibility-projection'
 import {
+  batchComputeProjectEvidenceRequests,
   beginComputeJobFileEvidence,
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
@@ -82,6 +83,153 @@ afterEach(async () => {
 })
 
 describe('working-file evidence', () => {
+  it('recovers many empty Session directories with one worker per Project', async () => {
+    await createRoots()
+    const evidenceRoot = join(storageRoot!, 'execution-file-evidence')
+    await mkdir(evidenceRoot)
+    const metadata = await stat(evidenceRoot)
+    for (const projectName of ['project-a', 'project-b']) {
+      await runEvidenceWorker(evidenceRoot, {
+        operation: 'ensure-project',
+        projectName,
+        expectedRootIdentity: { dev: metadata.dev, ino: metadata.ino }
+      })
+      for (let index = 0; index < 40; index++) {
+        await mkdir(join(evidenceRoot, projectName, `session-${index}`))
+      }
+    }
+    const worker = vi.fn(runEvidenceWorker)
+    await expect(reconcileComputeJobFileEvidence(storageRoot!, [], worker)).resolves.toEqual({
+      removedStagingEntries: 0,
+      removedActivityEntries: 0
+    })
+    expect(worker).toHaveBeenCalledTimes(2)
+    expect(worker.mock.calls.map(([, request]) => request.operation)).toEqual([
+      'reconcile-compute-project',
+      'reconcile-compute-project'
+    ])
+  })
+
+  it('bounds recovery of 130 Sessions to three workers', async () => {
+    await createRoots()
+    const root = join(storageRoot!, 'execution-file-evidence')
+    await mkdir(root)
+    const metadata = await stat(root)
+    await runEvidenceWorker(root, {
+      operation: 'ensure-project',
+      projectName: 'project-batched',
+      expectedRootIdentity: { dev: metadata.dev, ino: metadata.ino }
+    })
+    for (let index = 0; index < 130; index++) {
+      await mkdir(join(root, 'project-batched', `session-${index}`))
+    }
+    const worker = vi.fn(runEvidenceWorker)
+    await expect(reconcileComputeJobFileEvidence(storageRoot!, [], worker)).resolves.toEqual({
+      removedStagingEntries: 0,
+      removedActivityEntries: 0
+    })
+    expect(worker).toHaveBeenCalledTimes(3)
+    expect(
+      worker.mock.calls.map(([, request]) =>
+        request.operation === 'reconcile-compute-project' ? request.sessions.length : 0
+      )
+    ).toEqual([64, 64, 2])
+  })
+
+  it('includes JSON wrapper, separators and UTF-8 bytes in the recovery batch budget', () => {
+    const request: Parameters<typeof batchComputeProjectEvidenceRequests>[0] = {
+      operation: 'reconcile-compute-project',
+      expectedRootIdentity: { dev: 1, ino: 2 },
+      projectName: 'project-batched',
+      sessions: []
+    }
+    const first = { sessionName: 'first', retained: [], deferredActivityIds: ['資料'] }
+    const second = { sessionName: 'second', retained: [], deferredActivityIds: [''] }
+    const targetBytes = 4 * 1024 * 1024
+    const baseBytes = Buffer.byteLength(JSON.stringify({ ...request, sessions: [first, second] }))
+    second.deferredActivityIds[0] = 'a'.repeat(targetBytes - baseBytes)
+    request.sessions = [first, second]
+    const exact = [...batchComputeProjectEvidenceRequests(request)]
+    expect(exact).toHaveLength(1)
+    expect(Buffer.byteLength(JSON.stringify(exact[0]))).toBe(targetBytes)
+
+    second.deferredActivityIds[0] += 'a'
+    const split = [...batchComputeProjectEvidenceRequests(request)]
+    expect(split.map((batch) => batch.sessions.map((session) => session.sessionName))).toEqual([
+      ['first'],
+      ['second']
+    ])
+    expect(split.every((batch) => Buffer.byteLength(JSON.stringify(batch)) <= targetBytes)).toBe(
+      true
+    )
+  })
+
+  it('keeps an oversized Session retention set intact in its own batch', () => {
+    const oversized = {
+      sessionName: 'large',
+      deferredActivityIds: [],
+      retained: [
+        {
+          activityId: 'retained-job',
+          activityKind: 'compute-job' as const,
+          receiptName: 'receipt-retained-job.json',
+          finalName: 'activity-retained-job',
+          evidenceId: 'evidence-retained-job',
+          checksum: 'a'.repeat(64),
+          storageKey: 'a'.repeat(4 * 1024 * 1024)
+        }
+      ]
+    }
+    const sessions = [
+      { sessionName: 'before', retained: [], deferredActivityIds: [] },
+      oversized,
+      { sessionName: 'after', retained: [], deferredActivityIds: [] }
+    ]
+    const batches = [
+      ...batchComputeProjectEvidenceRequests({
+        operation: 'reconcile-compute-project',
+        expectedRootIdentity: { dev: 1, ino: 2 },
+        projectName: 'project-batched',
+        sessions
+      })
+    ]
+    expect(batches.map((batch) => batch.sessions.length)).toEqual([1, 1, 1])
+    expect(batches.flatMap((batch) => batch.sessions)).toEqual(sessions)
+    expect(batches[1].sessions[0]).toBe(oversized)
+  })
+
+  it('rejects unsafe Session directories inside a Project recovery batch', async () => {
+    await createRoots()
+    const root = join(storageRoot!, 'execution-file-evidence')
+    await mkdir(root)
+    const metadata = await stat(root)
+    const expectedRootIdentity = { dev: metadata.dev, ino: metadata.ino }
+    await runEvidenceWorker(root, {
+      operation: 'ensure-project',
+      projectName: 'project-a',
+      expectedRootIdentity
+    })
+    const outside = join(storageRoot!, 'outside')
+    await mkdir(outside)
+    await writeFile(join(outside, 'keep.txt'), 'retained')
+    await symlink(
+      outside,
+      join(root, 'project-a', 'session-link'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    for (const sessionName of ['session-link', '../outside', 'blobs']) {
+      await expect(
+        runEvidenceWorker(root, {
+          operation: 'reconcile-compute-project',
+          projectName: 'project-a',
+          expectedRootIdentity,
+          sessions: [{ sessionName, retained: [], deferredActivityIds: [] }]
+        })
+      ).rejects.toThrow()
+    }
+    expect(await readFile(join(outside, 'keep.txt'), 'utf8')).toBe('retained')
+  })
+
   it('reports unclassified data and handoff changes without observing other workspace directories', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const paths = [
