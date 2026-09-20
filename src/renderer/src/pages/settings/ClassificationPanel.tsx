@@ -281,12 +281,16 @@ export const ClassificationPanel = ({
                                   kindKey="official:openrouter"
                                   className="size-3"
                                 />
+                              ) : service.adapter === 'custom' ? (
+                                <PlugZap className="size-3" aria-hidden="true" />
                               ) : (
                                 <TypeSafeIcon />
                               )}
                               {service.adapter === 'openrouter'
                                 ? t('OpenRouter')
-                                : t('TypeSafe AI')}
+                                : service.adapter === 'custom'
+                                  ? t('Custom HTTP service')
+                                  : t('TypeSafe AI')}
                             </span>
                             {probe[service.id] !== undefined && (
                               <span
@@ -444,14 +448,16 @@ const ClassificationEditor = ({
   const [baseUrl, setBaseUrl] = useState(service?.baseUrl ?? '')
   const [modelId, setModelId] = useState(service?.modelId ?? '')
   const [providerId, setProviderId] = useState(service?.providerId)
-  const needsNewKey = !service || Boolean(service.providerId) || Boolean(service.needsKey)
   const [key, setKey] = useState('')
   const [keyVisible, setKeyVisible] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const customEndpointError =
     adapter === 'custom' ? getCustomProviderBaseUrlError(baseUrl) : undefined
   const customKeyRequired = adapter === 'custom' && customProviderRequiresKey(baseUrl)
-  const keyRequired = adapter !== 'custom' ? needsNewKey : customKeyRequired && needsNewKey
+  const hasReusableKey =
+    service?.adapter === adapter && !service.providerId && Boolean(service.maskedKey)
+  const needsNewKey = !providerId && !hasReusableKey
+  const keyRequired = needsNewKey && (adapter !== 'custom' || customKeyRequired)
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
@@ -637,16 +643,18 @@ const ClassificationEditor = ({
               <label className="text-xs font-medium text-muted-foreground" htmlFor="classifier-key">
                 {t('API key')}
               </label>
-              <ExternalTextLink
-                href={
-                  adapter === 'openrouter'
-                    ? 'https://openrouter.ai/workspaces/default/keys'
-                    : 'https://console.typesafe.ai'
-                }
-                className="text-xs"
-              >
-                {t('Get an API key')}
-              </ExternalTextLink>
+              {adapter !== 'custom' && (
+                <ExternalTextLink
+                  href={
+                    adapter === 'openrouter'
+                      ? 'https://openrouter.ai/workspaces/default/keys'
+                      : 'https://console.typesafe.ai'
+                  }
+                  className="text-xs"
+                >
+                  {t('Get an API key')}
+                </ExternalTextLink>
+              )}
             </div>
             <div className="relative">
               <Input

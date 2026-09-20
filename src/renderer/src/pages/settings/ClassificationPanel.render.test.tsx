@@ -165,6 +165,29 @@ it('configures a custom TypeSafe-compatible endpoint without requiring a loopbac
     )
   )
 })
+it('labels a custom service and requires a key when its endpoint changes from local to remote', async () => {
+  state.services = [
+    {
+      id: 'custom-service',
+      name: 'Local classifier',
+      adapter: 'custom',
+      baseUrl: 'http://localhost:8000/classify',
+      modelId: 'local-typed-decisions',
+      configured: true,
+      needsKey: false
+    }
+  ]
+  render(<Harness />)
+  expect(await screen.findByText('Custom HTTP service')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  fireEvent.change(await screen.findByLabelText('Endpoint URL'), {
+    target: { value: 'https://classifier.example.test/classify' }
+  })
+  expect(screen.getByLabelText('API key')).toHaveProperty('required', true)
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'remote-key' } })
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false)
+})
 it('shows the shared validation failure without saving, preserves the draft, and allows retry', async () => {
   let finish!: (result: ClassificationMutationResult) => void
   api.updateClassification.mockImplementationOnce(
