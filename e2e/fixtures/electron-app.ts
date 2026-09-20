@@ -39,6 +39,9 @@ const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs'
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
+type BeginResourceProfileOptions = RuntimeResourceProfilerOptions & {
+  firstReadySurface?: 'home'
+}
 
 // Keep in sync with GitHubStarBadge. Workspace variant waits 5s, then opens a popover that can
 // swallow the next pointer click (revision navigation, project menus) on macOS and Windows CI.
@@ -314,7 +317,7 @@ type ElectronApp = {
   allowRendererConsoleError: (text: string) => void
   captureMainLog: (name: string) => Promise<string>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
-  beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
+  beginResourceProfile: (options?: BeginResourceProfileOptions) => Promise<void>
   capturePersistedLocaleNativeQuitDialog: () => Promise<{
     buttons: string[]
     detail: string
@@ -509,10 +512,16 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-const waitForRendererReady = async (page: Page): Promise<void> => {
+type RendererStartupMilestone = 'dom-content-loaded' | 'runtime-ready'
+
+const waitForRendererReady = async (
+  page: Page,
+  onMilestone?: (milestone: RendererStartupMilestone) => void
+): Promise<void> => {
   const deadline = performance.now() + (process.platform === 'win32' ? 180_000 : 90_000)
   const remainingTimeout = (): number => Math.max(1, deadline - performance.now())
   await page.waitForLoadState('domcontentloaded', { timeout: remainingTimeout() })
+  onMilestone?.('dom-content-loaded')
   // Hosted Windows spent 89s applying the real schema before application composition began.
   // Keep readiness bounded and share its budget with settings; the fixture owns startup time
   // independently of the test body's assertion budget.
@@ -529,6 +538,8 @@ const waitForRendererReady = async (page: Page): Promise<void> => {
       { timeout: remainingTimeout() }
     )
     .toMatchObject({ phase: 'ready' })
+  // Main publishes this state only after the full application runtime and lifecycle are ready.
+  onMilestone?.('runtime-ready')
   await page
     .getByTestId('settings-startup-loading')
     .waitFor({ state: 'hidden', timeout: remainingTimeout() })
@@ -547,12 +558,13 @@ const openMainWindow = async (
   application: ElectronApplication,
   rendererFailures: RendererFailureGate,
   windowMode: E2eWindowMode,
-  onFirstReady?: (page: Page) => Promise<void>
+  onFirstReady?: (page: Page) => Promise<void>,
+  onMilestone?: (milestone: RendererStartupMilestone) => void
 ): Promise<Page> => {
   const page = await application.firstWindow()
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
-  await waitForRendererReady(page)
+  await waitForRendererReady(page, onMilestone)
   await onFirstReady?.(page)
   // Writing the cooldown after first paint does not cancel a timer GitHubStarBadge already
   // scheduled. Reload so the workspace variant remounts with the cooldown already set.
@@ -573,6 +585,7 @@ class ElectronAppHarness implements ElectronApp {
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
   private resourceProfiler: RuntimeResourceProfiler | undefined
+  private profileFirstReadySurface: BeginResourceProfileOptions['firstReadySurface']
   private readonly sabotagedDelegatedHandoffs = new Map<string, string>()
 
   private constructor(
@@ -648,8 +661,9 @@ class ElectronAppHarness implements ElectronApp {
     return destination
   }
 
-  async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {
+  async beginResourceProfile(options: BeginResourceProfileOptions = {}): Promise<void> {
     if (this.resourceProfiler) throw new Error('Runtime resource profiling is already active.')
+    const { firstReadySurface, ...profilerOptions } = options
     const profileDataRoot = join(this.testRoot, 'profile-data')
     await mkdir(profileDataRoot, { recursive: true })
     await this.close()
@@ -665,10 +679,11 @@ class ElectronAppHarness implements ElectronApp {
       throw new Error('Runtime resource profile did not activate its isolated data root.')
     }
     const profiler = new RuntimeResourceProfiler({
-      ...options,
+      ...profilerOptions,
       dataRoot,
       storageRoot: this.roots.storageRoot
     })
+    this.profileFirstReadySurface = firstReadySurface
     this.resourceProfiler = profiler
     await profiler.attach(this.runningApplication)
   }
@@ -734,6 +749,7 @@ class ElectronAppHarness implements ElectronApp {
     const profiler = this.resourceProfiler
     if (!profiler) throw new Error('Runtime resource profiling is not active.')
     this.resourceProfiler = undefined
+    this.profileFirstReadySurface = undefined
     profiler.detach()
     return profiler.finish()
   }
@@ -1271,6 +1287,7 @@ class ElectronAppHarness implements ElectronApp {
   async dispose(): Promise<void> {
     this.resourceProfiler?.abort()
     this.resourceProfiler = undefined
+    this.profileFirstReadySurface = undefined
     const errors: unknown[] = []
     try {
       await this.closeForCleanup()
@@ -1320,8 +1337,28 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined,
       packagePath
     )
-    await this.resourceProfiler?.attach(this.application)
+    const captureFirstWindowVisible =
+      this.resourceProfiler && this.windowMode === 'normal'
+        ? this.application
+            .evaluate(({ app, BrowserWindow }) => {
+              return new Promise<void>((resolveVisible) => {
+                const observe = (window: InstanceType<typeof BrowserWindow>): void => {
+                  if (window.isVisible()) resolveVisible()
+                  else window.once('show', resolveVisible)
+                }
+                const window = BrowserWindow.getAllWindows()[0]
+                if (window) observe(window)
+                else app.once('browser-window-created', (_event, created) => observe(created))
+              })
+            })
+            .then(() => {
+              this.recordResourceTiming('first-window-visible', performance.now() - launchStartedAt)
+            })
+        : Promise.resolve()
+    const attachResourceProfiler =
+      this.resourceProfiler?.attach(this.application) ?? Promise.resolve()
     try {
+      await Promise.all([attachResourceProfiler, captureFirstWindowVisible])
       if (process.env.OPEN_SCIENCE_E2E_EXECUTABLE) {
         const evidence = await this.application.evaluate(({ app }) => ({
           packaged: app.isPackaged,
@@ -1348,9 +1385,33 @@ class ElectronAppHarness implements ElectronApp {
           ? async (page) => {
               this.currentPage = page
               this.recordResourceTiming('first-' + timingName, performance.now() - launchStartedAt)
-              await this.captureResourceTimings(
-                timingName === 'recovery-startup-ready' ? 'first-recovery:' : 'first:'
-              )
+              const captureSurfaceReady = async (): Promise<void> => {
+                if (this.profileFirstReadySurface !== 'home') return
+                const home = page.getByTestId('home-page')
+                const newProject = page.getByTestId('home-new-project')
+                await home.waitFor({ state: 'visible' })
+                await newProject.waitFor({ state: 'visible' })
+                if (!(await newProject.isEnabled())) {
+                  throw new Error(
+                    'The profiled Home route is visible but its primary action is disabled.'
+                  )
+                }
+                this.recordResourceTiming(
+                  'first-workspace-ready',
+                  performance.now() - launchStartedAt
+                )
+              }
+              await Promise.all([
+                this.captureResourceTimings(
+                  timingName === 'recovery-startup-ready' ? 'first-recovery:' : 'first:'
+                ),
+                captureSurfaceReady()
+              ])
+            }
+          : undefined,
+        this.resourceProfiler
+          ? (milestone) => {
+              this.recordResourceTiming(`first-${milestone}`, performance.now() - launchStartedAt)
             }
           : undefined
       )

@@ -637,7 +637,7 @@ const HomePage = ({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
+      <main data-testid="home-page" className="h-svh overflow-y-auto bg-bg-10 text-text-000">
         <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
           <header className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -730,6 +730,7 @@ const HomePage = ({
               <UpdateCapsule />
               {/* Account button hidden for now; restore when the account flow lands. */}
               <Button
+                data-testid="home-new-project"
                 variant="outline"
                 size="sm"
                 className="h-8 gap-1 rounded-md px-3 text-xs"
