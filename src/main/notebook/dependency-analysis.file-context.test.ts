@@ -165,6 +165,34 @@ describe('file context after mutable path collections', () => {
     ).toMatchObject({ reads: [], writeState: 'complete' })
   })
 
+  it('drops helper evidence after a cross-cell export rebind', async () => {
+    const context = await fileContext(
+      'python',
+      ['value = 1', 'read_inputs = lambda: None'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("left.csv")',
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        },
+        {}
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({ reads: [] })
+  })
+
   it.each(['python', 'r'] as const)(
     'restores %s diagnostic path bindings after cache reload',
     async (language) => {

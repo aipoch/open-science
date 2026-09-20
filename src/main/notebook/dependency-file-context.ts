@@ -63,6 +63,7 @@ const projectNotebookFileContext = (
       pythonTaintedNamespaces.clear()
       pythonTaintedNamespaces.add('*')
       pythonBindings.clear()
+      pythonHelperModules.clear()
     }
   }
   let available = true
@@ -165,6 +166,9 @@ const projectNotebookFileContext = (
       }
     }
     const invalidatedNames = new Set([...definedNames, ...mutatedNames])
+    for (const [key, module] of pythonHelperModules) {
+      if (module.exports.some((name) => invalidatedNames.has(name))) pythonHelperModules.delete(key)
+    }
     for (const name of invalidatedNames) replContainerNames.delete(name)
     for (const name of facts.builtinContainerNames ?? []) {
       if (!conditionalNames.has(name)) replContainerNames.add(name)
