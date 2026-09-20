@@ -272,6 +272,9 @@ describe('workspace page component boundaries', () => {
     expect(mainCssSource).toContain('.scrollbar-auto-hide')
     expect(mainCssSource).toContain('.scrollbar-auto-hide:hover')
     expect(mainCssSource).toContain('.scrollbar-message')
+    expect(mainCssSource).toContain(
+      ".scrollbar-auto-hide:focus-within > [data-slot='scroll-area-scrollbar']"
+    )
     expect(mainCssSource).toContain('::-webkit-scrollbar-thumb')
     for (const source of workspaceScrollSources) expect(source).toContain('scrollbar-auto-hide')
   })

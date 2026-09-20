@@ -655,6 +655,11 @@
     pointer-events: none;
   }
 
+  .scrollbar-auto-hide:focus-within > [data-slot='scroll-area-scrollbar'][data-state='hidden'] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   @media (hover: none) {
     .scrollbar-auto-hide {
       scrollbar-color: color-mix(in srgb, var(--border) 60%, transparent) transparent;
