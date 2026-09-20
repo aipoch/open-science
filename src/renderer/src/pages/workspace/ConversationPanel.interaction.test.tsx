@@ -1144,6 +1144,9 @@ beforeEach(() => {
       observe(): void {
         // Layout is driven explicitly by the test after geometry changes.
       }
+      unobserve(): void {
+        // Radix releases individual observed elements during cleanup.
+      }
       disconnect(): void {
         // No resources are allocated by this test double.
       }
