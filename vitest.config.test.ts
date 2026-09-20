@@ -242,8 +242,7 @@ it('serializes migration and Session package round trips after other schema-usin
   expect(VITEST_DATABASE_TEST_GLOBS).toEqual([
     'scripts/database-migration-ledger-smoke.test.ts',
     'src/main/session-package/service.test.ts',
-    'src/main/session-package/literature.test.ts',
-    'src/main/session-package/historical-import.test.ts'
+    'src/main/session-package/literature.test.ts'
   ])
   const database = projectByName('database')
   expect(database.include).toEqual([...VITEST_DATABASE_TEST_GLOBS])
