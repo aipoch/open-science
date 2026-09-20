@@ -341,8 +341,8 @@ export class ClassificationSettingsOwner {
       log.info('classification reading route skipped', { reason: 'not-configured' })
       return undefined
     }
-    const modelId = binding?.modelId ?? CLASSIFICATION_MODELS[target.adapter][0].id
-    if (!CLASSIFICATION_MODELS[target.adapter].some((model) => model.id === modelId)) {
+    const modelId = binding?.modelId ?? modelIdsFor(target)[0]
+    if (!modelIdsFor(target).includes(modelId)) {
       log.info('classification reading route skipped', { reason: 'unsupported-model' })
       return undefined
     }
