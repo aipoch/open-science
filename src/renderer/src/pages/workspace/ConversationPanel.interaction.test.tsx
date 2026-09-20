@@ -140,6 +140,11 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
 // Default: no jobs. Override mockHasRunningJobs / mockAllJobs per test.
 let mockHasRunningJobs = false
 let mockAllJobs: unknown[] = []
+let resizeCallbacks: ResizeObserverCallback[] = []
+
+const notifyResize = (): void => {
+  for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+}
 
 vi.mock('@/stores/session-job-store', () => ({
   useSessionJobStore: (
@@ -1128,6 +1133,22 @@ const hasDropOverlay = (): boolean =>
   container.textContent?.includes('Drop files to attach') ?? false
 
 beforeEach(() => {
+  resizeCallbacks = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe(): void {
+        // Layout is driven explicitly by the test after geometry changes.
+      }
+      disconnect(): void {
+        // No resources are allocated by this test double.
+      }
+    }
+  )
   window.api = {
     notebook: {
       state: vi.fn().mockResolvedValue({ runs: [] }),
@@ -3694,6 +3715,7 @@ describe('ConversationPanel composer intake', () => {
         }
       }
     })
+    notifyResize()
 
     const followUp = container.querySelector(
       'textarea[placeholder="Follow up…"]'
