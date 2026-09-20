@@ -14,12 +14,12 @@ import {
 } from '../../../../shared/annotations'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { imageAttachmentMimeType } from '../../../../shared/uploads'
-import type {
-  ChatMessage,
-  ChatSession,
-  SessionActionabilityProjection
+import {
+  projectSessionActionability,
+  type ChatMessage,
+  type ChatSession,
+  type SessionActionabilityProjection
 } from '@/stores/session-store'
-import { projectSessionActionability } from '@/stores/session-store-interaction-state'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
