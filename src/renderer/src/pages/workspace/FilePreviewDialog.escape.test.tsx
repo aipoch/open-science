@@ -83,10 +83,6 @@ describe('FilePreviewDialog Escape dismissal', () => {
     const onClose = vi.fn()
     await act(async () => root.render(<FilePreviewDialog item={item} onClose={onClose} />))
 
-    const surface = document.body.querySelector<HTMLButtonElement>(
-      '[data-testid="preview-surface"]'
-    )
-    expect(document.activeElement).not.toBe(surface)
     expect(document.activeElement).toBe(
       document.body.querySelector('[data-slot="file-preview-dialog"]')
     )
