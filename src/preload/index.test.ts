@@ -66,6 +66,9 @@ type PreloadApi = {
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
+    inspectDiagnostics: (request: unknown) => unknown
+    exportDiagnostics: (request: unknown) => unknown
+    cancelDiagnostics: (request: unknown) => unknown
     onFlushAborted: (
       listener: (event?: { reason: 'conflict' | 'renderer-failed' }) => void
     ) => unknown
@@ -544,13 +547,16 @@ describe('preload bridge — public surface inventory', () => {
       'saveManagedFile',
       'saveProjectArtifacts',
       'saveSessionArtifacts',
+      'sessions.cancelDiagnostics',
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportConversation',
+      'sessions.exportDiagnostics',
       'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
       'sessions.fork',
       'sessions.importPackage',
+      'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.list',
       'sessions.loadAll',
@@ -1295,6 +1301,9 @@ const sampleEditSessionDetails = {
   title: 'Edited',
   description: 'Description'
 }
+const sampleDiagnostics = { projectId: 'p-1', sessionId: 's-1', operationId: 'diagnostic-1' }
+const sampleDiagnosticExport = { ...sampleDiagnostics, selectedItems: ['session', 'log:main.log'] }
+const sampleDiagnosticCancel = { operationId: 'diagnostic-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleConversationExport = {
   projectId: 'p-1',
@@ -1450,6 +1459,24 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.exportConversation(sampleConversationExport),
     channel: 'sessions:export-conversation',
     args: [sampleConversationExport]
+  },
+  {
+    name: 'sessions.inspectDiagnostics → sessions:inspect-diagnostics',
+    invoke: (a) => a.sessions.inspectDiagnostics(sampleDiagnostics),
+    channel: 'sessions:inspect-diagnostics',
+    args: [sampleDiagnostics]
+  },
+  {
+    name: 'sessions.exportDiagnostics → sessions:export-diagnostics',
+    invoke: (a) => a.sessions.exportDiagnostics(sampleDiagnosticExport),
+    channel: 'sessions:export-diagnostics',
+    args: [sampleDiagnosticExport]
+  },
+  {
+    name: 'sessions.cancelDiagnostics → sessions:cancel-diagnostics',
+    invoke: (a) => a.sessions.cancelDiagnostics(sampleDiagnosticCancel),
+    channel: 'sessions:cancel-diagnostics',
+    args: [sampleDiagnosticCancel]
   },
   // agent-framework / opencode settings additions
   {
