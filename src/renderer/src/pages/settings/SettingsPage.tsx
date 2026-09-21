@@ -227,6 +227,7 @@ const TokenUsagePanel = lazy(async () => ({
 }))
 
 type SettingsPageProps = {
+  standalone?: boolean
   open: boolean
   onClose: () => void
   onOpenSession?: (sessionId: string) => void
@@ -397,6 +398,7 @@ const PdfAnnotationPreviewDialog = lazy(() =>
 const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
   {
     open,
+    standalone = false,
     onClose,
     onOpenSession,
     canDeleteProjects = true,
@@ -1293,6 +1295,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   return (
     <Dialog.Root
+      modal={!standalone}
       open={open}
       onOpenChange={(next) => {
         if (next) return
@@ -1301,7 +1304,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
+        {!standalone ? (
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
+        ) : null}
         <Dialog.Content
           data-slot="settings-dialog"
           className="pointer-events-none fixed inset-0 z-50 outline-none data-[state=closed]:animate-out motion-reduce:data-[state=closed]:animate-none"
@@ -1361,9 +1366,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             data-state={open ? 'open' : 'closed'}
             className={cn(
               'pointer-events-auto fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:fill-mode-forwards motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
-              isExpanded
-                ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
-                : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
+              standalone
+                ? 'inset-0 rounded-none border-0 shadow-none'
+                : isExpanded
+                  ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
+                  : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
             )}
           >
             {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
@@ -1583,25 +1590,27 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     </div>
                   ) : null}
                   <div className="flex shrink-0 items-center gap-1">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => setIsExpanded((value) => !value)}
-                          aria-label={isExpanded ? t('Restore') : t('Maximize')}
-                          className="rounded-lg text-muted-foreground"
-                        >
-                          {isExpanded ? (
-                            <Minimize2 className="size-4" aria-hidden="true" />
-                          ) : (
-                            <Maximize2 className="size-4" aria-hidden="true" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{isExpanded ? t('Restore') : t('Maximize')}</TooltipContent>
-                    </Tooltip>
+                    {!standalone ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setIsExpanded((value) => !value)}
+                            aria-label={isExpanded ? t('Restore') : t('Maximize')}
+                            className="rounded-lg text-muted-foreground"
+                          >
+                            {isExpanded ? (
+                              <Minimize2 className="size-4" aria-hidden="true" />
+                            ) : (
+                              <Maximize2 className="size-4" aria-hidden="true" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{isExpanded ? t('Restore') : t('Maximize')}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     <Tooltip>
                       <Dialog.Close asChild>
                         <TooltipTrigger asChild>
@@ -1795,8 +1804,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             if (reference.resourceType === 'literature.item') {
                               useNavigationStore
                                 .getState()
-                                .openLiteratureItem(reference.resourceId, 'user')
-                              onClose()
+                                .openLiteratureItem(
+                                  reference.resourceId,
+                                  'user',
+                                  undefined,
+                                  onClose
+                                )
                               return
                             }
                             const specialist = specialistItems.find(

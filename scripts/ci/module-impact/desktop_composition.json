@@ -155,7 +155,11 @@
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
     "src/main/process-tree-windows.ts",
-    "src/main/process-tree.windows.integration.test.ts"
+    "src/main/process-tree.windows.integration.test.ts",
+    "src/main/settings-window-ipc.test.ts",
+    "src/main/settings-window-ipc.ts",
+    "src/main/settings-window-policy.test.ts",
+    "src/main/settings-window-policy.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -291,7 +295,9 @@
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/settings-window-policy.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1094,7 +1100,8 @@
       "src/main/pdf-annotations/service.test.ts",
       "src/main/database/application-database.integration.test.ts",
       "src/main/database/project-archive-revision.test.ts",
-      "src/main/projects/repository.test.ts"
+      "src/main/projects/repository.test.ts",
+      "src/main/settings/archive-tasks.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -12,6 +12,10 @@ const native = vi.hoisted(() => ({
   window: null as unknown,
   saveDialog: vi.fn()
 }))
+vi.mock('../windows', () => ({
+  createSettingsWindow: vi.fn(),
+  isTrustedAppContents: vi.fn(() => false)
+}))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
@@ -151,7 +155,12 @@ describe('desktop utilities Electron production surface', () => {
       'cli:get-status',
       'cli:install',
       'cli:uninstall',
-      WINDOW_CLOSE_CHANNEL
+      WINDOW_CLOSE_CHANNEL,
+      'window:open-settings',
+      'window:settings-ready',
+      'window:settings-context',
+      'window:navigate-workspace',
+      'window:workspace-navigated'
     ])
     expect(eventChannels.map((channel) => ipcMain.listenerCount(channel))).toEqual([2, 1, 1])
     await installed.uninstall()

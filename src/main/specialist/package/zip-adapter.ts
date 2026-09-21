@@ -8,7 +8,7 @@ import {
   type SpecialistPackageValidationResult
 } from '../../../shared/specialist-package'
 import { validateSpecialistPackage, type SpecialistPackageFile } from './validator'
-import { buildDeterministicSpecialistZip } from './contribution-template'
+import { buildDeterministicSpecialistZip } from './archive-builder'
 
 const LIMITS = SPECIALIST_PACKAGE_ARCHIVE_LIMITS
 const NOISE_PATH = /(?:^|\/)(?:__MACOSX(?:\/|$)|\.DS_Store$|Thumbs\.db$)/i

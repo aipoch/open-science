@@ -1,3 +1,4 @@
+import { probeRosetta, probeAvx2 } from './platform-probes'
 import { execFile, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, readFileSync, type Dirent, type Stats } from 'node:fs'
@@ -407,7 +408,7 @@ export type InstallManagedOpencodeOptions = {
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball
   verifyBinary?: VerifyBinary
-  detectAvx2?: () => boolean
+  detectAvx2?: () => boolean | Promise<boolean>
   signal?: AbortSignal
   renamePath?: typeof rename
   tmpDir?: string
@@ -493,15 +494,16 @@ export const installManagedOpencode = async ({
   dataRoot,
   registries = DEFAULT_REGISTRIES,
   version,
-  platform = resolveOpencodePlatform(),
+  platform: requestedPlatform,
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
   verifyBinary = defaultVerifyBinary,
-  detectAvx2: detectAvx2Dep = detectAvx2,
+  detectAvx2: detectAvx2Dep = probeAvx2,
   signal,
   renamePath = rename,
   tmpDir
 }: InstallManagedOpencodeOptions): Promise<ManagedInstallOutcome> => {
+  const platform = requestedPlatform ?? (await resolveOpencodePlatformAsync())
   const root = dirname(managedOpencodeDir(dataRoot))
   const destPath = join(root, 'bin', platform.binName)
   const scratch = `${root}.staging-${randomUUID()}`
@@ -584,7 +586,7 @@ export const installManagedOpencode = async ({
   // On an x64 host that we can positively tell lacks AVX2, install the baseline build FIRST (no wasted
   // standard download + SIGILL). When AVX2 is present or undetectable we try the standard build first and
   // keep the illegal-instruction→baseline retry as the safety net.
-  const preferBaseline = isX64 && !detectAvx2Dep()
+  const preferBaseline = isX64 && !(await detectAvx2Dep())
   const firstKey = preferBaseline ? baselinePackageKey(platform.key) : platform.key
 
   await removeOwnedOpencodeRuntimeSiblings(dataRoot, STAGED_OPENCODE_RUNTIME_PATTERN)
@@ -682,4 +684,9 @@ export const installManagedOpencode = async ({
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
   }
+}
+
+export const resolveOpencodePlatformAsync = async (): Promise<OpencodePlatform> => {
+  const translated = await probeRosetta()
+  return resolveOpencodePlatform({ isRosetta: () => translated })
 }

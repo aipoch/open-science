@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import { strToU8, zipSync, type Zippable } from 'fflate'
+import { strToU8 } from 'fflate'
+import { buildDeterministicSpecialistZip } from './archive-builder'
+export { buildDeterministicSpecialistZip } from './archive-builder'
 
 import {
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
@@ -35,19 +37,6 @@ type ContributionTemplateExporterDependencies = {
 const assertValidAppVersion = (appVersion: string): void => {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/.exec(appVersion)
   if (!match) throw new Error('Application version must be SemVer.')
-}
-
-export const buildDeterministicSpecialistZip = (
-  files: Readonly<Record<string, Uint8Array>>
-): Uint8Array => {
-  const zipOptions = { mtime: new Date(1980, 0, 1) }
-  const entries: Zippable = {}
-  for (const [path, bytes] of Object.entries(files).sort(([left], [right]) =>
-    left.localeCompare(right)
-  )) {
-    entries[path] = [bytes, zipOptions]
-  }
-  return zipSync(entries, { level: 6 })
 }
 
 export const buildContributionTemplateZip = (input: {

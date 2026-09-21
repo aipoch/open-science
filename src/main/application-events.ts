@@ -57,6 +57,7 @@ const log = createLogger('application-events')
 // signals and generated Web-only channels stay on their existing transports until their owner moves
 // them deliberately.
 export type ApplicationEventMap = {
+  'compute:hosts-changed': undefined
   'sessions:package-operation-changed': PackageOperationSnapshot
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]

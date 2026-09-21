@@ -100,6 +100,22 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it('offers a catalog retry instead of reporting a committed host deleted after a read failure', () => {
+  useComputeStore.setState({ loadError: 'temporary read failure' })
+  act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+  expect(container.textContent).toContain("Couldn't load hosts.")
+  expect(container.textContent).not.toContain('This host no longer exists.')
+  const retry = Array.from(container.querySelectorAll('button')).find(
+    (button) => button.textContent === 'Retry'
+  )
+  expect(retry).toBeDefined()
+  act(() => retry?.click())
+  expect(useComputeStore.getState().loadHosts).toHaveBeenCalled()
+  act(() => useComputeStore.setState({ loadError: undefined, hosts: [host()] }))
+  expect(container.textContent).not.toContain("Couldn't load hosts.")
+  expect(container.textContent).not.toContain('This host no longer exists.')
+})
+
 it('shows unknown facts for legacy snapshots and separates failed scratch from successful SSH', () => {
   const legacy = host({
     probeResult: { ok: true, probedAt: new Date().toISOString(), exitCode: 0, errorTail: null }

@@ -89,6 +89,7 @@ type ComputeStoreData = {
 
 type ComputeStore = ComputeStoreData & {
   loadHosts: () => Promise<void>
+  invalidateHosts: () => void
   loadSshAliases: () => Promise<void>
   createHost: (request: CreateComputeHostRequest) => Promise<ComputeHost>
   createPasswordHost: (request: CreatePasswordComputeHostRequest) => Promise<ComputeHost>
@@ -126,6 +127,7 @@ const sortByCreatedDesc = (hosts: ComputeHost[]): ComputeHost[] =>
 let loadHostsRequest: Promise<void> | undefined
 let computePanelPreloadReady = false
 let hostMutationSequence = 0
+let hostInvalidationSequence = 0
 let hostProjectionGeneration = 0
 const hostProjectionGenerations = new Map<string, number>()
 const hostProbeRequestCounts = new Map<string, number>()
@@ -155,6 +157,14 @@ export const createInitialComputeState = (): ComputeStoreData => ({
 export const useComputeStore = create<ComputeStore>((set, get) => ({
   ...createInitialComputeState(),
 
+  // Coalesce notifications and reject a read begun before a committed cross-window mutation.
+  // An unloaded cache stays lazy; an in-flight read is followed by one fresh authoritative read.
+  invalidateHosts: () => {
+    hostMutationSequence++
+    hostInvalidationSequence++
+    if (get().isLoaded && !loadHostsRequest) void get().loadHosts()
+  },
+
   // Loads the full host list. A DB/IPC failure is recorded (not thrown) so the panel can show an
   // error instead of a silent empty list.
   loadHosts: () => {
@@ -166,6 +176,8 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
           set({ isLoaded: true })
           return
         }
+        if (hostInvalidationSequence > 0)
+          for (const host of [...get().hosts, ...hosts]) supersedeHostProjection(host.providerId)
         set({ hosts: sortByCreatedDesc(hosts), isLoaded: true, loadError: undefined })
       },
       (error: unknown) => {
@@ -177,7 +189,14 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
       }
     )
     const trackedRequest = request.finally(() => {
-      if (loadHostsRequest === trackedRequest) loadHostsRequest = undefined
+      if (loadHostsRequest === trackedRequest) {
+        loadHostsRequest = undefined
+        // A local command reply can race the invalidation-triggered read as well. Retry the read
+        // after that command settles instead of leaving either window on the previous catalog.
+        if (hostInvalidationSequence > 0 && mutationSequence !== hostMutationSequence)
+          return get().loadHosts()
+      }
+      return undefined
     })
     loadHostsRequest = trackedRequest
     return trackedRequest
@@ -198,8 +217,13 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   // Creates a host and merges the returned row into the cache. Rejections propagate so the Add form
   // can show the readable error (e.g. duplicate alias) and stay open.
   createHost: async (request) => {
+    const invalidation = hostInvalidationSequence
     const host = await window.api.compute.create(request)
 
+    if (invalidation !== hostInvalidationSequence) {
+      await get().loadHosts()
+      return host
+    }
     hostMutationSequence += 1
     supersedeHostProjection(host.providerId)
     set((state) => ({
@@ -214,11 +238,16 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   },
 
   createPasswordHost: async (request) => {
+    const invalidation = hostInvalidationSequence
     const result = await window.api.compute.createPassword(request)
     if (!result.ok) {
       throw Object.assign(new Error(result.errorCode), { code: result.errorCode })
     }
     const host = result.host
+    if (invalidation !== hostInvalidationSequence) {
+      await get().loadHosts()
+      return host
+    }
     hostMutationSequence += 1
     supersedeHostProjection(host.providerId)
     set((state) => ({
@@ -250,7 +279,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     // belongs to the previous credential revision). Re-probe so the Host's status refreshes on its
     // own instead of sitting at "Not probed". Fire-and-forget, like the Add form's post-create
     // probe: failures become probeResult.ok=false and surface in the detail UI.
-    if (ownsProjection) {
+    {
       void get()
         .probeHost(result.host.providerId)
         .catch(() => undefined)
@@ -276,7 +305,7 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     // Same as resetPassword: the commit clears the persisted probe snapshot, so re-probe in the
     // background. Without this, a successful "Test and save" leaves the Host looking disconnected
     // ("Not probed") even though the candidate connection was just verified.
-    if (ownsProjection) {
+    {
       void get()
         .probeHost(host.providerId)
         .catch(() => undefined)

@@ -63,7 +63,8 @@ export const buildWslSupportPrefillDoc = (
 
 export const startWslSetupConversation = async (
   projectId: string,
-  t: TFunction
+  t: TFunction,
+  afterNavigate?: () => void
 ): Promise<boolean> => {
   const { handoff, setupSessionToken } = await window.api.settings.createWslSupportHandoff()
   return useNavigationStore
@@ -71,6 +72,7 @@ export const startWslSetupConversation = async (
     .startWslSupportConversation(
       projectId,
       buildWslSupportPrefillDoc(handoff, t),
-      setupSessionToken
+      setupSessionToken,
+      afterNavigate
     )
 }

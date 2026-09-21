@@ -1,3 +1,4 @@
+import { nodeWorkerTestPlugin } from './test/node-worker-plugin'
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
 import { defineConfig, configDefaults } from 'vitest/config'
@@ -146,6 +147,7 @@ function coverageThresholdsFor(env: NodeJS.ProcessEnv): CoverageThresholds | und
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
 export default defineConfig({
+  plugins: [nodeWorkerTestPlugin()],
   server: {
     // Vitest may still canonicalize worker URLs through the shared install even when module
     // resolution preserves symlinks. Limit the additional allowance to this repository root.

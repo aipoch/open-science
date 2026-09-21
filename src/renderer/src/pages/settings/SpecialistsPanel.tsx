@@ -512,8 +512,13 @@ const InstalledSpecialistsPanel = ({
   // mutation approval. Final activation against the real Featured Skill is owned by issue 08.
   const startChatWithAgent = (): void => {
     if (!chatProjectId) return
-    useSettingsStore.getState().closeSettings()
-    useNavigationStore.getState().startCustomizeConversation(chatProjectId, 'specialist')
+    useNavigationStore
+      .getState()
+      .startCustomizeConversation(
+        chatProjectId,
+        'specialist',
+        useSettingsStore.getState().closeSettings
+      )
   }
 
   const downloadTemplate = (): void => {

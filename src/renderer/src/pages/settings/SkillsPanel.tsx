@@ -186,8 +186,9 @@ const SkillsPanel = ({
 
   const startChatWithAgent = (): void => {
     if (!chatProjectId) return
-    useSettingsStore.getState().closeSettings()
-    useNavigationStore.getState().startCustomizeConversation(chatProjectId, 'skill')
+    useNavigationStore
+      .getState()
+      .startCustomizeConversation(chatProjectId, 'skill', useSettingsStore.getState().closeSettings)
   }
 
   const exportSkill = async (id: string, name: string): Promise<void> => {

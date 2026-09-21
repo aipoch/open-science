@@ -1,3 +1,4 @@
+import { registerSettingsWindowIpcHandlers } from '../settings-window-ipc'
 import { registerCliInstallIpcHandlers, type CliCommandOwner } from '../cli-install/ipc'
 import { registerFileSaveHandlers, type RegisterFileSaveHandlersOptions } from '../file-save'
 import { registerGithubIpcHandlers, type GithubCommandOwner } from '../github-ipc'
@@ -46,5 +47,10 @@ export const createDesktopUtilitiesElectronSurface = ({
     registerGithubIpcHandlers({}, github)
     registerCliInstallIpcHandlers(cli)
     registerWindowIpcHandlers()
-    return registerWindowFindIpcHandlers()
+    const removeSettingsWindow = registerSettingsWindowIpcHandlers()
+    const removeFind = registerWindowFindIpcHandlers()
+    return () => {
+      removeSettingsWindow()
+      removeFind()
+    }
   })

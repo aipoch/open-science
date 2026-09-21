@@ -193,7 +193,11 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
 
       <div className="mt-4 flex flex-col gap-2.5">
         {loadError ? (
-          <ErrorNotice role="alert" description={t("Couldn't load hosts.")}>
+          <ErrorNotice
+            role="alert"
+            description={t("Couldn't load hosts.")}
+            primaryButton={{ label: t('Retry'), onClick: () => void loadHosts() }}
+          >
             <DiagnosticDetails detail={loadError} />
           </ErrorNotice>
         ) : !isLoaded ? (

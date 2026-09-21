@@ -1,10 +1,11 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const openGeneralSettings = async (page: Page): Promise<Locator> => {
   await page.getByRole('button', { name: 'Model settings' }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'General', exact: true })
@@ -55,7 +56,7 @@ test.describe('Windows window system', () => {
     const closeAction = settings.getByRole('combobox', { name: 'When closing the window' })
 
     await closeAction.click()
-    await page.getByRole('option', { name: 'Minimize to tray' }).click()
+    await (await getSettingsPage(page)).getByRole('option', { name: 'Minimize to tray' }).click()
     await expect(closeAction).toContainText('Minimize to tray')
     await settings.getByRole('button', { name: 'Close settings' }).click()
 

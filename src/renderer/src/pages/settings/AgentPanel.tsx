@@ -112,12 +112,19 @@ const AgentPanel = ({
     // then be clobbered by the stale snapshot when it lands. Latch the first live event and drop any
     // getState() result that arrives after it, so live state always wins the race.
     let liveEventSeen = false
-    const removeListener = window.api.acp.onState((s) => {
+    const onState = window.api.acp.onPromptInFlightChanged
+      ? (listener: (state: { promptInFlight: boolean }) => void) =>
+          window.api.acp.onPromptInFlightChanged!((busy) => listener({ promptInFlight: busy }))
+      : window.api.acp.onState
+    const getState = window.api.acp.getPromptInFlight
+      ? () => window.api.acp.getPromptInFlight!().then((busy) => ({ promptInFlight: busy }))
+      : window.api.acp.getState
+    const removeListener = onState((s) => {
       if (!mounted) return
       liveEventSeen = true
       setPromptInFlight(s.promptInFlight)
     })
-    void window.api.acp.getState().then((s) => {
+    void getState().then((s) => {
       if (mounted && !liveEventSeen) setPromptInFlight(s.promptInFlight)
     })
     return () => {

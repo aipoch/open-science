@@ -116,3 +116,16 @@ it('continues broadcasting when one live window fails during send', () => {
     hub.dispose()
   }
 })
+
+it('keeps full session payloads out of Settings and sends only catalog invalidation', async () => {
+  const { markSettingsWebContents } = await import('./settings-window-policy')
+  const settings = { destroyed: false, isDestroyed: () => false, webContents: { send: vi.fn() } }
+  const workspace = { destroyed: false, isDestroyed: () => false, webContents: { send: vi.fn() } }
+  windows.push(settings, workspace)
+  markSettingsWebContents(settings.webContents)
+  const event = { session: { id: 'session-1', messages: ['large transcript'] } }
+  broadcastToRenderers('session:updated', event as never)
+  expect(settings.webContents.send).toHaveBeenCalledWith('window:settings-catalog-changed')
+  expect(settings.webContents.send).not.toHaveBeenCalledWith('session:updated', event)
+  expect(workspace.webContents.send).toHaveBeenCalledWith('session:updated', event)
+})

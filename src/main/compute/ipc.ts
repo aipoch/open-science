@@ -470,18 +470,32 @@ const createComputeHandlers = (
       return createHost()
     })
 
+  const changed = async <T>(operation: Promise<T>): Promise<T> => {
+    const result = await operation
+    try {
+      broadcastToRenderers('compute:hosts-changed', undefined)
+    } catch (error) {
+      // The mutation is already durable; observer delivery must not turn it into a failed write.
+      log.warn('compute host invalidation failed', errorLogFields(error))
+    }
+    return result
+  }
+
   return {
     list: () => service.list(),
     get: async (providerId) => {
       const host = await repository.get(providerId)
       return host ? projectComputeCredentialStatus(host, credentialVault) : null
     },
-    create: (request) => createHostWithLifecycle(request, () => repository.create(request)),
+    create: (request) =>
+      changed(createHostWithLifecycle(request, () => repository.create(request))),
     createPassword: async (request) => {
       try {
         return {
           ok: true,
-          host: await createHostWithLifecycle(request, () => authentication.createPassword(request))
+          host: await changed(
+            createHostWithLifecycle(request, () => authentication.createPassword(request))
+          )
         }
       } catch (error) {
         return {
@@ -492,7 +506,7 @@ const createComputeHandlers = (
     },
     resetPassword: async (request) => {
       try {
-        return { ok: true, host: await authentication.resetPassword(request) }
+        return { ok: true, host: await changed(authentication.resetPassword(request)) }
       } catch (error) {
         return {
           ok: false,
@@ -502,7 +516,7 @@ const createComputeHandlers = (
     },
     changeAuthentication: async (request) => {
       try {
-        return { ok: true, host: await authentication.changeAuthentication(request) }
+        return { ok: true, host: await changed(authentication.changeAuthentication(request)) }
       } catch (error) {
         return {
           ok: false,
@@ -528,33 +542,35 @@ const createComputeHandlers = (
       }
     },
     delete: (providerId, options = { allowPasswordCredentialDeletion: true }) =>
-      runHostLifecycleMutation(() =>
-        deleteComputeHost(
-          {
-            repository,
-            approvalBroker: broker,
-            connectionBroker,
-            jobRepository,
-            permissionGrantRegistry,
-            hostLifecycle
-          },
-          providerId,
-          options
+      changed(
+        runHostLifecycleMutation(() =>
+          deleteComputeHost(
+            {
+              repository,
+              approvalBroker: broker,
+              connectionBroker,
+              jobRepository,
+              permissionGrantRegistry,
+              hostLifecycle
+            },
+            providerId,
+            options
+          )
         )
       ),
     sshConfigAliases: () => listSshAliases(),
-    probe: (providerId) => service.probe(providerId),
+    probe: (providerId) => changed(service.probe(providerId)),
     detailsGet: async (providerId) => {
       const { doc } = await service.getDetails(providerId)
       return { doc }
     },
     detailsSave: (providerId, text, oldText, author) =>
-      service.replaceDetails(providerId, { text, oldText, author }),
-    scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
-    scratchClear: (providerId) => service.clearScratchRoot(providerId),
-    concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
+      changed(service.replaceDetails(providerId, { text, oldText, author })),
+    scratchSet: (providerId, path) => changed(service.setScratchRoot(providerId, path)),
+    scratchClear: (providerId) => changed(service.clearScratchRoot(providerId)),
+    concurrencySet: (providerId, limit) => changed(service.setConcurrencyLimit(providerId, limit)),
     executionModeSet: (providerId, executionMode) =>
-      service.setExecutionMode(providerId, executionMode),
+      changed(service.setExecutionMode(providerId, executionMode)),
     setSessionConcurrencyLimit: (sessionId, limit) =>
       service.setSessionConcurrencyLimit(sessionId, limit),
     getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),

@@ -1,3 +1,4 @@
+import { probeRosetta } from './platform-probes'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream, createWriteStream, type Dirent, type Stats } from 'node:fs'
 import { chmod, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
@@ -99,6 +100,11 @@ const getManagedPlatform = (deps: ManagedPlatformDeps = {}): ManagedPlatform => 
   }
 
   return toPlatform(`${platform}-${cpu}`)
+}
+
+export const getManagedPlatformAsync = async (): Promise<ManagedPlatform> => {
+  const translated = await probeRosetta()
+  return getManagedPlatform({ isRosetta: () => translated })
 }
 
 // Stable on-disk location for the managed binary. Kept version-independent (overwritten on upgrade) so
@@ -613,7 +619,7 @@ const installManagedClaude = async ({
   dataRoot,
   registries = DEFAULT_REGISTRIES,
   version,
-  platform = getManagedPlatform(),
+  platform: requestedPlatform,
   fetchJson = defaultFetchJson,
   fetchTarball = defaultFetchTarball,
   verifyBinary,
@@ -621,6 +627,7 @@ const installManagedClaude = async ({
   renamePath = rename,
   tmpDir
 }: InstallManagedClaudeOptions): Promise<ManagedInstallOutcome> => {
+  const platform = requestedPlatform ?? (await getManagedPlatformAsync())
   const root = dirname(managedClaudeDir(dataRoot))
   const destPath = join(root, 'bin', platform.binName)
   const scratch = `${root}.staging-${randomUUID()}`

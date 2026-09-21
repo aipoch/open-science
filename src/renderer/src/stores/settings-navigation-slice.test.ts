@@ -140,3 +140,22 @@ describe('settings navigation slice', () => {
     expect(store.getState().pendingSettingsIntent).toBeUndefined()
   })
 })
+
+it('uses the native settings owner without making the workspace modal', () => {
+  const requests: unknown[] = []
+  const store = createStore<TestStore>((set, get) => ({
+    ...createInitialSettingsNavigationState(),
+    ...createSettingsNavigationSlice({
+      getState: get,
+      setState: set,
+      openNative: (route) => {
+        requests.push(route)
+        return true
+      }
+    })
+  }))
+  store.getState().openSettingsToSkill('skill-one')
+  expect(requests).toEqual([{ panel: 'skills', view: { kind: 'detail', id: 'skill-one' } }])
+  expect(store.getState().isSettingsOpen).toBe(false)
+  expect(store.getState().pendingSettingsIntent).toBeUndefined()
+})

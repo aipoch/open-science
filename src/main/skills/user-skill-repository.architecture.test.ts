@@ -320,7 +320,8 @@ describe('User Skill repository architecture', () => {
         'src/main/skills/user-skill-repository.atomic.test.ts',
         'src/main/skills/user-skill-repository.test.ts',
         'src/main/skills/zip-extract.test.ts',
-        'src/main/skills/zip-extract.ts'
+        'src/main/skills/zip-extract.ts',
+        'src/main/skills/skill-archive-discovery.ts'
       ],
       interfacePaths: [
         'src/main/skills/user-skill-repository.ts',
@@ -903,7 +904,8 @@ describe('User Skill repository architecture', () => {
           'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
           'src/main/compute/cancellation-runtime.integration.test.ts',
           'src/main/pdf-annotations/repository.integration.test.ts',
-          'src/main/pdf-annotations/service.test.ts'
+          'src/main/pdf-annotations/service.test.ts',
+          'src/main/settings/archive-tasks.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
