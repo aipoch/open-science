@@ -185,14 +185,14 @@ export const SessionDiagnosticsDialog = ({
               </Dialog.Title>
               <FieldHelp
                 content={t(
-                  'The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.'
+                  'The archive always includes a manifest and export log; missing sources do not stop the export. Include screenshots when reporting an issue to developers.'
                 )}
                 contentClassName="max-w-[320px]"
               />
             </div>
             <Dialog.Description className={dialogDescriptionClassName}>
               {t(
-                'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM.'
+                'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.'
               )}
             </Dialog.Description>
           </div>

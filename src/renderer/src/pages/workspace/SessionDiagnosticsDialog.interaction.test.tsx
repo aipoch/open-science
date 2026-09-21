@@ -73,7 +73,7 @@ it('exports only selected available items, opts into historical logs and reports
   expect(checkboxes[4].disabled).toBe(true)
   expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe('Export diagnostics')
   expect(document.body.textContent).toContain(
-    'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM.'
+    'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.'
   )
   expect(document.querySelector('[data-slot="field-help"]')).not.toBeNull()
   expect(checkboxes[0].textContent).toContain('29 KB')
