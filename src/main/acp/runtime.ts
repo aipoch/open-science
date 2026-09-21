@@ -2717,6 +2717,7 @@ class AcpRuntime {
   }
 
   private parkArtifactPublicationContinuation(input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]
@@ -2729,6 +2730,7 @@ class AcpRuntime {
       request: {
         sessionId: input.sessionId,
         text: artifactPublicationContinuationText(input.files, toolName),
+        permissionPrompts: input.permissionPrompts,
         suppressUserMessage: true,
         ...(input.provenanceContext ? { provenanceContext: input.provenanceContext } : {})
       }

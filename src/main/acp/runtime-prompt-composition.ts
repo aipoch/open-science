@@ -27,6 +27,7 @@ type AcpRuntimePromptHost = Readonly<{
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   requestArtifactPublicationContinuation?: (input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]

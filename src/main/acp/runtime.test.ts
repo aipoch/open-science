@@ -18140,98 +18140,111 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('continues a completed Notebook turn when generated files were not saved as Artifacts', async () => {
-    const root = await createTemporaryRoot()
-    const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['session-1'], {
-      updatesForPrompt: (text) =>
-        text === 'draw a pie chart'
-          ? [
-              {
-                sessionUpdate: 'tool_call',
-                toolCallId: 'notebook-tool-1',
-                title: 'mcp__open-science-notebook__notebook_execute',
-                status: 'pending',
-                _meta: {
-                  claudeCode: {
-                    toolName: 'mcp__open-science-notebook__notebook_execute'
-                  }
-                }
-              },
-              {
-                sessionUpdate: 'tool_call_update',
-                toolCallId: 'notebook-tool-1',
-                status: 'completed',
-                content: [
-                  {
-                    type: 'content',
-                    content: {
-                      type: 'text',
-                      text: JSON.stringify({
-                        runId: 'notebook-run-1',
-                        workingFiles: [
-                          {
-                            relativePath: 'data/pie_chart.png',
-                            kind: 'other',
-                            size: 59_152,
-                            createdByRunId: 'notebook-run-1'
-                          },
-                          {
-                            relativePath: '/tmp/not-an-artifact.png',
-                            kind: 'other',
-                            size: 1,
-                            createdByRunId: 'notebook-run-1'
-                          },
-                          {
-                            relativePath: '../not-an-artifact-either.png',
-                            kind: 'other',
-                            size: 1,
-                            createdByRunId: 'notebook-run-1'
-                          }
-                        ]
-                      })
+  it.each([undefined, 'none'] as const)(
+    'preserves permission prompts %s when publishing generated Notebook files',
+    async (permissionPrompts) => {
+      const root = await createTemporaryRoot()
+      const process = new FakeAgentProcess()
+      const observedPolicies: Array<'none' | undefined> = []
+      const fakeAgent = startFakeAgent(process, ['session-1'], {
+        onPrompt: () => {
+          observedPolicies.push(runtime.getPermissionPrompts('session-1'))
+        },
+        updatesForPrompt: (text) =>
+          text.includes('draw a pie chart')
+            ? [
+                {
+                  sessionUpdate: 'tool_call',
+                  toolCallId: 'notebook-tool-1',
+                  title: 'mcp__open-science-notebook__notebook_execute',
+                  status: 'pending',
+                  _meta: {
+                    claudeCode: {
+                      toolName: 'mcp__open-science-notebook__notebook_execute'
                     }
                   }
-                ]
-              }
-            ]
-          : []
-    })
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      artifacts: {
-        configRoot: root,
-        dataRoot: root,
-        projectId: 'default-project',
-        mcpEntryPath: '/app/out/main/index.js'
-      },
-      notebook: {
-        projectId: 'default-project',
-        mcpEntryPath: '/app/out/main/index.js',
-        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
-      }
-    })
-    const session = await runtime.createSession({ cwd: '/workspace' })
+                },
+                {
+                  sessionUpdate: 'tool_call_update',
+                  toolCallId: 'notebook-tool-1',
+                  status: 'completed',
+                  content: [
+                    {
+                      type: 'content',
+                      content: {
+                        type: 'text',
+                        text: JSON.stringify({
+                          runId: 'notebook-run-1',
+                          workingFiles: [
+                            {
+                              relativePath: 'data/pie_chart.png',
+                              kind: 'other',
+                              size: 59_152,
+                              createdByRunId: 'notebook-run-1'
+                            },
+                            {
+                              relativePath: '/tmp/not-an-artifact.png',
+                              kind: 'other',
+                              size: 1,
+                              createdByRunId: 'notebook-run-1'
+                            },
+                            {
+                              relativePath: '../not-an-artifact-either.png',
+                              kind: 'other',
+                              size: 1,
+                              createdByRunId: 'notebook-run-1'
+                            }
+                          ]
+                        })
+                      }
+                    }
+                  ]
+                }
+              ]
+            : []
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        artifacts: {
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js'
+        },
+        notebook: {
+          projectId: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+        }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
 
-    await runtime.sendPrompt({
-      sessionId: session.sessionId,
-      text: 'draw a pie chart',
-      provenanceContext: { promptMessageId: 'prompt-1' }
-    })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'draw a pie chart',
+        permissionPrompts,
+        provenanceContext: { promptMessageId: 'prompt-1' }
+      })
 
-    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
-    expect(fakeAgent.prompts[1]).toEqual({
-      sessionId: session.sessionId,
-      text: expect.stringContaining('data/pie_chart.png')
-    })
-    expect(fakeAgent.prompts[1].text).toContain('notebook-run-1')
-    expect(fakeAgent.prompts[1].text).toContain('"filename": "pie_chart.png"')
-    expect(fakeAgent.prompts[1].text).toContain('"kind": "localPath"')
-    expect(fakeAgent.prompts[1].text).toContain('mcp__open-science-artifacts__write_artifact_file')
-    expect(fakeAgent.prompts[1].text).not.toContain('not-an-artifact')
-  })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+      await vi.waitFor(() =>
+        expect(observedPolicies).toEqual([permissionPrompts, permissionPrompts])
+      )
+      expect(fakeAgent.prompts[1]).toEqual({
+        sessionId: session.sessionId,
+        text: expect.stringContaining('data/pie_chart.png')
+      })
+      expect(fakeAgent.prompts[1].text).toContain('notebook-run-1')
+      expect(fakeAgent.prompts[1].text).toContain('"filename": "pie_chart.png"')
+      expect(fakeAgent.prompts[1].text).toContain('"kind": "localPath"')
+      expect(fakeAgent.prompts[1].text).toContain(
+        'mcp__open-science-artifacts__write_artifact_file'
+      )
+      expect(fakeAgent.prompts[1].text).not.toContain('not-an-artifact')
+    }
+  )
 
   it('retains handoff continuity across expected reconnect teardown', async () => {
     const process = new FakeAgentProcess()

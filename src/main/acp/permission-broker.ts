@@ -1245,7 +1245,11 @@ class AcpPermissionBroker {
     if (pending.policyContext?.permissionPrompts === 'none') {
       const reject = pending.request.options.find((option) => option.kind === 'reject_once')
       try {
-        this.onPermissionSettled?.(pending.requestId, 'rejected', pending.request)
+        this.onPermissionSettled?.(
+          pending.requestId,
+          reject ? 'rejected' : 'cancelled',
+          pending.request
+        )
       } catch {
         // Notification projection failures must never change the permission decision.
       }

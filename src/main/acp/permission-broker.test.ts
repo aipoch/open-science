@@ -215,7 +215,8 @@ describe('ACP permission broker', () => {
 
   it('denies app approvals and cancels providers with no rejection option', async () => {
     const emit = vi.fn()
-    const broker = new AcpPermissionBroker(emit)
+    const settled = vi.fn()
+    const broker = new AcpPermissionBroker(emit, undefined, undefined, settled)
     await expect(
       broker.requestAppApproval({
         sessionId: 's',
@@ -229,6 +230,7 @@ describe('ACP permission broker', () => {
     await expect(
       broker.requestPermission(request, { profile: 'ask', permissionPrompts: 'none' })
     ).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(settled).toHaveBeenLastCalledWith(expect.any(String), 'cancelled', expect.any(Object))
     expect(emit).not.toHaveBeenCalled()
   })
 

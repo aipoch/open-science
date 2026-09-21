@@ -112,6 +112,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
   requestArtifactPublicationContinuation?: (input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]
@@ -776,6 +777,7 @@ class AcpPromptTurnWorkflow {
     ) {
       this.safeCallback('artifact publication continuation callback failed', () =>
         env.requestArtifactPublicationContinuation?.({
+          permissionPrompts: request.permissionPrompts,
           sessionId,
           provenanceContext: request.provenanceContext,
           files: unpublishedFiles
