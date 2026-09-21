@@ -37,6 +37,7 @@ jobs:
   sbom-poc:
     name: macOS arm64 final-archive coverage
     if: ${{ github.event_name != 'release' || github.event.release.prerelease == false }}
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

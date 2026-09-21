@@ -545,6 +545,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     })
     expect(job).toMatchObject({
       if: "${{ github.event_name != 'release' || github.event.release.prerelease == false }}",
+      'continue-on-error': true,
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 20
     })
