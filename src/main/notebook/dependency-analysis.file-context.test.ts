@@ -130,6 +130,24 @@ describe('file context after mutable path collections', () => {
     )
   })
 
+  it('keeps conditional nested helper definitions partial', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    if enabled:\n        def read():\n            return open("first.csv")\n    else:\n        def read():\n            return open("second.csv")\n    return read()',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: [], readState: 'partial', externalState: 'partial' }
+    )
+  })
+
   it.each([
     ['path = "global.csv"', 'path = "local.csv"', 'return open(path)', ['local.csv']],
     [
@@ -825,6 +843,23 @@ def read_inputs():
         readState: 'partial',
         externalState: 'partial'
       }
+    )
+  })
+
+  it('does not replay an exported helper after a class rebind', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return open("old.csv")\nclass read_inputs:\n    pass',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: [], readState: 'partial', externalState: 'partial' }
     )
   })
 

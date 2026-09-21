@@ -7039,6 +7039,7 @@ const analyzePythonFileAccessTree = (
   const helperFunctions = new Map<string, HelperFunction>()
   const exportedHelperNames = new Set<string>()
   const helperScopes: Array<Map<string, HelperFunction>> = []
+  const ambiguousHelperScopes: Array<Set<string>> = []
   for (const { module, exports } of helperModules) {
     const topLevelFunctions = new Map<string, PyNode>()
     const finalBindings = new Map<string, 'function' | 'other'>()
@@ -7072,6 +7073,7 @@ const analyzePythonFileAccessTree = (
           return ((statement.names as PyAlias[] | undefined) ?? [])
             .filter((alias) => alias.name !== '*')
             .map((alias) => alias.asname || alias.name)
+        if (statement.type === 'ClassDef') return statement.name ? [statement.name] : []
         return []
       })()
       for (const name of reboundNames) finalBindings.set(name, 'other')
@@ -7555,10 +7557,21 @@ const analyzePythonFileAccessTree = (
     helperScopeDepth += 1
     activeHelperFunctions.add(helper.function)
     const scope = new Map<string, HelperFunction>()
+    const ambiguousNestedNames = new Set<string>()
     if (preserveCallerScope) {
       for (const candidate of helperScopes.at(-1)?.values() ?? [])
         scope.set(candidate.function.name!, candidate)
     }
+    const directNestedFunctions = new Set(
+      (Array.isArray(helper.function.body) ? helper.function.body : [])
+        .filter(
+          (statement) =>
+            (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+            statement.name &&
+            !statement.decorator_list?.length
+        )
+        .map((statement) => statement as PyNode)
+    )
     for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
@@ -7573,9 +7586,13 @@ const analyzePythonFileAccessTree = (
         nested.name &&
         !nested.decorator_list?.length
       )
-        scope.set(nested.name, { function: nested, module: helper.module, topLevel: false })
+        if (directNestedFunctions.has(nested))
+          scope.set(nested.name, { function: nested, module: helper.module, topLevel: false })
+        else ambiguousNestedNames.add(nested.name)
     }
+    for (const name of ambiguousNestedNames) scope.delete(name)
     helperScopes.push(scope)
+    ambiguousHelperScopes.push(ambiguousNestedNames)
     try {
       // Nested helpers inherit the enclosing bindings, including shadowed globals.
       // Their module has already been loaded by the enclosing helper invocation.
@@ -7597,6 +7614,7 @@ const analyzePythonFileAccessTree = (
         visit(statement)
     } finally {
       helperScopes.pop()
+      ambiguousHelperScopes.pop()
       activeHelperFunctions.delete(helper.function)
       helperScopeDepth -= 1
       restore()
@@ -7607,6 +7625,16 @@ const analyzePythonFileAccessTree = (
     const rawName = pythonDottedName(node.func)
     if (!rawName) return
     if (helperScopeDepth > 0 && node.func?.type === 'Name' && shadowedHelperNames.has(rawName)) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
+    if (
+      helperScopeDepth > 0 &&
+      node.func?.type === 'Name' &&
+      ambiguousHelperScopes.at(-1)?.has(rawName)
+    ) {
       unresolvedReads = true
       unresolvedWrites = true
       unsupportedExternalState = true
