@@ -12,7 +12,8 @@ export const TAG_RESOURCE_TYPES = [
   'catalog.skill',
   'catalog.connector',
   'catalog.specialist',
-  'literature.item'
+  'literature.item',
+  'pdf.annotation'
 ] as const
 export const TAG_ICON_KEYS = [
   'tag',
@@ -76,7 +77,22 @@ export const tagSnapshotSchema = z
   .object({
     revision: z.number().int().nonnegative(),
     tags: z.array(tagViewSchema),
-    assignments: z.array(tagAssignmentViewSchema)
+    assignments: z.array(tagAssignmentViewSchema),
+    pdfAnnotations: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            projectId: z.string().optional(),
+            sessionId: z.string().optional(),
+            literatureItemId: z.string().optional(),
+            versionId: z.string().optional(),
+            name: z.string(),
+            note: z.string()
+          })
+          .strict()
+      )
+      .optional()
   })
   .strict()
 

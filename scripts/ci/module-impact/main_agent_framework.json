@@ -12,6 +12,7 @@
     "src/main/agent-framework/codex.ts",
     "src/main/agent-framework/index.ts",
     "src/main/agent-framework/native-shell-policy.test.ts",
+    "src/main/agent-framework/opencode-mcp-isolation.integration.test.ts",
     "src/main/agent-framework/opencode-session-header.integration.test.ts",
     "src/main/agent-framework/opencode-skill-reference.integration.test.ts",
     "src/main/agent-framework/opencode.test.ts",
@@ -20,6 +21,7 @@
     "src/main/agent-framework/registry.ts",
     "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
     "src/main/agent-framework/resolved-agent-backend-leases.ts",
+    "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
     "src/main/agent-framework/types.ts"
   ],
   "interfacePaths": [
@@ -40,11 +42,13 @@
       "src/main/agent-framework/codebuddy.test.ts",
       "src/main/agent-framework/codex.test.ts",
       "src/main/agent-framework/native-shell-policy.test.ts",
+      "src/main/agent-framework/opencode-mcp-isolation.integration.test.ts",
       "src/main/agent-framework/opencode-session-header.integration.test.ts",
       "src/main/agent-framework/opencode-skill-reference.integration.test.ts",
       "src/main/agent-framework/opencode.test.ts",
       "src/main/agent-framework/registry.test.ts",
-      "src/main/agent-framework/resolved-agent-backend-leases.test.ts"
+      "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
+      "src/main/agent-framework/session-mcp-isolation.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -469,7 +473,9 @@
       "src/main/settings/classification-settings.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
-      "src/main/compute/cancellation-runtime.integration.test.ts"
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

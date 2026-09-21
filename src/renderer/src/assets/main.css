@@ -152,6 +152,16 @@
   user-select: none;
 }
 
+/* Marking mode advertises text selection across the page, including whitespace. */
+[data-pdf-cursor-mode='text-annotation'],
+[data-pdf-cursor-mode='text-annotation'] .pdf-text-layer .endOfContent {
+  cursor: text;
+}
+
+[data-pdf-cursor-mode='text-annotation'] [data-pdf-annotation-marker] {
+  cursor: pointer;
+}
+
 .pdf-text-layer.selecting .endOfContent {
   top: 0;
 }

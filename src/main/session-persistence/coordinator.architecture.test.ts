@@ -1344,6 +1344,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/artifacts/artifact-provenance-graph.test.ts',
       'src/main/artifacts/artifact-reproducibility-execution.test.ts',
       'src/main/artifacts/artifact-reproducibility-export.test.ts',
+      'src/main/artifacts/ro-crate-export.test.ts',
       'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.test.ts',
       'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
@@ -1658,7 +1659,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-details/startup-catalog.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
-      'src/main/compute/cancellation-runtime.integration.test.ts'
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

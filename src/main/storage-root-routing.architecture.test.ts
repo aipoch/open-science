@@ -76,8 +76,8 @@ describe('storage root routing architecture', () => {
     const uploads = source('src/main/uploads/ipc.ts')
     expect(uploads).toContain('new UploadRepository(resolveDataRoot(), {')
     expect(uploads).toContain('getProjectDbClient(resolveConfigRoot())')
-    expect(source('src/main/uploads/repository.ts')).toContain(
-      'constructor(dataRoot: string, options: UploadRepositoryOptions = {})'
+    expect(source('src/main/uploads/repository.ts')).toMatch(
+      /constructor\(\s*dataRoot: string,\s*private readonly options: UploadRepositoryOptions = \{\}/
     )
 
     const notebookComposition = source('src/main/ipc.ts')

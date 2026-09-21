@@ -27,6 +27,7 @@ import {
 } from './verified-legacy-cleanup-owner'
 
 type UploadRepositoryOptions = {
+  onFinalized?: (projectId: string, sessionId: string, attachments: UploadedAttachment[]) => void
   maxFileBytes?: number
   getClient?: () => Promise<PrismaClient>
   getLegacyFileChecksum?: (path: string) => Promise<string>
@@ -46,7 +47,10 @@ class UploadRepository {
   private readonly legacyRecoveryOwner: LegacyRecoveryOwner
   private readonly dataRoot: string
 
-  constructor(dataRoot: string, options: UploadRepositoryOptions = {}) {
+  constructor(
+    dataRoot: string,
+    private readonly options: UploadRepositoryOptions = {}
+  ) {
     this.dataRoot = dataRoot
     this.contentRepository = options.getClient
       ? new ContentRepository({ storageRoot: dataRoot, getClient: options.getClient })
@@ -105,11 +109,17 @@ class UploadRepository {
     attachments: UploadedAttachment[],
     projectId = DEFAULT_UPLOAD_PROJECT_ID
   ): Promise<UploadedAttachment[]> {
-    return this.stagedPublicationOwner.finalizePendingSessionUploads(
+    const finalized = await this.stagedPublicationOwner.finalizePendingSessionUploads(
       sessionId,
       attachments,
       projectId
     )
+    const newlyPublished = finalized.filter((file) =>
+      attachments.some((input) => input.id === file.id && input.versionId !== file.versionId)
+    )
+    // Reusing an immutable upload must not resurrect native annotations deleted by the user.
+    if (newlyPublished.length) this.options.onFinalized?.(projectId, sessionId, newlyPublished)
+    return finalized
   }
 
   async upgradeLegacySessionUploads(

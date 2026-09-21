@@ -51,17 +51,21 @@ export const SearchDetailHeader = ({
 }: Props): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const locale = resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
-  const Icon = result.kind === 'library' && !('item' in result.item) ? Folder : icons[result.kind]
+  const Icon = result.kind === 'library' && 'itemCount' in result.item ? Folder : icons[result.kind]
+  const annotation =
+    result.kind === 'library' && 'annotation' in result.item ? result.item.annotation : undefined
   const title =
     result.kind === 'messages'
       ? messageTitle(result.item) || t('Matched message')
-      : resultTitle(result)
+      : (annotation?.target.source.name ?? resultTitle(result))
   const projectIds =
     result.kind === 'library' && 'item' in result.item
       ? result.item.projectIds
-      : 'projectId' in result.item
-        ? [result.item.projectId]
-        : []
+      : annotation?.projectId
+        ? [annotation.projectId]
+        : 'projectId' in result.item
+          ? [result.item.projectId]
+          : []
   const linkedProjects = projects.filter((project) => projectIds.includes(project.id))
   const sessionItem = 'sessionId' in result.item ? result.item : undefined
   const session =
@@ -165,6 +169,16 @@ export const SearchDetailHeader = ({
             <BookOpenText aria-hidden="true" />
             <span>{t('Library')}</span>
           </span>
+        )}
+        {annotation && (
+          <>
+            <span>{t('Notes & Annotations')}</span>
+            <span>
+              {'pageNumber' in annotation.target.selector
+                ? t('Page {{page}}', { page: annotation.target.selector.pageNumber })
+                : t('Document note')}
+            </span>
+          </>
         )}
         {result.kind === 'uploads' && result.item.sessionId === STANDALONE_UPLOAD_SESSION_ID ? (
           <span className="search-detail-context-part">

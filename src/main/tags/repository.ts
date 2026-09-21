@@ -18,7 +18,7 @@ import {
 } from '../../shared/tags'
 import type { TagResourceCatalogSnapshot } from './resource-catalog'
 
-type TagClient = Pick<PrismaClient, 'tag' | 'tagAssignment' | '$transaction'>
+type TagClient = Pick<PrismaClient, 'tag' | 'tagAssignment' | 'pdfAnnotation' | '$transaction'>
 type TagClientProvider = () => Promise<TagClient>
 
 const cleanTagName = (input: string): string => input.normalize('NFKC').trim().replace(/\s+/gu, ' ')
@@ -71,22 +71,68 @@ class TagRepository {
   async snapshot(revision: number): Promise<TagSnapshot> {
     const client = await this.getClient()
     await this.ensureFavorite(client)
-    const [tags, assignments] = await Promise.all([
-      client.tag.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }),
-      client.tagAssignment.findMany({
-        orderBy: [{ createdAt: 'asc' }, { tagId: 'asc' }, { resourceType: 'asc' }]
+    return client.$transaction(async (transaction) => {
+      const [tags, assignments] = await Promise.all([
+        transaction.tag.findMany({ orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }),
+        transaction.tagAssignment.findMany({
+          orderBy: [{ createdAt: 'asc' }, { tagId: 'asc' }, { resourceType: 'asc' }]
+        })
+      ])
+      const pdfAnnotations = await transaction.pdfAnnotation.findMany({
+        where: {
+          id: {
+            in: [
+              ...new Set(
+                assignments
+                  .filter((row) => row.resourceType === 'pdf.annotation')
+                  .map((row) => row.resourceId)
+              )
+            ]
+          }
+        },
+        select: {
+          id: true,
+          projectId: true,
+          sessionId: true,
+          versionId: true,
+          name: true,
+          note: true
+        }
       })
-    ])
-    return {
-      revision,
-      tags: tags.map(toTagView),
-      assignments: assignments.map((row): TagAssignmentView => ({
-        tagId: row.tagId,
-        resourceType: row.resourceType as TagAssignmentView['resourceType'],
-        resourceId: row.resourceId,
-        createdAt: row.createdAt.getTime()
-      }))
-    }
+      const libraryVersionIds = pdfAnnotations
+        .filter(({ projectId }) => projectId === null)
+        .map(({ versionId }) => versionId)
+      const libraryVersions = libraryVersionIds.length
+        ? await transaction.literatureAttachmentVersion.findMany({
+            where: { id: { in: libraryVersionIds } },
+            select: { id: true, attachment: { select: { itemId: true } } }
+          })
+        : []
+      const libraryItems = new Map(
+        libraryVersions.map((version) => [version.id, version.attachment.itemId])
+      )
+      return {
+        revision,
+        pdfAnnotations: pdfAnnotations.map((annotation) => ({
+          id: annotation.id,
+          versionId: annotation.versionId,
+          name: annotation.name,
+          projectId: annotation.projectId ?? undefined,
+          sessionId: annotation.sessionId ?? undefined,
+          ...(annotation.projectId === null
+            ? { literatureItemId: libraryItems.get(annotation.versionId) }
+            : {}),
+          note: annotation.note.slice(0, 200)
+        })),
+        tags: tags.map(toTagView),
+        assignments: assignments.map((row): TagAssignmentView => ({
+          tagId: row.tagId,
+          resourceType: row.resourceType as TagAssignmentView['resourceType'],
+          resourceId: row.resourceId,
+          createdAt: row.createdAt.getTime()
+        }))
+      }
+    })
   }
 
   async create(request: CreateTagRequest): Promise<void> {
@@ -238,24 +284,32 @@ class TagRepository {
 
   async pruneStaleAssignments(resources: TagResourceCatalogSnapshot): Promise<number> {
     const client = await this.getClient()
-    const assignments = await client.tagAssignment.findMany({
-      select: { tagId: true, resourceType: true, resourceId: true }
+    return client.$transaction(async (transaction) => {
+      const pdfAnnotations = new Set(
+        (await transaction.pdfAnnotation.findMany({ select: { id: true } })).map(({ id }) => id)
+      )
+      const assignments = await transaction.tagAssignment.findMany({
+        select: { tagId: true, resourceType: true, resourceId: true }
+      })
+      const stale = assignments.filter((assignment) => {
+        const ids =
+          assignment.resourceType === 'pdf.annotation'
+            ? pdfAnnotations
+            : resources[assignment.resourceType as keyof TagResourceCatalogSnapshot]
+        return !ids?.has(assignment.resourceId)
+      })
+      if (stale.length === 0) return 0
+      const result = await transaction.tagAssignment.deleteMany({
+        where: {
+          OR: stale.map(({ tagId, resourceType, resourceId }) => ({
+            tagId,
+            resourceType,
+            resourceId
+          }))
+        }
+      })
+      return result.count
     })
-    const stale = assignments.filter((assignment) => {
-      const ids = resources[assignment.resourceType as keyof TagResourceCatalogSnapshot]
-      return !ids?.has(assignment.resourceId)
-    })
-    if (stale.length === 0) return 0
-    const result = await client.tagAssignment.deleteMany({
-      where: {
-        OR: stale.map(({ tagId, resourceType, resourceId }) => ({
-          tagId,
-          resourceType,
-          resourceId
-        }))
-      }
-    })
-    return result.count
   }
 }
 

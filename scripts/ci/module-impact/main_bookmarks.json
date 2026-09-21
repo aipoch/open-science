@@ -58,7 +58,8 @@
       "src/main/session-package/portability.test.ts",
       "src/main/session-package/recovery-diagnostics.test.ts",
       "src/main/session-package/recovery.test.ts",
-      "src/main/session-package/service.test.ts"
+      "src/main/session-package/service.test.ts",
+      "src/main/pdf-annotations/service.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

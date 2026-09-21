@@ -23,7 +23,8 @@ import {
 import {
   AnnotationDraftEditor,
   AnnotationMarkers,
-  type AnnotationControl
+  type AnnotationControl,
+  type BookmarkSaveInput
 } from './TextAnnotationEditors'
 import {
   textAnnotationAnchorForRange,
@@ -587,7 +588,7 @@ const TextAnnotationSurface = ({
     window.getSelection()?.removeAllRanges()
   }
 
-  const saveBookmark = async (bookmarkNote: string): Promise<void> => {
+  const saveBookmark = async (input: BookmarkSaveInput): Promise<void> => {
     if (!selection) return
     const id = pendingBookmarkIdRef.current ?? createBookmarkId()
     pendingBookmarkIdRef.current = id
@@ -597,7 +598,7 @@ const TextAnnotationSurface = ({
       quote: selection.quote,
       anchor: textAnnotationAnchorForRange(contentRef.current!, selection.range)
     }
-    await bookmarkPort.create(id, target, bookmarkNote)
+    await bookmarkPort.create(id, target, input.note)
     clearDraft()
     window.getSelection()?.removeAllRanges()
   }

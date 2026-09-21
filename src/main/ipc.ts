@@ -38,6 +38,8 @@ import { registerApplicationCommandElectronAdapter } from './application-command
 import { isPathInsideWorkspace } from './acp/workspace-path'
 import { BookmarkRepository } from './bookmarks/repository'
 import { BookmarkService } from './bookmarks/service'
+import { PdfAnnotationRepository } from './pdf-annotations/repository'
+import { PdfAnnotationService } from './pdf-annotations/service'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import type { JobSummary } from '../shared/compute'
@@ -872,7 +874,26 @@ const createApplicationModules = async (
 
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
-  const uploadRepository = createDefaultUploadRepository()
+  const pdfUploadImporter: { current?: PdfAnnotationService } = {}
+  const uploadRepository = createDefaultUploadRepository((projectId, sessionId, attachments) => {
+    for (const attachment of attachments) {
+      if (!attachment.versionId || !attachment.originalName.toLowerCase().endsWith('.pdf')) continue
+      // Enrichment starts after publication. Do not await it while the upload caller still owns
+      // the Session mutation barrier; the annotation service acquires that barrier itself.
+      void pdfUploadImporter.current
+        ?.importNative({
+          operationId: crypto.randomUUID(),
+          projectId,
+          sessionId,
+          sourceKind: 'upload-version',
+          sourceFileId: attachment.id,
+          versionId: attachment.versionId
+        })
+        .catch((error) =>
+          storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
+        )
+    }
+  })
   await runDataRootStartupRecovery(() => uploadRepository.recoverStagingUploads(), {
     reportFailure: (error) => {
       // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
@@ -1532,6 +1553,39 @@ const createApplicationModules = async (
       }
     }
   })
+  const pdfAnnotationTagEvents: { notify?: () => Promise<void> } = {}
+  const pdfAnnotationRepository = new PdfAnnotationRepository(
+    () => getProjectDbClient(resolveConfigRoot()),
+    async (event, tagsChanged) => {
+      if (event) applicationEvents.publish('pdf-annotations:changed', event)
+      if (tagsChanged) await pdfAnnotationTagEvents.notify?.()
+    }
+  )
+  const pdfAnnotationService = new PdfAnnotationService({
+    literature: literatureAttachmentAuthority,
+    repository: pdfAnnotationRepository,
+    sessions: sessionRepository,
+    runWithSessionAuthority: (projectId, sessionId, operation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
+    resolveSessionPdfVersion: (request) =>
+      sessionPdfSourceResolver.resolveVersion({
+        projectId: request.projectId,
+        sourceKind: request.sourceKind,
+        sourceVersionId: request.versionId,
+        expectedSourceFileId: request.sourceFileId
+      }),
+    onNativeImportProgress: (progress) =>
+      applicationEvents.publish('pdf-annotations:import-progress', progress)
+  })
+  pdfUploadImporter.current = pdfAnnotationService
+  await modules.add(undefined, () => ({
+    name: 'pdf-native-annotation-imports',
+    capability: undefined,
+    dispose: async () => {
+      pdfUploadImporter.current = undefined
+      await pdfAnnotationService.dispose()
+    }
+  }))
   const sessionPdfContextOwner = new SessionPdfContextOwner({
     sources: sessionPdfSourceResolver,
     pendingUploads: {
@@ -2051,6 +2105,8 @@ const createApplicationModules = async (
       listConnectors: () => settingsService.listConnectors(),
       listSpecialists: async () =>
         (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer'),
+      listPdfAnnotations: async () =>
+        (await getProjectDbClient(configRoot)).pdfAnnotation.findMany({ select: { id: true } }),
       listLiteratureItems: async () => {
         const database = await getProjectDbClient(configRoot)
         return database.literatureItem.findMany({
@@ -2058,8 +2114,10 @@ const createApplicationModules = async (
         })
       }
     }),
-    applicationEvents
+    applicationEvents,
+    (request) => pdfAnnotationService.setTagAssignment(request)
   )
+  pdfAnnotationTagEvents.notify = () => tagService.notifyAssignmentsChanged()
   const memoryService = new MemoryService(
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
@@ -2112,7 +2170,10 @@ const createApplicationModules = async (
   const literaturePdfImporter = new LiteraturePdfImporter({
     uploads: uploadRepository,
     content: contentRepository,
-    catalog: literatureCatalog
+    catalog: literatureCatalog,
+    annotations: pdfAnnotationRepository,
+    onNativeImportProgress: (progress) =>
+      applicationEvents.publish('pdf-annotations:import-progress', progress)
   })
   const literaturePdfAcquisition = new AgentPdfAcquisition({
     catalog: literatureCatalog,
@@ -4448,6 +4509,29 @@ const createApplicationModules = async (
     )
   )
   const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
+    onPublished: (artifacts) => {
+      for (const artifact of artifacts) {
+        if (
+          !artifact.projectId ||
+          !artifact.artifactId ||
+          !artifact.versionId ||
+          !(artifact.mimeType === 'application/pdf' || artifact.name.toLowerCase().endsWith('.pdf'))
+        )
+          continue
+        void pdfAnnotationService
+          .importNative({
+            operationId: crypto.randomUUID(),
+            projectId: artifact.projectId,
+            sessionId: artifact.sessionId,
+            sourceKind: 'artifact-version',
+            sourceFileId: artifact.artifactId,
+            versionId: artifact.versionId
+          })
+          .catch((error) =>
+            storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
+          )
+      }
+    },
     provenance: artifactProvenanceRepository,
     openLatestManagedFile: (request) =>
       managedFileVersionService.openLatest({
@@ -4671,6 +4755,7 @@ const createApplicationModules = async (
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
     specialist: specialistApplicationOwner,
     bookmarks: bookmarkService,
+    pdfAnnotations: pdfAnnotationService,
     acp: {
       runtime,
       workflows: acpHandlerWorkflows,
@@ -4846,7 +4931,8 @@ const createApplicationModules = async (
       exportRecord: (request) => literatureCatalog.exportRecord(request),
       get: (itemId) => literatureCatalog.get(itemId),
       sources: (itemId) => literatureCatalog.sources(itemId),
-      importPdf: (request) => literaturePdfImporter.import(request),
+      importPdf: (request, signal) => literaturePdfImporter.import(request, signal),
+      cancelPdfImport: (request) => literaturePdfImporter.cancelImport(request.operationId),
       importRecords: async (request) => {
         const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
           request.content

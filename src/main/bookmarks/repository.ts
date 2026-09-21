@@ -55,7 +55,12 @@ const storedParts = (
     sourceId: target.source.sourceFileId,
     sourceJson: JSON.stringify({ version: 1, source: target.source }),
     selectorJson: JSON.stringify({ version: 1, selector: target.selector }),
-    quote: target.selector.kind === 'text' ? target.selector.exact : (target.selector.text ?? null)
+    quote:
+      target.selector.kind === 'text'
+        ? target.selector.exact
+        : target.selector.kind === 'region'
+          ? (target.selector.text ?? null)
+          : null
   }
 }
 

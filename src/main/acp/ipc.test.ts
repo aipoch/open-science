@@ -82,6 +82,7 @@ const {
   const AcpRuntimeMock = vi.fn().mockImplementation(function (options: AcpRuntimeOptions) {
     let turnSequence = 0
     return {
+      connect: vi.fn().mockResolvedValue({}),
       createSession,
       cancelPrompt,
       compactSession,

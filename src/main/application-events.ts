@@ -1,5 +1,9 @@
 import type { LiteratureChangedEvent } from '../shared/literature'
 import type {
+  PdfNativeAnnotationImportProgress,
+  PdfAnnotationsChangedEvent
+} from '../shared/pdf-annotations'
+import type {
   AcpAgentRuntimeUpdate,
   AcpPermissionRequest,
   AcpRuntimeEvent,
@@ -78,6 +82,8 @@ export type ApplicationEventMap = {
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
   'literature:changed': LiteratureChangedEvent
+  'pdf-annotations:changed': PdfAnnotationsChangedEvent
+  'pdf-annotations:import-progress': PdfNativeAnnotationImportProgress
   'tags:changed': TagsChangedEvent
   'memory:changed': MemoryChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest

@@ -123,6 +123,7 @@ type ArtifactHandlers = {
 }
 
 type ArtifactHandlerDependencies = {
+  onPublished?: (artifacts: readonly ArtifactFile[]) => void
   openPath?: (path: string) => Promise<string>
   logger?: Pick<Logger, 'error'>
   openLatestManagedFile?: (
@@ -203,7 +204,7 @@ const createArtifactHandlers = (
   return {
     finalizeRunArtifacts: (request) =>
       withDataRootWrite(() =>
-        withClaimLock(finalizeLocks, request.claimId, () => {
+        withClaimLock(finalizeLocks, request.claimId, async () => {
           const claim = runRegistry.resolve(request.claimId)
           const finalize = (): Promise<ArtifactFile[]> =>
             finalizeRunArtifacts(
@@ -213,9 +214,17 @@ const createArtifactHandlers = (
               dependencies.provenance,
               dependencies.logger ?? log
             )
-          return dependencies.withSessionMutation
+          const artifacts = await (dependencies.withSessionMutation
             ? dependencies.withSessionMutation(claim.projectId, claim.sessionId, finalize)
-            : finalize()
+            : finalize())
+          // Enrichment may acquire Session authority itself; start only after publication's
+          // mutation barrier is released, and never turn a published run into a failed run.
+          try {
+            dependencies.onPublished?.(artifacts)
+          } catch (error) {
+            ;(dependencies.logger ?? log).error('artifact publication enrichment failed', error)
+          }
+          return artifacts
         })
       ),
     reconcilePendingArtifacts: (request) =>
