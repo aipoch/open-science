@@ -52,6 +52,42 @@ for (const kind of ['skills', 'connectors']) {
     expect(errors).toEqual([])
   })
 
+  test(`${kind}: disabled controls do not forward clicks to the row`, async ({ page }) => {
+    await page.goto(`/resource-controls.html${suffix}`)
+    await page.evaluate((kind) => {
+      const command = kind === 'skills' ? 'setSkillEnabled' : 'setConnectorEnabled'
+      // Hold the fixture write pending so the test can hit the genuinely disabled control.
+      window.api.settings[command] = async () => new Promise<never>(() => {})
+    }, kind)
+    await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
+    const row = page.locator('[data-slot="settings-list-row"]').first()
+    await row.getByRole('checkbox').check()
+    await page.getByRole('button', { name: /Stop Main Agent loading/ }).click()
+    const trigger = row.locator('[data-slot="resource-assignment-trigger"]')
+    await expect(trigger).toBeDisabled()
+    await trigger.click({ force: true })
+    await expect(row).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Selected resources' })).toBeVisible()
+  })
+
+  test(`${kind}: row padding opens details while embedded controls stay independent`, async ({
+    page
+  }) => {
+    await page.goto(`/resource-controls.html${suffix}`)
+    const row = page.locator('[data-slot="settings-list-row"]').first()
+    const usage = row.locator('[data-slot="skill-usage-agents-trigger"]')
+    await usage.click()
+    await expect(page.locator('[data-slot="skill-usage-agents-popover"]')).toBeVisible()
+    await expect(row).toBeVisible()
+    await page.locator('header').click()
+    await row.getByRole('button', { name: 'Manage Tags', exact: true }).click()
+    await expect(row).toBeVisible()
+    await page.keyboard.press('Escape')
+    // Exercise the hover surface outside every nested button, including the row's padding.
+    await row.click({ position: { x: 4, y: 4 } })
+    await expect(page.getByRole('region', { name: 'Availability', exact: true })).toBeVisible()
+  })
+
   test(`${kind}: filter and current category remain sticky and selection survives filtering`, async ({
     page
   }) => {

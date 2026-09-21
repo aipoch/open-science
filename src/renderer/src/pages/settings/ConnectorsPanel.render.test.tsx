@@ -252,6 +252,21 @@ const clickItemByText = (role: string, text: string): void => {
 }
 
 describe('ConnectorsPanel (groups)', () => {
+  it.each([
+    ['Europe PMC', { kind: 'detail', id: 'europepmc' }],
+    ['My MCP', { kind: 'edit', id: 'custom-server-uuid' }]
+  ])('opens %s from row whitespace without duplicating title navigation', (name, destination) => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+    const row = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes(name as string))!
+    act(() => row.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith(destination)
+    onNavigate.mockClear()
+    act(() => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith(destination)
+  })
   it('renders Featured connector rows with a toggle each and the Custom group', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)

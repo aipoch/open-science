@@ -267,6 +267,31 @@ it('navigates to the conflicting Skill detail even when the retained search hide
 })
 
 describe('SkillsPanel (list view)', () => {
+  it('opens details from row whitespace and metadata without duplicating title navigation', () => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
+    const row = document.body.querySelector<HTMLElement>('[data-slot="settings-list-row"]')!
+    act(() => row.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+    onNavigate.mockClear()
+    act(() => row.querySelector<HTMLElement>('[data-slot="skill-usage-agents-label"]')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+    onNavigate.mockClear()
+    act(() => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+  })
+  it('keeps assignment popup interactions separate from row navigation', async () => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="resource-assignment-trigger"]'
+    )!
+    await act(async () => trigger.click())
+    const popup = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    act(() => popup.click())
+    await act(async () => popup.querySelector<HTMLButtonElement>('[role="switch"]')!.click())
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
   it('renders independent access groups for each resource and retains Add skill', () => {
     act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
     expect(document.querySelectorAll('[data-slot="resource-assignment-trigger"]')).toHaveLength(3)
@@ -486,7 +511,10 @@ describe('SkillsPanel (list view)', () => {
       (button) => button.textContent?.includes('Conflicting Skill')
     )
     expect(title?.disabled).toBe(true)
-    act(() => title?.click())
+    act(() => {
+      title?.click()
+      document.body.querySelector<HTMLElement>('[data-slot="settings-list-row"]')?.click()
+    })
     expect(onNavigate).not.toHaveBeenCalled()
   })
 

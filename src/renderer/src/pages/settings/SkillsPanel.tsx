@@ -614,7 +614,21 @@ const SkillsPanel = ({
                         <li
                           key={skill.catalogEntryKey ?? skill.id}
                           data-slot="settings-list-row"
-                          className="group/row -mx-2 flex min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                          onClick={(event) => {
+                            // Keep nested controls and portal events out of row navigation.
+                            // Row styles preserve pointer hits on disabled buttons instead of passing through.
+                            const target = event.target
+                            if (
+                              !available ||
+                              event.defaultPrevented ||
+                              !(target instanceof Element) ||
+                              !event.currentTarget.contains(target) ||
+                              target.closest('button, a, input, select, textarea, [role="button"]')
+                            )
+                              return
+                            onNavigate({ kind: 'detail', id: skill.id })
+                          }}
+                          className={`group/row [&_button:disabled]:pointer-events-auto -mx-2 flex min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 ${available ? 'cursor-pointer' : ''}`}
                         >
                           {available ? (
                             <ResourceSelectionCheckbox
