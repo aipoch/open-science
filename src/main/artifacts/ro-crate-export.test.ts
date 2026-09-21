@@ -554,7 +554,7 @@ describe('Artifact Version RO-Crate export', () => {
     ).rejects.toThrow('RO-Crate archive path conflicts: data/report.csv')
   })
 
-  it.each(['report #1%.csv', '结果 数据.csv'])(
+  it.each(['report #1%.csv', 'résumé data.csv'])(
     'encodes URI references for %s without renaming ZIP entries',
     async (filename) => {
       const fixture = completeSource()
