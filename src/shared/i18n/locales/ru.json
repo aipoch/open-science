@@ -6520,8 +6520,6 @@
     "Export diagnostics": "Экспорт диагностики",
     "Export diagnostics…": "Экспорт диагностики…",
     "Preparing diagnostics…": "Подготовка диагностики…",
-    "{{size}} bytes": "{{size}} байт",
-    "The archive always includes a manifest and export log. Missing sources do not stop the export.": "Архив всегда содержит манифест и журнал экспорта. Отсутствие источников не останавливает экспорт.",
     "Could not inspect diagnostic sources.": "Не удалось проверить источники диагностики.",
     "Could not cancel diagnostic export.": "Не удалось отменить экспорт диагностики.",
     "Diagnostic export failed.": "Ошибка экспорта диагностики.",
@@ -6531,7 +6529,7 @@
     "Could not show the exported file.": "Не удалось показать экспортированный файл.",
     "Session database records": "Записи базы данных сеанса",
     "If this session fails or behaves unexpectedly, export a diagnostic package to help developers investigate.": "Если в сеансе возникает ошибка или неожиданное поведение, экспортируйте диагностический пакет, чтобы помочь разработчикам разобраться в проблеме.",
-    "Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.": "Экспорт метаданных диагностики без полей с личным содержимым. Данные сохраняются локально, без загрузки на сервер или отправки в LLM. Для повреждённых или больших файлов может включаться только сводка.",
+    "Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.": "Экспортирует метаданные диагностики без полей с личным содержимым. Данные сохраняются локально, без загрузки на сервер или отправки в LLM. Архив всегда содержит манифест и журнал экспорта; отсутствие источников не останавливает экспорт. Для повреждённых или больших файлов может включаться только сводка. При сообщении о проблеме разработчикам приложите снимки экрана.",
     "Choose diagnostic metadata to include. Private content fields are excluded. Saved locally; nothing is uploaded or sent to an LLM.": "Выберите метаданные диагностики для экспорта. Поля с личным содержимым исключаются. Данные сохраняются локально, без загрузки на сервер или отправки в LLM.",
     "Current application log metadata, including activity outside this session.": "Метаданные текущего журнала приложения, включая действия вне этого сеанса.",
     "Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.": "Метаданные прошлых журналов приложения, включая действия вне этого сеанса. Выберите вручную для исследования более ранних проблем.",
@@ -6540,7 +6538,6 @@
     "The selected file already exists. Choose a new filename.": "Выбранный файл уже существует. Укажите новое имя файла.",
     "Diagnostic operation timed out.": "Время ожидания операции диагностики истекло.",
     "Temporary diagnostic files could not be fully removed.": "Не удалось полностью удалить временные файлы диагностики.",
-    "Choose a new .tar.gz file.": "Выберите новый файл .tar.gz.",
-    "When reporting an issue to developers, include screenshots of the problem.": "При сообщении о проблеме разработчикам приложите снимки экрана с этой проблемой."
+    "Choose a new .tar.gz file.": "Выберите новый файл .tar.gz."
   }
 }

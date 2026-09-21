@@ -6059,8 +6059,6 @@
     "Export diagnostics": "导出诊断包",
     "Export diagnostics…": "导出诊断包…",
     "Preparing diagnostics…": "正在准备诊断信息…",
-    "{{size}} bytes": "{{size}} 字节",
-    "The archive always includes a manifest and export log. Missing sources do not stop the export.": "压缩包始终包含清单和导出日志。缺失的数据源不会中止导出。",
     "Could not inspect diagnostic sources.": "无法检查诊断数据源。",
     "Could not cancel diagnostic export.": "无法取消诊断导出。",
     "Diagnostic export failed.": "诊断导出失败。",
@@ -6070,7 +6068,7 @@
     "Could not show the exported file.": "无法显示导出的文件。",
     "Session database records": "会话数据库记录",
     "If this session fails or behaves unexpectedly, export a diagnostic package to help developers investigate.": "会话报错或行为异常时，可导出诊断包，帮助开发者排查问题。",
-    "Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.": "导出诊断元数据，排除隐私内容字段。仅保存到本地，不会上传或发送给大语言模型。损坏或较大的文件可能只包含摘要。",
+    "Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.": "导出诊断元数据，排除隐私内容字段。仅保存到本地，不会上传或发送给大语言模型。压缩包始终包含清单和导出日志；缺失的数据源不会中止导出。损坏或较大的文件可能只包含摘要。向开发者反馈问题时，请附上问题截图。",
     "Choose diagnostic metadata to include. Private content fields are excluded. Saved locally; nothing is uploaded or sent to an LLM.": "选择要包含的诊断元数据。隐私内容字段会被排除。仅保存到本地，不会上传或发送给大语言模型。",
     "Current application log metadata, including activity outside this session.": "当前应用日志的元数据，也包含此会话以外的活动。",
     "Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.": "历史应用日志的元数据，也包含此会话以外的活动。排查较早的问题时，请手动勾选。",
@@ -6079,7 +6077,6 @@
     "The selected file already exists. Choose a new filename.": "所选文件已存在，请使用新的文件名。",
     "Diagnostic operation timed out.": "诊断操作超时。",
     "Temporary diagnostic files could not be fully removed.": "无法完全删除临时诊断文件。",
-    "Choose a new .tar.gz file.": "请选择新的 .tar.gz 文件。",
-    "When reporting an issue to developers, include screenshots of the problem.": "向开发者反馈问题时，请同时附上问题截图。"
+    "Choose a new .tar.gz file.": "请选择新的 .tar.gz 文件。"
   }
 }

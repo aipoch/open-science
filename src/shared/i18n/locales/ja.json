@@ -6059,8 +6059,6 @@
     "Export diagnostics": "診断情報をエクスポート",
     "Export diagnostics…": "診断情報をエクスポート…",
     "Preparing diagnostics…": "診断情報を準備中…",
-    "{{size}} bytes": "{{size}} バイト",
-    "The archive always includes a manifest and export log. Missing sources do not stop the export.": "アーカイブには必ずマニフェストとエクスポートログが含まれます。情報源が欠けていてもエクスポートは続行されます。",
     "Could not inspect diagnostic sources.": "診断情報の取得元を確認できませんでした。",
     "Could not cancel diagnostic export.": "診断情報のエクスポートをキャンセルできませんでした。",
     "Diagnostic export failed.": "診断情報のエクスポートに失敗しました。",
@@ -6070,7 +6068,7 @@
     "Could not show the exported file.": "エクスポートしたファイルを表示できませんでした。",
     "Session database records": "セッションのデータベースレコード",
     "If this session fails or behaves unexpectedly, export a diagnostic package to help developers investigate.": "セッションでエラーや予期しない動作が発生した場合、診断パッケージをエクスポートして開発者の調査に役立てられます。",
-    "Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.": "個人情報などの内容フィールドを除外して診断メタデータをエクスポートします。ローカルに保存され、アップロードやLLMへの送信は行われません。破損したファイルや大きなファイルは、概要のみが含まれる場合があります。",
+    "Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.": "個人情報などの内容フィールドを除外して診断メタデータをエクスポートします。ローカルに保存され、アップロードやLLMへの送信は行われません。アーカイブには必ずマニフェストとエクスポートログが含まれ、情報源が欠けていてもエクスポートは続行されます。破損したファイルや大きなファイルは概要のみが含まれる場合があります。開発者に問題を報告する際はスクリーンショットを添付してください。",
     "Choose diagnostic metadata to include. Private content fields are excluded. Saved locally; nothing is uploaded or sent to an LLM.": "含める診断メタデータを選択します。個人情報などの内容フィールドは除外されます。ローカルに保存され、アップロードやLLMへの送信は行われません。",
     "Current application log metadata, including activity outside this session.": "現在のアプリケーションログのメタデータ。このセッション以外のアクティビティも含まれます。",
     "Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.": "過去のアプリケーションログのメタデータ。このセッション以外のアクティビティも含まれます。以前の問題を調査する場合は手動で選択してください。",
@@ -6079,7 +6077,6 @@
     "The selected file already exists. Choose a new filename.": "選択したファイルは既に存在します。別のファイル名を指定してください。",
     "Diagnostic operation timed out.": "診断処理がタイムアウトしました。",
     "Temporary diagnostic files could not be fully removed.": "一時診断ファイルを完全に削除できませんでした。",
-    "Choose a new .tar.gz file.": "新しい .tar.gz ファイルを選択してください。",
-    "When reporting an issue to developers, include screenshots of the problem.": "開発者に問題を報告する際は、問題のスクリーンショットも添付してください。"
+    "Choose a new .tar.gz file.": "新しい .tar.gz ファイルを選択してください。"
   }
 }

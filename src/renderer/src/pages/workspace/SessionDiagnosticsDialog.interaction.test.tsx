@@ -18,10 +18,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   inspectDiagnostics.mockResolvedValue({
     items: [
-      { id: 'session', name: 'session.json', kind: 'session', available: true },
+      { id: 'session', name: 'session.json', kind: 'session', available: true, sizeBytes: 29_840 },
       { id: 'database', name: 'db', kind: 'database', available: true },
-      { id: 'log:main.log', name: 'main.log', kind: 'log', available: true },
-      { id: 'log:main.1.log', name: 'main.1.log', kind: 'log', available: true },
+      { id: 'log:main.log', name: 'main.log', kind: 'log', available: true, sizeBytes: 197_723 },
+      {
+        id: 'log:main.1.log',
+        name: 'main.1.log',
+        kind: 'log',
+        available: true,
+        sizeBytes: 5_242_719
+      },
       {
         id: 'invalid:backup',
         name: 'session.json.invalid-1-1',
@@ -66,6 +72,9 @@ it('exports only selected available items, opts into historical logs and reports
   ])
   expect(checkboxes[4].disabled).toBe(true)
   expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe('Export diagnostics')
+  expect(checkboxes[0].textContent).toContain('29 KB')
+  expect(checkboxes[2].textContent).toContain('193 KB')
+  expect(checkboxes[3].textContent).toContain('5.0 MB')
   expect(checkboxes[1].textContent).toContain('Session database records')
   expect(checkboxes[2].textContent).toContain(
     'Current application log metadata, including activity outside this session.'
