@@ -6241,6 +6241,7 @@
     "Unsupported native annotations: {{count}}_other": "Nicht unterstützte native Anmerkung: {{count}}",
     "Native annotation import failed.": "Native Anmerkungen konnten nicht importiert werden.",
     "Native annotation import limit reached. Some annotations were not imported.": "Das Importlimit für native Anmerkungen wurde erreicht. Einige Anmerkungen wurden nicht importiert.",
+    "Widen the window to show notes beside the PDF": "Verbreitern Sie das Fenster, um Notizen neben dem PDF anzuzeigen",
     "Show notes sidebar": "Notizseitenleiste anzeigen",
     "Hide notes sidebar": "Notizseitenleiste ausblenden",
     "Resize notes sidebar": "Breite der Notizseitenleiste ändern",

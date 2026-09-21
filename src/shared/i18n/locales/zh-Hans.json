@@ -6077,6 +6077,7 @@
     "Unsupported native annotations: {{count}}_other": "不支持的原生批注：{{count}}",
     "Native annotation import failed.": "原生批注导入失败。",
     "Native annotation import limit reached. Some annotations were not imported.": "已达到原生批注导入上限，部分批注未导入。",
+    "Widen the window to show notes beside the PDF": "加宽窗口以在 PDF 旁显示笔记",
     "Show notes sidebar": "显示笔记侧栏",
     "Hide notes sidebar": "隐藏笔记侧栏",
     "Resize notes sidebar": "调整笔记侧栏宽度",

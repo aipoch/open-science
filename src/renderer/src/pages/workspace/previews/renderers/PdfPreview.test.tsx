@@ -402,7 +402,7 @@ describe('PdfPreviewContent', () => {
     ])
   })
 
-  it('offers a resizable notes sidebar only within the reader width budget and retains one notebook', async () => {
+  it('keeps the notes toggle visible and enables the sidebar within the reader width budget', async () => {
     let width = 1200
     const callbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
@@ -458,9 +458,17 @@ describe('PdfPreviewContent', () => {
       })
     }
     await resize(900)
-    expect(container.querySelector('[aria-label="Show notes sidebar"]')).toBeNull()
+    const narrowToggle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Show notes sidebar"]'
+    )!
+    expect(narrowToggle).not.toBeNull()
+    expect(narrowToggle.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => narrowToggle.click())
     expect(notebook.hasAttribute('inert')).toBe(true)
     await resize(1200)
+    expect(
+      container.querySelector('[aria-label="Hide notes sidebar"]')?.getAttribute('aria-disabled')
+    ).toBe('false')
     expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()

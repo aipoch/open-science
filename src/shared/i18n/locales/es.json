@@ -6413,6 +6413,7 @@
     "Unsupported native annotations: {{count}}_other": "Anotación nativa no compatible: {{count}}",
     "Native annotation import failed.": "No se pudieron importar las anotaciones nativas.",
     "Native annotation import limit reached. Some annotations were not imported.": "Se alcanzó el límite de importación de anotaciones nativas. Algunas anotaciones no se importaron.",
+    "Widen the window to show notes beside the PDF": "Ampliar la ventana para mostrar las notas junto al PDF",
     "Show notes sidebar": "Mostrar el panel de notas",
     "Hide notes sidebar": "Ocultar el panel de notas",
     "Resize notes sidebar": "Ajustar el ancho del panel de notas",

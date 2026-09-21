@@ -6077,6 +6077,7 @@
     "Unsupported native annotations: {{count}}_other": "サポートされていないネイティブ注釈：{{count}}",
     "Native annotation import failed.": "PDF 内の注釈を読み込めませんでした。",
     "Native annotation import limit reached. Some annotations were not imported.": "PDF 内の注釈の読み込み上限に達しました。一部の注釈は読み込まれていません。",
+    "Widen the window to show notes beside the PDF": "ウィンドウを広げると PDF の横にノートを表示できます",
     "Show notes sidebar": "ノートサイドバーを表示",
     "Hide notes sidebar": "ノートサイドバーを非表示",
     "Resize notes sidebar": "ノートサイドバーの幅を変更",

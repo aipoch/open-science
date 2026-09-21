@@ -6075,6 +6075,7 @@
     "Unsupported native annotations: {{count}}_other": "지원되지 않는 네이티브 주석: {{count}}",
     "Native annotation import failed.": "PDF 내 주석을 가져오지 못했습니다.",
     "Native annotation import limit reached. Some annotations were not imported.": "PDF 내 주석 가져오기 한도에 도달했습니다. 일부 주석을 가져오지 못했습니다.",
+    "Widen the window to show notes beside the PDF": "PDF 옆에 노트를 표시하려면 창을 넓히세요",
     "Show notes sidebar": "노트 사이드바 표시",
     "Hide notes sidebar": "노트 사이드바 숨기기",
     "Resize notes sidebar": "노트 사이드바 너비 조절",

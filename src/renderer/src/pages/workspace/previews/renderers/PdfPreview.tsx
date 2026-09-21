@@ -3048,27 +3048,34 @@ export const PdfPreviewContent = ({
                 </Tabs.Trigger>
                 <PdfToolbarTooltip plain side="bottom" label={t('Notes & Annotations')} />
               </Tooltip>
-              {canShowNotesSidebar && readingMode === 'original' ? (
+              {readingMode === 'original' ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       type="button"
                       variant={showNotesSidebar ? 'secondary' : 'ghost'}
                       size="icon-sm"
-                      className="absolute right-2 top-0.5 size-7"
+                      className="absolute right-2 top-0.5 size-7 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
                       aria-label={
                         showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')
                       }
                       ref={notesToggleRef}
                       aria-expanded={showNotesSidebar}
                       aria-controls={notebookPanelId}
-                      onClick={() => setNotesOpen((open) => !open)}
+                      aria-disabled={!canShowNotesSidebar}
+                      onClick={() => {
+                        if (canShowNotesSidebar) setNotesOpen((open) => !open)
+                      }}
                     >
                       <PanelRight className="size-4" aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    {showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')}
+                    {!canShowNotesSidebar
+                      ? t('Widen the window to show notes beside the PDF')
+                      : showNotesSidebar
+                        ? t('Hide notes sidebar')
+                        : t('Show notes sidebar')}
                   </TooltipContent>
                 </Tooltip>
               ) : null}

@@ -1264,9 +1264,9 @@ const PdfNotebookView = ({
                     )}
                   >
                     <div className="min-w-0">
-                      <div className="flex items-start gap-2">
+                      <div className="flex items-center gap-2">
                         <span
-                          className={cn('mt-1 size-2.5 shrink-0 rounded-full', palette.dot)}
+                          className={cn('size-2.5 shrink-0 rounded-full', palette.dot)}
                           aria-label={t(color[0].toUpperCase() + color.slice(1))}
                         />
                         <div className="flex min-w-0 flex-1 items-center gap-2">

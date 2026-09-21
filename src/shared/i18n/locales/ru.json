@@ -6556,6 +6556,7 @@
     "Unsupported native annotations: {{count}}_other": "Неподдерживаемая нативная аннотация: {{count}}",
     "Native annotation import failed.": "Не удалось импортировать встроенные аннотации.",
     "Native annotation import limit reached. Some annotations were not imported.": "Достигнут лимит импорта встроенных аннотаций. Некоторые аннотации не импортированы.",
+    "Widen the window to show notes beside the PDF": "Расширьте окно, чтобы показать заметки рядом с PDF",
     "Show notes sidebar": "Показать панель заметок",
     "Hide notes sidebar": "Скрыть панель заметок",
     "Resize notes sidebar": "Изменить ширину панели заметок",

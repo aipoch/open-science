@@ -106,6 +106,17 @@ test('imports external notes, preserves provenance through undo, and persists an
   await expect(notesSidebar.locator('[data-annotation-page-group="1"]')).toBeVisible()
   const originalView = page.locator('[data-pdf-original-view]')
   expect((await originalView.boundingBox())!.width).toBeGreaterThanOrEqual(752)
+  // The compact header must center the tag trigger and source/edit/delete actions on one row.
+  const firstCard = notesSidebar.locator('[data-annotation-id]').first()
+  const headerCenters = await Promise.all(
+    ['Add tag', 'Show annotation source', 'Edit annotation note', 'Delete annotation'].map(
+      async (name) => {
+        const box = (await firstCard.getByRole('button', { name, exact: true }).boundingBox())!
+        return box.y + box.height / 2
+      }
+    )
+  )
+  expect(Math.max(...headerCenters) - Math.min(...headerCenters)).toBeLessThanOrEqual(1)
   await notesSidebar
     .getByRole('button', { name: 'Show annotation source', exact: true })
     .first()
@@ -131,7 +142,8 @@ test('imports external notes, preserves provenance through undo, and persists an
     .getByPlaceholder('Add a private note')
     .fill('Sidebar draft survives layout changes')
   await app.setMainWindowSize(1100, 960)
-  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeDisabled()
   await expect(notesSidebar).toHaveCount(0)
   await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   await expect(page.getByPlaceholder('Add a private note')).toHaveValue(
