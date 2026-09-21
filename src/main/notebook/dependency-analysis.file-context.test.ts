@@ -91,6 +91,108 @@ const fileContext = async (
 }
 
 describe('file context after mutable path collections', () => {
+  it.each([
+    'try:\n    raise Exception()\nexcept Exception as read_inputs:\n    pass',
+    'match replacement:\n    case read_inputs:\n        pass'
+  ])('does not replay helper exports overwritten by capture bindings: %s', async (suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs():\n    return open("old.csv")\ndef replacement():\n    return open("new.csv")\n${suffix}`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each(['nonlocal', 'global'])(
+    'does not certify stale helper reads after %s rebinding',
+    async (scope) => {
+      const reader = 'def read():\n    return open("old.csv")'
+      const source =
+        scope === 'global'
+          ? `${reader}\ndef read_inputs():\n    def mutate():\n        global read\n        read = lambda: None\n    mutate()\n    return read()`
+          : `def read_inputs():\n    ${reader.replaceAll('\n', '\n    ')}\n    def mutate():\n        nonlocal read\n        read = lambda: None\n    mutate()\n    return read()`
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('invalidates an exception alias before replaying a later notebook call', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        { source: 'def read_inputs():\n    return open("old.csv")', exports: ['read_inputs'] }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'try:\n    raise Exception()\nexcept Exception as read_inputs:\n    pass\nread_inputs()',
+        context
+      )
+    ).toMatchObject({ reads: [], readState: 'partial' })
+  })
+
+  it('does not restore module globals on a later exported helper call', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'path = "old.csv"\ndef mutate():\n    global path\n    path = "new.csv"\ndef read_inputs():\n    return open(path)',
+          exports: ['mutate', 'read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'mutate()\nread_inputs()', context)
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it('keeps ordinary exception handling without rebinding a helper analyzable', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    try:\n        return open("input.csv")\n    except Exception:\n        pass',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: ['input.csv'], readState: 'complete' }
+    )
+  })
+
   it('keeps private functions in their defining helper module', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],

@@ -554,6 +554,7 @@ const pythonConsoleControlDiagnostic = (
         children.length !== 2 ||
         children[0]?.type !== 'Module' ||
         children[1]?.type !== 'ExceptHandler' ||
+        children[1].target ||
         children[1].test?.type !== 'Name' ||
         children[1].test.id !== 'ImportError' ||
         imports.has('ImportError') ||
@@ -1581,24 +1582,30 @@ const convertStmt = (node: Node): PyNode | undefined => {
     }
     case 'block':
       return locate(node, py('Module', { body: convertBlock(node) }, ['body']))
-    case 'except_clause':
+    case 'except_clause': {
+      const value = fieldChild(node, 'value')
+      const alias = value?.type === 'as_pattern' ? fieldChild(value, 'alias') : null
+      const target = alias?.namedChildren[0] ?? alias
+      const exception = alias
+        ? value?.namedChildren.find((child) => child.type !== 'as_pattern_target')
+        : value
       return locate(
         node,
         py(
           'ExceptHandler',
           {
-            test: fieldChild(node, 'value')
-              ? convertExpr(fieldChild(node, 'value')!, 'Load')
-              : undefined,
+            test: exception ? convertExpr(exception, 'Load') : undefined,
+            target: target ? convertPattern(target, 'Store') : undefined,
             body: convertBlock(
               fieldChild(node, 'body') ??
                 node.namedChildren.find((child) => child.type === 'block') ??
                 null
             )
           },
-          ['test', 'body']
+          ['test', 'target', 'body']
         )
       )
+    }
     case 'try_statement':
     case 'match_statement':
     case 'async_for_statement':
@@ -7047,6 +7054,8 @@ const analyzePythonFileAccessTree = (
       // Definition bodies have their own namespace; control-flow blocks do not.
       if (['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(node.type))
         return node.name ? [node.name] : []
+      // Capture patterns are not modeled as stores in the converted match tree.
+      if (node.type === 'Match') return [...exports]
       if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del'))
         return node.id ? [node.id] : []
       if (node.type === 'Import')
@@ -7372,6 +7381,14 @@ const analyzePythonFileAccessTree = (
   }
 
   const invokeHelper = (helper: HelperFunction, call: PyNode): void => {
+    // Replay restores lexical state after each invocation. Cross-scope writes and
+    // match captures cannot safely reuse that state, including on later calls.
+    if (walkPy(helper.module).some((node) => ['Global', 'Nonlocal', 'Match'].includes(node.type))) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     const nestedInvocation = helperScopeDepth > 0
     const preserveCallerScope = nestedInvocation && !helper.topLevel
     const fnArgs = helper.function.args as PyArguments | undefined
@@ -8811,6 +8828,21 @@ const analyzePythonFileAccessTree = (
       conditionalDepth += 1
       pyChildren(node).forEach((child) => visit(child))
       conditionalDepth -= 1
+      return
+    }
+    if (node.type === 'ExceptHandler') {
+      if (node.test) visit(node.test)
+      for (const name of loopTargetNames(node.target)) {
+        invalidateStaticValue(name)
+        shadowedHelperNames.add(name)
+        shadowedStaticCalls.add(name)
+        importedNames.delete(name)
+        scientificObjectTypes.delete(name)
+        inMemoryInputs.delete(name)
+        fileConnections.delete(name)
+        archiveNames.delete(name)
+      }
+      for (const statement of Array.isArray(node.body) ? node.body : []) visit(statement)
       return
     }
     if (node.type === 'With') {
