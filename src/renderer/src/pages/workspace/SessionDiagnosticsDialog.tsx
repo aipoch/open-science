@@ -179,13 +179,10 @@ export const SessionDiagnosticsDialog = ({
           onInteractOutside={(event) => event.preventDefault()}
         >
           <div className={`${dialogHeaderClassName} flex-col items-start`}>
-            <Dialog.Title className={dialogTitleClassName}>{t('Export diagnostics')}</Dialog.Title>
-            <div className="flex w-full items-start gap-2">
-              <Dialog.Description className={`${dialogDescriptionClassName} min-w-0 flex-1`}>
-                {t(
-                  'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM.'
-                )}
-              </Dialog.Description>
+            <div className="flex w-full items-center justify-between gap-3">
+              <Dialog.Title className={dialogTitleClassName}>
+                {t('Export diagnostics')}
+              </Dialog.Title>
               <FieldHelp
                 content={t(
                   'The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.'
@@ -193,6 +190,11 @@ export const SessionDiagnosticsDialog = ({
                 contentClassName="max-w-[320px]"
               />
             </div>
+            <Dialog.Description className={dialogDescriptionClassName}>
+              {t(
+                'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM.'
+              )}
+            </Dialog.Description>
           </div>
           <div className={`${dialogBodyClassName} min-h-0 overflow-auto`}>
             {busy && (
