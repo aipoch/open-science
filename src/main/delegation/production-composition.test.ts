@@ -746,7 +746,6 @@ describe('production delegated-work composition', () => {
   })
 
   it('batches three staggered children without overlapping Session wake continuations', async () => {
-    vi.useFakeTimers()
     root = await mkdtemp(join(tmpdir(), 'delegated-production-staggered-wake-'))
     const dispatch = vi.fn(async (request: DelegationSettlementDispatch) => {
       void request
@@ -771,8 +770,11 @@ describe('production delegated-work composition', () => {
       ],
       { wait: false }
     )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(3)
+    // Child admission prepares real filesystem workspaces; its deadline is not the
+    // settlement debounce under test. Keep real timers until all children have started.
+    await expect.poll(() => harness.execution.controls(), { timeout: 10_000 }).toHaveLength(3)
     for (const { attemptId } of delegated.children) harness.execution.control(attemptId).accept()
+    vi.useFakeTimers()
     await harness.composition.root.rootTurnEnded?.({
       sessionId: harness.session.id,
       originatingPromptId: harness.caller.originMessageId,

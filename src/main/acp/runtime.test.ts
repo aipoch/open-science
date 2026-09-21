@@ -1909,7 +1909,6 @@ describe('ACP runtime migration write-gate', () => {
 describe('unattended permission prompt ownership', () => {
   it('declines app-owned questions without creating a durable user-choice wait', async () => {
     const process = new FakeAgentProcess()
-    let runtime!: AcpRuntime
     let sessionId = ''
     let result: unknown
     startFakeAgent(process, ['unattended-question'], {
@@ -1922,7 +1921,7 @@ describe('unattended permission prompt ownership', () => {
         })
       }
     })
-    runtime = new AcpRuntime({
+    const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process)
