@@ -6,6 +6,7 @@ import { Checkbox } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { FieldHelp } from '@/components/FieldHelp'
 import { formatByteSize } from '@/lib/utils'
 import {
   dialogOverlayClassName,
@@ -179,11 +180,19 @@ export const SessionDiagnosticsDialog = ({
         >
           <div className={`${dialogHeaderClassName} flex-col items-start`}>
             <Dialog.Title className={dialogTitleClassName}>{t('Export diagnostics')}</Dialog.Title>
-            <Dialog.Description className={dialogDescriptionClassName}>
-              {t(
-                'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.'
-              )}
-            </Dialog.Description>
+            <div className="flex w-full items-start gap-2">
+              <Dialog.Description className={`${dialogDescriptionClassName} min-w-0 flex-1`}>
+                {t(
+                  'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM.'
+                )}
+              </Dialog.Description>
+              <FieldHelp
+                content={t(
+                  'The archive always includes a manifest and export log; missing sources do not stop the export. Damaged or large files may include only a summary. Include screenshots when reporting an issue to developers.'
+                )}
+                contentClassName="max-w-[320px]"
+              />
+            </div>
           </div>
           <div className={`${dialogBodyClassName} min-h-0 overflow-auto`}>
             {busy && (
