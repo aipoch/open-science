@@ -6101,6 +6101,26 @@ describe('ConversationPanel notebook bar', () => {
     expect(container.querySelector('[data-testid="background-tasks-chip"]')).toBeNull()
   })
 
+  it('keeps unavailable Specialist guidance above the joined Notebook and composer dock', () => {
+    renderPanel({
+      view: { activeSession: { ...session, specialistId: 'deleted-specialist' } },
+      sessionTools: { notebookReference },
+      conversation: { availability: { submit: false } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+
+    const notice = container.querySelector('[data-testid="specialist-unavailable-notice"]')!
+    const notebookBar = container.querySelector('[aria-label="Open notebook"]')!.parentElement!
+    expect(
+      notice.compareDocumentPosition(notebookBar) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(notebookBar.nextElementSibling?.contains(getComposerForm())).toBe(true)
+    expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(true)
+  })
+
   it('places the queue disclosure at the right edge of the Notebook bar', () => {
     renderPanel({
       view: { activeSession: session },
