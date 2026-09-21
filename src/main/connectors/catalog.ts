@@ -20,16 +20,6 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
-    id: 'zenodo',
-    displayName: 'Zenodo',
-    description: 'Public research records, versions and file metadata from Zenodo.',
-    useWhen:
-      'Use when discovering datasets, software or publications deposited in Zenodo, inspecting record and concept DOIs, or listing file names, sizes, checksums and download links for a record. Searches fetch one page of public metadata; file access may be restricted. No uploads or file downloads.',
-    sources: ['Zenodo'],
-    termsUrl: 'https://about.zenodo.org/terms/',
-    requiresNcbi: false
-  },
-  {
     id: 'chemistry',
     displayName: 'Chemistry',
     description: 'Small-molecule chemistry via PubChem, ChEBI, Rhea and BindingDB.',
@@ -291,6 +281,16 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use when you need purchasable small molecules from ZINC22 — look up compounds by ZINC id, search by SMILES (exact or analog/similarity), resolve vendor catalog codes, draw a random compound sample, or locate docking-ready 3D structures. Sourced from ZINC22 / CartBlanche22.',
     sources: ['ZINC'],
     termsUrl: 'https://zinc.docking.org/',
+    requiresNcbi: false
+  },
+  {
+    id: 'zenodo',
+    displayName: 'Zenodo',
+    description: 'Public research records, versions and file metadata from Zenodo.',
+    useWhen:
+      'Use when discovering datasets, software or publications deposited in Zenodo, inspecting record and concept DOIs, or listing file names, sizes, checksums and download links for a record. Searches fetch one page of public metadata; file access may be restricted. No uploads or file downloads.',
+    sources: ['Zenodo'],
+    termsUrl: 'https://about.zenodo.org/terms/',
     requiresNcbi: false
   }
 ]
