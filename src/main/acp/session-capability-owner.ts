@@ -469,6 +469,10 @@ export class AcpSessionCapabilityOwner {
       bridgeMcpNamespaces: built.bridgeMcpNamespaces ?? [],
       registerBridgeMcpSession: (appSessionId: string, providerSessionId: string): void => {
         if (!request.bridgeMcpAliasesEnabled) return
+        const previousProviderSessionId = this.bridgeMcpSessionKeys.get(appSessionId)
+        if (previousProviderSessionId && previousProviderSessionId !== providerSessionId) {
+          this.options.unregisterBridgeMcpSession?.(previousProviderSessionId)
+        }
         bridgeMcpSessionKey = providerSessionId
         this.options.registerBridgeMcpSession?.(
           providerSessionId,
@@ -964,6 +968,7 @@ export class AcpSessionCapabilityOwner {
                 acquirePdf: Boolean(libraryHandler?.acquirePdf)
               }
             : false,
+          skillImport: capabilities.includes('skill-import'),
           literature: literatureAllowed ? { elements: Boolean(literatureHandler?.elements) } : false
         })
       : []
@@ -971,6 +976,9 @@ export class AcpSessionCapabilityOwner {
       ? [
           namespaceFor(ARTIFACT_MCP_SERVER_NAME),
           namespaceFor(NOTEBOOK_MCP_SERVER_NAME),
+          ...(capabilities.includes('skill-import')
+            ? [namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME)]
+            : []),
           namespaceFor(LITERATURE_LIBRARY_MCP_SERVER_NAME),
           namespaceFor(LITERATURE_MCP_SERVER_NAME)
         ]

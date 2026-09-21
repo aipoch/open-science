@@ -22,6 +22,12 @@ import {
   LITERATURE_MCP_SERVER_NAME,
   LITERATURE_READ_DOCUMENT_TOOL_NAME
 } from '../literature/mcp-server'
+import {
+  REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
+  REQUEST_SKILL_IMPORT_TOOL_NAME,
+  SKILL_IMPORT_MCP_SERVER_NAME
+} from '../../shared/skill-import'
+import { requestSkillImportToolSchema } from '../skills/mcp-server'
 import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
 import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
 
@@ -42,6 +48,15 @@ const tool = (
   description,
   parameters: jsonSchema(schema)
 })
+
+const SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  tool(
+    SKILL_IMPORT_MCP_SERVER_NAME,
+    REQUEST_SKILL_IMPORT_TOOL_NAME,
+    REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
+    z.object(requestSkillImportToolSchema)
+  )
+]
 
 const libraryScope = z.enum(LITERATURE_LIBRARY_SCOPES)
 const itemId = z.string().trim().min(1).max(512)
@@ -221,6 +236,7 @@ const notebookTools = (options: NotebookToolEnvironmentOptions): ResponsesBridge
 
 export const createCodexBridgeMcpTools = (options: {
   notebook?: NotebookToolEnvironmentOptions
+  skillImport?: boolean
   library?:
     | boolean
     | {
@@ -235,6 +251,7 @@ export const createCodexBridgeMcpTools = (options: {
   const tools = [
     ...(options.artifacts ? ARTIFACT_TOOLS : []),
     ...(options.notebook ? notebookTools(options.notebook) : []),
+    ...(options.skillImport ? SKILL_IMPORT_TOOLS : []),
     ...(options.library
       ? libraryTools(typeof options.library === 'object' ? options.library : {})
       : []),
@@ -253,4 +270,11 @@ export const codexBridgeStaticMcpTools = (): ResponsesBridgeNamespacedTool[] =>
     artifacts: true
   })
 
-export { ARTIFACT_TOOLS, LIBRARY_CORE_TOOLS, libraryTools, literatureTools, notebookTools }
+export {
+  ARTIFACT_TOOLS,
+  LIBRARY_CORE_TOOLS,
+  SKILL_IMPORT_TOOLS,
+  libraryTools,
+  literatureTools,
+  notebookTools
+}
