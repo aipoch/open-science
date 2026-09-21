@@ -166,6 +166,21 @@ test('changes branch permissions before the first follow-up without changing sou
     exact: true
   })
   await expect(divider).toBeVisible()
+  // Isolated OpenCode Sessions start a new process. Wait for the temporary branch identity to bind
+  // before opening a menu that is remounted when the durable Session id replaces it.
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async (sourceId) =>
+          (await window.api.sessions.loadAll()).sessions.some(
+            (session) =>
+              session.branchSource?.sessionId === sourceId &&
+              session.pendingHistoryReplay?.kind === 'all'
+          ),
+        source.id
+      )
+    )
+    .toBe(true)
 
   await page.getByTestId('composer-controls-trigger').click()
   await page.getByRole('menuitem', { name: /^Permission mode/ }).hover()
