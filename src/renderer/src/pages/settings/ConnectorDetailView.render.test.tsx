@@ -124,6 +124,15 @@ const blockSegment = (method: string): HTMLButtonElement | null => {
 }
 
 describe('ConnectorDetailView', () => {
+  it('labels the linked users as Connector availability', async () => {
+    await act(async () => {
+      root.render(<ConnectorDetailView id="ensembl" onOpenSpecialist={vi.fn()} />)
+    })
+    const trigger = container.querySelector('[data-slot="skill-usage-agents-trigger"]')
+    expect(trigger?.getAttribute('aria-label')).toContain('Connector')
+    expect(trigger?.getAttribute('data-resource-kind')).toBe('connector')
+  })
+
   it('shows translated descriptions for the new DOI tools while retaining exact permission identities', async () => {
     const method = 'crossref_get_updates'
     const literature: ConnectorDetail = {

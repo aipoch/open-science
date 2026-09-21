@@ -208,7 +208,7 @@ test('delete review accepts keyboard focus', async ({ page }) => {
   const trigger = page.getByRole('button', { name: 'Delete selected' })
   await trigger.focus()
   await page.keyboard.press('Enter')
-  await expect(page.getByRole('button', { name: 'Confirm deletion' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Confirm deletion 1', exact: true })).toBeVisible()
   expect(
     await page.evaluate(
       () => !!document.activeElement?.closest('[data-slot="batch-manage-review"]')

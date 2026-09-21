@@ -140,7 +140,7 @@ export const ResourceSelectionBar = ({
       data-slot="resource-selection-bar"
       role="region"
       aria-label={t('Selected resources')}
-      className="sticky bottom-0 z-30 -mx-5 mt-4 border-t border-border bg-card px-5 py-3 shadow-lg"
+      className="sticky bottom-0 z-30 -mx-5 mt-4 border-t border-border bg-card px-5 py-3 shadow-sm"
     >
       {selection.error ? (
         <ErrorNotice
@@ -169,11 +169,7 @@ export const ResourceSelectionBar = ({
               ))}
             </ul>
           }
-          summary={
-            <span>
-              {review.map((resource) => resource.displayName ?? resource.name).join(', ')}
-            </span>
-          }
+          summary={<span>{t('{{count}} selected', { count: review.length })}</span>}
           actions={
             <Button
               variant="destructive"
@@ -181,7 +177,7 @@ export const ResourceSelectionBar = ({
               disabled={busy}
               onClick={() => void selection.deleteSelected()}
             >
-              {t('Confirm deletion')}
+              {t('Confirm deletion')} <span className="tabular-nums">{review.length}</span>
             </Button>
           }
           onCancel={selection.cancelReview}
@@ -216,7 +212,7 @@ export const ResourceSelectionBar = ({
                 <PopoverContent
                   align="end"
                   side="top"
-                  className="flex w-72 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] flex-col gap-2 rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+                  className="flex w-72 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] flex-col gap-1 overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
                 >
                   {showSearch ? (
                     <div className="shrink-0">
@@ -239,7 +235,7 @@ export const ResourceSelectionBar = ({
                             setOpen(false)
                             void selection.assign(item.id)
                           }}
-                          className="flex w-full items-center gap-2 rounded-lg p-2 text-left text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+                          className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
                         >
                           <SpecialistAvatar
                             iconKey={item.iconKey}
@@ -321,16 +317,23 @@ export const ResourceSelectionBar = ({
               ) : null}
             </>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            disabled={busy}
-            aria-label={t('Clear selection')}
-            ref={clearTrigger}
-            onClick={selection.clear}
-          >
-            <X className="size-4" aria-hidden="true" />
-          </Button>
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={busy}
+                  aria-label={t('Clear selection')}
+                  ref={clearTrigger}
+                  onClick={selection.clear}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t('Clear selection')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       )}
     </div>

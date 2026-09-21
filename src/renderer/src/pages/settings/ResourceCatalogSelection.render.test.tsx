@@ -167,7 +167,7 @@ describe('category resource selection', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Personal skill' }))
     fireEvent.click(screen.getByRole('button', { name: /Delete selected/ }))
     expect(remove).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion 1' }))
     await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith('personal'))
   })
   it('rechecks references for each deletion after earlier asynchronous cleanup', async () => {
@@ -193,7 +193,7 @@ describe('category resource selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all in personal' }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm deletion \d+$/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
     expect(remove).toHaveBeenCalledExactlyOnceWith('personal')
     expect(
@@ -209,7 +209,7 @@ describe('category resource selection', () => {
     fireEvent.click(trigger)
     expect(document.activeElement?.closest('[data-slot="batch-manage-review"]')).not.toBeNull()
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
-    expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Confirm deletion \d+$/ })).toBeNull()
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete selected' }))
   })
   it('restores focus to a live control after deleting the entire selection', async () => {
@@ -217,9 +217,9 @@ describe('category resource selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm deletion \d+$/ }))
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /^Confirm deletion \d+$/ })).toBeNull()
     )
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Clear selection' }))
   })
@@ -229,7 +229,7 @@ describe('category resource selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm deletion \d+$/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Clear selection' }))
   })
@@ -245,13 +245,13 @@ describe('category resource selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm deletion \d+$/ }))
     await waitFor(() => expect(finish).toBeTypeOf('function'))
     fireEvent.keyDown(screen.getByRole('heading', { name: 'Delete selected resources?' }), {
       key: 'Escape'
     })
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Cancel' }).disabled).toBe(true)
     await act(async () => finish())
-    expect(screen.queryByRole('button', { name: 'Confirm deletion' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Confirm deletion \d+$/ })).toBeNull()
   })
 })

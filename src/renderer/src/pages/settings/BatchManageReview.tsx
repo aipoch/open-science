@@ -48,7 +48,7 @@ export function BatchManageReview({
       <div className="text-xs leading-5 text-muted-foreground">{description}</div>
       <div className="space-y-1">{summary}</div>
       <details className="group">
-        <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-sm text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+        <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md text-xs font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
           {t('Details')}
           <ChevronDown aria-hidden="true" className="size-4 group-open:rotate-180" />
         </summary>

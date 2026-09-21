@@ -431,7 +431,7 @@ export function ConnectorsPanel({
             type="button"
             aria-expanded={expanded}
             onClick={() => setCollapsed((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }))}
-            className="flex w-full flex-col items-start gap-0.5 text-left"
+            className="flex w-full flex-col items-start gap-0.5 text-left rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
               {label}
@@ -487,7 +487,7 @@ export function ConnectorsPanel({
                           return
                         onNavigate({ kind: 'detail', id: connector.id })
                       }}
-                      className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                      className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 hover:bg-muted/50 focus-within:bg-muted/50"
                     >
                       <ConnectorGlyph size={24} />
                       <div className="min-w-0 flex-1">
@@ -559,7 +559,7 @@ export function ConnectorsPanel({
                             name: connector.displayName
                           })}
                           onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                          className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
+                          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
                         >
                           <ChevronRight className="size-4" aria-hidden="true" />
                         </button>
@@ -771,7 +771,7 @@ export function ConnectorsPanel({
                 type="button"
                 aria-expanded={customExpanded}
                 onClick={() => setCollapsed((prev) => ({ ...prev, custom: !prev.custom }))}
-                className="flex w-full flex-col items-start gap-0.5 text-left"
+                className="flex w-full flex-col items-start gap-0.5 text-left rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
                   {t('Custom')}
@@ -827,7 +827,7 @@ export function ConnectorsPanel({
                               return
                             onNavigate({ kind: 'edit', id: server.id })
                           }}
-                          className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                          className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 hover:bg-muted/50 focus-within:bg-muted/50"
                         >
                           <ConnectorGlyph size={24} />
                           <div className="min-w-0 flex-1">
@@ -1001,7 +1001,7 @@ export function ConnectorsPanel({
                                 name: server.displayName
                               })}
                               onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                              className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
+                              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
                             >
                               <ChevronRight className="size-4" aria-hidden="true" />
                             </button>

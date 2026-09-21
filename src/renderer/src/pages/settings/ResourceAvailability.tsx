@@ -43,6 +43,7 @@ export const ResourceAvailability = ({
         <div className="mt-2 flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{t('Used by')}</span>
           <SkillUsageAgents
+            resourceKind={resource.kind === 'connector' ? 'Connector' : 'Skill'}
             mainEnabled={resource.mainEnabled}
             usages={usages}
             onOpenSpecialist={onOpenSpecialist}

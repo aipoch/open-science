@@ -107,12 +107,17 @@ export const ResourceAssignmentControls = ({
       <PopoverContent
         align="end"
         aria-label={t('Manage access for {{name}}', { name: label })}
-        className="w-80 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+        className="w-80 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
       >
-        <div className="flex items-center gap-2 rounded-lg pr-1 pl-3 py-3">
-          <Bot className="size-5 shrink-0 text-foreground/80" aria-hidden="true" />
+        <div className="flex min-h-8 items-center gap-2 rounded-lg px-2 py-1.5">
+          <span
+            className="flex size-5 shrink-0 items-center justify-center text-muted-foreground"
+            aria-hidden="true"
+          >
+            <Bot className="size-4" />
+          </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm">{t('Main Agent')}</p>
+            <p className="text-sm font-medium">{t('Main Agent')}</p>
             {resource.mainRequired ? (
               <p className="text-xs text-muted-foreground">{t('Always enabled')}</p>
             ) : mainBlocked ? (
@@ -137,24 +142,28 @@ export const ResourceAssignmentControls = ({
           )}
         </div>
         {/* Association switches do not change whether a Specialist itself is enabled. */}
-        <div className="mt-2 border-t border-border pt-3">
-          <div className="mb-3 px-3">
-            <p className="text-sm font-medium">{t('Specialist associations')}</p>
+        <div className="mt-1 border-t border-border pt-1">
+          <div className="px-2 pt-1 pb-0.5">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t('Specialist associations')}
+            </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {t('Choose which Specialists can use this resource.')}
             </p>
           </div>
           {showSearch ? (
-            <SettingsSearchInput
-              aria-label={t('Search Specialists')}
-              placeholder={t('Search Specialists')}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
+            <div className="mt-1">
+              <SettingsSearchInput
+                aria-label={t('Search Specialists')}
+                placeholder={t('Search Specialists')}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
           ) : null}
-          <div className="mt-2 max-h-56 overflow-y-auto overscroll-contain" aria-busy={busy}>
+          <div className="mt-1 max-h-56 overflow-y-auto overscroll-contain" aria-busy={busy}>
             {visible.map((item) => (
-              <div key={item.id} className="flex items-center gap-2 rounded-lg px-1 py-1">
+              <div key={item.id} className="flex items-center gap-2 pr-2">
                 {/* Navigation and assignment are sibling controls, so opening details never toggles access. */}
                 <button
                   type="button"
@@ -162,7 +171,7 @@ export const ResourceAssignmentControls = ({
                   aria-label={t('Open {{name}} in Specialist Settings', {
                     name: item.displayName?.trim() || item.name
                   })}
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+                  className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none"
                   onClick={() => {
                     setOpen(false)
                     onOpenSpecialist?.({
