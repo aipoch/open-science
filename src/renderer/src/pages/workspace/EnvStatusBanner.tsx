@@ -1,4 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
@@ -20,7 +21,10 @@ const EnvStatusBanner = ({
   onOpenRuntimes?: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
+  const [dismissedUi, setDismissedUi] = useState<ProvisionUiState>()
+  const show =
+    ((ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error') &&
+    dismissedUi !== ui
   const readyAnnouncement = (
     <span
       className="sr-only"
@@ -69,6 +73,11 @@ const EnvStatusBanner = ({
                 : ui.message
             }
             className="[&_p]:max-h-28 [&_p]:overflow-y-auto"
+            dismissButton={{
+              label: t('Close'),
+              onClick: () => setDismissedUi(ui),
+              testId: 'env-status-banner-dismiss'
+            }}
             primaryButton={
               onAction
                 ? {

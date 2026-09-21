@@ -54,7 +54,7 @@ describe('EnvStatusBanner', () => {
     const banner = container.querySelector('[role="alert"]')
     expect(banner?.textContent).toContain('Runtime recovery blocked')
     expect(banner?.textContent).not.toContain(diagnostic)
-    const action = banner?.querySelector('button')
+    const action = banner?.querySelector('[data-testid="env-status-banner-retry"]')
     expect(action?.textContent).toBe('Open Settings')
     act(() => action?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(openedSettings).toBe(1)
@@ -73,7 +73,9 @@ describe('EnvStatusBanner', () => {
         />
       )
     )
-    const button = container.querySelector('button')
+    const button = container.querySelector(
+      '[data-testid="env-status-banner-retry"]'
+    ) as HTMLButtonElement
     expect(button?.textContent).toBe('Recheck')
     act(() => button?.click())
     expect(rechecked).toBe(1)
@@ -176,6 +178,26 @@ describe('EnvStatusBanner', () => {
     expect(button).not.toBeNull()
     act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(retried).toBe(1)
+  })
+
+  it('dismisses only the current error projection and shows a later failure', () => {
+    const currentFailure = { kind: 'error', message: 'offline' } as const
+    act(() => root.render(<EnvStatusBanner ui={currentFailure} onRetry={() => {}} />))
+
+    const dismiss = container.querySelector(
+      '[data-testid="env-status-banner-dismiss"]'
+    ) as HTMLButtonElement
+    expect(dismiss.getAttribute('aria-label')).toBe('Close')
+    act(() => dismiss.click())
+    expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
+
+    act(() => root.render(<EnvStatusBanner ui={currentFailure} onRetry={() => {}} />))
+    expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
+
+    act(() =>
+      root.render(<EnvStatusBanner ui={{ kind: 'error', message: 'offline' }} onRetry={() => {}} />)
+    )
+    expect(container.querySelector('[data-testid="env-status-banner"]')).not.toBeNull()
   })
 
   it('bounds a long error reason in a scrollable box and uses the dialog card chrome, keeping the full text readable', () => {
