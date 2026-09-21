@@ -413,7 +413,9 @@ jobs:
           echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" \
             | sha256sum --check --strict
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -color
+          # Keep this gate scoped to workflow YAML, expressions, and action schemas. Optional
+          # ShellCheck/Pyflakes integrations vary with runner images and have separate baselines.
+          "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
       - name: Audit GitHub Actions security with zizmor
         continue-on-error: true
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4

@@ -957,6 +957,7 @@ describe('PR Gate workflow', () => {
     expect(actionlint?.run).toContain(
       '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
     )
+    expect(actionlint?.run).toContain('-shellcheck= -pyflakes=')
     expect(zizmor).toMatchObject({
       'continue-on-error': true,
       uses: 'zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482',
