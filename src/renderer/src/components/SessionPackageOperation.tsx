@@ -616,22 +616,6 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                         <p className="mt-2">{t('Last stage: {{stage}}', { stage: phase })}</p>
                       </details>
                     ) : null}
-                    {operation.state === 'failed' &&
-                    !operation.cleanupPending &&
-                    operation.kind === 'import' &&
-                    operation.importRequestId ? (
-                      <div className="basis-full pl-8">
-                        <Button
-                          variant="link"
-                          size="sm"
-                          className="h-auto min-h-7 max-w-full whitespace-normal px-0 text-left"
-                          disabled={retrying}
-                          onClick={() => void retry(true)}
-                        >
-                          {t('Choose another package')}
-                        </Button>
-                      </div>
-                    ) : null}
                   </div>
                 ) : null}
                 {operation.cleanupPending && !active ? (
@@ -684,6 +668,20 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             )}
             {!selecting ? (
               <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
+                {(error || operation.error) &&
+                operation.state === 'failed' &&
+                !operation.cleanupPending &&
+                operation.kind === 'import' &&
+                operation.importRequestId ? (
+                  <Button
+                    variant="outline"
+                    className="mr-auto h-auto min-h-8 max-w-full whitespace-normal text-left max-sm:w-full"
+                    disabled={retrying}
+                    onClick={() => void retry(true)}
+                  >
+                    {t('Choose another package')}
+                  </Button>
+                ) : null}
                 {active ? (
                   <Button
                     variant="ghost"
