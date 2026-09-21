@@ -106,6 +106,55 @@ describe('PRIDE project file input contract', () => {
   })
 })
 
+describe('ENA discovery input contracts', () => {
+  const query = getDescriptor('omics-archives', 'ena_query_runs')!
+
+  it.each(['a', '𠮷', '😀'])('counts keyword %s by Unicode code points', (character) => {
+    expect(() => validateToolArguments(query, { keyword: character.repeat(200) })).not.toThrow()
+    expect(() => validateToolArguments(query, { keyword: character.repeat(201) })).toThrow(
+      /invalid_arguments/
+    )
+  })
+
+  it.each(['   ', '\u00a0', '\u3000'])(
+    'rejects whitespace-only keyword %j at the Schema boundary',
+    (keyword) => {
+      for (const args of [{ keyword }, { tax_id: 6239, keyword }]) {
+        expect(() => validateToolArguments(query, args)).toThrow(/invalid_arguments/)
+      }
+    }
+  )
+
+  it('accepts surrounding whitespace without mutating keyword arguments', () => {
+    const args = { keyword: '\u3000 transcriptome \u00a0' }
+    expect(() => validateToolArguments(query, args)).not.toThrow()
+    expect(args.keyword).toBe('\u3000 transcriptome \u00a0')
+  })
+
+  it('requires a structured discovery filter and rejects raw queries and pagination', () => {
+    for (const args of [{}, { query: 'tax_tree(6239)' }, { tax_id: 6239, offset: 1 }]) {
+      expect(() => validateToolArguments(query, args)).toThrow(/invalid_arguments/)
+    }
+    expect(() =>
+      validateToolArguments(query, { tax_id: 6239, library_strategy: 'RNA-Seq' })
+    ).not.toThrow()
+  })
+
+  it('keeps accession lookup, generated FASTQ and submitted files as distinct contracts', () => {
+    const lookup = getDescriptor('omics-archives', 'ena_search_runs')!
+    expect(() => validateToolArguments(lookup, { keyword: 'worm' })).toThrow(/invalid_arguments/)
+    for (const id of ['ena_get_run_files', 'ena_get_submitted_files']) {
+      const descriptor = getDescriptor('omics-archives', id)!
+      expect(() =>
+        validateToolArguments(descriptor, { run_accession: 'ERR10015065' })
+      ).not.toThrow()
+      expect(() => validateToolArguments(descriptor, { accession: 'ERR10015065' })).toThrow(
+        /invalid_arguments/
+      )
+    }
+  })
+})
+
 // Authored examples are part of the agent-facing contract, not illustrative pseudocode.
 describe('bundled tool contracts', () => {
   const tools = ALL_CONNECTOR_IDS.flatMap(getConnectorTools)

@@ -61,6 +61,18 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
+  it('documents ENA discovery limits and original submitted file locations', () => {
+    const md = renderSkillDoc('omics-archives')
+    expect(md).toContain('### ena_query_runs')
+    expect(md).toContain('### ena_get_submitted_files')
+    expect(md).toContain('Discover ENA sequencing runs by taxonomy')
+    expect(md).toContain('including descendant taxa')
+    expect(md).toContain('not the host of a microbiome sample')
+    expect(md).toContain('repeated calls are not pagination')
+    expect(md).toContain('filenames may contain literal #')
+    expect(md).toContain('A CRAM may require its matching reference')
+  })
+
   it('exposes the PRIDE paged file contract in the generated connector skill', () => {
     const md = renderSkillDoc('omics-archives')
     expect(md).toContain('### pride_get_project_files')
