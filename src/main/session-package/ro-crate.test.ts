@@ -240,20 +240,6 @@ describe('Session package RO-Crate projection', () => {
     )
   })
 
-  it('rejects Artifact evidence that disagrees with the persisted version row', async () => {
-    const { records, manifest } = fixture()
-    const row = records.tables.ArtifactVersion[0]!
-    row.evidenceJson = JSON.stringify({
-      ...JSON.parse(String(row.evidenceJson)),
-      filename: 'different.csv'
-    })
-    row.evidenceChecksum = sha256(row.evidenceJson)
-
-    await expect(buildSessionPackageRoCrateMetadata(manifest, records)).rejects.toThrow(
-      'RO-Crate Artifact evidence filename mismatch'
-    )
-  })
-
   it.each(['checksum', 'sizeBytes'] as const)('rejects an inventory %s mismatch', async (field) => {
     const { records, manifest } = fixture()
     const entry = manifest.inventory.find((entry) => entry.storageKey === 'artifacts/p/s/v1')!

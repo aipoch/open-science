@@ -37,26 +37,6 @@ const entityStrings = (entity: RoCrateEntity | undefined, key: string): string[]
     : []
 }
 
-const assertArtifactEvidenceIdentity = (
-  row: NativeRow,
-  evidence: ArtifactVersionEvidence
-): void => {
-  const fields: ReadonlyArray<[string, unknown, unknown]> = [
-    ['version ID', row.id, evidence.version_id],
-    ['version number', row.versionNumber, evidence.version_number],
-    ['filename', row.filename, evidence.filename],
-    ['content type', row.contentType, evidence.content_type],
-    ['size', row.sizeBytes, evidence.size_bytes],
-    ['checksum', row.checksum, evidence.checksum],
-    ['created at', row.createdAt, evidence.created_at]
-  ]
-  for (const [label, persisted, captured] of fields) {
-    if (persisted === undefined || persisted === null || captured === undefined) continue
-    if (String(persisted) !== String(captured))
-      throw new Error(`RO-Crate Artifact evidence ${label} mismatch.`)
-  }
-}
-
 const mergeFileIdentity = (
   existing: RoCrateEntity | undefined,
   filename: string,
@@ -191,7 +171,6 @@ export const buildSessionPackageRoCrateMetadata = async (
     if (sha256(row.evidenceJson) !== row.evidenceChecksum)
       throw new Error('RO-Crate Artifact evidence checksum mismatch.')
     const evidence: ArtifactVersionEvidence = JSON.parse(row.evidenceJson)
-    assertArtifactEvidenceIdentity(row, evidence)
     const execution =
       typeof row.executionSnapshotJson === 'string'
         ? parseArtifactExecutionSnapshot(row.executionSnapshotJson)
