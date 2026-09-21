@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -179,4 +179,26 @@ it('rejects missing metadata and undeclared metadata while retaining strict arch
   await expect(target.service.inspect(undeclared)).rejects.toThrow(
     'RO-Crate package capability declaration'
   )
+})
+
+it('retains legacy timestamp import compatibility and reports an explicit error when forwarding an invalid date', async () => {
+  const target = await setup()
+  const archive = fileURLToPath(
+    new URL('./fixtures/session-package-v0.31.1-minimal.science', import.meta.url)
+  )
+  const directory = join(target.storageRoot, 'legacy-invalid-date')
+  const manifest = await readPackageArchive(archive, directory)
+  manifest.createdAt = 8_640_000_000_000_001
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+  const legacy = join(target.storageRoot, 'legacy.science')
+  await writePackageArchive(directory, legacy)
+  const before = await readFile(legacy)
+  const imported = await target.service.importFrom(legacy)
+  const forwarded = join(target.storageRoot, 'forwarded.science')
+  await expect(target.service.exportTo(imported, forwarded)).rejects.toMatchObject({
+    name: 'Error',
+    message: 'Session package creation timestamp cannot be represented in RO-Crate metadata.'
+  })
+  await expect(stat(forwarded)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await readFile(legacy)).toEqual(before)
 })

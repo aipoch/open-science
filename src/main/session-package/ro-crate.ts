@@ -54,6 +54,11 @@ export const buildSessionPackageRoCrateMetadata = async (
   records: PackageRecords,
   signal?: AbortSignal
 ): Promise<RoCrateMetadataDocument> => {
+  const publishedAt = new Date(manifest.createdAt)
+  if (!Number.isFinite(publishedAt.getTime()))
+    throw new Error(
+      'Session package creation timestamp cannot be represented in RO-Crate metadata.'
+    )
   const inventory = manifest.inventory.filter((entry) => entry.path !== PACKAGE_RO_CRATE_METADATA)
   const packagedPaths = new Set(inventory.map((entry) => entry.path))
   const byStorageKey = new Map(
@@ -246,7 +251,7 @@ export const buildSessionPackageRoCrateMetadata = async (
     '@id': './',
     '@type': 'Dataset',
     name: manifest.source.title || manifest.source.projectName,
-    datePublished: new Date(manifest.createdAt).toISOString(),
+    datePublished: publishedAt.toISOString(),
     license: 'License information was not provided. This export grants no additional usage rights.',
     description:
       'Open Science Session research package with captured provenance. Excluded or unavailable files retain references only. Captured evidence does not guarantee deterministic replay.',
