@@ -26,6 +26,60 @@ const reference = (id: string): { '@id': string } => ({ '@id': id })
 const versionId = (id: unknown): string => `urn:open-science:version:${String(id)}`
 const artifactId = (id: unknown): string => `#artifact/${encodeURIComponent(String(id))}`
 
+const sortedUniqueStrings = (values: readonly string[]): string[] =>
+  [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+
+const entityStrings = (entity: RoCrateEntity | undefined, key: string): string[] => {
+  const value = entity?.[key]
+  if (typeof value === 'string') return [value]
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
+}
+
+const assertArtifactEvidenceIdentity = (
+  row: NativeRow,
+  evidence: ArtifactVersionEvidence
+): void => {
+  const fields: ReadonlyArray<[string, unknown, unknown]> = [
+    ['version ID', row.id, evidence.version_id],
+    ['version number', row.versionNumber, evidence.version_number],
+    ['filename', row.filename, evidence.filename],
+    ['content type', row.contentType, evidence.content_type],
+    ['size', row.sizeBytes, evidence.size_bytes],
+    ['checksum', row.checksum, evidence.checksum],
+    ['created at', row.createdAt, evidence.created_at]
+  ]
+  for (const [label, persisted, captured] of fields) {
+    if (persisted === undefined || persisted === null || captured === undefined) continue
+    if (String(persisted) !== String(captured))
+      throw new Error(`RO-Crate Artifact evidence ${label} mismatch.`)
+  }
+}
+
+const mergeFileIdentity = (
+  existing: RoCrateEntity | undefined,
+  filename: string,
+  contentType: string | null
+): { name: string; alternateName?: string[]; encodingFormat?: string | string[] } => {
+  const names = sortedUniqueStrings([
+    ...entityStrings(existing, 'name'),
+    ...entityStrings(existing, 'alternateName'),
+    filename
+  ])
+  const contentTypes = sortedUniqueStrings([
+    ...entityStrings(existing, 'encodingFormat'),
+    ...(contentType ? [contentType] : [])
+  ])
+  return {
+    name: names[0] ?? filename,
+    ...(names.length > 1 ? { alternateName: names.slice(1) } : {}),
+    ...(contentTypes.length
+      ? { encodingFormat: contentTypes.length === 1 ? contentTypes[0] : contentTypes }
+      : {})
+  }
+}
+
 // Only rewrite JSON-LD identities, never code, review prose or captured source text.
 const scopeEntities = (value: unknown, scope: string): unknown => {
   if (Array.isArray(value)) return value.map((item) => scopeEntities(item, scope))
@@ -66,6 +120,15 @@ export const buildSessionPackageRoCrateMetadata = async (
   )
   const excluded = new Set(manifest.excludedFiles.map((entry) => entry.storageKey))
   const versions = [...records.tables.ArtifactVersion, ...records.tables.UploadVersion]
+  const contentSizes = new Map<string, number>()
+  for (const row of versions) {
+    const checksum = String(row.checksum)
+    const size = Number(row.sizeBytes)
+    const previous = contentSizes.get(checksum)
+    if (previous !== undefined && previous !== size)
+      throw new Error('RO-Crate content checksum has conflicting sizes.')
+    contentSizes.set(checksum, size)
+  }
   const packagedDataPaths = new Map<string, string>()
   const omittedDataReasons = new Map<string, string>()
   const entities = new Map<string, RoCrateEntity>()
@@ -95,11 +158,16 @@ export const buildSessionPackageRoCrateMetadata = async (
     }
     const id = entry?.path ?? versionId(row.id)
     const existing = entities.get(id)
+    const fileIdentity = mergeFileIdentity(
+      existing?.identifier ? existing : undefined,
+      String(row.filename),
+      typeof row.contentType === 'string' ? row.contentType : null
+    )
     entities.set(id, {
       ...existing,
       '@id': id,
       '@type': 'File',
-      name: existing?.identifier ? existing.name : String(row.filename),
+      ...fileIdentity,
       identifier: [
         ...new Set([
           ...(Array.isArray(existing?.identifier) ? existing.identifier : []),
@@ -108,7 +176,6 @@ export const buildSessionPackageRoCrateMetadata = async (
       ],
       contentSize: String(row.sizeBytes),
       sha256: row.checksum,
-      ...(row.contentType ? { encodingFormat: row.contentType } : {}),
       description: entry
         ? 'Immutable file bytes included in this package.'
         : `The bytes ${omittedDataReasons.get(String(row.id))}; only their immutable identity and checksum are retained.`
@@ -124,6 +191,7 @@ export const buildSessionPackageRoCrateMetadata = async (
     if (sha256(row.evidenceJson) !== row.evidenceChecksum)
       throw new Error('RO-Crate Artifact evidence checksum mismatch.')
     const evidence: ArtifactVersionEvidence = JSON.parse(row.evidenceJson)
+    assertArtifactEvidenceIdentity(row, evidence)
     const execution =
       typeof row.executionSnapshotJson === 'string'
         ? parseArtifactExecutionSnapshot(row.executionSnapshotJson)
