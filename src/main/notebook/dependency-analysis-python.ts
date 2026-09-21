@@ -7360,9 +7360,45 @@ const analyzePythonFileAccessTree = (
       ...(fnArgs?.kwarg ? [fnArgs.kwarg] : [])
     ]
     const positional = Array.isArray(call.args) ? call.args : []
+    const suppliedKeywords = call.keywords ?? []
+    const positionalOnlyNames = new Set((fnArgs?.posonlyargs ?? []).map(({ arg }) => arg))
+    const keywordNames = suppliedKeywords.map(({ arg }) => arg)
+    const positionalDefaultStart = positionalParameters.length - (fnArgs?.defaults.length ?? 0)
+    const invalidArguments =
+      positional.some((argument) => argument.type === 'Starred') ||
+      suppliedKeywords.some(({ arg }) => !arg) ||
+      new Set(keywordNames).size !== keywordNames.length ||
+      (!fnArgs?.vararg && positional.length > positionalParameters.length) ||
+      suppliedKeywords.some(({ arg }) => {
+        const parameterIndex = positionalParameters.findIndex((parameter) => parameter.arg === arg)
+        if (positionalOnlyNames.has(arg!)) return !fnArgs?.kwarg
+        if (parameterIndex >= 0 && parameterIndex < positional.length) return true
+        return !parameters.some((parameter) => parameter.arg === arg) && !fnArgs?.kwarg
+      }) ||
+      parameters.some((parameter, index) => {
+        const supplied =
+          (index < positionalParameters.length && index < positional.length) ||
+          (!positionalOnlyNames.has(parameter.arg) && keywordNames.includes(parameter.arg))
+        const hasDefault =
+          index < positionalParameters.length
+            ? index >= positionalDefaultStart
+            : Boolean(fnArgs?.kw_defaults[index - positionalParameters.length])
+        return !supplied && !hasDefault
+      })
+    if (invalidArguments) {
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      return
+    }
     const keywords = new Map(
-      (call.keywords ?? [])
-        .filter((keyword) => Boolean(keyword.arg) && isPyNode(keyword.value))
+      suppliedKeywords
+        .filter(
+          (keyword) =>
+            Boolean(keyword.arg) &&
+            !positionalOnlyNames.has(keyword.arg!) &&
+            isPyNode(keyword.value)
+        )
         .map((keyword) => [keyword.arg!, keyword.value as PyNode])
     )
     const parameterValues = new Map<string, string>()
@@ -7370,7 +7406,6 @@ const analyzePythonFileAccessTree = (
       const argument =
         keywords.get(parameter.arg ?? '') ??
         (index < positionalParameters.length ? positional[index] : undefined)
-      const positionalDefaultStart = positionalParameters.length - (fnArgs?.defaults.length ?? 0)
       const defaultValue =
         index < positionalParameters.length
           ? index >= positionalDefaultStart
@@ -8756,6 +8791,11 @@ const analyzePythonFileAccessTree = (
     }
     if (node.type === 'Import') {
       for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
+        if (helperScopeDepth > 0 && PYTHON_LIBRARY_EFFECTS[alias.name]?.kind !== 'module') {
+          unresolvedReads = true
+          unresolvedWrites = true
+          unsupportedExternalState = true
+        }
         const localName = alias.asname || alias.name.split('.')[0] || alias.name
         importedNames.set(localName, alias.asname ? alias.name : localName)
         if (helperFunctions.has(localName)) shadowedHelperNames.add(localName)
@@ -8766,6 +8806,11 @@ const analyzePythonFileAccessTree = (
         shadowedStaticCalls.add(localName)
       }
     } else if (node.type === 'ImportFrom') {
+      if (helperScopeDepth > 0 && PYTHON_LIBRARY_EFFECTS[node.module ?? '']?.kind !== 'module') {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
       for (const alias of (node.names as PyAlias[] | undefined) ?? []) {
         if (alias.name !== '*') {
           const localName = alias.asname || alias.name

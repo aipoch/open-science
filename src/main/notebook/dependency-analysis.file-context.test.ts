@@ -397,6 +397,96 @@ describe('file context after mutable path collections', () => {
     )
   })
 
+  it.each([
+    'import custom_loader',
+    'from custom_loader import value',
+    'import pandas.custom_plugin',
+    'from . import custom_loader',
+    'if enabled:\n    import custom_loader'
+  ])('keeps unknown helper imports partial: %s', async (imports) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `${imports}\ndef read_inputs():\n    return open("input.csv")`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: ['input.csv'],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    ['path', '"a.csv", "b.csv"'],
+    ['path', 'path="a.csv", extra=1'],
+    ['path', '"a.csv", path="b.csv"'],
+    ['path', 'path="a.csv", path="b.csv"'],
+    ['path', ''],
+    ['*, path', '"a.csv"'],
+    ['path, /', 'path="a.csv"'],
+    ['path', '*["a.csv"]'],
+    ['path', '**{"path": "a.csv"}'],
+    ['path, *, required', '"a.csv"']
+  ])(
+    'does not replay invalid or ambiguous helper arguments: %s (%s)',
+    async (parameters, arguments_) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `def read_inputs(${parameters}):\n    return open("body.csv")`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', `read_inputs(${arguments_})`, context)
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it.each([
+    ['path, *args', '"input.csv", 1'],
+    ['path, **kwargs', 'path="input.csv", extra=1'],
+    ['path, /, **kwargs', '"input.csv", path="other.csv"'],
+    ['path="input.csv", /, **kwargs', 'path="other.csv"']
+  ])('accepts supported variadic helper arguments: %s (%s)', async (parameters, arguments_) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs(${parameters}):\n    return open(path)`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `read_inputs(${arguments_})`, context)
+    ).toMatchObject({
+      reads: ['input.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
   it('keeps recursive helper replay partial', async () => {
     const context: NotebookSourceFileAccessContext = {
       staticStrings: [],
