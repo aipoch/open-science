@@ -426,7 +426,7 @@ export function ConnectorsPanel({
 
     return (
       <div data-slot="connectors-source-group" data-source={groupKey}>
-        <div className="sticky top-[var(--resource-filter-height,0px)] z-10 flex items-center justify-between gap-3 bg-background py-2">
+        <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 px-5 py-2">
           <button
             type="button"
             aria-expanded={expanded}
@@ -520,6 +520,7 @@ export function ConnectorsPanel({
                         reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
                       />
                       <ResourceAssignmentControls
+                        onOpenSpecialist={onOpenSpecialist}
                         resource={{
                           id: connector.id,
                           name: connector.name,
@@ -639,7 +640,7 @@ export function ConnectorsPanel({
       <div
         ref={filterRef}
         data-slot="connectors-filter-bar"
-        className="sticky top-0 z-20 -mx-5 mb-2 flex flex-wrap items-center gap-2 border-b border-border/60 bg-background px-5 py-3"
+        className="sticky top-0 z-20 -mx-5 mb-2 flex flex-wrap items-center gap-2 border-b border-border/60 px-5 py-3"
         data-testid="connectors-toolbar"
       >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
@@ -742,7 +743,7 @@ export function ConnectorsPanel({
 
         {showCustom ? (
           <div data-slot="connectors-source-group" data-source="custom">
-            <div className="sticky top-[var(--resource-filter-height,0px)] z-10 flex items-center justify-between gap-3 bg-background py-2">
+            <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 px-5 py-2">
               <button
                 type="button"
                 aria-expanded={customExpanded}
@@ -940,6 +941,7 @@ export function ConnectorsPanel({
                         </DropdownMenu>
                         <div className="flex shrink-0 items-center gap-2">
                           <ResourceAssignmentControls
+                            onOpenSpecialist={onOpenSpecialist}
                             resource={{
                               id: server.id,
                               name: server.name,

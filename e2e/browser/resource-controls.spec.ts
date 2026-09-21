@@ -12,8 +12,8 @@ for (const kind of ['skills', 'connectors']) {
     const name = kind === 'skills' ? 'AlphaFold2' : 'Chemistry'
     await row.getByRole('button', { name: `Manage access for ${name}` }).click()
     const popup = page.getByRole('dialog')
-    await popup.getByRole('searchbox', { name: 'Search agents' }).fill('Researcher')
-    await expect(popup.getByRole('switch')).toHaveCount(1)
+    await popup.getByRole('searchbox', { name: 'Search Specialists' }).fill('Researcher')
+    await expect(popup.getByRole('switch')).toHaveCount(2)
     await expect(popup.getByRole('switch', { name: 'Researcher', exact: true })).toBeChecked()
     await popup.getByRole('switch', { name: 'Researcher', exact: true }).click()
     await expect(popup.getByRole('switch', { name: 'Researcher', exact: true })).not.toBeChecked()
@@ -75,6 +75,13 @@ for (const kind of ['skills', 'connectors']) {
       (element) => element.closest('.sticky')!.getBoundingClientRect().bottom
     )
     expect((await section.boundingBox())!.y).toBeCloseTo(filterBottom, 0)
+    const filterContainer = kind === 'skills' ? filter.locator('xpath=..') : filter
+    await expect(filterContainer).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(section).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    const headerBounds = (await section.boundingBox())!
+    const filterBounds = (await filterContainer.boundingBox())!
+    expect(headerBounds.x).toBeCloseTo(filterBounds.x, 0)
+    expect(headerBounds.width).toBeCloseTo(filterBounds.width, 0)
     await expect(page.getByRole('region', { name: 'Selected resources' })).toBeInViewport()
   })
 }
@@ -145,3 +152,19 @@ test('delete review accepts keyboard focus', async ({ page }) => {
     )
   ).toBe(true)
 })
+
+for (const count of [5, 6]) {
+  test(`assignment search appears only above five Specialists: ${count}`, async ({ page }) => {
+    await page.goto(`/resource-controls.html?specialists=${count}`)
+    await page.getByRole('button', { name: 'Manage access for AlphaFold2' }).click()
+    const popup = page.getByRole('dialog')
+    await expect(popup.getByRole('searchbox')).toHaveCount(count > 5 ? 1 : 0)
+    await expect(popup.getByRole('switch')).toHaveCount(count + 1)
+    if (count > 5) {
+      await popup.getByRole('searchbox', { name: 'Search Specialists' }).fill('no-result')
+      await expect(popup.getByRole('searchbox')).toBeVisible()
+      await expect(popup.getByRole('switch', { name: 'Main Agent' })).toBeVisible()
+      await expect(popup.getByText('No Specialists match your search.')).toBeVisible()
+    }
+  })
+}

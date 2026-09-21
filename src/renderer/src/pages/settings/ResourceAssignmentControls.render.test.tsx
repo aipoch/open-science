@@ -64,7 +64,17 @@ describe('resource assignment controls', () => {
     )
     expect(setMain).not.toHaveBeenCalled()
   })
-  it('searches the scrollable agent list and protects required Main Agent skills', async () => {
+  it('searches Specialists without hiding the required Main Agent or the search input', async () => {
+    useSpecialistStore.setState({
+      items: [
+        profile,
+        ...Array.from({ length: 5 }, (_, index) => ({
+          ...profile,
+          id: `other-${index}`,
+          name: `OTHER_${index}`
+        }))
+      ]
+    })
     render(
       <ResourceAssignmentControls
         resource={{ ...resource, mainEnabled: true, mainRequired: true }}
@@ -73,13 +83,51 @@ describe('resource assignment controls', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
     expect(screen.getByRole('switch', { name: 'Main Agent' }).hasAttribute('disabled')).toBe(true)
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search agents' }), {
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Specialists' }), {
       target: { value: 'research' }
     })
-    expect(screen.queryByRole('switch', { name: 'Main Agent' })).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Main Agent' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('searchbox', { name: 'Search Specialists' })).toBeTruthy()
     expect(screen.getByRole('switch', { name: 'RESEARCH' })).toBeTruthy()
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Specialists' }), {
+      target: { value: 'no-such-specialist' }
+    })
+    expect(screen.getByText('No Specialists match your search.')).toBeTruthy()
+    expect(screen.getAllByRole('switch')).toHaveLength(1)
     await act(async () => {})
   })
+  it.each([0, 1, 5])('hides search for %i Specialists', (count) => {
+    useSpecialistStore.setState({
+      items: Array.from({ length: count }, (_, index) => ({ ...profile, id: `profile-${index}` }))
+    })
+    render(<ResourceAssignmentControls resource={resource} onSetMain={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(screen.getAllByRole('switch')).toHaveLength(count + 1)
+  })
+  it.each(['custom', 'builtin'] as const)(
+    'opens %s Specialist details without changing assignments',
+    (kind) => {
+      useSpecialistStore.setState({
+        items: [
+          kind === 'builtin' ? { ...profile, kind, readonly: true, version: '1.0.0' } : profile
+        ]
+      })
+      const navigate = vi.fn()
+      render(
+        <ResourceAssignmentControls
+          resource={resource}
+          onSetMain={vi.fn()}
+          onOpenSpecialist={navigate}
+        />
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Open RESEARCH in Specialist Settings' }))
+      expect(navigate).toHaveBeenCalledWith({ id: 'research', name: 'RESEARCH', kind })
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(update).not.toHaveBeenCalled()
+    }
+  )
   it('keeps the prior state and reports a rejected update', async () => {
     update.mockRejectedValue(new Error('revision conflict'))
     render(<ResourceAssignmentControls resource={resource} onSetMain={vi.fn()} />)

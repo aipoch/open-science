@@ -33,7 +33,11 @@ export const ResourceAvailability = ({
             {t('Control access separately for Main Agent and each Specialist.')}
           </p>
         </div>
-        <ResourceAssignmentControls resource={resource} onSetMain={onSetMain} />
+        <ResourceAssignmentControls
+          resource={resource}
+          onSetMain={onSetMain}
+          onOpenSpecialist={onOpenSpecialist}
+        />
       </div>
       {onOpenSpecialist && usages.length > 0 ? (
         <div className="mt-2 flex items-center gap-2">

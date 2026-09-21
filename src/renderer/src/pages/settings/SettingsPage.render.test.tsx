@@ -4281,109 +4281,147 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
   })
 
-  it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-usage',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
-      revision: 1
+  it.each(['usage', 'access'])(
+    'navigates from a Skill %s popover to Specialist Settings and back',
+    async (entry) => {
+      const researcher: SpecialistView = {
+        id: 'spc-usage',
+        name: 'RESEARCHER',
+        displayName: 'Researcher',
+        description: 'Conducts systematic literature reviews.',
+        systemPrompt: 'You are a literature review specialist.',
+        iconKey: 'search',
+        colorKey: 'blue',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        items: [{ kind: 'custom', ...researcher }],
+        integrity: { status: 'ok' }
+      })
+      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+      useSettingsStore.getState().openSettingsToSkill('alpha')
+
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      await act(async () => {
+        if (entry === 'access') {
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
+          )
+        } else {
+          fireEvent.focus(
+            document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
+          )
+        }
+      })
+      await act(async () => {
+        fireEvent.click(
+          document.body.querySelector<HTMLElement>(
+            '[aria-label="Open Researcher in Specialist Settings"]'
+          )!
+        )
+      })
+
+      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+      })
+      expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.textContent).toContain('Test Author')
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSkill('alpha')
+  )
 
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
+  it.each(['usage', 'access', 'detail access'])(
+    'navigates from a Connector %s popover to Specialist Settings and back',
+    async (entry) => {
+      const researcher: SpecialistView = {
+        id: 'spc-connector-usage',
+        name: 'RESEARCHER',
+        displayName: 'Researcher',
+        description: 'Conducts systematic literature reviews.',
+        systemPrompt: 'You are a literature review specialist.',
+        iconKey: 'search',
+        colorKey: 'blue',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
+        revision: 1
+      }
+      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        items: [{ kind: 'custom', ...researcher }],
+        integrity: { status: 'ok' }
+      })
+      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+      window.api.settings.getConnectorDetail = vi.fn().mockResolvedValue({
+        id: 'chemistry',
+        name: 'chemistry',
+        displayName: 'Chemistry',
+        description: 'Small-molecule chemistry via PubChem.',
+        sources: ['PubChem'],
+        requiresNcbi: false,
+        enabled: true,
+        autoAllow: false,
+        tools: []
+      })
+      useSettingsStore.getState().openSettingsToPanel('connectors')
 
-    await act(async () => {
-      fireEvent.focus(
-        document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
-      )
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>(
-          '[aria-label="Open Researcher in Specialist Settings"]'
-        )!
-      )
-    })
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
 
-    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+      if (entry === 'detail access') {
+        await act(async () =>
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[aria-label="View details for Chemistry"]')!
+          )
+        )
+      }
+      await act(async () => {
+        if (entry === 'usage') {
+          fireEvent.focus(
+            document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!
+          )
+        } else {
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
+          )
+        }
+      })
+      await act(async () => {
+        fireEvent.click(
+          document.body.querySelector<HTMLElement>(
+            '[aria-label="Open Researcher in Specialist Settings"]'
+          )!
+        )
+      })
 
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Test Author')
-  })
+      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
 
-  it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-connector-usage',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
-      revision: 1
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+      })
+      expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.textContent).toContain('Chemistry')
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToPanel('connectors')
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    await act(async () => {
-      fireEvent.focus(document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!)
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>(
-          '[aria-label="Open Researcher in Specialist Settings"]'
-        )!
-      )
-    })
-
-    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
-
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Chemistry')
-  })
+  )
 
   it('routes connector capability rows to detail or edit by server kind', async () => {
     const researcher: SpecialistView = {

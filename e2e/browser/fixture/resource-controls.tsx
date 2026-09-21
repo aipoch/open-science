@@ -65,22 +65,25 @@ let connectors: ConnectorsSnapshot = {
   ],
   ncbi: { hasApiKey: false }
 }
-let specialists: SpecialistView[] = Array.from({ length: 18 }, (_, index) => ({
-  id: `research-${index}`,
-  name: `RESEARCH_${index}`,
-  displayName: index === 0 ? 'Researcher' : `Research team ${index + 1}`,
-  description: '',
-  systemPrompt: '',
-  enabled: true,
-  revision: 1,
-  capabilityMode: 'selected',
-  fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-  selectedCapabilities: {
-    skillIds: index === 0 ? ['alphafold2'] : [],
-    connectorIds: index === 0 ? [CONNECTOR_CATALOG[0].id] : [],
-    connectorTools: []
-  }
-}))
+let specialists: SpecialistView[] = Array.from(
+  { length: Number(query.get('specialists') ?? 18) },
+  (_, index) => ({
+    id: `research-${index}`,
+    name: `RESEARCH_${index}`,
+    displayName: index === 0 ? 'Researcher' : `Research team ${index + 1}`,
+    description: '',
+    systemPrompt: '',
+    enabled: true,
+    revision: 1,
+    capabilityMode: 'selected',
+    fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+    selectedCapabilities: {
+      skillIds: index === 0 ? ['alphafold2'] : [],
+      connectorIds: index === 0 ? [CONNECTOR_CATALOG[0].id] : [],
+      connectorTools: []
+    }
+  })
+)
 const noop = (): void => {}
 window.api = {
   platform: 'darwin',
@@ -200,12 +203,12 @@ export const Fixture = (): React.JSX.Element => {
         <div data-testid="catalog-scroll" className="min-h-0 flex-1 overflow-y-auto">
           {connectorPage ? (
             connectorView.kind === 'detail' ? (
-              <ConnectorDetailView id={connectorView.id} />
+              <ConnectorDetailView id={connectorView.id} onOpenSpecialist={noop} />
             ) : (
-              <ConnectorsPanel onNavigate={setConnectorView} />
+              <ConnectorsPanel onNavigate={setConnectorView} onOpenSpecialist={noop} />
             )
           ) : (
-            <SkillsPanel view={view} onNavigate={setView} />
+            <SkillsPanel view={view} onNavigate={setView} onOpenSpecialist={noop} />
           )}
         </div>
       </main>

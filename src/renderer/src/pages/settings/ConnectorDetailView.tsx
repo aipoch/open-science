@@ -16,9 +16,11 @@ import { ConnectorGlyph } from './connector-icons'
 import { SettingsLoadNotice, SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
 import { ResourceAvailability } from './ResourceAvailability'
+import type { SpecialistUsage } from './specialist-resource-scope'
 
 type ConnectorDetailViewProps = {
   id: string
+  onOpenSpecialist?: (usage: SpecialistUsage) => void
   onManagePermissions?: () => void
   onManageCredentials?: () => void
 }
@@ -42,6 +44,7 @@ const DetailRow = ({
 // breadcrumb and back control live in the settings header, not here.
 const ConnectorDetailView = ({
   id,
+  onOpenSpecialist,
   onManagePermissions,
   onManageCredentials
 }: ConnectorDetailViewProps): React.JSX.Element => {
@@ -208,6 +211,7 @@ const ConnectorDetailView = ({
       ) : null}
 
       <ResourceAvailability
+        onOpenSpecialist={onOpenSpecialist}
         resource={{
           id,
           name: detail.name,

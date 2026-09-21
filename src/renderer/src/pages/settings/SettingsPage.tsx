@@ -1758,6 +1758,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             onOpenTag={navigateTag}
                           />
                           <ConnectorDetailView
+                            onOpenSpecialist={(usage) =>
+                              navigate({
+                                panel: 'specialists',
+                                view:
+                                  usage.kind === 'builtin'
+                                    ? { kind: 'builtin', id: usage.id }
+                                    : { kind: 'edit', id: usage.id }
+                              })
+                            }
                             key={connectorsView.id}
                             id={connectorsView.id}
                             onManagePermissions={() => navigatePanel('permissions')}
