@@ -905,6 +905,32 @@ describe('notebook run repository', () => {
     ).resolves.toEqual([expect.objectContaining({ projectId, sessionId })])
   })
 
+  it.each([
+    ['helper modules', { helperModules: {} }],
+    ['helper evidence status', { helperEvidenceStatus: { state: 'unknown' } }]
+  ])('rejects a run with malformed persisted %s', async (_label, malformedRun) => {
+    const root = await createStorageRoot()
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const repository = new NotebookRunRepository(root)
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendRun({ projectId, sessionId, lane, run: admittedRun() })
+    const filePath = join(document.notebookSessionRoot, 'run.json')
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      runs: Array<Record<string, unknown>>
+    }
+    persisted.runs[0] = { ...persisted.runs[0], ...malformedRun }
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    await expect(repository.readSessionRuns(projectId, sessionId)).resolves.toEqual([])
+  })
+
   it('does not treat an unversioned Notebook document as registered legacy data', async () => {
     const root = await createStorageRoot()
     const projectId = 'default-project'

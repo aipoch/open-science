@@ -1148,6 +1148,17 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
           ['argument']
         )
       )
+    case 'yield': {
+      const value = pythonSyntaxChildren(node)[0]
+      return locate(
+        node,
+        py(
+          node.text.trimStart().startsWith('yield from') ? 'YieldFrom' : 'Yield',
+          { value: value ? convertExpr(value, 'Load') : null },
+          ['value']
+        )
+      )
+    }
     case 'call': {
       const func = fieldChild(node, 'function')
       const { args, keywords } = convertCallArgs(fieldChild(node, 'arguments'))
@@ -7380,10 +7391,32 @@ const analyzePythonFileAccessTree = (
     recordFileAccess(kind, node)
   }
 
+  const hasUnreachableStatements = (node: PyNode): boolean => {
+    const terminators = new Set(['Return', 'Raise', 'Break', 'Continue'])
+    for (const field of node._fields) {
+      const value = (node as Record<string, unknown>)[field]
+      if (Array.isArray(value)) {
+        let terminated = false
+        for (const child of value) {
+          if (!isPyNode(child)) continue
+          if (terminated || hasUnreachableStatements(child)) return true
+          if (terminators.has(child.type)) terminated = true
+        }
+      } else if (isPyNode(value) && hasUnreachableStatements(value)) {
+        return true
+      }
+    }
+    return false
+  }
+
   const invokeHelper = (helper: HelperFunction, call: PyNode): void => {
     // Replay restores lexical state after each invocation. Cross-scope writes and
     // match captures cannot safely reuse that state, including on later calls.
-    if (walkPy(helper.module).some((node) => ['Global', 'Nonlocal', 'Match'].includes(node.type))) {
+    if (
+      walkPy(helper.module).some((node) => ['Global', 'Nonlocal', 'Match'].includes(node.type)) ||
+      walkPy(helper.function).some((node) => ['Yield', 'YieldFrom'].includes(node.type)) ||
+      hasUnreachableStatements(helper.function)
+    ) {
       unresolvedReads = true
       unresolvedWrites = true
       unsupportedExternalState = true
@@ -7554,6 +7587,12 @@ const analyzePythonFileAccessTree = (
           continue
         }
         if (statement.type === 'ClassDef') {
+          markOpaqueImportTimeEffect()
+          continue
+        }
+        // Top-level calls execute when the helper module is imported, not when an exported
+        // function is later invoked. Do not attribute those effects to the invocation.
+        if (walkPy(statement).some((node) => node.type === 'Call')) {
           markOpaqueImportTimeEffect()
           continue
         }

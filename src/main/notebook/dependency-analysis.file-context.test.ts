@@ -92,6 +92,49 @@ const fileContext = async (
 
 describe('file context after mutable path collections', () => {
   it.each([
+    [
+      'unreachable statements after return',
+      'def read_inputs():\n    return 1\n    open("dead.csv")'
+    ],
+    ['lazy generator bodies', 'def read_inputs():\n    yield open("lazy.csv")']
+  ])('keeps helper replay partial for %s', async (_label, source) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it('does not attribute top-level helper import I/O to a later call', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'open("import.csv")\ndef read_inputs():\n    return 1',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
     'try:\n    raise Exception()\nexcept Exception as read_inputs:\n    pass',
     'match replacement:\n    case read_inputs:\n        pass'
   ])('does not replay helper exports overwritten by capture bindings: %s', async (suffix) => {

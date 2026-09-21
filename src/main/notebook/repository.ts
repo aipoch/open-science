@@ -26,6 +26,7 @@ import {
   decodeRunDocumentDataPaths,
   encodeRunDocumentDataPaths
 } from './run-document-data-path-codec'
+import { decodeNotebookHelperEvidence } from './helper-evidence'
 import {
   createFrameNotebookLane,
   createRootNotebookLane,
@@ -41,6 +42,10 @@ const RUN_TERMINAL_OUTBOX_DIR = '.run-terminal-outbox'
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
 const MAX_DOCUMENT_READ_ATTEMPTS = 2
+const MAX_HELPER_MODULES_PER_RUN = 32
+const MAX_HELPER_EXPORTS = 512
+const MAX_HELPER_FIELD_LENGTH = 4_096
+const MAX_HELPER_SOURCE_BYTES = 512 * 1024
 const log = createLogger('notebook:persistence')
 
 type DocumentFileIdentity = { mtimeMs: number; size: number; ino: number }
@@ -147,6 +152,43 @@ const persistedScopeValue = (value: unknown): string =>
 
 const isOptionalSha256 = (value: unknown): boolean =>
   value === undefined || (typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value))
+
+const notebookHelperModuleCandidate = (value: unknown): boolean => {
+  if (!isRecord(value) || typeof value.source !== 'string') return false
+  if (Buffer.byteLength(value.source, 'utf8') > MAX_HELPER_SOURCE_BYTES) return false
+  const decoded = decodeNotebookHelperEvidence(value)
+  if (decoded.state !== 'valid') return false
+  const helper = decoded.value
+  return (
+    helper.exports.length <= MAX_HELPER_EXPORTS &&
+    helper.exports.every((name) => name.length > 0 && name.length <= MAX_HELPER_FIELD_LENGTH) &&
+    (helper.dependencies === undefined ||
+      (helper.dependencies.length <= MAX_HELPER_EXPORTS &&
+        helper.dependencies.every(
+          (dependency) => dependency.length > 0 && dependency.length <= MAX_HELPER_FIELD_LENGTH
+        ))) &&
+    [
+      helper.helperId,
+      helper.skillIdentity,
+      helper.packageOrigin,
+      helper.interfaceRevision,
+      helper.registeredGeneration
+    ].every((field) => field.length > 0 && field.length <= MAX_HELPER_FIELD_LENGTH)
+  )
+}
+
+const notebookHelperEvidenceStatusCandidate = (value: unknown): boolean => {
+  if (!isRecord(value) || (value.state !== 'complete' && value.state !== 'incomplete')) return false
+  return (
+    value.state === 'complete' ||
+    (Array.isArray(value.reasons) &&
+      value.reasons.length > 0 &&
+      value.reasons.every(
+        (reason) =>
+          reason === 'source-missing' || reason === 'source-corrupt' || reason === 'payload-limit'
+      ))
+  )
+}
 
 class UnsupportedNotebookDocumentVersionError extends DurableJsonRecoveryBarrierError {
   constructor() {
@@ -297,6 +339,20 @@ const notebookRunCandidate = (value: unknown): boolean => {
           typeof artifact.path !== 'string' ||
           (typeof artifact.projectId !== 'string' && typeof artifact.projectName !== 'string')
       ))
+  ) {
+    return false
+  }
+  if (
+    value.helperModules !== undefined &&
+    (!Array.isArray(value.helperModules) ||
+      value.helperModules.length > MAX_HELPER_MODULES_PER_RUN ||
+      value.helperModules.some((helper) => !notebookHelperModuleCandidate(helper)))
+  ) {
+    return false
+  }
+  if (
+    value.helperEvidenceStatus !== undefined &&
+    !notebookHelperEvidenceStatusCandidate(value.helperEvidenceStatus)
   ) {
     return false
   }
