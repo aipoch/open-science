@@ -373,7 +373,7 @@ describe('workspace agent runtime event processing', () => {
     expect(appliedEventIds).toEqual([firstEvent, ...laterEvents].map((event) => event.id))
   })
 
-  it('keeps synchronous incremental event admission within a linear main-thread work budget', async () => {
+  it('drops thought chunks before renderer event admission', async () => {
     let eventIdReads = 0
     const appliedEventIds: string[] = []
     const processor = createWorkspaceRuntimeEventProcessor(async (event) => {
@@ -404,11 +404,11 @@ describe('workspace agent runtime event processing', () => {
     await Promise.all(drains)
     await processor.drain()
 
-    expect(admissionEventIdReads).toBeLessThan(events.length * 20)
-    expect(appliedEventIds).toEqual(events.map((event) => event.id))
+    expect(admissionEventIdReads).toBe(0)
+    expect(appliedEventIds).toEqual([])
   })
 
-  it('keeps live presentation drain of a thought burst within a linear main-thread work budget', async () => {
+  it('does not schedule a presentation drain for a thought burst', async () => {
     let eventIdReads = 0
     const appliedEventIds: string[] = []
     const processor = createWorkspaceRuntimeEventProcessor(
@@ -442,8 +442,46 @@ describe('workspace agent runtime event processing', () => {
 
     // Admission-only budget is 20 reads/event. Live drain also walks the pending lane and the
     // selected batch, so allow a still-linear 32. The unfixed presentation path was ~4,600.
-    expect(eventIdReads).toBeLessThan(events.length * 32)
-    expect(appliedEventIds).toEqual(events.map((event) => event.id))
+    expect(eventIdReads).toBe(0)
+    expect(appliedEventIds).toEqual([])
+  })
+
+  it('keeps a Stop boundary responsive after a live thought burst', async () => {
+    let eventIdReads = 0
+    const appliedEventIds: string[] = []
+    const processor = createWorkspaceRuntimeEventProcessor(
+      async (event) => {
+        appliedEventIds.push(event.id)
+        return true
+      },
+      { presentation: createTimerPresentation() }
+    )
+    const thoughtEvents = Array.from({ length: 400 }, (_, index) => {
+      const event = createEvent({
+        id: `thought-event-${index + 1}`,
+        kind: 'thought',
+        role: 'assistant',
+        text: 'x'
+      })
+      const eventId = event.id
+      Object.defineProperty(event, 'id', {
+        enumerable: true,
+        get: () => {
+          eventIdReads += 1
+          return eventId
+        }
+      })
+      return event
+    })
+    const stopEvent = createEvent({ id: 'stop-event-1', kind: 'stop' })
+
+    const thoughtDrain = processor.processIncremental(thoughtEvents)
+    const stopDrain = processor.processIncremental([stopEvent])
+    await Promise.all([thoughtDrain, stopDrain])
+    await processor.drain()
+
+    expect(appliedEventIds.at(-1)).toBe('stop-event-1')
+    expect(eventIdReads).toBe(0)
   })
 
   it('releases fast assistant text in grapheme-budgeted 30 fps batches', async () => {

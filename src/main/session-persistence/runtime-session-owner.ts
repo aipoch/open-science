@@ -683,6 +683,10 @@ export class RuntimeSessionOwner {
 
   accept(event: AcpRuntimeEvent): void {
     if (!event.sessionId || !event.promptMessageId || event.publicationOwner === 'main') return
+    // Thought chunks are private reasoning and are intentionally excluded from the durable
+    // transcript projection. Do not queue them for the runtime-session flush loop: a long turn can
+    // otherwise keep cloning and scheduling persistence batches for data that is discarded anyway.
+    if (event.kind === 'thought') return
     const turn = this.turns.get(turnKey(event.sessionId, event.promptMessageId))
     if (
       !turn ||

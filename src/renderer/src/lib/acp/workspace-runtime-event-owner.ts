@@ -336,11 +336,16 @@ const createWorkspaceRuntimeEventProcessor = (
     events: readonly AcpRuntimeEvent[],
     replaceLatestEvents: boolean
   ): Promise<void> => {
+    // Thought chunks are private provider reasoning. The renderer intentionally never projects
+    // them into the transcript, so keeping them in presentation lanes only adds queue, map, and
+    // event-id work during a long thinking turn. Drop them at admission while retaining terminal
+    // events (especially Stop) on the same prompt lane.
+    const presentableEvents = events.filter((event) => event.kind !== 'thought')
     const evictedEvents: AcpRuntimeEvent[] = []
     if (replaceLatestEvents) {
-      latestEventsById = new Map(events.map((event) => [event.id, event]))
+      latestEventsById = new Map(presentableEvents.map((event) => [event.id, event]))
     } else {
-      for (const event of events) {
+      for (const event of presentableEvents) {
         if (!latestEventsById.has(event.id)) {
           latestEventsById.set(event.id, event)
         }
@@ -355,7 +360,7 @@ const createWorkspaceRuntimeEventProcessor = (
     }
     const visibleLaneKeys = new Set<string | symbol>()
 
-    for (const event of events) {
+    for (const event of presentableEvents) {
       const laneKey = getEventLaneKey(event)
       const lane = getEventLane(laneKey)
       visibleLaneKeys.add(laneKey)
