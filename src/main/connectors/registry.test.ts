@@ -141,3 +141,44 @@ describe('bundled tool contracts', () => {
     }
   )
 })
+
+describe('UniProt discovery input contract', () => {
+  const search = getDescriptor('genes', 'search_uniprot_entries')!
+  it.each([
+    {},
+    { reviewed: true },
+    { query: 'organism_id:9606' },
+    { gene: 'TP53', offset: 1 },
+    { gene: ' ' },
+    { protein_name: '\u3000' },
+    { gene: 'x" OR reviewed:true' },
+    { gene: '*' },
+    { organism_id: '9606' },
+    { gene: 'TP53', reviewed: 'true' },
+    { gene: 'TP53', page_size: 501 },
+    { gene: 'TP53', cursor: '' }
+  ])('rejects invalid search arguments before authorization: %j', (args) => {
+    expect(() => validateToolArguments(search, args)).toThrow(/invalid_arguments/)
+  })
+  it.each(['a', '𠮷', '😀'])('counts both text fields as Unicode code points: %s', (character) => {
+    for (const field of ['gene', 'protein_name']) {
+      expect(() => validateToolArguments(search, { [field]: character.repeat(200) })).not.toThrow()
+      expect(() => validateToolArguments(search, { [field]: character.repeat(201) })).toThrow(
+        /invalid_arguments/
+      )
+    }
+  })
+  it('accepts false, maximum page size and cursors without injecting defaults or changing arguments', () => {
+    const args = { gene: ' TP53 ', reviewed: false, page_size: 500, cursor: 'opaque+/token==' }
+    expect(() => validateToolArguments(search, args)).not.toThrow()
+    expect(args).toEqual({
+      gene: ' TP53 ',
+      reviewed: false,
+      page_size: 500,
+      cursor: 'opaque+/token=='
+    })
+    const minimal = { gene: 'TP53' }
+    validateToolArguments(search, minimal)
+    expect(minimal).toEqual({ gene: 'TP53' })
+  })
+})

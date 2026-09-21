@@ -231,4 +231,15 @@ describe('renderSkillDoc', () => {
       expect(md, connector.id).not.toMatch(/host\.mcp\([^\n]*\b(?:True|False|None)\b/)
     }
   })
+
+  it('documents UniProt search filters, pagination and accession handoff', () => {
+    const md = renderSkillDoc('genes')
+    expect(md).toContain('### search_uniprot_entries')
+    expect(md).toContain('discover UniProt proteins')
+    expect(md).toContain('not descendants')
+    expect(md).toContain('No organism or reviewed default')
+    expect(md).toContain('identical filters and page_size')
+    expect(md).toContain('not offsets or durable snapshots')
+    expect(md).toContain('Pass accession values to get_uniprot_entries')
+  })
 })
