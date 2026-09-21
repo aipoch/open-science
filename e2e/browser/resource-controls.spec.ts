@@ -216,8 +216,8 @@ test('delete review accepts keyboard focus', async ({ page }) => {
   ).toBe(true)
 })
 
-for (const count of [5, 6]) {
-  test(`assignment search appears only above five Specialists: ${count}`, async ({ page }) => {
+for (const count of [5, 6, 18]) {
+  test(`resource menus show search only above five Specialists: ${count}`, async ({ page }) => {
     await page.goto(`/resource-controls.html?specialists=${count}`)
     await page.getByRole('button', { name: 'Manage access for AlphaFold2' }).click()
     const popup = page.getByRole('dialog')
@@ -228,6 +228,25 @@ for (const count of [5, 6]) {
       await expect(popup.getByRole('searchbox')).toBeVisible()
       await expect(popup.getByRole('switch', { name: 'Main Agent' })).toBeVisible()
       await expect(popup.getByText('No Specialists match your search.')).toBeVisible()
+    }
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
+    await page.getByRole('checkbox', { name: 'Select AlphaFold2', exact: true }).check()
+    await page.getByRole('button', { name: 'Add to Specialist', exact: true }).click()
+    await expect(popup.getByRole('searchbox')).toHaveCount(count > 5 ? 1 : 0)
+    if (count === 18) {
+      const last = popup.getByRole('button', { name: 'Research team 18', exact: true })
+      const list = last.locator('..')
+      expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(
+        true
+      )
+      await last.scrollIntoViewIfNeeded()
+      await expect(last).toBeInViewport()
+    }
+    if (count > 5) {
+      await popup.getByRole('searchbox').fill('Researcher')
+      await expect(popup.getByRole('button', { name: /^Research/ })).toHaveCount(1)
+      await expect(popup.getByRole('searchbox')).toBeVisible()
     }
   })
 }

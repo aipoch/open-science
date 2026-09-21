@@ -92,6 +92,36 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('category resource selection', () => {
+  it.each([0, 1, 5, 6])('shows batch search only above five eligible Specialists: %i', (count) => {
+    useSpecialistStore.setState({
+      items: Array.from({ length: count }, (_, index) => ({
+        kind: 'custom' as const,
+        id: `expert-${index}`,
+        name: `Expert ${index}`,
+        enabled: true,
+        revision: 1,
+        description: '',
+        systemPrompt: '',
+        capabilityMode: 'selected' as const,
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+      }))
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Personal skill' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add to Specialist' }))
+    expect(screen.queryAllByRole('searchbox', { name: 'Search Specialists' })).toHaveLength(
+      count > 5 ? 1 : 0
+    )
+    if (count > 5) {
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search Specialists' }), {
+        target: { value: 'Expert 0' }
+      })
+      expect(screen.getAllByRole('button', { name: /^Expert/ })).toHaveLength(1)
+      expect(screen.getByRole('searchbox', { name: 'Search Specialists' })).toBeTruthy()
+    }
+  })
   it('hides category selection for empty lists while preserving hidden selections', () => {
     const view = render(<Harness hideResources />)
     expect(screen.queryAllByRole('button', { name: /Select multiple in/ })).toHaveLength(0)

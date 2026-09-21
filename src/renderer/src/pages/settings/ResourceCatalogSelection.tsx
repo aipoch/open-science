@@ -6,7 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import { canEditResourceAssignments, type AssignableResource } from './resource-assignment'
+import {
+  canEditResourceAssignments,
+  type AssignableResource,
+  type ResourceSpecialist
+} from './resource-assignment'
 import type { ResourceSelection as Selection } from './use-resource-selection'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SpecialistAvatar } from './specialist-avatar'
@@ -98,13 +102,15 @@ export const ResourceSelectionBar = ({
   const items = useSpecialistStore((state) => state.items)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
-  const specialists = items.filter(
-    (item) =>
-      item.kind !== 'reviewer' &&
-      canEditResourceAssignments(item) &&
-      `${item.displayName ?? ''} ${item.name}`
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase())
+  const eligibleSpecialists = items.filter(
+    (item): item is ResourceSpecialist =>
+      item.kind !== 'reviewer' && canEditResourceAssignments(item)
+  )
+  // Count eligible profiles before filtering so search stays visible while typing.
+  const showSearch = eligibleSpecialists.length > 5
+  const term = showSearch ? query.trim().toLocaleLowerCase() : ''
+  const specialists = eligibleSpecialists.filter((item) =>
+    `${item.displayName ?? ''} ${item.name}`.toLocaleLowerCase().includes(term)
   )
   const { selected, actions, busy, review } = selection
   const bar = useRef<HTMLDivElement>(null)
@@ -210,15 +216,19 @@ export const ResourceSelectionBar = ({
                 <PopoverContent
                   align="end"
                   side="top"
-                  className="w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+                  className="flex w-72 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] flex-col gap-2 rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"
                 >
-                  <SettingsSearchInput
-                    aria-label={t('Search Specialists')}
-                    placeholder={t('Search Specialists')}
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                  />
-                  <div className="mt-2 max-h-60 overflow-y-auto overscroll-contain">
+                  {showSearch ? (
+                    <div className="shrink-0">
+                      <SettingsSearchInput
+                        aria-label={t('Search Specialists')}
+                        placeholder={t('Search Specialists')}
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="min-h-0 max-h-60 overflow-y-auto overscroll-contain">
                     {specialists.map((item) =>
                       item.kind === 'custom' ? (
                         <button
