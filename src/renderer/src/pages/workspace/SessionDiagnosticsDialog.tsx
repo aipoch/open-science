@@ -218,9 +218,9 @@ export const SessionDiagnosticsDialog = ({
                           : current.filter((id) => id !== item.id)
                       )
                     }
-                    className="group flex min-h-14 w-full min-w-0 items-start gap-3 rounded-xl border border-transparent bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-200 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-text-200 data-[state=checked]:bg-bg-100 disabled:cursor-not-allowed disabled:opacity-55"
+                    className="group flex min-h-14 w-full min-w-0 items-start gap-3 rounded-xl border border-transparent bg-bg-000 px-3.5 py-3 text-left outline-none transition-colors hover:border-border-200 hover:bg-bg-100 focus-visible:ring-3 focus-visible:ring-ring/40 data-[state=checked]:border-primary/30 data-[state=checked]:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-55"
                   >
-                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-text-000 group-data-[state=checked]:bg-text-000 group-data-[state=checked]:text-bg-000">
+                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
                       <Checkbox.Indicator>
                         <Check className="size-3" aria-hidden="true" />
                       </Checkbox.Indicator>
