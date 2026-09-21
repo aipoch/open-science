@@ -170,7 +170,7 @@ const FilePreviewDialog = ({
               if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
             }}
             className={dialogPanelClassName(
-              'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0'
+              'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0 [contain:layout_style]'
             )}
           >
             <Dialog.Title className="sr-only">
@@ -187,7 +187,7 @@ const FilePreviewDialog = ({
                 // its tooltip, and the first Escape dies on that control instead of closing the
                 // dialog. Focus the dialog shell (tabIndex -1 via the outer FocusScope) instead.
                 event.preventDefault()
-                contentElementRef.current?.focus()
+                contentElementRef.current?.focus({ preventScroll: true })
               }}
               onUnmountAutoFocus={(event) => {
                 releaseBackgroundIsolation()
