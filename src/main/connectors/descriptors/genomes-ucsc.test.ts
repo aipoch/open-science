@@ -327,24 +327,64 @@ describe('ucsc_conservation', () => {
     ).rejects.toThrow(/upstream truncated/)
   })
 
-  it('uses the hg19 conservation track that actually exists', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ phyloP100wayAll: [] }))
-    await run(
-      'ucsc_conservation',
-      { genome: 'hg19', chrom: 'chr7', start: 100, end: 200 },
-      fetchImpl
+  it.each([
+    ['hg19', 'phyloP100wayAll'],
+    ['hg38', 'phyloP100way'],
+    ['mm10', 'phyloP60wayAll'],
+    ['mm39', 'phyloP35way']
+  ])('uses the %s score track and summarizes its rows', async (genome, track) => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        trackType: 'wig',
+        [track]: [
+          { chrom: 'chr7', start: 100, end: 102, value: 4 },
+          { chrom: 'chr7', start: 102, end: 103, value: -2 }
+        ]
+      })
     )
-    expect(String(fetchImpl.mock.calls[0][0])).toContain('track=phyloP100wayAll')
+    const args = { genome, chrom: 'chr7', start: 100, end: 104 }
+    expect(() => validateToolArguments(tool('ucsc_conservation'), args)).not.toThrow()
+    const out = await run('ucsc_conservation', args, fetchImpl)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(String(fetchImpl.mock.calls[0][0])).toContain(`genome=${genome};track=${track};`)
+    expect(out).toMatchObject({
+      genome,
+      track,
+      n_bases_covered: 3,
+      coverage_fraction: 0.75,
+      mean: 2,
+      min: -2,
+      max: 4
+    })
   })
 
-  it('preserves the phyloP100way fallback for other genomes', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ phyloP100way: [] }))
-    await run(
-      'ucsc_conservation',
-      { genome: 'mm10', chrom: 'chr7', start: 100, end: 200 },
-      fetchImpl
-    )
-    expect(String(fetchImpl.mock.calls[0][0])).toContain('track=phyloP100way')
+  it.each([undefined, '', '   '])(
+    'preserves the upstream failure for other assemblies (%j)',
+    async (track) => {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 400 } as Response)
+      await expect(
+        run(
+          'ucsc_conservation',
+          { genome: 'rn6', track, chrom: 'chr1', start: 100, end: 200 },
+          fetchImpl
+        )
+      ).rejects.toThrow(/HTTP 400/)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(String(fetchImpl.mock.calls[0][0])).toContain('genome=rn6;track=phyloP100way;')
+    }
+  )
+
+  it.each([
+    ['mm39', 'phastCons35way'],
+    ['rn6', 'phyloP20way']
+  ])('honors an explicit track for %s', async (genome, track) => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ [track]: [] }))
+    const args = { genome, track, chrom: 'chr1', start: 100, end: 200 }
+    expect(() => validateToolArguments(tool('ucsc_conservation'), args)).not.toThrow()
+    const out = await run('ucsc_conservation', args, fetchImpl)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(String(fetchImpl.mock.calls[0][0])).toContain(`genome=${genome};track=${track};`)
+    expect(out).toMatchObject({ genome, track, n_bases_covered: 0, mean: null })
   })
 })
 
