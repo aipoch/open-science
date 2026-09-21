@@ -557,7 +557,7 @@ it('imports historical metadata-only Literature mentions with attachment IDs but
   delete manifest.requiredFeatures
   manifest.inventory = await Promise.all(
     manifest.inventory
-      .filter((entry) => !entry.storageKey)
+      .filter((entry) => !entry.storageKey && entry.path !== 'ro-crate-metadata.json')
       .map((entry) =>
         entry.path === 'records.json' ? packageEntry(directory, 'records.json', 'records') : entry
       )

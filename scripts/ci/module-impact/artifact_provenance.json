@@ -105,7 +105,8 @@
     "src/main/notebook/reproduction-runtime.test.ts",
     "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx",
     "src/main/notebook/dependency-analysis.stdlib-replay.test.ts",
-    "src/main/artifacts/resumed-finalization-ownership.test.ts"
+    "src/main/artifacts/resumed-finalization-ownership.test.ts",
+    "src/main/artifacts/export-filename.ts"
   ],
   "interfacePaths": [
     "src/main/artifacts/provenance-message-snapshot.ts",
@@ -142,7 +143,8 @@
     "src/main/artifacts/save-test-fixtures.ts",
     "src/main/artifacts/session-reproducibility-store.ts",
     "src/main/notebook/reproduction-runtime.ts",
-    "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx"
+    "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx",
+    "src/main/artifacts/ro-crate-export.ts"
   ],
   "consumerModules": ["session_persistence"],
   "testFiles": {
@@ -539,7 +541,9 @@
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
       "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
       "src/main/pdf-annotations/repository.integration.test.ts",
-      "src/main/pdf-annotations/service.test.ts"
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/ro-crate.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -405,7 +405,23 @@ describe('Artifact Version RO-Crate export', () => {
     expect(root.hasPart).toEqual([
       { '@id': 'provenance/artifact-version-evidence.json' },
       { '@id': 'provenance/execution-snapshot.json' },
-      { '@id': 'provenance/review-projection.json' }
+      { '@id': 'provenance/review-projection.json' },
+      { '@id': 'urn:open-science:version:version-1' },
+      { '@id': 'urn:open-science:version:input-version-1' }
+    ])
+  })
+
+  it('retains later dependencies after repeated package names', () => {
+    const value = source()
+    const environment = value.evidence.environment!
+    const first = environment.packages[0]!
+    environment.packages = [first, { ...first, version: 'older' }, { ...first, name: 'numpy' }]
+    const document = buildArtifactVersionRoCrateMetadata(value)
+    expect(entity(document, '#package/python/pandas').softwareVersion).toBe(first.version)
+    expect(entity(document, '#package/python/numpy').name).toBe('numpy')
+    expect(entity(document, '#environment').softwareRequirements).toEqual([
+      { '@id': '#package/python/pandas' },
+      { '@id': '#package/python/numpy' }
     ])
   })
 

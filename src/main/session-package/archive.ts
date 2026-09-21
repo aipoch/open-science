@@ -7,6 +7,7 @@ import { Header, Pax, Parser } from 'tar'
 import {
   PACKAGE_MAX_BYTES,
   PACKAGE_MAX_FILE_BYTES,
+  PACKAGE_RO_CRATE_METADATA,
   sessionPackageManifestSchema,
   type SessionPackageManifest
 } from '../../shared/session-package'
@@ -19,7 +20,8 @@ import { assertPackageCapacity, packageCapacityChecker } from './capacity'
 export const PACKAGE_MAX_JSON_BYTES = 256 * 1024 ** 2
 const MAX_MANIFEST_BYTES = 8 * 1024 ** 2
 const MAX_ENTRIES = 10004
-const ENTRY_PATH = /^(manifest\.json|session\.json|records\.json|README\.md|objects\/[a-f0-9]{64})$/
+const ENTRY_PATH =
+  /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
 
 // The configured root may itself use a platform alias (/var -> /private/var). Below that owned
 // root, reject links at every level so a Notebook directory cannot include unrelated local data.
@@ -247,6 +249,15 @@ export const validatePackageDirectory = async (
     JSON.parse(await readFileWithinLimit(join(directory, 'manifest.json'), MAX_MANIFEST_BYTES))
   )
   const declared = new Set(['manifest.json', 'objects/'])
+  const metadata = manifest.inventory.filter((entry) => entry.path === PACKAGE_RO_CRATE_METADATA)
+  if (
+    Boolean(manifest.requiredFeatures?.includes('ro-crate')) !== (metadata.length === 1) ||
+    metadata.some((entry) => entry.kind !== 'metadata' || entry.storageKey !== undefined) ||
+    manifest.inventory.some(
+      (entry) => entry.kind === 'metadata' && entry.path !== PACKAGE_RO_CRATE_METADATA
+    )
+  )
+    throw new Error('RO-Crate package capability declaration is invalid.')
   for (const entry of manifest.inventory) {
     if (declared.has(entry.path))
       throw new Error('Session package inventory contains duplicate entries.')

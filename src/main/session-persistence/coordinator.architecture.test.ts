@@ -1661,7 +1661,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/compute/cancellation-runtime.integration.test.ts',
       'src/main/pdf-annotations/repository.integration.test.ts',
-      'src/main/pdf-annotations/service.test.ts'
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

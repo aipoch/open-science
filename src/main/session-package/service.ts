@@ -108,6 +108,8 @@ import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-obser
 import { SessionPackageDeletion } from './deletion'
 import { createManagedSessionWorkspaceCapability } from '../acp/managed-session-workspace'
 import { createForkSession, nextForkTitle, ForkRecoveryRequiredError } from './fork-session'
+import { writePackageRoCrateMetadata } from './ro-crate'
+import { PACKAGE_RO_CRATE_METADATA } from '../../shared/session-package'
 
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
@@ -515,7 +517,11 @@ export class SessionPackageService {
       const forwarded: SessionPackageManifest = {
         ...manifest,
         inventory: manifest.inventory
-          .filter((entry) => !entry.storageKey || !excluded.has(entry.storageKey))
+          .filter(
+            (entry) =>
+              entry.path !== PACKAGE_RO_CRATE_METADATA &&
+              (!entry.storageKey || !excluded.has(entry.storageKey))
+          )
           .map((entry) =>
             entry.path === 'session.json' && forwardedSessionJson
               ? {
@@ -565,6 +571,7 @@ export class SessionPackageService {
                 })
             )
           }
+          await writePackageRoCrateMetadata(staging, forwarded, records, this.signal)
           await writeFile(join(staging, 'manifest.json'), JSON.stringify(forwarded))
           options.onProgress?.({ phase: 'validating' })
           await validatePackageDirectory(staging, this.signal)
@@ -856,6 +863,7 @@ export class SessionPackageService {
               : [])
           ]
         }
+        await writePackageRoCrateMetadata(directory, manifest, records, this.signal)
         await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
         options.onProgress?.({ phase: 'validating' })
         await validatePackageRecords(directory, manifest, records, this.signal)
@@ -1206,6 +1214,9 @@ export class SessionPackageService {
         destinationRoot,
         {
           ...manifest,
+          // Standard metadata describes the retained source archive. Native remapping below
+          // validates destination records only; it neither copies nor rewrites that document.
+          requiredFeatures: manifest.requiredFeatures?.filter((feature) => feature !== 'ro-crate'),
           source: { ...manifest.source, projectId, sessionId },
           excludedFiles: manifest.excludedFiles.map((file) => ({
             ...file,

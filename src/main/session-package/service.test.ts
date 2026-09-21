@@ -1,3 +1,4 @@
+import { writePackageRoCrateMetadata } from './ro-crate'
 import { initDataRoot } from '../storage-root'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { join, sep } from 'node:path'
@@ -640,7 +641,7 @@ it.each([1, 12, 'unavailable'] as const)(
       storageRoot: source.storageRoot,
       getClient: async () => source.client
     }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
-    expect(capacity).toHaveBeenCalledTimes(3)
+    expect(capacity).toHaveBeenCalledTimes(4)
     capacity.mockClear()
     const importer = new SessionPackageService({
       storageRoot: target.storageRoot,
@@ -658,7 +659,7 @@ it.each([1, 12, 'unavailable'] as const)(
     ).toBe('Capacity')
     capacity.mockClear()
     await importer.exportTo(imported, join(target.storageRoot, 'forwarded.science'))
-    expect(capacity).toHaveBeenCalledTimes(3)
+    expect(capacity).toHaveBeenCalledTimes(4)
   }
 )
 
@@ -1886,12 +1887,18 @@ it('rejects self-consistent archive hashes when the embedded evidence contradict
     entry.sizeBytes = (await stat(join(expanded, entry.path))).size
     entry.checksum = await fileChecksum(join(expanded, entry.path))
   }
+  await writePackageRoCrateMetadata(
+    expanded,
+    manifest,
+    JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+  )
   await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
   await createTar({ cwd: expanded, file: archive, gzip: true }, [
     'manifest.json',
     'session.json',
     'records.json',
     'README.md',
+    'ro-crate-metadata.json',
     'objects'
   ])
   const importer = new SessionPackageService({
@@ -2870,6 +2877,11 @@ it('blocks recognized sensitive content when forwarding an externally created pa
     entry.sizeBytes = (await stat(join(expanded, entry.path))).size
     entry.checksum = await fileChecksum(join(expanded, entry.path))
   }
+  await writePackageRoCrateMetadata(
+    expanded,
+    manifest,
+    JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+  )
   await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
   await createTar({ cwd: expanded, file: archive, gzip: true }, [
     'manifest.json',

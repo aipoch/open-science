@@ -515,7 +515,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/notebook/reproduction-runtime.test.ts',
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx',
       'src/main/notebook/dependency-analysis.stdlib-replay.test.ts',
-      'src/main/artifacts/resumed-finalization-ownership.test.ts'
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/artifacts/export-filename.ts'
     ])
     expect(module.interfacePaths).toEqual([
       'src/main/artifacts/provenance-message-snapshot.ts',
@@ -552,7 +553,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/save-test-fixtures.ts',
       'src/main/artifacts/session-reproducibility-store.ts',
       'src/main/notebook/reproduction-runtime.ts',
-      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx'
+      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
+      'src/main/artifacts/ro-crate-export.ts'
     ])
     expect(module.consumerModules).toEqual(['session_persistence'])
     expect(module.testFiles.owner).toEqual([
@@ -948,7 +950,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
       'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
       'src/main/pdf-annotations/repository.integration.test.ts',
-      'src/main/pdf-annotations/service.test.ts'
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',
