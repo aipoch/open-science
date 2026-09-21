@@ -206,6 +206,7 @@ const ApplicationPresentationContent = ({
           title={t('Saved conversations could not be loaded')}
           message={sessions.loadError}
           inline
+          className="max-w-md"
           onRetry={sessions.retryLoad}
         />
       </main>
