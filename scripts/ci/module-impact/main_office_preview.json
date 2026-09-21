@@ -39,7 +39,10 @@
       "src/main/ipc-surfaces/office-preview.test.ts",
       "src/main/reviewer/paged-preview-electron.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
-      "src/main/windows.test.ts"
+      "src/main/windows.test.ts",
+      "src/main/source-preview-view.test.ts",
+      "src/main/window-find-ipc.test.ts",
+      "src/main/ipc-surfaces/desktop-utilities.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
