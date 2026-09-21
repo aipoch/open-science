@@ -417,7 +417,7 @@ const SkillsPanel = ({
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="shrink-0">
+              <Button variant="outline" className="shrink-0" data-settings-anchor="skills.add">
                 <Plus data-icon="inline-start" aria-hidden="true" />
                 {t('Add skill')}
                 <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -529,7 +529,13 @@ const SkillsPanel = ({
         />
       ) : null}
 
-      <div className="flex flex-col gap-4">
+      {/* Search now lands on category selection, which replaces the separate Manage page. */}
+      <div
+        data-settings-anchor="skills.manage"
+        role="region"
+        aria-label={t('Manage skills')}
+        className="flex flex-col gap-4"
+      >
         {groups.map((group) => {
           const rows = visible.filter(({ skill }) => skill.source === group.source)
           const expanded = !collapsed[group.source]
@@ -820,6 +826,7 @@ const SkillsPanel = ({
         })}
       </div>
       <SettingsSection
+        data-settings-anchor="skills.conversation-imports"
         title={t('Conversation imports')}
         description={t('Choose what conversations can import into Open-Science.')}
         aria-label={t('Conversation imports')}

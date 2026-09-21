@@ -9,7 +9,8 @@ export type ConnectorCredentials = {
 export type ToolContext = {
   signal?: AbortSignal
   fetchJson(url: string): Promise<unknown>
-  fetchText(url: string, accept?: string): Promise<string>
+  // Disable automatic retries for APIs whose polling interval exceeds the call budget.
+  fetchText(url: string, accept?: string, options?: { retry?: false }): Promise<string>
   // GET JSON plus the response headers — for APIs that report totals/pagination in headers rather than
   // the body (e.g. PRIDE Archive's `total_records`), which fetchJson alone would drop.
   // Opt into reading selected HTTP error bodies and inspect status before treating them as success.

@@ -810,7 +810,7 @@ const SideChatProvider = ({
   const runtime = useOwnedSideChatRuntime(persistence)
   const { views, hydrated, close } = runtime
   const activeProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
-  // Existing durable Side chat records are the authority for open tabs, including after restart.
+  // Main-process memory owns open tabs, including across renderer reloads (not app restarts).
   // Preview persistence preserves these runtime-owned tabs during subsequent snapshot refreshes.
   useEffect(() => {
     if (!hydrated) return

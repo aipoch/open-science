@@ -3,6 +3,7 @@ import { act } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import * as followScroll from './follow-notebook-scroll'
 import { useFollowScrollBottom } from './use-follow-scroll-bottom'
 
 const Harness = ({
@@ -38,9 +39,27 @@ const setScrollGeometry = (
   })
 }
 
+const stubResizeObserver = (): (() => void) => {
+  const callbacks: ResizeObserverCallback[] = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+  )
+  return () => {
+    for (const callback of callbacks) callback([], {} as ResizeObserver)
+  }
+}
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('useFollowScrollBottom', () => {
@@ -67,6 +86,23 @@ describe('useFollowScrollBottom', () => {
     expect(viewport.scrollTop).toBe(1400)
     view.unmount()
     expect(observers[0]!.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('does not reread the bottom geometry for unchanged DOM targets on ordinary rerenders', () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    const followBottomSpy = vi.spyOn(followScroll, 'followScrollBottomTop')
+    const view = render(<Harness enabled contentHeight={1000} />)
+    followBottomSpy.mockClear()
+
+    for (let i = 0; i < 20; i++) view.rerender(<Harness enabled contentHeight={1000} />)
+
+    expect(followBottomSpy).not.toHaveBeenCalled()
   })
 
   it('rebinds replaced DOM targets and cleans up when the viewport disappears', () => {
@@ -100,23 +136,28 @@ describe('useFollowScrollBottom', () => {
   })
 
   it('pins new content to the bottom while following', () => {
+    const notifyResize = stubResizeObserver()
     const view = render(<Harness enabled contentHeight={1000} />)
     const viewport = screen.getByTestId('viewport')
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 0 })
 
     view.rerender(<Harness enabled contentHeight={1000} />)
+    notifyResize()
     expect(viewport.scrollTop).toBe(600)
 
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1400, scrollTop: 600 })
     view.rerender(<Harness enabled contentHeight={1400} />)
+    notifyResize()
     expect(viewport.scrollTop).toBe(1000)
   })
 
   it('pauses after the user leaves the bottom and resumes when they return', () => {
+    const notifyResize = stubResizeObserver()
     const view = render(<Harness enabled contentHeight={1000} />)
     const viewport = screen.getByTestId('viewport')
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 0 })
     view.rerender(<Harness enabled contentHeight={1000} />)
+    notifyResize()
     expect(viewport.scrollTop).toBe(600)
 
     viewport.scrollTop = 120
@@ -124,6 +165,7 @@ describe('useFollowScrollBottom', () => {
 
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1600, scrollTop: 120 })
     view.rerender(<Harness enabled contentHeight={1600} />)
+    notifyResize()
     expect(viewport.scrollTop).toBe(120)
 
     viewport.scrollTop = 1200
@@ -131,6 +173,7 @@ describe('useFollowScrollBottom', () => {
 
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 2000, scrollTop: 1200 })
     view.rerender(<Harness enabled contentHeight={2000} />)
+    notifyResize()
     expect(viewport.scrollTop).toBe(1600)
   })
 
@@ -145,7 +188,19 @@ describe('useFollowScrollBottom', () => {
     expect(viewport.scrollTop).toBe(40)
   })
 
+  it('does not scroll a disabled viewport when ResizeObserver is unavailable', () => {
+    vi.stubGlobal('ResizeObserver', undefined)
+    const view = render(<Harness enabled contentHeight={1000} />)
+    const viewport = screen.getByTestId('viewport')
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 40 })
+
+    view.rerender(<Harness enabled={false} contentHeight={1000} />)
+
+    expect(viewport.scrollTop).toBe(40)
+  })
+
   it('catches up when follow is re-enabled after staying at the bottom', async () => {
+    const notifyResize = stubResizeObserver()
     vi.stubGlobal(
       'requestAnimationFrame',
       (callback: FrameRequestCallback): number =>
@@ -159,6 +214,7 @@ describe('useFollowScrollBottom', () => {
     const viewport = screen.getByTestId('viewport')
     setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 0 })
     view.rerender(<Harness enabled contentHeight={1000} />)
+    notifyResize()
     expect(viewport.scrollTop).toBe(600)
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))

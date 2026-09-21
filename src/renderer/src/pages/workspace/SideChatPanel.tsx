@@ -13,7 +13,7 @@ import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-st
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { ArrowUp, Plus, Square, X } from 'lucide-react'
+import { ArrowUp, Square, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -446,25 +446,6 @@ const SideChatPanel = ({
             />
           </SideChatAnnotationDrop>
           <div className="flex items-center gap-1">
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-disabled="true"
-                    aria-label={t('Add to Side chat')}
-                    data-testid="side-chat-plus-button"
-                    className="grid size-8 shrink-0 cursor-not-allowed place-items-center rounded-md text-text-300 opacity-50 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    onClick={(event) => event.preventDefault()}
-                  >
-                    <Plus className="size-4" aria-hidden="true" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {t('Attachments are unavailable in Side chat')}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
             <div className="flex-1" />
             {controls}
             <TooltipProvider delayDuration={200}>

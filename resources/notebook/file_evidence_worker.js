@@ -1539,7 +1539,7 @@ const complete = (request) => {
   return { ok: true, removedStagingEntries: 0, removedActivityEntries: 0 }
 }
 
-const reconcile = (request) => {
+const reconcile = (request, sweepBlobs = true) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
   const retained = new Map(request.retained.map((item) => [item.activityId, item]))
@@ -1580,8 +1580,79 @@ const reconcile = (request) => {
     ok: true,
     removedStagingEntries,
     removedActivityEntries,
-    removedBlobEntries: sweepBlobPool(blobPool)
+    removedBlobEntries: sweepBlobs ? sweepBlobPool(blobPool) : 0
   }
+}
+
+// The caller holds the same evidence mutation queue used by single-Activity operations.
+// Keep ownership/identity validation inside the worker; batching must never trust directory names
+// or turn an unsafe Project/Session path into a cleanup target.
+const reconcileComputeProject = (request) => {
+  ensureProject(request)
+  const rootPath = process.cwd()
+  const projectName = assertSafeName(request.projectName)
+  const projectIdentity = entryIdentity(projectName)
+  process.chdir(projectName)
+  let result
+  try {
+    assertBoundRoot(projectIdentity)
+    const projectPath = process.cwd()
+    const ensureDirectory = (name) => {
+      assertSafeName(name)
+      if (!entryExists(name)) mkdirSync(name, { mode: 0o700 })
+      const actual = entryIdentity(name)
+      if (!actual) throw new Error('Unsafe file-evidence recovery directory.')
+      return actual
+    }
+    const blobIdentity = ensureDirectory('blobs')
+    const binding = {
+      blobRoot: join(projectPath, 'blobs'),
+      expectedBlobRootIdentity: blobIdentity,
+      blobStorageKeyPrefix: `execution-file-evidence/${projectName}/blobs`
+    }
+    let removedStagingEntries = 0
+    let removedActivityEntries = 0
+    for (const session of request.sessions) {
+      const sessionName = assertSafeName(session.sessionName)
+      if (sessionName === 'blobs') throw new Error('Reserved file-evidence Session name.')
+      assertBoundRoot(projectIdentity)
+      const sessionIdentity = ensureDirectory(sessionName)
+      process.chdir(sessionName)
+      try {
+        const result = reconcile(
+          {
+            ...binding,
+            expectedRootIdentity: sessionIdentity,
+            retained: session.retained,
+            deferredActivityIds: session.deferredActivityIds,
+            deferredActivityKinds: ['notebook-run']
+          },
+          false
+        )
+        removedStagingEntries += result.removedStagingEntries
+        removedActivityEntries += result.removedActivityEntries
+      } finally {
+        process.chdir(projectPath)
+      }
+      assertBoundRoot(projectIdentity)
+      if (!sameIdentity(entryIdentity(sessionName), sessionIdentity)) {
+        throw new Error('File-evidence Session directory changed during recovery.')
+      }
+    }
+    result = {
+      ok: true,
+      removedStagingEntries,
+      removedActivityEntries,
+      removedBlobEntries: sweepBlobPool(bindBlobPool(binding))
+    }
+  } finally {
+    process.chdir(rootPath)
+  }
+  assertBoundRoot(request.expectedRootIdentity)
+  if (!sameIdentity(entryIdentity(projectName), projectIdentity)) {
+    throw new Error('File-evidence Project directory changed during recovery.')
+  }
+  return result
 }
 
 const verifyLegacyNotebookPublishedEvidence = (receipt, expected) => {
@@ -1776,13 +1847,15 @@ process.stdin.on('end', () => {
                     ? cleanup(request)
                     : request.operation === 'delete-project'
                       ? deleteProject(request)
-                      : request.operation === 'reconcile'
-                        ? reconcile(request)
-                        : request.operation === 'reconcile-legacy-notebook'
-                          ? reconcileLegacyNotebook(request)
-                          : (() => {
-                              throw new Error('Unsupported file-evidence worker operation.')
-                            })()
+                      : request.operation === 'reconcile-compute-project'
+                        ? reconcileComputeProject(request)
+                        : request.operation === 'reconcile'
+                          ? reconcile(request)
+                          : request.operation === 'reconcile-legacy-notebook'
+                            ? reconcileLegacyNotebook(request)
+                            : (() => {
+                                throw new Error('Unsupported file-evidence worker operation.')
+                              })()
     process.stdout.write(`${JSON.stringify(result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))

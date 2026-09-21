@@ -323,20 +323,23 @@ test('projects real production-composed delegation, permission, and Stop lifecyc
   )
   await expectDurableChildStatus(page, TERMINAL_CHILD, 'completed')
 
+  const releaseFile = join(await app.createTestDirectory('bounded-delegation'), 'release')
   await sendPrompt(
     page,
-    BOUNDED_COLLECT_PROMPT,
+    `${BOUNDED_COLLECT_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`,
     'Production bounded delegate returned while a Subagent kept running.',
     120_000
   )
   await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop subagents' })).toBeVisible()
+  await writeFile(releaseFile, '')
   await sendPrompt(
     page,
     BOUNDED_RECOLLECT_PROMPT,
     'Production bounded collect journey completed.',
     120_000
   )
+  await expectDurableChildStatus(page, 'Complete the bounded fixture after a delay.', 'completed')
   await expectRenderedChildStatus(page, TERMINAL_CHILD, 'completed')
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })

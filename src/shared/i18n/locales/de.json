@@ -578,7 +578,6 @@
     "Add skill": "Fähigkeit hinzufügen",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "Fügen Sie Fähigkeiten aus SKILL.md-Dateien oder .zip-/.skill-Paketen auf Ihrem Computer hinzu. Sie können mehrere Dateien gleichzeitig auswählen; ein einzelnes Archiv darf mehrere Fähigkeiten enthalten.",
     "Add specialist": "Spezialist hinzufügen",
-    "Add to Side chat": "Zum Side-Chat hinzufügen",
     "Add to conversation as attachment": "Als Anhang zur Konversation hinzufügen",
     "Add to project": "Zum Projekt hinzufügen",
     "Add to collection": "Zur Sammlung hinzufügen",
@@ -6106,6 +6105,12 @@
     "Unlink Specialists": "Spezialisten trennen",
     "View details for {{name}}": "Details zu {{name}} anzeigen",
     "{{count}} hidden by filters_one": "{{count}} durch Filter ausgeblendet",
-    "{{count}} hidden by filters_other": "{{count}} durch Filter ausgeblendet"
+    "{{count}} hidden by filters_other": "{{count}} durch Filter ausgeblendet",
+    "Custom HTTP service": "Benutzerdefinierter HTTP-Dienst",
+    "Custom services use the TypeSafe classification request and response format.": "Benutzerdefinierte Dienste verwenden das Anfrage- und Antwortformat der TypeSafe-Klassifikation.",
+    "Endpoint URL": "Endpunkt-URL",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Geben Sie einen gültigen sicheren HTTP-Endpunkt ein. Entfernte Endpunkte müssen HTTPS verwenden.",
+    "Model ID exposed by the endpoint": "Vom Endpunkt bereitgestellte Modell-ID",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Dies ist kein Chat-Completions-Endpunkt. Dienste mit einem anderen API-Format benötigen einen Adapter."
   }
 }

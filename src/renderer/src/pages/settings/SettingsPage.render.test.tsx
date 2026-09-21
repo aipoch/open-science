@@ -1059,6 +1059,30 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
   })
 
+  it('jumps from settings search to in-place Skill selection after retiring Manage', async () => {
+    // jsdom has no scrolling layout; keep the real search navigation and focus behavior.
+    Element.prototype.scrollIntoView = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+    await act(async () => {
+      fireEvent.change(search, { target: { value: 'Manage skills' } })
+      search.focus()
+    })
+    await act(async () => fireEvent.keyDown(search, { key: 'Enter' }))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Manage skills')
+    const select = document.activeElement?.querySelector<HTMLButtonElement>(
+      '[aria-label="Select multiple in Featured"]'
+    )
+    expect(select).not.toBeNull()
+    await act(async () => select!.click())
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+  })
+
   it('keeps the dialog open when Escape closes the global search results', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(<SettingsPage open onClose={onClose} />))

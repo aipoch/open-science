@@ -14,6 +14,7 @@
     "src/main/notebook/bundle-manifest.test.ts",
     "src/main/notebook/bundle-manifest.ts",
     "src/main/notebook/cell-execution-input.test.ts",
+    "src/main/notebook/compute-evidence-recovery.integration.test.ts",
     "src/main/notebook/conditional-restore-script.ts",
     "src/main/notebook/content-limits.test.ts",
     "src/main/notebook/content-limits.ts",
@@ -343,6 +344,7 @@
       "src/main/notebook/bundle-local.test.ts",
       "src/main/notebook/bundle-manifest.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",
+      "src/main/notebook/compute-evidence-recovery.integration.test.ts",
       "src/main/notebook/content-limits.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
@@ -897,7 +899,9 @@
       "src/main/session-plan/plan-legacy-compatibility.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

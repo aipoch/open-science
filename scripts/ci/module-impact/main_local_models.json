@@ -1,6 +1,9 @@
 {
   "ownerPaths": [
     "src/main/local-models/catalog.ts",
+    "src/main/local-models/download-sources.ts",
+    "src/main/local-models/download.test.ts",
+    "src/main/local-models/download.ts",
     "src/main/local-models/ipc.ts",
     "src/main/local-models/owner.test.ts",
     "src/main/local-models/owner.ts"
@@ -12,7 +15,7 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/local-models/owner.test.ts"],
+    "owner": ["src/main/local-models/download.test.ts", "src/main/local-models/owner.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -286,7 +289,9 @@
       "src/main/storage/migration-target-race.test.ts",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

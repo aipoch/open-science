@@ -1959,7 +1959,10 @@ const applyManifestMigration = async (
         }
         await insertLedgerRow(transactionClient, migration)
       },
-      migration.id === literatureSearchTextMigration.id ? { timeout: 120_000 } : undefined
+      migration.id === numericAndNullConstraintsMigration.id ||
+        migration.id === literatureSearchTextMigration.id
+        ? { timeout: 120_000 }
+        : undefined
     )
   } catch (error) {
     migrationFailure = error

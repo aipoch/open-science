@@ -123,17 +123,6 @@ export type SessionRunProjectionActions = {
     > & { wslSetup?: true },
     options?: { preserveCompaction?: boolean }
   ) => void
-  prepareInterruptedTurnContinuation: (
-    sessionId: string,
-    promptMessageId: string,
-    update:
-      | Pick<
-          PersistedChatSession,
-          'agentFrameworkId' | 'agentBackendId' | 'providerSessionId' | 'providerContinuityToken'
-        >
-      | undefined,
-    contextReset: boolean
-  ) => { runtimeSegmentId?: string } | undefined
   completeInterruptedTurnResume: (sessionId: string) => void
   clearPendingHistoryReplay: (sessionId: string, replay: PersistedPendingHistoryReplay) => void
   failRun: (
@@ -667,72 +656,6 @@ export const createSessionRunProjectionOwner = <
           updatedAt: Date.now()
         }))
       }))
-    },
-
-    prepareInterruptedTurnContinuation: (sessionId, promptMessageId, update, contextReset) => {
-      let prepared: { runtimeSegmentId?: string } | undefined
-      setSessionState((state) => ({
-        sessions: state.sessions.map((session) => {
-          const prompt = session.messages.find((message) => message.id === promptMessageId)
-          if (
-            session.id !== sessionId ||
-            prompt?.role !== 'user' ||
-            session.resumeRecovery?.promptMessageId !== promptMessageId ||
-            (session.activeRun && session.activeRun.promptMessageId !== promptMessageId)
-          ) {
-            return session
-          }
-
-          const now = Date.now()
-          const withProvider = {
-            ...session,
-            agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
-            agentBackendId: update?.agentBackendId ?? session.agentBackendId,
-            providerSessionId: update?.providerSessionId ?? session.providerSessionId,
-            providerContinuityToken:
-              update === undefined
-                ? session.providerContinuityToken
-                : update.providerContinuityToken
-          }
-          const isRetryingPreparedContext =
-            contextReset && session.pendingHistoryReplay !== undefined
-          const conversationGraph = contextReset
-            ? synchronizeSessionGraph(
-                withProvider,
-                withProvider.messages,
-                now,
-                withProvider.agentFrameworkId ?? 'claude-code',
-                withProvider.agentBackendId,
-                withProvider.agentModel,
-                !isRetryingPreparedContext
-              )
-            : withProvider.conversationGraph
-          const runtimeSegmentId = conversationGraph?.runtimeSegments
-            .filter((segment) => segment.agentFrameId === conversationGraph.activeFrameId)
-            .at(-1)?.id
-          prepared = runtimeSegmentId ? { runtimeSegmentId } : {}
-          return {
-            ...withProvider,
-            status: 'running',
-            activeRun: { promptMessageId, startedAt: now },
-            activeRunRuntimeSegmentId: runtimeSegmentId,
-            awaitingFirstAgentOutput: true,
-            agentStatus: undefined,
-            error: undefined,
-            errorReportable: undefined,
-            pendingHistoryReplay: contextReset
-              ? (session.pendingHistoryReplay ?? {
-                  kind: 'before-message',
-                  messageId: promptMessageId
-                })
-              : session.pendingHistoryReplay,
-            compacting: undefined,
-            conversationGraph,
-            updatedAt: now
-          }
-        })
-      }))
-      return prepared
     },
 
     completeInterruptedTurnResume: (sessionId) => {

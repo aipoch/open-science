@@ -3,9 +3,7 @@ import { i18next } from '@/i18n'
 import { highlightMermaidSource, LINE_CLASS } from './mermaid-source-highlight'
 import { getMermaidSource, MERMAID_RENDER_ID_ATTRIBUTE } from './mermaid-source-registry'
 
-const AGENT_MARKDOWN_ROOT_SELECTOR = '.agent-markdown-root'
 const MERMAID_BLOCK_SELECTOR = '[data-streamdown="mermaid-block"]'
-const MERMAID_ACTIONS_SELECTOR = `${AGENT_MARKDOWN_ROOT_SELECTOR} [data-streamdown="mermaid-block-actions"]`
 
 const TOGGLE_ATTRIBUTE = 'data-mermaid-view-toggle'
 const DECORATED_ATTRIBUTE = 'data-view-toggle-decorated'
@@ -118,36 +116,40 @@ const showDiagram = (block: HTMLElement): void => {
 // Adds a source/rendered toggle to each mermaid block's action bar. The rendered SVG stays
 // mounted (display: none) while the source is shown, so toggling back never re-renders.
 const installMermaidViewToggle = (): (() => void) => {
-  const decorate = (): void => {
-    for (const actions of document.querySelectorAll<HTMLElement>(
-      `${MERMAID_ACTIONS_SELECTOR}:not([${DECORATED_ATTRIBUTE}])`
-    )) {
-      const block = actions.closest(MERMAID_BLOCK_SELECTOR)
-      if (!(block instanceof HTMLElement)) continue
+  const decorate = (blocks?: Iterable<HTMLElement>): void => {
+    const candidates = (
+      blocks ? [...blocks] : [...document.querySelectorAll<HTMLElement>(MERMAID_BLOCK_SELECTOR)]
+    ).filter((block) => block.isConnected && block.closest('.agent-markdown-root'))
+
+    for (const block of candidates) {
       // The toggle only works once a rendered diagram has exposed its source; retry next scan.
       if (!block.querySelector(`svg[${MERMAID_RENDER_ID_ATTRIBUTE}]`)) continue
 
-      actions.setAttribute(DECORATED_ATTRIBUTE, '')
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = BUTTON_CLASS
-      button.setAttribute(TOGGLE_ATTRIBUTE, '')
-      button.addEventListener('click', () => {
-        if (block.getAttribute(VIEW_ATTRIBUTE) === 'source') {
-          showDiagram(block)
-        } else {
-          showSource(block)
-        }
-        syncButton(button, block)
-      })
-      actions.prepend(button)
+      for (const actions of block.querySelectorAll<HTMLElement>(
+        `[data-streamdown="mermaid-block-actions"]:not([${DECORATED_ATTRIBUTE}])`
+      )) {
+        actions.setAttribute(DECORATED_ATTRIBUTE, '')
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = BUTTON_CLASS
+        button.setAttribute(TOGGLE_ATTRIBUTE, '')
+        button.addEventListener('click', () => {
+          if (block.getAttribute(VIEW_ATTRIBUTE) === 'source') {
+            showDiagram(block)
+          } else {
+            showSource(block)
+          }
+          syncButton(button, block)
+        })
+        actions.prepend(button)
+      }
     }
 
     // Re-rendered diagrams (retry, streaming) replace the SVG: keep enabled/disabled state and
     // any visible source view in sync with the latest chart.
-    for (const button of document.querySelectorAll<HTMLButtonElement>(`[${TOGGLE_ATTRIBUTE}]`)) {
-      const block = button.closest(MERMAID_BLOCK_SELECTOR)
-      if (!(block instanceof HTMLElement)) continue
+    for (const block of candidates) {
+      const button = block.querySelector<HTMLButtonElement>(`[${TOGGLE_ATTRIBUTE}]`)
+      if (!button) continue
       syncButton(button, block)
       const sourceView = getDiagramBody(block)?.querySelector<HTMLElement>(
         `[${SOURCE_VIEW_ATTRIBUTE}]`
@@ -166,8 +168,37 @@ const installMermaidViewToggle = (): (() => void) => {
     }
   }
 
+  const blocksForMutations = (mutations: MutationRecord[]): Set<HTMLElement> => {
+    const blocks = new Set<HTMLElement>()
+    const addFromNode = (node: Node): void => {
+      if (!(node instanceof Element)) return
+      const block =
+        node instanceof HTMLElement && node.matches(MERMAID_BLOCK_SELECTOR)
+          ? node
+          : node.closest<HTMLElement>(MERMAID_BLOCK_SELECTOR)
+      if (block) blocks.add(block)
+      for (const descendant of node.querySelectorAll<HTMLElement>(MERMAID_BLOCK_SELECTOR)) {
+        blocks.add(descendant)
+      }
+    }
+
+    for (const mutation of mutations) {
+      mutation.addedNodes.forEach(addFromNode)
+      // Removals and SVG replacements affect their containing block. Do not scan siblings when
+      // unrelated content is appended to a transcript/Markdown root.
+      if (mutation.target instanceof Element) {
+        const block = mutation.target.closest<HTMLElement>(MERMAID_BLOCK_SELECTOR)
+        if (block) blocks.add(block)
+      }
+    }
+    return blocks
+  }
+
   decorate()
-  const observer = new MutationObserver(decorate)
+  const observer = new MutationObserver((mutations) => {
+    const blocks = blocksForMutations(mutations)
+    if (blocks.size > 0) decorate(blocks)
+  })
   observer.observe(document.body, { childList: true, subtree: true })
   i18next.on('languageChanged', onLanguageChanged)
 

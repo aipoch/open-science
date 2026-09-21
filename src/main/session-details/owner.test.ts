@@ -81,6 +81,21 @@ const queuedSession = (overrides: Partial<SessionDetailsSession> = {}): SessionD
   ...overrides
 })
 
+const runningSession = (overrides: Partial<SessionDetailsSession> = {}): SessionDetailsSession =>
+  queuedSession({
+    sessionDetailsGeneration: {
+      status: 'running',
+      sourceMessageId: 'message-1',
+      requestId: 'request-1',
+      queuedAt: 10,
+      startedAt: 11,
+      frameworkId: 'codex',
+      model: 'model-1',
+      reasoningEffort: 'low'
+    },
+    ...overrides
+  })
+
 class MemorySessions implements SessionDetailsSessionMutations {
   readonly records = new Map<string, SessionDetailsSession>()
 
@@ -106,7 +121,7 @@ class MemorySessions implements SessionDetailsSessionMutations {
     const current = this.records.get(key)
     if (!current) return undefined
     const result = mutation(current)
-    if (result.kind === 'unchanged') return current
+    if (result.kind === 'unchanged') return undefined
     const saved = {
       ...result.session,
       revision: (current.revision ?? 0) + 1,
@@ -181,6 +196,218 @@ const harness = (
 }
 
 describe('SessionDetailsOwner', () => {
+  it('reuses the startup catalog without another full-history hydration', async () => {
+    const source = queuedSession()
+    const { owner, store, generate } = harness([source])
+    const list = vi.spyOn(store, 'listSessions').mockRejectedValue(new Error('duplicate scan'))
+    await owner.start([source])
+    await waitFor(() => store.current().sessionDetailsGeneration?.status === 'succeeded')
+    expect(list).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledTimes(1)
+    await owner.shutdown()
+  })
+
+  it('does not scan history for an empty recovered catalog', async () => {
+    const { owner, store } = harness([])
+    const list = vi.spyOn(store, 'listSessions')
+    await owner.start([])
+    expect(list).not.toHaveBeenCalled()
+    await owner.shutdown()
+  })
+
+  it('revalidates a startup candidate against current manual-edit authority', async () => {
+    const candidate = queuedSession()
+    const current = queuedSession({
+      title: 'Edited',
+      sessionDetailsSource: 'manual',
+      sessionDetailsGeneration: undefined,
+      sessionDetailsGenerationEligible: undefined
+    })
+    const { owner, store, generate } = harness([current])
+    await owner.start([candidate])
+    expect(store.current().title).toBe('Edited')
+    expect(generate).not.toHaveBeenCalled()
+    await owner.shutdown()
+  })
+
+  it.each(['succeeded', 'manual', 'different-request'] as const)(
+    'does not overwrite %s authority from a stale running startup candidate',
+    async (state) => {
+      const candidate = runningSession()
+      if (candidate.sessionDetailsGeneration?.status !== 'running')
+        throw new Error('Expected running fixture')
+      const current =
+        state === 'manual'
+          ? queuedSession({
+              title: 'Manual title',
+              sessionDetailsSource: 'manual',
+              sessionDetailsGeneration: undefined
+            })
+          : state === 'succeeded'
+            ? queuedSession({
+                title: 'Completed title',
+                sessionDetailsSource: 'generated',
+                sessionDetailsGeneration: {
+                  ...candidate.sessionDetailsGeneration!,
+                  status: 'succeeded',
+                  usageUnavailable: true,
+                  completedAt: 20
+                }
+              })
+            : runningSession({
+                sessionDetailsGeneration: {
+                  ...candidate.sessionDetailsGeneration!,
+                  requestId: 'replacement-request'
+                }
+              })
+      const { owner, store, generate, publish } = harness([current])
+
+      await owner.start([candidate])
+
+      expect(store.current()).toEqual(current)
+      expect(generate).not.toHaveBeenCalled()
+      expect(publish).not.toHaveBeenCalled()
+      await owner.shutdown()
+    }
+  )
+
+  it('does not recreate a deleted startup candidate', async () => {
+    const { owner, store, generate, publish } = harness([])
+    await owner.start([runningSession(), queuedSession({ id: 'deleted-queued' })])
+    expect(store.records.size).toBe(0)
+    expect(generate).not.toHaveBeenCalled()
+    expect(publish).not.toHaveBeenCalled()
+    await owner.shutdown()
+  })
+
+  it.each(['branch', 'invalid-source'] as const)(
+    'rechecks %s authority before admitting a stale queued startup candidate',
+    async (state) => {
+      const candidate = queuedSession()
+      const current = queuedSession(
+        state === 'branch'
+          ? { branchSource: { sessionId: 'parent', headMessageId: 'message-1' } }
+          : { messages: [{ ...candidate.messages[0], id: 'replacement-message' }] }
+      )
+      const { owner, store, generate } = harness([current])
+
+      await owner.start([candidate])
+
+      expect(generate).not.toHaveBeenCalled()
+      expect(store.current().sessionDetailsGeneration).toBeUndefined()
+      expect(store.current().messages).toEqual(current.messages)
+      expect(store.current().branchSource).toEqual(current.branchSource)
+      expect(store.current().title).toBe(current.title)
+      await owner.shutdown()
+    }
+  )
+
+  it('retains and deduplicates saves arriving while startup snapshot recovery is blocked', async () => {
+    const candidate = runningSession()
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    const admitted = deferred<void>()
+    const inference = deferred<SessionDetailsInferenceResult>()
+    const { owner, store, generate } = harness([candidate], {
+      inference: () => {
+        admitted.resolve()
+        return inference.promise
+      },
+      shutdownCleanupMs: 0
+    })
+    const mutate = store.mutateSession.bind(store)
+    vi.spyOn(store, 'mutateSession').mockImplementationOnce(async (...args) => {
+      entered.resolve()
+      await release.promise
+      return mutate(...args)
+    })
+    const startup = owner.start([candidate])
+    await entered.promise
+    const saved = queuedSession({ id: 'saved-during-recovery' })
+    store.records.set('project-1:saved-during-recovery', saved)
+    owner.afterSessionSaved(saved)
+    owner.afterSessionSaved(saved)
+    expect(generate).not.toHaveBeenCalled()
+
+    release.resolve()
+    await startup
+    await admitted.promise
+
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(store.current().sessionDetailsGeneration?.status).toBe('failed')
+    expect(
+      store.records.get('project-1:saved-during-recovery')?.sessionDetailsGeneration?.status
+    ).toBe('running')
+    await owner.shutdown()
+    inference.resolve({ stopReason: 'end_turn', output: '{"title":"Late","description":"Late"}' })
+  })
+
+  it.each(['branch', 'invalid-source'] as const)(
+    'does not clear newly invalid %s authority after shutdown during queued snapshot admission',
+    async (state) => {
+      const candidate = queuedSession()
+      const current = queuedSession(
+        state === 'branch'
+          ? { branchSource: { sessionId: 'parent', headMessageId: 'message-1' } }
+          : { messages: [{ ...candidate.messages[0], id: 'replacement-message' }] }
+      )
+      const { owner, store, generate, publish } = harness([current])
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      const mutate = store.mutateSession.bind(store)
+      vi.spyOn(store, 'mutateSession').mockImplementationOnce(async (...args) => {
+        entered.resolve()
+        await release.promise
+        return mutate(...args)
+      })
+      const startup = owner.start([candidate])
+      await entered.promise
+      await owner.shutdown()
+      release.resolve()
+      await startup
+      expect(store.current()).toEqual(current)
+      expect(generate).not.toHaveBeenCalled()
+      expect(publish).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['running', 'invalid-running', 'branch', 'eligible'] as const)(
+    'does not write or infer when shutdown overtakes blocked %s snapshot recovery',
+    async (state) => {
+      const candidate =
+        state === 'eligible'
+          ? queuedSession({
+              sessionDetailsGeneration: undefined,
+              sessionDetailsGenerationEligible: true
+            })
+          : state === 'branch'
+            ? queuedSession({ branchSource: { sessionId: 'parent', headMessageId: 'message-1' } })
+            : runningSession(
+                state === 'invalid-running'
+                  ? { branchSource: { sessionId: 'parent', headMessageId: 'message-1' } }
+                  : {}
+              )
+      const entered = deferred<void>()
+      const release = deferred<void>()
+      const { owner, store, generate, publish } = harness([candidate])
+      const mutate = store.mutateSession.bind(store)
+      vi.spyOn(store, 'mutateSession').mockImplementationOnce(async (...args) => {
+        entered.resolve()
+        await release.promise
+        return mutate(...args)
+      })
+      const startup = owner.start([candidate])
+      await entered.promise
+      await owner.shutdown()
+      release.resolve()
+      await startup
+
+      expect(store.current()).toEqual(candidate)
+      expect(generate).not.toHaveBeenCalled()
+      expect(publish).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps an attachment-only fallback editable after disabled generation', async () => {
     const source = queuedSession({
       sessionDetailsSource: undefined,

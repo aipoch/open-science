@@ -788,6 +788,18 @@ export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
     | Readonly<{ expectedTitle?: never; expectedDescription?: never }>
   )
 
+// Main-owned proof linking an execution Segment to its immutable originating prompt.
+// Historical entries remain available for delayed Artifact finalization after restart.
+export type PersistedRuntimeSessionAdmission = {
+  executionId: string
+  promptMessageId: string
+  promptRuntimeSegmentId: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+}
+
 export type PersistedChatSession = {
   // Imported history has no execution authority. Absence preserves existing local Session behavior.
   packageOrigin?: import('./session-package').SessionPackageOrigin
@@ -892,6 +904,7 @@ export type PersistedChatSession = {
   }
   runtimeTranscriptLastRun?: PersistedActiveRun
   runtimeConversationCommandIds?: string[]
+  runtimeSessionAdmissions?: PersistedRuntimeSessionAdmission[]
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery
@@ -4576,6 +4589,39 @@ const sanitizeSession = (
       }
     }
     sanitized.runtimeTranscriptLastRun = sanitizeActiveRun(session.runtimeTranscriptLastRun)
+    if (Array.isArray(session.runtimeSessionAdmissions)) {
+      const admissions = new Map<string, PersistedRuntimeSessionAdmission>()
+      const conflicts = new Set<string>()
+      const keys = [
+        'executionId',
+        'promptMessageId',
+        'promptRuntimeSegmentId',
+        'rootFrameId',
+        'agentFrameId',
+        'messageBranchId',
+        'runtimeSegmentId'
+      ] as const
+      for (const value of session.runtimeSessionAdmissions) {
+        if (
+          !isRecord(value) ||
+          !keys.every(
+            (key) =>
+              typeof value[key] === 'string' && value[key].length > 0 && value[key].length <= 256
+          )
+        )
+          continue
+        const admission = Object.fromEntries(
+          keys.map((key) => [key, value[key]])
+        ) as PersistedRuntimeSessionAdmission
+        const previous = admissions.get(admission.executionId)
+        if (previous && keys.some((key) => previous[key] !== admission[key]))
+          conflicts.add(admission.executionId)
+        admissions.set(admission.executionId, admission)
+      }
+      sanitized.runtimeSessionAdmissions = [...admissions.values()].filter(
+        ({ executionId }) => !conflicts.has(executionId)
+      )
+    }
     if (Array.isArray(session.runtimeConversationCommandIds)) {
       sanitized.runtimeConversationCommandIds = session.runtimeConversationCommandIds
         .filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256)

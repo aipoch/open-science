@@ -134,6 +134,62 @@ it('offers provider choices and an API key link without a manual model ID field'
     'https://openrouter.ai/workspaces/default/keys'
   )
 })
+
+it('configures a custom TypeSafe-compatible endpoint without requiring a loopback key', async () => {
+  render(<Harness />)
+  fireEvent.click(await screen.findByText('Add service'))
+  fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  const customOption = await screen.findByRole('option', { name: 'Custom HTTP service' })
+  expect(customOption.querySelector('svg')).toBeTruthy()
+  fireEvent.click(customOption)
+  expect(
+    await screen.findByText(
+      'Custom services use the TypeSafe classification request and response format.'
+    )
+  ).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('Endpoint URL'), {
+    target: { value: 'http://localhost:8000/classify' }
+  })
+  fireEvent.change(screen.getByLabelText('Model'), {
+    target: { value: 'local-typed-decisions' }
+  })
+  fireEvent.change(screen.getByLabelText('Service name'), { target: { value: 'Local classifier' } })
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false)
+  fireEvent.click(screen.getByText('Save'))
+  await waitFor(() =>
+    expect(api.updateClassification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: 'custom',
+        baseUrl: 'http://localhost:8000/classify',
+        modelId: 'local-typed-decisions',
+        apiKey: undefined
+      })
+    )
+  )
+})
+it('labels a custom service and requires a key when its endpoint changes from local to remote', async () => {
+  state.services = [
+    {
+      id: 'custom-service',
+      name: 'Local classifier',
+      adapter: 'custom',
+      baseUrl: 'http://localhost:8000/classify',
+      modelId: 'local-typed-decisions',
+      configured: true,
+      needsKey: false
+    }
+  ]
+  render(<Harness />)
+  expect(await screen.findByText('Custom HTTP service')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  fireEvent.change(await screen.findByLabelText('Endpoint URL'), {
+    target: { value: 'https://classifier.example.test/classify' }
+  })
+  expect(screen.getByLabelText('API key')).toHaveProperty('required', true)
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'remote-key' } })
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', false)
+})
 it('shows the shared validation failure without saving, preserves the draft, and allows retry', async () => {
   let finish!: (result: ClassificationMutationResult) => void
   api.updateClassification.mockImplementationOnce(

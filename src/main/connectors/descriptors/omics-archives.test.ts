@@ -65,7 +65,7 @@ const MGNIFY_ANALYSES = [
 ]
 
 describe('omics-archives tool set', () => {
-  it('exposes the 17 upstream archive tools and 2 ENA tools, all on connector omics-archives', () => {
+  it('exposes the 18 archive tools and 2 ENA tools, all on connector omics-archives', () => {
     expect(OMICS_ARCHIVES_TOOLS.map((t) => t.id).sort()).toEqual(
       [
         'arrayexpress_get_experiment',
@@ -85,6 +85,7 @@ describe('omics-archives tool set', () => {
         'mgnify_search_studies',
         'pride_find_projects_for_protein',
         'pride_get_projects',
+        'pride_get_project_files',
         'pride_search_project_proteins',
         'pride_search_projects'
       ].sort()
@@ -1011,6 +1012,207 @@ describe('mgnify_get_study_analyses', () => {
   })
 })
 
+describe('pride_get_project_files', () => {
+  // Shape observed at /projects/PXD000001/files; file accessions are not necessarily PXF IDs.
+  const file = (
+    accession = '5bda360133398f66021c8889'
+  ): {
+    accession: string
+    projectAccessions: string[]
+    fileName: string
+    fileCategory: { name: string; value: string }
+    fileSizeBytes: number
+    checksum: string
+    publicFileLocations: Array<{ name: string; value: string }>
+  } => ({
+    accession,
+    projectAccessions: ['PXD000001'],
+    fileName: 'sample.raw',
+    fileCategory: { name: 'Raw data file URI', value: 'RAW' },
+    fileSizeBytes: 497985,
+    checksum: '',
+    publicFileLocations: [
+      { name: 'FTP Protocol', value: 'ftp://ftp.pride.ebi.ac.uk/pride/data/sample.raw' },
+      { name: 'Aspera Protocol', value: 'prd_ascp@fasp.ebi.ac.uk:pride/data/sample.raw' }
+    ]
+  })
+  const call = (fetchImpl: typeof fetch, args: Record<string, unknown> = {}): Promise<unknown> =>
+    engine(fetchImpl).call(
+      tool('pride_get_project_files'),
+      { project_accession: 'PXD000001', ...args },
+      {}
+    )
+
+  it('preserves download locations and requests metadata only', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([file()], { total_records: '1' }))
+    expect(await call(fetchImpl)).toEqual({
+      project_accession: 'PXD000001',
+      page: 0,
+      page_size: 100,
+      api_total: 1,
+      n_files_returned: 1,
+      next_page: null,
+      files: [
+        {
+          file_accession: file().accession,
+          file_name: 'sample.raw',
+          file_category: 'RAW',
+          file_size_bytes: 497985,
+          checksum: null,
+          public_file_locations: file().publicFileLocations.map((l) => ({
+            protocol: l.name,
+            location: l.value
+          }))
+        }
+      ]
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const url = new URL(String(fetchImpl.mock.calls[0][0]))
+    expect(url.pathname).toBe('/pride/ws/archive/v2/projects/PXD000001/files')
+    expect(Object.fromEntries(url.searchParams)).toEqual({ page: '0', pageSize: '100' })
+  })
+
+  it.each(['PXD000001', 'PRD000001'])(
+    'accepts project accession %s through the executor',
+    async (projectAccession) => {
+      const args = { project_accession: projectAccession }
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValue(
+          jsonRes([{ ...file(), projectAccessions: [projectAccession] }], { total_records: '1' })
+        )
+      expect(await call(fetchImpl, args)).toMatchObject({
+        project_accession: projectAccession,
+        api_total: 1,
+        n_files_returned: 1,
+        files: [{ file_accession: file().accession }]
+      })
+      expect(new URL(String(fetchImpl.mock.calls[0][0])).pathname).toBe(
+        `/pride/ws/archive/v2/projects/${projectAccession}/files`
+      )
+    }
+  )
+
+  it('lets callers follow pages through a partial final page without losing same-name files', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes([file('a'), file('b')], { total_records: '3' }))
+      .mockResolvedValueOnce(jsonRes([file('c')], { total_records: '3' }))
+    expect(await call(fetchImpl, { page_size: 2 })).toMatchObject({
+      api_total: 3,
+      n_files_returned: 2,
+      next_page: 1,
+      files: [{ file_accession: 'a' }, { file_accession: 'b' }]
+    })
+    expect(await call(fetchImpl, { page: 1, page_size: 2 })).toMatchObject({
+      page: 1,
+      api_total: 3,
+      n_files_returned: 1,
+      next_page: null
+    })
+    expect(new URL(String(fetchImpl.mock.calls[1][0])).searchParams.get('page')).toBe('1')
+  })
+
+  it.each([
+    [0, '0'],
+    [2, '3']
+  ])('returns an empty page without claiming project existence (page %s)', async (page, total) => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([], { total_records: total }))
+    expect(await call(fetchImpl, { page, page_size: 2 })).toEqual({
+      project_accession: 'PXD000001',
+      page,
+      page_size: 2,
+      api_total: Number(total),
+      n_files_returned: 0,
+      next_page: null,
+      files: []
+    })
+  })
+
+  it('stops at an exact total and uses a possible next page when the total is absent', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonRes([file()], { total_records: '1' }))
+      .mockResolvedValueOnce(jsonRes([file()]))
+      .mockResolvedValueOnce(jsonRes([]))
+    expect(await call(fetchImpl, { page_size: 1 })).toMatchObject({ next_page: null })
+    expect(await call(fetchImpl, { page_size: 1 })).toMatchObject({ api_total: null, next_page: 1 })
+    expect(await call(fetchImpl, { page: 1, page_size: 1 })).toMatchObject({ next_page: null })
+  })
+
+  it('distinguishes missing sizes from zero and preserves untyped checksums', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes(
+        [
+          { accession: 'a', fileName: 'no-metadata' },
+          { ...file('b'), fileSizeBytes: 0, checksum: 'upstream-checksum' },
+          { ...file('c'), fileSizeBytes: '497985' }
+        ],
+        { total_records: '3' }
+      )
+    )
+    expect(await call(fetchImpl)).toMatchObject({
+      files: [
+        { file_size_bytes: null, file_category: null, checksum: null, public_file_locations: [] },
+        { file_size_bytes: 0, checksum: 'upstream-checksum' },
+        { file_size_bytes: 497985 }
+      ]
+    })
+  })
+
+  it.each([
+    { project_accession: '../PXD000001' },
+    { project_accession: 'PXD1' },
+    { project_accession: 'PRD1' },
+    { project_accession: 'PRD000001/../files' },
+    { project_accession: 'PRD00000x' },
+    { project_accession: 'PZD000001' },
+    { page: -1 },
+    { page: 0.5 },
+    { page: '1' },
+    { page: 1000001 },
+    { page_size: 0 },
+    { page_size: 101 },
+    { page_size: 1.5 },
+    { page_size: '2' }
+  ])('rejects invalid arguments before fetching: %j', async (args) => {
+    const fetchImpl = vi.fn()
+    await expect(call(fetchImpl, args)).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ error: 'upstream failure' }, {}],
+    [[file()], { total_records: '-1' }],
+    [[file()], { total_records: '1.5' }],
+    [[file()], { total_records: '9007199254740992' }],
+    [[file()], { total_records: '2' }],
+    [[file(), file()], { total_records: '2' }],
+    [[{ ...file(), projectAccessions: ['PXD000002'] }], {}],
+    [[{ ...file(), fileName: null }], {}],
+    [[{ ...file(), fileSizeBytes: -1 }], {}],
+    [[{ ...file(), fileSizeBytes: 9007199254740992 }], {}],
+    [[{ ...file(), publicFileLocations: {} }], {}],
+    [[{ ...file(), publicFileLocations: [{ name: 'FTP Protocol' }] }], {}]
+  ])('rejects malformed or inconsistent upstream data: %j', async (body, headers) => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes(body, headers))
+    await expect(call(fetchImpl)).rejects.toThrow('Invalid PRIDE project files response')
+  })
+
+  it('rejects a response larger than the requested page', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([file('a'), file('b')]))
+    await expect(call(fetchImpl, { page_size: 1 })).rejects.toThrow('expected a bounded file array')
+  })
+
+  it.each([401, 403, 404, 429, 500])(
+    'propagates HTTP %s instead of reporting no files',
+    async (status) => {
+      const fetchImpl = vi.fn().mockResolvedValue(errRes(status))
+      await expect(call(fetchImpl)).rejects.toThrow(`HTTP ${status}`)
+    }
+  )
+})
+
 describe('pride_search_projects', () => {
   it('reads the total_records header, sorts by accession, and caps output', async () => {
     const body = [
@@ -1219,6 +1421,33 @@ describe.skipIf(!process.env.LIVE_API)('omics-archives (LIVE)', () => {
     expect(typeof out.api_total).toBe('number')
     expect((out.records as unknown[]).length).toBeLessThanOrEqual(3)
   }, 60000)
+
+  it.each(['PXD000001', 'PRD000001'])(
+    'pride_get_project_files %s follows a next page',
+    async (projectAccession) => {
+      const first = (await call('pride_get_project_files', {
+        project_accession: projectAccession,
+        page_size: 2
+      })) as Record<string, unknown>
+      expect(first.api_total).toBeGreaterThan(2)
+      expect(first.next_page).toBe(1)
+      const files = first.files as Array<Record<string, unknown>>
+      expect(files).toHaveLength(2)
+      expect(files[0].file_name).toBeTruthy()
+      expect(files[0].file_size_bytes).toBeGreaterThan(0)
+      expect(files[0].public_file_locations).not.toHaveLength(0)
+      const second = (await call('pride_get_project_files', {
+        project_accession: projectAccession,
+        page_size: 2,
+        page: first.next_page
+      })) as Record<string, unknown>
+      expect(second.api_total).toBe(first.api_total)
+      expect(
+        (second.files as Array<Record<string, unknown>>).map((f) => f.file_accession)
+      ).not.toEqual(files.map((f) => f.file_accession))
+    },
+    30000
+  )
 
   it('pride_find_projects_for_protein P04637', async () => {
     const out = (await call('pride_find_projects_for_protein', {

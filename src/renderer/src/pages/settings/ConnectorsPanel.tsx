@@ -592,7 +592,7 @@ export function ConnectorsPanel({
         <div data-slot="connectors-action-bar" className="flex flex-wrap items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="shrink-0">
+              <Button variant="outline" className="shrink-0" data-settings-anchor="connectors.add">
                 <Plus data-icon="inline-start" aria-hidden="true" />
                 {t('Add connector')}
                 <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />

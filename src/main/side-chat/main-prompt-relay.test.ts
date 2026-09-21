@@ -52,6 +52,7 @@ describe('main prompt side-chat relay', () => {
       projectId: 'project-1',
       sessionId: 'main-1',
       relayIds: [expect.stringMatching(/^side-chat-message-/)],
+      relays: [expect.objectContaining({ text: 'Use a black line.', sideChatId: 'chat-1' })],
       promptMessageId: 'prompt-1'
     })
     expect(onDelivered).toHaveBeenCalledWith({
@@ -107,6 +108,7 @@ describe('main prompt side-chat relay', () => {
       projectId: 'project-1',
       sessionId: 'main-1',
       relayIds: [queued.messageId],
+      relays: [expect.objectContaining({ id: queued.messageId })],
       promptMessageId: 'prompt-live'
     })
     expect(adapter.claim('main-1')).toBeUndefined()
@@ -203,6 +205,10 @@ describe('main prompt side-chat relay', () => {
       projectId: 'project-1',
       sessionId: 'main-1',
       relayIds: [first.messageId, second.messageId],
+      relays: [
+        expect.objectContaining({ id: first.messageId }),
+        expect.objectContaining({ id: second.messageId })
+      ],
       promptMessageId: 'prompt-1'
     })
   })
@@ -407,6 +413,7 @@ it('does not requeue an advisory already accepted by Main when local commit fail
   expect(commitSideChatRelays).toHaveBeenCalledWith(
     expect.objectContaining({
       relayIds: [queued.messageId],
+      relays: [expect.objectContaining({ id: queued.messageId })],
       promptMessageId: 'accepted-main-prompt'
     })
   )
@@ -455,10 +462,14 @@ it('retries only the accepted relay commit with the same prompt identity and pub
   })
   await expect(adapter.tryInject('main-1', queued)).resolves.toMatchObject({
     status: 'injected',
+    persisted: false,
     persistenceError: 'Disk full'
   })
   expect(onDelivered).not.toHaveBeenCalled()
-  await expect(adapter.tryInject('main-1', queued)).resolves.toMatchObject({ status: 'injected' })
+  await expect(adapter.tryInject('main-1', queued)).resolves.toMatchObject({
+    status: 'injected',
+    persisted: true
+  })
   expect(steerAdvisory).toHaveBeenCalledOnce()
   expect(commitSideChatRelays).toHaveBeenCalledTimes(2)
   expect(commitSideChatRelays.mock.calls[0]).toEqual(commitSideChatRelays.mock.calls[1])

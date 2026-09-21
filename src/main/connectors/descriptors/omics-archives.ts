@@ -1067,8 +1067,95 @@ async function prideSearch(ctx: ToolContext, spec: Obj, maxPages: number): Promi
   }
 }
 
+// The project-files endpoint returns a bare array and an optional total_records header.
+// Keep pages explicit: large proteomics projects must not cause an unbounded metadata walk.
+async function prideProjectFiles(ctx: ToolContext, args: Obj): Promise<Obj> {
+  const accession = args.project_accession
+  const page = args.page ?? 0
+  const pageSize = args.page_size ?? 100
+  if (
+    typeof accession !== 'string' ||
+    !/^(?:PXD|PRD)[0-9]{6,}$/.test(accession) ||
+    accession.length > 32
+  )
+    throw new Error('project_accession must be a PXD or PRD accession, e.g. PXD000001 or PRD000001')
+  if (typeof page !== 'number' || !Number.isInteger(page) || page < 0 || page > 1000000)
+    throw new Error('page must be an integer from 0 to 1000000')
+  if (typeof pageSize !== 'number' || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+    throw new Error('page_size must be an integer from 1 to 100')
+
+  const invalid = (field: string): never => {
+    throw new Error(`Invalid PRIDE project files response: ${field}`)
+  }
+  const optionalText = (value: unknown, field: string): string | null => {
+    if (value == null || value === '') return null
+    if (typeof value !== 'string') return invalid(field)
+    return value
+  }
+  const integer = (value: unknown, field: string): number => {
+    const n = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value
+    if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0) return invalid(field)
+    return n
+  }
+  const { body, headers } = await ctx.fetchJsonWithHeaders(
+    `${PRIDE}/projects/${accession}/files?${qs({ page, pageSize })}`
+  )
+  if (!Array.isArray(body) || body.length > pageSize)
+    return invalid('expected a bounded file array')
+  const totalHeader = headers.get('total_records')
+  const total = totalHeader === null ? null : integer(totalHeader.trim(), 'total_records')
+  const offset = page * pageSize
+  if (total !== null && body.length !== Math.min(pageSize, Math.max(0, total - offset)))
+    return invalid('page length disagrees with total_records')
+
+  const seen = new Set<string>()
+  const files = body.map((value) => {
+    const raw = asObj(value)
+    const fileAccession = optionalText(raw.accession, 'accession')
+    const fileName = optionalText(raw.fileName, 'fileName')
+    if (!fileAccession || !fileName) return invalid('missing file accession or name')
+    if (seen.has(fileAccession)) return invalid('duplicate file accession')
+    seen.add(fileAccession)
+    if (
+      raw.projectAccessions != null &&
+      (!Array.isArray(raw.projectAccessions) || !raw.projectAccessions.includes(accession))
+    )
+      return invalid('file does not belong to the requested project')
+    if (raw.publicFileLocations != null && !Array.isArray(raw.publicFileLocations))
+      return invalid('publicFileLocations')
+    const locations = asArr(raw.publicFileLocations).map((entry) => {
+      const location = asObj(entry)
+      const address = optionalText(location.value, 'publicFileLocations.value')
+      if (!address) return invalid('missing public file location')
+      return {
+        protocol: optionalText(location.name, 'publicFileLocations.name'),
+        location: address
+      }
+    })
+    return {
+      file_accession: fileAccession,
+      file_name: fileName,
+      file_category: optionalText(asObj(raw.fileCategory).value, 'fileCategory.value'),
+      file_size_bytes:
+        raw.fileSizeBytes == null ? null : integer(raw.fileSizeBytes, 'fileSizeBytes'),
+      checksum: optionalText(raw.checksum, 'checksum'),
+      public_file_locations: locations
+    }
+  })
+  const hasMore = total === null ? files.length === pageSize : offset + files.length < total
+  return {
+    project_accession: accession,
+    page,
+    page_size: pageSize,
+    api_total: total,
+    n_files_returned: files.length,
+    next_page: hasMore ? page + 1 : null,
+    files
+  }
+}
+
 // ===========================================================================
-// Descriptors (17 upstream archive tools plus 2 ENA tools; connector = 'omics-archives')
+// Descriptors (18 archive tools plus 2 ENA tools; connector = 'omics-archives')
 // ===========================================================================
 export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
   ...ENA_OMICS_TOOLS,
@@ -1563,6 +1650,28 @@ export const OMICS_ARCHIVES_TOOLS: ToolDescriptor[] = [
     run: (ctx, a) => fetchStudyAnalyses(ctx, String(a.accession))
   },
   // ---- PRIDE ----
+  {
+    id: 'pride_get_project_files',
+    connector: 'omics-archives',
+    description:
+      'List one page of public PRIDE project files for a PXD or PRD accession, including file category, byte size, upstream checksum and download locations (FTP, HTTP or Aspera). Metadata only: does not download files or verify checksums. Pages are zero-based; keep page_size unchanged and follow next_page until null. Ordering is supplied by PRIDE, not a snapshot. An empty list does not establish whether a project exists or is public.',
+    input: {
+      type: 'object',
+      properties: {
+        project_accession: { type: 'string', pattern: '^(?:PXD|PRD)[0-9]{6,}$', maxLength: 32 },
+        page: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
+        page_size: { type: 'integer', minimum: 1, maximum: 100, default: 100 }
+      },
+      required: ['project_accession'],
+      additionalProperties: false
+    },
+    required: ['project_accession'],
+    returns:
+      '{project_accession, page, page_size, api_total:number|null, n_files_returned, next_page:number|null, files:[{file_accession, file_name, file_category:string|null, file_size_bytes:number|null, checksum:string|null, public_file_locations:[{protocol:string|null, location:string}]}]}. api_total counts files across all pages; null means no total header. Without a total, a full page yields a possible next_page which may be empty. Missing sizes/checksums are null, not zero. Checksum text and location strings are preserved from PRIDE; no checksum algorithm or alternate download URL is inferred. Aspera locations are transfer addresses, not HTTP URLs.',
+    example:
+      'const result = await host.mcp("omics-archives", "pride_get_project_files", {"project_accession": "PXD000001", "page": 0, "page_size": 100})',
+    run: prideProjectFiles
+  },
   {
     id: 'pride_search_projects',
     connector: 'omics-archives',

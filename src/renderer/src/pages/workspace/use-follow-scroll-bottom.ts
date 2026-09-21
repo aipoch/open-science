@@ -22,12 +22,16 @@ export const useFollowScrollBottom = (enabled: boolean): RefObject<HTMLDivElemen
   >(undefined)
 
   useLayoutEffect(() => {
+    const wasEnabled = enabledRef.current
+    const hasResizeObserver = typeof ResizeObserver !== 'undefined'
     enabledRef.current = enabled
     const viewport = viewportRef.current
     const content = viewport?.firstElementChild ?? null
     const previous = bindingRef.current
     if (previous && previous.viewport === viewport && previous.content === content) {
-      if (enabled && followingRef.current) previous.scrollToEnd()
+      if (enabled && followingRef.current && (!wasEnabled || !hasResizeObserver)) {
+        previous.scrollToEnd()
+      }
       return
     }
     previous?.cleanup()

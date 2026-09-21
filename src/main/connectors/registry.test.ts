@@ -74,6 +74,38 @@ describe('registry + catalog', () => {
   })
 })
 
+describe('PRIDE project file input contract', () => {
+  const descriptor = getDescriptor('omics-archives', 'pride_get_project_files')!
+
+  it.each(['PXD000001', 'PRD000001'])('accepts project accession %s', (projectAccession) => {
+    expect(() =>
+      validateToolArguments(descriptor, { project_accession: projectAccession })
+    ).not.toThrow()
+  })
+
+  it.each([
+    { project_accession: '../PXD000001' },
+    { project_accession: 'PXD1' },
+    { project_accession: 'PRD1' },
+    { project_accession: 'PRD000001/../files' },
+    { project_accession: 'PRD00000x' },
+    { project_accession: 'PZD000001' },
+    { page: -1 },
+    { page: 0.5 },
+    { page: '1' },
+    { page: 1000001 },
+    { page_size: 0 },
+    { page_size: 101 },
+    { page_size: 1.5 },
+    { page_size: '2' },
+    { download: true }
+  ])('rejects invalid or unknown arguments: %j', (args) => {
+    expect(() =>
+      validateToolArguments(descriptor, { project_accession: 'PXD000001', ...args })
+    ).toThrow(/invalid_arguments/)
+  })
+})
+
 // Authored examples are part of the agent-facing contract, not illustrative pseudocode.
 describe('bundled tool contracts', () => {
   const tools = ALL_CONNECTOR_IDS.flatMap(getConnectorTools)

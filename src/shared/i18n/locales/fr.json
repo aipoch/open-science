@@ -621,7 +621,6 @@
     "Add skill": "Ajouter une compétence",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "Ajoutez des compétences à partir de fichiers SKILL.md ou d’archives .zip / .skill sur votre ordinateur. Vous pouvez sélectionner plusieurs fichiers à la fois, et une même archive peut contenir plusieurs compétences.",
     "Add specialist": "Ajouter un spécialiste",
-    "Add to Side chat": "Ajouter au chat secondaire",
     "Add to conversation as attachment": "Ajouter à la conversation en pièce jointe",
     "Add to project": "Ajouter au projet",
     "Add to collection": "Ajouter à la collection",
@@ -6270,6 +6269,12 @@
     "View details for {{name}}": "Voir les détails de {{name}}",
     "{{count}} hidden by filters_one": "{{count}} masqué par les filtres",
     "{{count}} hidden by filters_many": "{{count}} masqués par les filtres",
-    "{{count}} hidden by filters_other": "{{count}} masqués par les filtres"
+    "{{count}} hidden by filters_other": "{{count}} masqués par les filtres",
+    "Custom HTTP service": "Service HTTP personnalisé",
+    "Custom services use the TypeSafe classification request and response format.": "Les services personnalisés utilisent le format de requête et de réponse de classification TypeSafe.",
+    "Endpoint URL": "URL du point de terminaison",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Saisissez un point de terminaison HTTP sécurisé valide. Les points de terminaison distants doivent utiliser HTTPS.",
+    "Model ID exposed by the endpoint": "ID du modèle exposé par le point de terminaison",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Il ne s’agit pas d’un point de terminaison Chat Completions. Les services utilisant un autre format d’API nécessitent un adaptateur."
   }
 }

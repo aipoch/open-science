@@ -512,7 +512,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/write-budget-owner.test.ts',
       'src/main/notebook/reproduction-runtime.test.ts',
       'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx',
-      'src/main/notebook/dependency-analysis.stdlib-replay.test.ts'
+      'src/main/notebook/dependency-analysis.stdlib-replay.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts'
     ])
     expect(module.interfacePaths).toEqual([
       'src/main/artifacts/provenance-message-snapshot.ts',
@@ -591,7 +592,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/scientific-output-comparison.test.ts',
       'src/main/artifacts/session-reproducibility-store.test.ts',
       'src/main/artifacts/session-reproducibility.test.ts',
-      'src/main/artifacts/storage-access.context.test.ts'
+      'src/main/artifacts/storage-access.context.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts'
     ])
     expect(module.testFiles.contract).toEqual([
       'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
@@ -938,7 +940,10 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
-      'src/main/session-persistence/runtime-authority.test.ts'
+      'src/main/session-persistence/runtime-authority.test.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

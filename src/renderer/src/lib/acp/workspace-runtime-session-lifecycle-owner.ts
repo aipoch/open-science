@@ -168,18 +168,62 @@ const resumeInterruptedWorkspaceSession = async (
 
   const runtimeAlreadyAttached =
     runtime.state.sessionIds.includes(sessionId) && !options?.agentTarget
-  const promptMessageId = session.resumeRecovery?.promptMessageId
+  const originalPromptMessageId = session.resumeRecovery?.promptMessageId
+  const originalFrameId = session.conversationGraph?.activeFrameId
+  const originalBranchId = session.conversationGraph?.frames.find(
+    (frame) => frame.id === originalFrameId
+  )?.activeBranchId
+  const currentRecoverySession = (): ChatSession | undefined => {
+    const current = workspaceSession(sessionId)
+    const currentFrameId = current?.conversationGraph?.activeFrameId
+    const currentBranchId = current?.conversationGraph?.frames.find(
+      (frame) => frame.id === currentFrameId
+    )?.activeBranchId
+    const currentBranch = current?.conversationGraph?.branches.find(
+      (branch) => branch.id === currentBranchId
+    )
+    // Truncating the interrupted prompt can settle its explicitly forked path while attachment is
+    // pending. The newly empty provider still needs its binding and replay state recorded.
+    const removedPromptSettled =
+      originalPromptMessageId !== undefined &&
+      current?.status === 'idle' &&
+      !current.activeRun &&
+      current.error === undefined &&
+      (current.resumeRecovery === undefined ||
+        current.resumeRecovery.promptMessageId === originalPromptMessageId) &&
+      currentBranch !== undefined &&
+      currentBranch.parentBranchId === originalBranchId &&
+      currentBranch.supersededMessageId === originalPromptMessageId &&
+      !current.messages.some((message) => message.id === originalPromptMessageId)
+    if (
+      !current ||
+      current.projectId !== session.projectId ||
+      current.createdAt !== session.createdAt ||
+      currentFrameId !== originalFrameId ||
+      (currentBranchId !== originalBranchId && !removedPromptSettled) ||
+      (originalPromptMessageId !== undefined &&
+        current.resumeRecovery?.promptMessageId !== originalPromptMessageId &&
+        !removedPromptSettled)
+    )
+      return undefined
+    // A truncated prompt can retain its old recovery marker in the local projection. It no longer
+    // owns a continuation, but the attachment-only path must retain the empty provider context.
+    return removedPromptSettled ? { ...current, resumeRecovery: undefined } : current
+  }
 
   if (runtimeAlreadyAttached) {
     try {
       await drainRuntimeEvents?.(sessionId)
+      const current = currentRecoverySession()
+      if (!current) return
+      const promptMessageId = current.resumeRecovery?.promptMessageId
       if (promptMessageId) {
         if (
           !(await continueInterruptedWorkspaceTurn(
             runtime,
             sessionId,
             promptMessageId,
-            session.pendingHistoryReplay !== undefined,
+            current.pendingHistoryReplay !== undefined,
             options
           ))
         ) {
@@ -220,6 +264,11 @@ const resumeInterruptedWorkspaceSession = async (
     // runtime generation can still be queued in the renderer. Drain them before starting the
     // continuation so a stale terminal event cannot settle the recovered turn.
     await drainRuntimeEvents?.(sessionId)
+    // Attachment commits restart recovery in Main. Its projection can arrive after a metadata
+    // save acknowledgement omitted the marker, so choose the prompt only after that lane drains.
+    const current = currentRecoverySession()
+    if (!current) return
+    const promptMessageId = current.resumeRecovery?.promptMessageId
     const providerUpdate = resumeResult
       ? {
           agentFrameworkId: resumeResult.frameworkId,
@@ -234,7 +283,7 @@ const resumeInterruptedWorkspaceSession = async (
         runtime,
         sessionId,
         promptMessageId,
-        Boolean(resumeResult?.contextReset || session.pendingHistoryReplay),
+        Boolean(resumeResult?.contextReset || current.pendingHistoryReplay),
         options,
         providerUpdate
       )
@@ -588,6 +637,7 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
   const overflowRecoveryCooldownSessionIds = new Set<string>()
   const activeOverflowRecoverySessionIds = new Set<string>()
   const cancelledOverflowRecoverySessionIds = new Set<string>()
+  const resumeOperations = new Map<string, Promise<void>>()
   const memoryReconfigurationTails = new Map<string, Promise<void>>()
   const admittedAgentTargetBySessionId = new Map<string, AcpSessionAgentTarget>()
   const pruneAdmittedAgentTargets = (): void => {
@@ -685,7 +735,20 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
       drainRuntimeEvents: RuntimeEventDrain,
       options: ResumeInterruptedWorkspaceSessionOptions
     ): Promise<void> {
-      return resumeInterruptedWorkspaceSession(runtime, sessionId, drainRuntimeEvents, options)
+      const existing = resumeOperations.get(sessionId)
+      if (existing) return existing
+      const operation = resumeInterruptedWorkspaceSession(
+        runtime,
+        sessionId,
+        drainRuntimeEvents,
+        options
+      )
+      resumeOperations.set(sessionId, operation)
+      const clear = (): void => {
+        if (resumeOperations.get(sessionId) === operation) resumeOperations.delete(sessionId)
+      }
+      void operation.then(clear, clear)
+      return operation
     },
     cancel(runtime: WorkspaceCancellationRuntime, sessionId: string): Promise<void> {
       admittedAgentTargetBySessionId.delete(sessionId)

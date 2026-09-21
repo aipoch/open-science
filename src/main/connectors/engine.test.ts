@@ -420,6 +420,36 @@ describe('ParserEngine declarative path', () => {
     expect(out).toEqual({ data: { ok: true } })
   })
 
+  it.each([undefined, false] as const)(
+    'fetchText retry=%s preserves the default and supports one-shot GET',
+    async (retry) => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('', { status: 503 }))
+        .mockResolvedValueOnce(new Response('ready'))
+      const descriptor: ToolDescriptor = {
+        id: 't',
+        connector: 'c',
+        description: '',
+        input: {},
+        run: (ctx) =>
+          ctx.fetchText(
+            'https://example.test/status',
+            undefined,
+            retry === false ? { retry: false } : undefined
+          )
+      }
+      const pending = new ParserEngine({ fetchImpl, retryBackoffMs: 0 }).call(descriptor, {}, {})
+      if (retry === false) {
+        await expect(pending).rejects.toThrow('HTTP 503')
+        expect(fetchImpl).toHaveBeenCalledOnce()
+      } else {
+        await expect(pending).resolves.toBe('ready')
+        expect(fetchImpl).toHaveBeenCalledTimes(2)
+      }
+    }
+  )
+
   it('postForm lets fetch serialize multipart boundaries and preserves the uploaded sequence', async () => {
     const body = new FormData()
     body.append('sequence_file', new Blob(['AGUUCC'], { type: 'text/plain' }), 'query.seq')

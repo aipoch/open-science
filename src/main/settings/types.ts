@@ -5,6 +5,8 @@ type StoredClassificationService = {
   name: string
   /** Stored catalog; actual selectable models are validated against the shared catalog. */
   models: string[]
+  /** Full HTTP endpoint for custom TypeSafe-compatible classification services. */
+  baseUrl?: string
   keyRef?: string
   providerId?: string
   /** Non-secret display hint for the configured key. */

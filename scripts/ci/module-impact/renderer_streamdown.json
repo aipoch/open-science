@@ -47,7 +47,9 @@
     "src/renderer/src/components/streamdown/unclosed-trailing-fence.ts",
     "src/renderer/src/components/streamdown/use-code-highlighter.ts",
     "src/renderer/src/components/streamdown/use-smooth-streaming-content.test.tsx",
-    "src/renderer/src/components/streamdown/use-smooth-streaming-content.ts"
+    "src/renderer/src/components/streamdown/use-smooth-streaming-content.ts",
+    "src/renderer/src/components/streamdown/table-data-runtime.ts",
+    "src/renderer/src/components/streamdown/install-streamdown.lazy-table.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/streamdown/AgentMarkdown.tsx",
@@ -85,7 +87,8 @@
       "src/renderer/src/components/streamdown/mermaid-view-toggle.test.ts",
       "src/renderer/src/components/streamdown/normalize-agent-markdown.test.ts",
       "src/renderer/src/components/streamdown/normalize-mermaid.parse.test.ts",
-      "src/renderer/src/components/streamdown/use-smooth-streaming-content.test.tsx"
+      "src/renderer/src/components/streamdown/use-smooth-streaming-content.test.tsx",
+      "src/renderer/src/components/streamdown/install-streamdown.lazy-table.test.ts"
     ],
     "contract": [],
     "consumer": [

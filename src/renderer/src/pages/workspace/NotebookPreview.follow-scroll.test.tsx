@@ -100,8 +100,29 @@ const setScrollGeometry = (
 
 let container: HTMLDivElement
 let root: Root
+let resizeCallbacks: ResizeObserverCallback[] = []
+
+const notifyResize = (): void => {
+  for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+}
 
 beforeEach(() => {
+  resizeCallbacks = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe(): void {
+        // Layout is driven explicitly by the test after geometry changes.
+      }
+      disconnect(): void {
+        // No resources are allocated by this test double.
+      }
+    }
+  )
   useNotebookEnvStore.setState({
     ...createInitialNotebookEnvState(),
     status: readyStatus,
@@ -122,6 +143,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  vi.unstubAllGlobals()
   container.remove()
 })
 
@@ -164,6 +186,7 @@ describe('NotebookPreview follow-bottom', () => {
     await act(async () => {
       root.render(<NotebookPreview item={item} />)
     })
+    notifyResize()
     expect(cells?.scrollTop).toBe(600)
 
     runs = [
@@ -180,6 +203,7 @@ describe('NotebookPreview follow-bottom', () => {
       await Promise.resolve()
     })
     await flushLoad()
+    notifyResize()
     expect(cells?.scrollTop).toBe(1200)
 
     cells!.scrollTop = 80

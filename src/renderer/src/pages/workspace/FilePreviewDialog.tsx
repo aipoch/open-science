@@ -71,6 +71,7 @@ const FilePreviewDialog = ({
   const [hasNestedFullscreen, setHasNestedFullscreen] = useState(hasStreamdownFullscreen)
   const isBackgroundIsolatedRef = useRef(false)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const contentElementRef = useRef<HTMLDivElement | null>(null)
   const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
   const requestClose = useCallback(
     (checkGuard = true): void => {
@@ -99,6 +100,7 @@ const FilePreviewDialog = ({
   // interrupted. Release the background lock at that boundary as well as after normal animation.
   const setContentRef = useCallback(
     (content: HTMLDivElement | null): void => {
+      contentElementRef.current = content
       if (!content) releaseBackgroundIsolation()
     },
     [releaseBackgroundIsolation]
@@ -139,6 +141,9 @@ const FilePreviewDialog = ({
           aria-describedby={undefined}
           aria-modal="true"
           onCloseAutoFocus={(event) => event.preventDefault()}
+          // The inner FocusScope owns mount focus; without this the outer scope races it to the
+          // first header button.
+          onOpenAutoFocus={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           onAnimationEnd={(event) => {
             if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
@@ -154,9 +159,14 @@ const FilePreviewDialog = ({
             asChild
             loop
             trapped={!(open && hasNestedFullscreen)}
-            onMountAutoFocus={() => {
+            onMountAutoFocus={(event) => {
               returnFocusRef.current =
                 document.activeElement instanceof HTMLElement ? document.activeElement : null
+              // Open with nothing selected: an auto-focused header button shows a focus ring and
+              // its tooltip, and the first Escape dies on that control instead of closing the
+              // dialog. Focus the dialog shell (tabIndex -1 via the outer FocusScope) instead.
+              event.preventDefault()
+              contentElementRef.current?.focus()
             }}
             onUnmountAutoFocus={(event) => {
               releaseBackgroundIsolation()

@@ -104,6 +104,26 @@ describe('Windows updater certification', () => {
     await expect(observer.exit).resolves.toMatchObject({ code: 7 })
   })
 
+  it('retries process discovery and handle acquisition after observer readiness', async () => {
+    let command = ''
+    const completed = Promise.withResolvers<{ code: number; stdout: string; stderr: string }>()
+    const observer = observeInstaller({
+      installer: 'C:\\updates\\setup.exe',
+      env: {},
+      runProcessImpl: (_executable, args, options) => {
+        command = String(args[args.indexOf('-Command') + 1])
+        options.onStdout?.('OPEN_SCIENCE_INSTALLER_OBSERVER_READY\r\n')
+        return completed.promise
+      }
+    })
+
+    await expect(observer.ready).resolves.toBeUndefined()
+    completed.resolve({ code: 126, stdout: '', stderr: 'process was not observable' })
+    await expect(observer.exit).resolves.toMatchObject({ code: 126 })
+    expect(command).toContain('$handle = [IntPtr]::Zero')
+    expect(command).toContain('while ($handle -eq [IntPtr]::Zero')
+  })
+
   it('rejects readiness if PowerShell fails before observation starts', async () => {
     const observer = observeInstaller({
       installer: 'C:\\updates\\setup.exe',

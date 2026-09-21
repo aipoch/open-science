@@ -670,7 +670,6 @@
     "Add skill": "新增技能",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "從本機的 SKILL.md 檔案或 .zip / .skill 壓縮檔新增技能。可一次選擇多個檔案，單一壓縮檔也可以包含多個技能。",
     "Add specialist": "新增專家",
-    "Add to Side chat": "新增至側邊聊天",
     "Add to conversation as attachment": "作為附件加入對話",
     "Add to project": "加入專案",
     "Add to collection": "加入合集",
@@ -5950,6 +5949,12 @@
     "Stop Main Agent loading": "停止主智能體載入",
     "Unlink Specialists": "解除專家關聯",
     "View details for {{name}}": "檢視「{{name}}」的詳細資訊",
-    "{{count}} hidden by filters_other": "其中 {{count}} 項被篩選隱藏"
+    "{{count}} hidden by filters_other": "其中 {{count}} 項被篩選隱藏",
+    "Custom HTTP service": "自訂 HTTP 服務",
+    "Custom services use the TypeSafe classification request and response format.": "自訂服務使用 TypeSafe 分類請求與回應格式。",
+    "Endpoint URL": "端點 URL",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "請輸入有效且安全的 HTTP 端點。遠端端點必須使用 HTTPS。",
+    "Model ID exposed by the endpoint": "端點提供的模型 ID",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "此端點不是 Chat Completions 端點。使用其他 API 格式的服務需要轉接器。"
   }
 }

@@ -1482,7 +1482,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/process-tree.windows.integration.test.ts',
       'src/main/delegation/frame-workspace.test.ts',
       'src/main/acp/agent-process.test.ts',
-      'src/main/settings/classification-settings.test.ts'
+      'src/main/settings/classification-settings.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
     ])
     expect(
       [

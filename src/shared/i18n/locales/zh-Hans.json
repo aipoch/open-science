@@ -670,7 +670,6 @@
     "Add skill": "添加技能",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "从本机的 SKILL.md 文件或 .zip / .skill 压缩包添加技能。可一次选择多个文件，单个压缩包也可以包含多个技能。",
     "Add specialist": "添加专家",
-    "Add to Side chat": "添加到侧边聊天",
     "Add to conversation as attachment": "作为附件添加到对话",
     "Add to project": "添加到项目",
     "Add to collection": "添加到合集",
@@ -5950,6 +5949,12 @@
     "Stop Main Agent loading": "停止主智能体加载",
     "Unlink Specialists": "解除专家关联",
     "View details for {{name}}": "查看“{{name}}”的详情",
-    "{{count}} hidden by filters_other": "其中 {{count}} 项被筛选隐藏"
+    "{{count}} hidden by filters_other": "其中 {{count}} 项被筛选隐藏",
+    "Custom HTTP service": "自定义 HTTP 服务",
+    "Custom services use the TypeSafe classification request and response format.": "自定义服务使用 TypeSafe 分类请求和返回格式。",
+    "Endpoint URL": "端点 URL",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "请输入有效且安全的 HTTP 端点。远程端点必须使用 HTTPS。",
+    "Model ID exposed by the endpoint": "端点提供的模型 ID",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "此端点不是 Chat Completions 端点。使用其他 API 格式的服务需要适配器。"
   }
 }

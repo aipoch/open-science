@@ -3,6 +3,7 @@ import type { ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationActivities } from '../../shared/conversation-graph'
 import type { PersistedActiveRun, PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { hasDurableRuntimeSessionAdmission } from '../../shared/runtime-session-admission'
 import {
   applyRuntimeSessionEvents,
   attachRuntimeSessionArtifacts,
@@ -195,7 +196,8 @@ const assertScopeMatchesSession = (
 }
 
 // A restored provider context starts a new Runtime Segment without rewriting the original
-// user Message's provenance. Only a durable Resume for the selected path authorizes that binding.
+// user Message's provenance. A durable Resume admits that path once; its persisted witness also
+// authorizes later decision continuations on the same selected execution Segment.
 const resolvePromptRuntimeSegmentId = (
   session: PersistedChatSession,
   scope: RuntimeSessionTurnScope
@@ -209,9 +211,18 @@ const resolvePromptRuntimeSegmentId = (
     .filter(({ agentFrameId }) => agentFrameId === scope.agentFrameId)
     .at(-1)
   const originalSegment = graph?.runtimeSegments.find(({ id }) => id === prompt.runtimeSegmentId)
+  const hasRecovery =
+    session.resumeRecovery?.kind === 'resume-required' &&
+    session.resumeRecovery.promptMessageId === scope.promptMessageId
+  const hasAdmission =
+    graph &&
+    hasDurableRuntimeSessionAdmission(
+      session,
+      { ...scope, rootFrameId: graph.rootFrameId },
+      prompt.runtimeSegmentId
+    )
   if (
-    session.resumeRecovery?.kind !== 'resume-required' ||
-    session.resumeRecovery.promptMessageId !== scope.promptMessageId ||
+    (!hasRecovery && !hasAdmission) ||
     graph?.activeFrameId !== scope.agentFrameId ||
     frame?.activeBranchId !== scope.messageBranchId ||
     segment?.id !== scope.runtimeSegmentId ||
@@ -462,10 +473,32 @@ export class RuntimeSessionOwner {
       } = admission
       void _planDeliveryCommandId
       void _delegatedMessageId
+      const durableAdmission = {
+        executionId: scope.executionId,
+        promptMessageId: scope.promptMessageId,
+        promptRuntimeSegmentId,
+        rootFrameId: latest.conversationGraph!.rootFrameId,
+        agentFrameId: scope.agentFrameId,
+        messageBranchId: scope.messageBranchId,
+        runtimeSegmentId: scope.runtimeSegmentId
+      }
+      const previousAdmission = latest.runtimeSessionAdmissions?.find(
+        ({ executionId }) => executionId === scope.executionId
+      )
+      if (
+        previousAdmission &&
+        Object.entries(durableAdmission).some(
+          ([key, value]) => previousAdmission[key as keyof typeof durableAdmission] !== value
+        )
+      )
+        throw new Error('Runtime Session execution conflicts with its durable admission.')
       const next: PersistedChatSession = {
         ...latest,
         ...(resumedRun ? { activeRun: resumedRun, status: 'running' as const } : {}),
         ...runtimeBinding,
+        runtimeSessionAdmissions: previousAdmission
+          ? latest.runtimeSessionAdmissions
+          : [...(latest.runtimeSessionAdmissions ?? []), durableAdmission],
         runtimeTranscriptReviewOwner: {
           promptMessageId: scope.promptMessageId,
           owner: reviewOwner

@@ -137,8 +137,8 @@ const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
-const waitForReleaseFile = async (releaseFile) => {
-  const deadline = Date.now() + 30_000
+const waitForReleaseFile = async (releaseFile, timeout = 30_000) => {
+  const deadline = Date.now() + timeout
   while (true) {
     try {
       await readFile(releaseFile)
@@ -1035,6 +1035,26 @@ if (process.argv.includes('--version')) {
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
+      // Use the supported mid-response interruption wrapper: generic provider errors are terminal
+      // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.
+      if (
+        prompt.includes('Create a PNG after provider execution failure.') &&
+        !prompt.includes('Continue the interrupted turn from where it stopped.')
+      ) {
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text: 'PNG recovery checkpoint reached.' }
+          }
+        })
+        await delay(2_000)
+        throw acp.RequestError.internalError(
+          { errorKind: 'provider-error' },
+          'API Error: Connection closed mid-response'
+        )
+      }
 
       if (prompt.includes(DELEGATED_WAIT_MARKER)) {
         await captureDelegatedHandoff(
@@ -1591,6 +1611,49 @@ if (process.argv.includes('--version')) {
           reply = await verifyRealNotebookEnvironment(context.params.sessionId)
         } else if (prompt.includes(NOTEBOOK_PACKAGE_CANCELLATION_PROMPT)) {
           reply = await verifyNotebookPackageCancellation(context.params.sessionId)
+        } else if (
+          prompt.includes('Create a PNG without interruption.') ||
+          prompt.includes('Create a PNG after interrupted recovery.') ||
+          prompt.includes('Create a PNG after provider execution failure.')
+        ) {
+          if (
+            !prompt.includes('Create a PNG without interruption.') &&
+            !prompt.includes('Continue the interrupted turn from where it stopped.')
+          ) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+                content: { type: 'text', text: 'PNG recovery checkpoint reached.' }
+              }
+            })
+            await delay(5_000)
+            reply = 'PNG initial attempt finished.'
+          } else {
+            await withMcpClient(
+              context.params.sessionId,
+              'open-science-artifacts',
+              async (client) =>
+                toolResult(
+                  'write_artifact_file',
+                  await client.callTool({
+                    name: 'write_artifact_file',
+                    arguments: {
+                      // Fixed 160 × 112 chart makes manual full-preview acceptance visible.
+                      filename: 'resumed-figure.png',
+                      mimeType: 'image/png',
+                      content:
+                        'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
+                      encoding: 'base64'
+                    }
+                  })
+                )
+            )
+            reply = prompt.includes('Create a PNG without interruption.')
+              ? 'PNG artifact created.'
+              : 'Resumed PNG artifact created.'
+          }
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           if (prompt.includes('Observe the Task before publication.')) {
             await new Promise((resolve) => setTimeout(resolve, 8_000))
@@ -1612,20 +1675,38 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATION_ARTIFACT_VERSION_INPUT_PROMPT)) {
           reply = await runArtifactVersionInputDelegation(context.params.sessionId)
         } else if (prompt.includes(DELEGATION_BOUNDED_COLLECT_PROMPT)) {
+          const releaseFile = JSON.parse(prompt.split('Release file: ')[1])
+          const slowTask = `${DELEGATED_BOUNDED_SLOW_TASK}\nRelease file: ${JSON.stringify(releaseFile)}`
           const dispatched = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
             )
           )
           if (
             dispatched.kind !== 'observations' ||
             dispatched.children.length !== 2 ||
-            dispatched.children[0].status !== 'completed' ||
+            !['running', 'completed'].includes(dispatched.children[0].status) ||
             dispatched.children[1].status !== 'running' ||
             Object.hasOwn(dispatched.children[1], 'artifactsCreated')
           ) {
             throw new Error(`Timed delegate observation failed: ${JSON.stringify(dispatched)}`)
+          }
+          // Startup time is not part of the bounded-observation contract. Wait for the fast
+          // child explicitly while the slow child's release file keeps its state deterministic.
+          const mixed = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `const handles = globalThis.s2Pending.children.map(({ frameId, attemptId }) => ({ frameId, attemptId })); await host.collect([handles[0]], { timeoutSeconds: 30 }); return await host.collect(handles, { timeoutSeconds: 0 })`
+            )
+          )
+          if (
+            mixed.length !== 2 ||
+            mixed[0].status !== 'completed' ||
+            mixed[1].status !== 'running' ||
+            Object.hasOwn(mixed[1], 'artifactsCreated')
+          ) {
+            throw new Error(`Mixed bounded observation failed: ${JSON.stringify(mixed)}`)
           }
           reply = 'Production bounded delegate returned while a Subagent kept running.'
         } else if (prompt.includes(DELEGATION_BOUNDED_RECOLLECT_PROMPT)) {
@@ -1963,7 +2044,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_FAIRNESS_USER_PROMPT)) {
           reply = 'Concurrent real user prompt completed.'
         } else if (prompt.includes(DELEGATED_BOUNDED_SLOW_TASK)) {
-          await new Promise((resolve) => setTimeout(resolve, 3_000))
+          await waitForReleaseFile(JSON.parse(prompt.split('Release file: ')[1]), 120_000)
           reply = 'Delayed bounded child completed.'
         } else if (prompt.includes(DELEGATED_PERMISSION_TASK)) {
           const permission = await context.client.request(

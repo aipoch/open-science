@@ -220,6 +220,7 @@ export type AcpRuntimeCallbacks = {
 
 type AcpRuntimeOptions = {
   classifySkills?: import('../../shared/classification').ClassifySkills
+  classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
   hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string

@@ -159,6 +159,7 @@ const composeAcpRuntimePromptOwners = (
 
   const promptPreparation = new AcpPromptPreparationOwner({
     classifySkills: options.classifySkills,
+    classifyReadingRoute: options.classifyReadingRoute,
     recordClassificationUsage: async (record) => {
       await options.auxiliaryUsage?.record({
         ...record,

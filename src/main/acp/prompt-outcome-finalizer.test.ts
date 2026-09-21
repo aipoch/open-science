@@ -446,6 +446,19 @@ describe('AcpPromptOutcomeFinalizer', () => {
       providerError: false
     },
     {
+      name: 'OpenCode session read stream EOF',
+      error: Object.assign(
+        new Error('Internal error: {"message":"unexpected EOF","type":"read_stream_err"}'),
+        {
+          code: -32603,
+          data: { service: 'session', errorName: 'UnknownError' },
+          name: 'RequestError'
+        }
+      ),
+      recoverable: 'session-lost',
+      providerError: false
+    },
+    {
       name: 'non-session OpenCode service failure',
       error: Object.assign(new Error('Internal error: OpenCode service failure'), {
         code: -32603,

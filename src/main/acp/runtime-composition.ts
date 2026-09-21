@@ -202,6 +202,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   memory?: AcpRuntimeOptions['memory']
   auxiliaryUsage?: AcpRuntimeOptions['auxiliaryUsage']
   classifySkills?: AcpRuntimeOptions['classifySkills']
+  classifyReadingRoute?: AcpRuntimeOptions['classifyReadingRoute']
 }
 
 const isLiteratureItemInScope = (
@@ -279,6 +280,7 @@ const createAcpRuntime = ({
   resolveComputeExecutionTargetIds,
   memory,
   classifySkills,
+  classifyReadingRoute,
   auxiliaryUsage
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
@@ -402,6 +404,7 @@ const createAcpRuntime = ({
         appVersion: app.getVersion(),
         auxiliaryUsage,
         classifySkills: delegatedNotebookConnection ? undefined : classifySkills,
+        classifyReadingRoute: delegatedNotebookConnection ? undefined : classifyReadingRoute,
         ...(runtimeSessionOwner ? { runtimeSessions: runtimeSessionOwner } : {}),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,

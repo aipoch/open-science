@@ -10,6 +10,7 @@ import { readFileWithinLimit, writeDurableJsonFile } from '../storage/durable-js
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { resolveDataRoot } from '../storage-root'
 import { PDF_TABLE_MODEL_REVISIONS, type LocalModelRevision } from './catalog'
+import { downloadLocalModelAsset } from './download'
 
 type Dependencies = {
   dataRoot?: () => string
@@ -38,7 +39,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
   }
   const root = dependencies.dataRoot ?? resolveDataRoot
   const acquire = dependencies.acquireWriter ?? acquireDataRootWriter
-  const download = dependencies.download ?? resilientDownload
+  const download = dependencies.download
   let snapshot: Omit<LocalModelSnapshot, 'inUse'> = {
     availability: 'notInstalled',
     recommendedRevision: recommended.revision,
@@ -289,12 +290,12 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
           const target = join(staging, asset.file)
           for (const suffix of ['', '.part', '.part.meta']) await regularFile(target + suffix)
           if (!(await validAsset(target, asset))) {
-            await download(asset.url, target, {
+            const options = {
               expectedSha256: asset.sha256,
               expectedSize: asset.size,
               signal: controller.signal,
               deps: { fetchImpl: netFetchStandard },
-              onProgress: (progress) => {
+              onProgress: (progress: NonNullable<LocalModelSnapshot['downloadProgress']>) => {
                 const transferred = completed + progress.transferred
                 const total = snapshot.downloadBytes
                 snapshot = {
@@ -312,7 +313,9 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
                   }
                 }
               }
-            })
+            }
+            if (download) await download(asset.url, target, options)
+            else await downloadLocalModelAsset(asset, target, options)
           }
           if (controller.signal.aborted) return
           if (!(await validAsset(target, asset))) throw new DownloadChecksumError()

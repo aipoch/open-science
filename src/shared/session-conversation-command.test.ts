@@ -52,6 +52,78 @@ const rootBranchId = (session: PersistedChatSession): string =>
     .activeBranchId
 
 describe('Session conversation commands', () => {
+  it('authorizes recovery with durable evidence and reuses its run across retries', () => {
+    const initial = fixture()
+    initial.resumeRecovery = {
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    }
+    const commands = sanitizeSessionConversationCommands([
+      {
+        id: 'resume-1',
+        kind: 'resume-run',
+        timestamp: 10,
+        run: { promptMessageId: 'prompt-1', startedAt: 10 }
+      },
+      {
+        id: 'resume-2',
+        kind: 'resume-run',
+        timestamp: 20,
+        run: { promptMessageId: 'prompt-1', startedAt: 20 }
+      }
+    ])
+    const recovered = applySessionConversationCommands(initial, commands)
+    expect(recovered.activeRun).toEqual({ promptMessageId: 'prompt-1', startedAt: 10 })
+    expect(recovered.resumeRecovery).toEqual(initial.resumeRecovery)
+    expect(recovered.runtimeConversationCommandIds).toEqual(['resume-1', 'resume-2'])
+    const replayed = applySessionConversationCommands(recovered, commands)
+    expect(replayed.activeRun).toEqual(recovered.activeRun)
+    expect(replayed.runtimeConversationCommandIds).toEqual(recovered.runtimeConversationCommandIds)
+    expect(replayed.messages).toEqual(recovered.messages)
+    expect(() =>
+      applySessionConversationCommands(recovered, [
+        {
+          id: 'ordinary-start',
+          kind: 'start-run',
+          timestamp: 30,
+          run: { promptMessageId: 'prompt-1', startedAt: 30 }
+        }
+      ])
+    ).toThrow('already has an active run')
+  })
+
+  it.each(['missing-marker', 'wrong-marker', 'other-run', 'settled-run', 'missing-prompt'])(
+    'rejects recovery without valid authority: %s',
+    (scenario) => {
+      const initial = fixture()
+      if (scenario !== 'missing-marker')
+        initial.resumeRecovery = {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: scenario === 'wrong-marker' ? 'other' : 'prompt-1'
+        }
+      if (scenario === 'other-run') initial.activeRun = { promptMessageId: 'other', startedAt: 5 }
+      if (scenario === 'settled-run')
+        initial.runtimeTranscriptLastRun = { promptMessageId: 'prompt-1', startedAt: 10 }
+      const before = structuredClone(initial)
+      expect(() =>
+        applySessionConversationCommands(initial, [
+          {
+            id: 'rejected-resume',
+            kind: 'resume-run',
+            timestamp: 10,
+            run: {
+              promptMessageId: scenario === 'missing-prompt' ? 'missing' : 'prompt-1',
+              startedAt: 10
+            }
+          }
+        ])
+      ).toThrow()
+      expect(initial).toEqual(before)
+    }
+  )
+
   it.each(['prompt-1', 'older-prompt'])(
     'retains recovery only for the prepared prompt: %s',
     (recoveryPromptId) => {

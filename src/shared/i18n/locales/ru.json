@@ -628,7 +628,6 @@
     "Add skill": "Добавить навык",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "Добавить навыки из SKILL.md файлов или архивов .zip / .skill на вашем компьютере. Вы можете выбрать несколько файлов одновременно, и один архив может содержать несколько навыков.",
     "Add specialist": "Добавить специалиста",
-    "Add to Side chat": "Добавить в боковой чат",
     "Add to conversation as attachment": "Добавить в диалог как вложение",
     "Add to project": "Добавить в проект",
     "Add to collection": "Добавить в коллекцию",
@@ -6405,6 +6404,12 @@
     "{{count}} hidden by filters_one": "{{count}} скрыт фильтрами",
     "{{count}} hidden by filters_few": "{{count}} скрыты фильтрами",
     "{{count}} hidden by filters_many": "{{count}} скрыты фильтрами",
-    "{{count}} hidden by filters_other": "{{count}} скрыты фильтрами"
+    "{{count}} hidden by filters_other": "{{count}} скрыты фильтрами",
+    "Custom HTTP service": "Пользовательский HTTP-сервис",
+    "Custom services use the TypeSafe classification request and response format.": "Пользовательские службы используют формат запросов и ответов классификации TypeSafe.",
+    "Endpoint URL": "URL конечной точки",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Введите корректную защищённую HTTP-конечную точку. Для удалённых конечных точек требуется HTTPS.",
+    "Model ID exposed by the endpoint": "Идентификатор модели, предоставляемый конечной точкой",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Это не конечная точка Chat Completions. Службам с другим форматом API требуется адаптер."
   }
 }

@@ -606,7 +606,6 @@
     "Add skill": "スキルを追加",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "コンピューター上の SKILL.md ファイルや .zip / .skill バンドルからスキルを追加します。一度に複数のファイルを選択でき、1 つのアーカイブに複数のスキルが含まれる場合があります。",
     "Add specialist": "スペシャリストを追加",
-    "Add to Side chat": "サイドチャットに追加",
     "Add to conversation as attachment": "添付ファイルとして会話に追加",
     "Add to project": "プロジェクトに追加",
     "Add to collection": "コレクションに追加",
@@ -5950,6 +5949,12 @@
     "Stop Main Agent loading": "メインエージェントの読み込みを停止",
     "Unlink Specialists": "スペシャリストとの関連を解除",
     "View details for {{name}}": "{{name}} の詳細を表示",
-    "{{count}} hidden by filters_other": "フィルターで {{count}} 件を非表示"
+    "{{count}} hidden by filters_other": "フィルターで {{count}} 件を非表示",
+    "Custom HTTP service": "カスタム HTTP サービス",
+    "Custom services use the TypeSafe classification request and response format.": "カスタムサービスは TypeSafe の分類リクエストとレスポンス形式を使用します。",
+    "Endpoint URL": "エンドポイント URL",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "有効で安全な HTTP エンドポイントを入力してください。リモートエンドポイントには HTTPS が必要です。",
+    "Model ID exposed by the endpoint": "エンドポイントが公開するモデル ID",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "これは Chat Completions エンドポイントではありません。別の API 形式を使用するサービスにはアダプターが必要です。"
   }
 }

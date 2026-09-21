@@ -244,6 +244,57 @@ const parentMessageSession = (): PersistedChatSession => {
 }
 
 describe('RuntimeSessionOwner', () => {
+  it('rejects an execution identity already admitted on a different prompt path', async () => {
+    const turn = scope()
+    const durable = session(turn)
+    durable.runtimeSessionAdmissions = [
+      {
+        executionId: turn.executionId,
+        promptMessageId: 'different-prompt',
+        promptRuntimeSegmentId: turn.runtimeSegmentId,
+        rootFrameId: turn.agentFrameId,
+        agentFrameId: turn.agentFrameId,
+        messageBranchId: turn.messageBranchId,
+        runtimeSegmentId: turn.runtimeSegmentId
+      }
+    ]
+    const { owner, sessions } = harness([durable])
+    await expect(owner.begin(turn)).rejects.toThrow('conflicts with its durable admission')
+    expect(sessions.get(turn.sessionId)?.runtimeSessionAdmissions).toEqual(
+      durable.runtimeSessionAdmissions
+    )
+  })
+
+  it('fails closed on conflicting serialized admission identities', () => {
+    const turn = scope()
+    const admission = {
+      executionId: turn.executionId,
+      promptMessageId: turn.promptMessageId,
+      promptRuntimeSegmentId: turn.runtimeSegmentId,
+      rootFrameId: turn.agentFrameId,
+      agentFrameId: turn.agentFrameId,
+      messageBranchId: turn.messageBranchId,
+      runtimeSegmentId: turn.runtimeSegmentId
+    }
+    const restored = normalizeSessionFile(
+      JSON.parse(
+        JSON.stringify({
+          ...session(turn),
+          runtimeTranscriptOwner: 'main',
+          runtimeSessionAdmissions: [
+            admission,
+            { ...admission, runtimeSegmentId: 'conflicting-segment' },
+            { ...admission, executionId: 'valid-history' },
+            { ...admission, executionId: '', runtimeSegmentId: 'malformed' }
+          ]
+        })
+      )
+    )!
+    expect(restored.runtimeSessionAdmissions).toEqual([
+      { ...admission, executionId: 'valid-history' }
+    ])
+  })
+
   it('durably admits a fenced parent message without adding a user message', async () => {
     const turn = { ...scope(), runtimeSegmentId: 'delegated-message-message-1' }
     const durable = parentMessageSession()
@@ -855,9 +906,41 @@ describe('RuntimeSessionOwner', () => {
       await owner.flush(turn.sessionId, turn.promptMessageId)
       expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('recovered')
       expect(
+        sessions
+          .get(turn.sessionId)
+          ?.conversationGraph?.messages.find((message) => message.content === 'recovered')
+          ?.runtimeSegmentId
+      ).toBe(failure.contextReset ? 'segment-replacement' : turn.runtimeSegmentId)
+      expect(
         sessions.get(turn.sessionId)?.messages.some(({ content }) => content.includes('stale'))
       ).toBe(false)
       expect(sessions.get(turn.sessionId)?.resumeRecovery).toBeUndefined()
+      const durable = sessions.get(turn.sessionId)!
+      const restoredAdmission = normalizeSessionFile(
+        JSON.parse(
+          JSON.stringify({
+            ...durable,
+            runtimeTranscriptOwner: 'main'
+          })
+        )
+      )!
+      expect(restoredAdmission.runtimeSessionAdmissions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            executionId: turn.executionId,
+            runtimeSegmentId: turn.runtimeSegmentId
+          }),
+          {
+            executionId: 'retry-execution',
+            promptMessageId: turn.promptMessageId,
+            promptRuntimeSegmentId: turn.runtimeSegmentId,
+            rootFrameId: turn.agentFrameId,
+            agentFrameId: turn.agentFrameId,
+            messageBranchId: turn.messageBranchId,
+            runtimeSegmentId: failure.contextReset ? 'segment-replacement' : turn.runtimeSegmentId
+          }
+        ])
+      )
       await expect(
         owner.publish({
           appSessionId: turn.sessionId,
@@ -980,6 +1063,87 @@ describe('RuntimeSessionOwner', () => {
       'Continuing with the chosen dataset.'
     )
   })
+
+  it.each([false, true])(
+    'continues a resumed Segment after recovery was consumed; restored=%s',
+    async (restored) => {
+      const original = scope()
+      const resumed = {
+        ...original,
+        runtimeSegmentId: 'segment-resumed',
+        executionId: 'execution-resumed'
+      }
+      const initial = session(original)
+      initial.runtimeTranscriptOwner = 'main'
+      initial.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'connection-lost',
+        promptMessageId: original.promptMessageId
+      }
+      initial.conversationGraph!.runtimeSegments.push({
+        id: resumed.runtimeSegmentId,
+        agentFrameId: resumed.agentFrameId,
+        frameworkId: 'codex',
+        startedAt: 9
+      })
+      initial.activeRun = { promptMessageId: original.promptMessageId, startedAt: 10 }
+      const first = harness([initial])
+      await first.owner.begin(resumed)
+      expect(first.sessions.get(original.sessionId)?.resumeRecovery).toBeUndefined()
+      first.owner.accept(questionEvent(resumed, 'pending', 11))
+      first.owner.accept(stopEvent(resumed, 12))
+      await first.owner.flush(original.sessionId, original.promptMessageId)
+      first.owner.accept(questionEvent(resumed, 'answered', 13))
+      await first.owner.flush(original.sessionId, original.promptMessageId)
+      const durable = first.sessions.get(original.sessionId)!
+      // The production persistence coordinator stamps the settled run before its next admission.
+      durable.runtimeTranscriptLastRun = {
+        promptMessageId: original.promptMessageId,
+        startedAt: 10
+      }
+      for (const field of [
+        'rootFrameId',
+        'agentFrameId',
+        'messageBranchId',
+        'runtimeSegmentId',
+        'promptMessageId',
+        'promptRuntimeSegmentId'
+      ] as const) {
+        const invalid = structuredClone(durable)
+        invalid.runtimeSessionAdmissions![0][field] = 'unrelated'
+        await expect(
+          harness([invalid]).owner.begin({ ...resumed, executionId: 'rejected-choice' })
+        ).rejects.toThrow('no durable recovery Segment binding')
+      }
+      await expect(
+        harness([{ ...durable, runtimeTranscriptOwner: undefined }]).owner.begin({
+          ...resumed,
+          executionId: 'untrusted-choice'
+        })
+      ).rejects.toThrow('no durable recovery Segment binding')
+      const active = restored
+        ? harness([normalizeSessionFile(JSON.parse(JSON.stringify(durable)))!])
+        : first
+      const continued = await active.owner.begin({
+        ...resumed,
+        executionId: 'execution-after-choice'
+      })
+      expect(continued.activeRun?.startedAt).toBeGreaterThan(10)
+      expect(continued.runtimeSessionAdmissions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            executionId: 'execution-after-choice',
+            promptRuntimeSegmentId: original.runtimeSegmentId,
+            runtimeSegmentId: resumed.runtimeSegmentId
+          })
+        ])
+      )
+      expect(
+        continued.conversationGraph!.messages.find(({ id }) => id === original.promptMessageId)
+          ?.runtimeSegmentId
+      ).toBe(original.runtimeSegmentId)
+    }
+  )
 
   it('admits the answer after the question is recorded as answered', async () => {
     const turn = scope()

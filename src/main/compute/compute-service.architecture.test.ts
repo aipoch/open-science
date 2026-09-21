@@ -1103,7 +1103,11 @@ describe('Compute service architecture', () => {
       'src/main/storage/migration-target-race.test.ts',
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
-      'src/main/session-persistence/runtime-authority.test.ts'
+      'src/main/session-persistence/runtime-authority.test.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
     ])
   })
 

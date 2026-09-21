@@ -296,11 +296,15 @@ describe('AcpPromptContentOwner', () => {
     const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
     loggerInfo.mockClear()
     const extractionCallStart = vi.mocked(extractPdfText).mock.calls.length
-    const prepare = (text: string): ReturnType<AcpPromptContentOwner['prepare']> =>
+    const prepare = (
+      text: string,
+      readingIntentText = text
+    ): ReturnType<AcpPromptContentOwner['prepare']> =>
       owner.prepare({
         appSessionId: 'session-1',
         projectId: 'project-1',
         text,
+        readingIntentText,
         historyImages: [],
         historyUploads: [],
         currentUploads: [],
@@ -327,6 +331,10 @@ describe('AcpPromptContentOwner', () => {
       const prepared = await prepare('总结一下整篇论文的核心贡献。')
       const auto = await prepare('这个方法有哪些局限？')
       const overall = await prepare("Analyze this paper's overall results and contributions.")
+      const composedPrompt = await prepare(
+        'Summarize this paper. Application guidance mentions all home directories.',
+        'Summarize this paper.'
+      )
 
       expect(vi.mocked(extractPdfText).mock.calls.slice(extractionCallStart)).toEqual([])
       const pdf = contentBlocks(prepared.content).find(
@@ -349,6 +357,14 @@ describe('AcpPromptContentOwner', () => {
         type: 'text',
         text: expect.stringContaining('"target":"active-document"')
       })
+      expect(
+        contentBlocks(composedPrompt.content).find(
+          (block) => block.type === 'text' && block.text.includes('route":"literature-mcp')
+        )
+      ).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining('"target":"active-document"')
+      })
       expect(loggerInfo.mock.calls.map(([, fields]) => fields)).toEqual([
         expect.objectContaining({
           retrievalMode: 'literature-tool',
@@ -363,6 +379,13 @@ describe('AcpPromptContentOwner', () => {
           routingReason: 'intent-auto',
           fullDocumentInjected: false,
           bm25Status: 'pending-read-document-query'
+        }),
+        expect.objectContaining({
+          retrievalMode: 'literature-tool',
+          scope: 'full-document',
+          routingReason: 'intent-full-document',
+          fullDocumentInjected: false,
+          bm25Status: 'not-requested'
         }),
         expect.objectContaining({
           retrievalMode: 'literature-tool',

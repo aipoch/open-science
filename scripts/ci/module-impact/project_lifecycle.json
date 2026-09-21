@@ -224,7 +224,8 @@
       "src/main/storage/brand-location.test.ts",
       "src/main/storage/migration-target-race.test.ts",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-      "src/main/database/classification-usage.test.ts"
+      "src/main/database/classification-usage.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

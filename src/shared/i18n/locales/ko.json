@@ -605,7 +605,6 @@
     "Add skill": "스킬 추가",
     "Add skills from SKILL.md files or .zip / .skill bundles on your computer. You can select several files at once, and a single archive may contain multiple skills.": "컴퓨터의 SKILL.md 파일이나 .zip / .skill 번들에서 스킬을 추가하세요. 한 번에 여러 파일을 선택할 수 있으며, 하나의 압축 파일에 여러 스킬이 포함될 수 있습니다.",
     "Add specialist": "스페셜리스트 추가",
-    "Add to Side chat": "사이드 채팅에 추가",
     "Add to conversation as attachment": "대화에 첨부파일로 추가",
     "Add to project": "프로젝트에 추가",
     "Add to collection": "컬렉션에 추가",
@@ -5948,6 +5947,12 @@
     "Stop Main Agent loading": "메인 에이전트 로드 중지",
     "Unlink Specialists": "스페셜리스트 연결 해제",
     "View details for {{name}}": "{{name}} 상세 정보 보기",
-    "{{count}} hidden by filters_other": "필터로 {{count}}개 숨김"
+    "{{count}} hidden by filters_other": "필터로 {{count}}개 숨김",
+    "Custom HTTP service": "사용자 지정 HTTP 서비스",
+    "Custom services use the TypeSafe classification request and response format.": "사용자 지정 서비스는 TypeSafe 분류 요청 및 응답 형식을 사용합니다.",
+    "Endpoint URL": "엔드포인트 URL",
+    "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "유효한 보안 HTTP 엔드포인트를 입력하세요. 원격 엔드포인트에는 HTTPS가 필요합니다.",
+    "Model ID exposed by the endpoint": "엔드포인트가 제공하는 모델 ID",
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "이 엔드포인트는 Chat Completions용이 아닙니다. 다른 API 형식을 사용하는 서비스에는 어댑터가 필요합니다."
   }
 }
