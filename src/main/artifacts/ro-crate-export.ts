@@ -445,6 +445,9 @@ const buildArtifactVersionRoCrateMetadata = (
     '@type': 'Dataset',
     '@id': './',
     name: `${evidence.filename} (Artifact Version v${evidence.version_number}) RO-Crate`,
+    // This crate describes the immutable version's publication, not the export time.
+    datePublished: evidence.created_at,
+    license: 'License information was not provided. This export grants no additional usage rights.',
     description:
       profile === 'lightweight'
         ? 'Open Science Artifact Version provenance crate (lightweight profile). Serializes the provenance captured for one immutable Artifact Version — checksums, producer code, execution history, exact input references, environment inventory, message-branch context, and reviewer evidence — as RO-Crate 1.1 metadata. Provenance is an audit and traceability record, not a deterministic replay contract. Data payloads and input files are referenced by SHA-256 checksum and are not included.'

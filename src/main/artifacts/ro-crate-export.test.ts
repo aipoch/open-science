@@ -271,6 +271,10 @@ describe('Artifact Version RO-Crate export', () => {
     const root = entity(document, './')
     expect(root['@type']).toBe('Dataset')
     expect(root.conformsTo).toEqual({ '@id': LIGHTWEIGHT_PROFILE })
+    expect(root.datePublished).toBe('2026-09-10T00:00:00.000Z')
+    expect(root.license).toBe(
+      'License information was not provided. This export grants no additional usage rights.'
+    )
     expect(root.name).toBe('report.csv (Artifact Version v3) RO-Crate')
     expect(root.mainEntity).toEqual({ '@id': 'urn:open-science:version:version-1' })
     expect(String(root.description)).toContain('not a deterministic replay contract')
@@ -432,6 +436,10 @@ describe('Artifact Version RO-Crate export', () => {
     ) as RoCrateMetadataDocument
     const root = entity(metadata, './')
     expect(root.conformsTo).toEqual({ '@id': COMPLETE_PROFILE })
+    expect(root.datePublished).toBe(fixture.source.evidence.created_at)
+    expect(root.license).toBe(
+      'License information was not provided. This export grants no additional usage rights.'
+    )
     expect(root.mainEntity).toEqual({ '@id': 'data/report.csv' })
     expect(root.hasPart).toEqual([
       { '@id': 'provenance/artifact-version-evidence.json' },
