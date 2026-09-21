@@ -528,7 +528,9 @@
       "src/main/acp/agent-process.test.ts",
       "src/main/settings/classification-settings.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
-      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/agent-framework/opencode-mcp-isolation.integration.test.ts",
+      "src/main/agent-framework/session-mcp-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
