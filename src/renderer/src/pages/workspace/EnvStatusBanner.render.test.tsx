@@ -180,7 +180,7 @@ describe('EnvStatusBanner', () => {
     expect(retried).toBe(1)
   })
 
-  it('dismisses only the current error projection and shows a later failure', () => {
+  it('keeps the current failure dismissed across refreshes and shows a later failure', () => {
     const currentFailure = { kind: 'error', message: 'offline' } as const
     act(() => root.render(<EnvStatusBanner ui={currentFailure} onRetry={() => {}} />))
 
@@ -197,6 +197,31 @@ describe('EnvStatusBanner', () => {
     act(() =>
       root.render(<EnvStatusBanner ui={{ kind: 'error', message: 'offline' }} onRetry={() => {}} />)
     )
+    expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
+
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          ui={{ kind: 'error', message: 'network unavailable' }}
+          onRetry={() => {}}
+        />
+      )
+    )
+    expect(container.querySelector('[data-testid="env-status-banner"]')).not.toBeNull()
+  })
+
+  it('shows the same failure again after the environment leaves the error state', () => {
+    const failure = { kind: 'error', message: 'offline' } as const
+    act(() => root.render(<EnvStatusBanner ui={failure} onRetry={() => {}} />))
+    act(() =>
+      (
+        container.querySelector('[data-testid="env-status-banner-dismiss"]') as HTMLButtonElement
+      ).click()
+    )
+
+    act(() => root.render(<EnvStatusBanner ui={{ kind: 'ready' }} onRetry={() => {}} />))
+    act(() => root.render(<EnvStatusBanner ui={failure} onRetry={() => {}} />))
+
     expect(container.querySelector('[data-testid="env-status-banner"]')).not.toBeNull()
   })
 
