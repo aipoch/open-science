@@ -174,7 +174,7 @@ for (const direction of ['forward', 'backward'] as const) {
         window.api.pdfAnnotations = {
           list: async () => ({ source, items: [annotation], total: 1 }),
           onChanged: () => () => {}
-        } as typeof window.api.pdfAnnotations
+        } as unknown as typeof window.api.pdfAnnotations
       })
       await page.getByRole('button', { name: 'All references', exact: true }).click()
       await page.getByRole('button', { name: 'Preview paper.pdf', exact: true }).click()
