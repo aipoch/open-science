@@ -4246,7 +4246,7 @@ describe('durable delegated work', () => {
       })
 
     const continued = await work.sendMessage(
-      { ...caller, toolInvocationId: 'continuation-call' },
+      { ...caller, permissionPrompts: 'none', toolInvocationId: 'continuation-call' },
       frameId,
       'Check a counterexample'
     )
@@ -4261,6 +4261,7 @@ describe('durable delegated work', () => {
       (await records.snapshot()).records[0].attempts[1].runtimeSegmentIds[0]
     )
     expect(execution.controls()[1].input).toMatchObject({
+      permissionPrompts: 'none',
       frameId,
       task: 'Check a counterexample',
       continuation: true,

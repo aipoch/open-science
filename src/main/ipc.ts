@@ -2719,7 +2719,6 @@ const createApplicationModules = async (
     },
     notebookRpcServer: requireNotebookRpcServer,
     readSession: ({ projectId, sessionId }) => sessionRepository.loadSession(projectId, sessionId),
-    resolvePermissionPrompts: (sessionId) => runtimeRef.current?.getPermissionPrompts(sessionId),
     resolvePermissionProfile: (sessionId) =>
       runtimeRef.current?.getSnapshot().permissionProfiles[sessionId]?.selectedProfile
   })
@@ -2736,6 +2735,7 @@ const createApplicationModules = async (
     current?: ReturnType<typeof createProductionDelegatedWorkComposition>
   } = {}
   const delegatedWork = createProductionDelegatedWorkComposition({
+    resolvePermissionPrompts: (sessionId) => runtimeRef.current?.getPermissionPrompts(sessionId),
     dataRoot: resolveDataRoot(),
     resolveExecutionModel: async (session) => {
       if (!session.agentFrameworkId) {

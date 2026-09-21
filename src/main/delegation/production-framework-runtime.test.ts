@@ -317,7 +317,6 @@ describe('production delegated framework runtime bridge', () => {
                 }
               }
             }) as never,
-          resolvePermissionPrompts: () => 'none',
           readSession: async () => delegatedSession(frameworkId)
         })
         const selected = await frameworks.forSession(session(frameworkId))
@@ -327,6 +326,7 @@ describe('production delegated framework runtime bridge', () => {
             session: { projectId: 'project-1', sessionId: `session-${frameworkId}` },
             frameId: 'child-frame',
             attemptId: 'bound-attempt',
+            permissionPrompts: 'none',
             runtimeSegmentId: 'child-segment',
             executionModel: {
               frameworkId,

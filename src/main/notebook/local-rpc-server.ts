@@ -3161,6 +3161,7 @@ class NotebookLocalRpcServer {
       }
       const parentSpecialistId = this.sessionSpecialists.get(sessionId)
       const caller: AuthenticatedDelegateCaller = {
+        permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
         session: { projectId, sessionId },
         frameId,
         role,

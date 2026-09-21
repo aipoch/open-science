@@ -51,7 +51,6 @@ type ProductionFrameworkRuntimeOptions = Readonly<{
   notebookRpcServer(): NotebookLocalRpcServer
   readSession(key: SessionKey): Promise<PersistedChatSession | undefined>
   resolvePermissionProfile?(sessionId: string): PermissionProfileId | undefined
-  resolvePermissionPrompts?(sessionId: string): 'none' | undefined
 }>
 
 const DELEGATED_CHILD_SYSTEM_PROMPT_APPEND = [
@@ -126,7 +125,7 @@ const createProductionDelegatedFrameworkRuntime = (
       const prepareScope = async (
         input: DelegateExecutionInput
       ): Promise<PreparedProductionFrameworkScope> => {
-        const permissionPrompts = options.resolvePermissionPrompts?.(input.session.sessionId)
+        const permissionPrompts = input.permissionPrompts
         if (!input.workspaceCwd) throw new Error('Delegated Attempt has no prepared Frame cwd.')
         if (!input.executionModel) {
           throw new Error('Delegated Attempt has no admitted model snapshot.')

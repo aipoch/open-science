@@ -113,7 +113,11 @@ const createCompositionHarness = async (
   admissionError?: Error,
   owners: Pick<
     ProductionDelegatedWorkOptions,
-    'artifactEvidence' | 'reviewEvidence' | 'parentMessages' | 'settlementContinuations'
+    | 'artifactEvidence'
+    | 'reviewEvidence'
+    | 'parentMessages'
+    | 'settlementContinuations'
+    | 'resolvePermissionPrompts'
   > = {},
   initialRootInvocations: readonly Readonly<{
     rootMessageId: string
@@ -2290,6 +2294,31 @@ describe('production delegated-work composition', () => {
       })
     ).resolves.toMatchObject([{ status: 'running' }])
   })
+
+  it.each([undefined, 'none'] as const)(
+    'captures permission prompts %s before asynchronous admission',
+    async (initialPolicy) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-'))
+      let currentPolicy = initialPolicy
+      const resolvePermissionPrompts = vi.fn(() => currentPolicy)
+      const harness = await createCompositionHarness(root, 'opencode', undefined, undefined, {
+        resolvePermissionPrompts
+      })
+      const pending = harness.composition.host.delegate(
+        harness.caller,
+        { task: 'Check the cohort', name: 'Cohort' },
+        { wait: false }
+      )
+      // A finished root prompt or a later prompt must not alter the admitted execution.
+      currentPolicy = initialPolicy === 'none' ? undefined : 'none'
+      await pending
+      await vi.waitFor(() => expect(harness.execution.controls()).toHaveLength(1))
+      expect(harness.execution.controls()[0].input.permissionPrompts).toBe(initialPolicy)
+      expect(resolvePermissionPrompts).toHaveBeenCalledOnce()
+      expect(JSON.stringify(harness.durable())).not.toContain('permissionPrompts')
+      await harness.composition.root.stopSession(harness.session.id)
+    }
+  )
 
   it('runs authenticated Host delegation through durable Session records and a staged Frame cwd', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-composition-'))

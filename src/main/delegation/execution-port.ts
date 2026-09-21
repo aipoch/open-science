@@ -83,6 +83,8 @@ type DelegateExecutionOutcome =
   | Readonly<{ status: 'cancelled' }>
 
 type DelegateExecutionInput = Readonly<{
+  /** Captured before asynchronous admission; never persisted. */
+  permissionPrompts?: 'none'
   session: Readonly<{ projectId: string; sessionId: string }>
   frameId: string
   attemptId: string
