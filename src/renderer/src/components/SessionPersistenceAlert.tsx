@@ -38,7 +38,7 @@ const SessionPersistenceAlert = ({
       data-bottom-notice={inline ? undefined : true}
       className={cn(
         inline
-          ? 'pointer-events-auto w-full max-w-md'
+          ? 'pointer-events-auto w-full'
           : 'pointer-events-auto fixed bottom-3 right-3 z-toast w-[min(420px,calc(100vw-24px))] max-h-[calc(100svh-24px)] overflow-y-auto shadow-sm',
         className
       )}

@@ -1,5 +1,25 @@
 import { expect, test } from '@playwright/test'
 
+for (const width of [320, 1000, 1600]) {
+  test(`inline catalog recovery fills its content area at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/error-surfaces.html?inline-catalog')
+    const host = page.getByTestId('inline-catalog-host')
+    const recovery = host.getByTestId('session-persistence-alert')
+    await expect(recovery).toBeVisible()
+    const hostBounds = (await host.boundingBox())!
+    const cardBounds = (await recovery.locator('section').boundingBox())!
+    expect(cardBounds.x).toBeCloseTo(hostBounds.x, 0)
+    expect(cardBounds.width).toBeCloseTo(hostBounds.width, 0)
+    expect(await recovery.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await recovery.getByTestId('session-persistence-retry').click()
+    await expect(page.getByTestId('retry-count')).toHaveText('1')
+    await recovery.getByTestId('session-persistence-action').click()
+    await expect(page.getByTestId('session-recovery-details-dialog')).toBeVisible()
+  })
+}
+
 for (const theme of ['', '&dark']) {
   test(`narrow notices keep recovery reachable${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 600 })
