@@ -106,6 +106,55 @@ describe('PRIDE project file input contract', () => {
   })
 })
 
+describe('ENA discovery input contracts', () => {
+  const query = getDescriptor('omics-archives', 'ena_query_runs')!
+
+  it.each(['a', '𠮷', '😀'])('counts keyword %s by Unicode code points', (character) => {
+    expect(() => validateToolArguments(query, { keyword: character.repeat(200) })).not.toThrow()
+    expect(() => validateToolArguments(query, { keyword: character.repeat(201) })).toThrow(
+      /invalid_arguments/
+    )
+  })
+
+  it.each(['   ', '\u00a0', '\u3000'])(
+    'rejects whitespace-only keyword %j at the Schema boundary',
+    (keyword) => {
+      for (const args of [{ keyword }, { tax_id: 6239, keyword }]) {
+        expect(() => validateToolArguments(query, args)).toThrow(/invalid_arguments/)
+      }
+    }
+  )
+
+  it('accepts surrounding whitespace without mutating keyword arguments', () => {
+    const args = { keyword: '\u3000 transcriptome \u00a0' }
+    expect(() => validateToolArguments(query, args)).not.toThrow()
+    expect(args.keyword).toBe('\u3000 transcriptome \u00a0')
+  })
+
+  it('requires a structured discovery filter and rejects raw queries and pagination', () => {
+    for (const args of [{}, { query: 'tax_tree(6239)' }, { tax_id: 6239, offset: 1 }]) {
+      expect(() => validateToolArguments(query, args)).toThrow(/invalid_arguments/)
+    }
+    expect(() =>
+      validateToolArguments(query, { tax_id: 6239, library_strategy: 'RNA-Seq' })
+    ).not.toThrow()
+  })
+
+  it('keeps accession lookup, generated FASTQ and submitted files as distinct contracts', () => {
+    const lookup = getDescriptor('omics-archives', 'ena_search_runs')!
+    expect(() => validateToolArguments(lookup, { keyword: 'worm' })).toThrow(/invalid_arguments/)
+    for (const id of ['ena_get_run_files', 'ena_get_submitted_files']) {
+      const descriptor = getDescriptor('omics-archives', id)!
+      expect(() =>
+        validateToolArguments(descriptor, { run_accession: 'ERR10015065' })
+      ).not.toThrow()
+      expect(() => validateToolArguments(descriptor, { accession: 'ERR10015065' })).toThrow(
+        /invalid_arguments/
+      )
+    }
+  })
+})
+
 // Authored examples are part of the agent-facing contract, not illustrative pseudocode.
 describe('bundled tool contracts', () => {
   const tools = ALL_CONNECTOR_IDS.flatMap(getConnectorTools)
@@ -140,4 +189,45 @@ describe('bundled tool contracts', () => {
       expect(mcp).toHaveBeenCalledTimes(1)
     }
   )
+})
+
+describe('UniProt discovery input contract', () => {
+  const search = getDescriptor('genes', 'search_uniprot_entries')!
+  it.each([
+    {},
+    { reviewed: true },
+    { query: 'organism_id:9606' },
+    { gene: 'TP53', offset: 1 },
+    { gene: ' ' },
+    { protein_name: '\u3000' },
+    { gene: 'x" OR reviewed:true' },
+    { gene: '*' },
+    { organism_id: '9606' },
+    { gene: 'TP53', reviewed: 'true' },
+    { gene: 'TP53', page_size: 501 },
+    { gene: 'TP53', cursor: '' }
+  ])('rejects invalid search arguments before authorization: %j', (args) => {
+    expect(() => validateToolArguments(search, args)).toThrow(/invalid_arguments/)
+  })
+  it.each(['a', '𠮷', '😀'])('counts both text fields as Unicode code points: %s', (character) => {
+    for (const field of ['gene', 'protein_name']) {
+      expect(() => validateToolArguments(search, { [field]: character.repeat(200) })).not.toThrow()
+      expect(() => validateToolArguments(search, { [field]: character.repeat(201) })).toThrow(
+        /invalid_arguments/
+      )
+    }
+  })
+  it('accepts false, maximum page size and cursors without injecting defaults or changing arguments', () => {
+    const args = { gene: ' TP53 ', reviewed: false, page_size: 500, cursor: 'opaque+/token==' }
+    expect(() => validateToolArguments(search, args)).not.toThrow()
+    expect(args).toEqual({
+      gene: ' TP53 ',
+      reviewed: false,
+      page_size: 500,
+      cursor: 'opaque+/token=='
+    })
+    const minimal = { gene: 'TP53' }
+    validateToolArguments(search, minimal)
+    expect(minimal).toEqual({ gene: 'TP53' })
+  })
 })

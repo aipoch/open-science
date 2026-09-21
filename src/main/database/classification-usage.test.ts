@@ -7,7 +7,6 @@ import { createProjectDbClient } from '../projects/prisma-client'
 import {
   MIGRATION_MANIFEST,
   migrateApplicationDatabase,
-  migrateApplicationDatabaseWithManifest,
   verifyCurrentApplicationSchema
 } from './migration-service'
 let root: string
@@ -19,7 +18,10 @@ afterEach(async () => {
 it('preserves old usage measurements and admits only the new known source after migration', async () => {
   root = await mkdtemp(join(tmpdir(), 'classification-migration-'))
   client = createProjectDbClient(root)
-  await migrateApplicationDatabaseWithManifest(client, MIGRATION_MANIFEST.slice(0, -1))
+  await migrateApplicationDatabase(client)
+  await client.$executeRawUnsafe(
+    `DELETE FROM "_open_science_migrations" WHERE "id" >= '0042_classification_usage'`
+  )
   // The empty-database fast path uses today's generated schema even with a historical ledger.
   // Reinstall the released 0028 table to exercise a genuine old CHECK, not the current one.
   await client.$executeRawUnsafe('DROP TABLE "SessionAuxiliaryTurnUsage"')
@@ -41,7 +43,11 @@ it('preserves old usage measurements and admits only the new known source after 
   await expect(insert('not-yet', 'classification')).rejects.toThrow()
   await expect(
     migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
-  ).resolves.toMatchObject({ applied: ['0042_classification_usage'] })
+  ).resolves.toMatchObject({
+    applied: MIGRATION_MANIFEST.filter((entry) => entry.id >= '0042_classification_usage').map(
+      (entry) => entry.id
+    )
+  })
   expect(await client.$queryRawUnsafe('SELECT * FROM "SessionAuxiliaryTurnUsage"')).toEqual(before)
   await insert('new', 'classification')
   await expect(insert('bad', 'unknown')).rejects.toThrow()

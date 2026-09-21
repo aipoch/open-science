@@ -45,6 +45,27 @@ function setup(
 
 describe('ENA tool registration and contracts', () => {
   it.each([
+    ['ena_query_runs', {}],
+    ['ena_query_runs', { tax_id: 0 }],
+    ['ena_query_runs', { tax_id: -1 }],
+    ['ena_query_runs', { tax_id: 6239.5 }],
+    ['ena_query_runs', { tax_id: '6239' }],
+    ['ena_query_runs', { tax_id: 2147483648 }],
+    ['ena_query_runs', { keyword: '' }],
+    ['ena_query_runs', { keyword: 'a'.repeat(201) }],
+    ['ena_query_runs', { keyword: 'worm" OR tax_tree(9606)' }],
+    ['ena_query_runs', { keyword: 'worm\\test' }],
+    ['ena_query_runs', { keyword: '*worm*' }],
+    ['ena_query_runs', { keyword: 'worm?' }],
+    ['ena_query_runs', { keyword: 'worm\nRNA' }],
+    ['ena_query_runs', { library_strategy: 'rna-seq' }],
+    ['ena_query_runs', { tax_id: 6239, limit: 0 }],
+    ['ena_query_runs', { tax_id: 6239, limit: 1001 }],
+    ['ena_query_runs', { tax_id: 6239, limit: '1' }],
+    ['ena_query_runs', { tax_id: 6239, offset: 1 }],
+    ['ena_query_runs', { query: 'tax_tree(6239)' }],
+    ['ena_get_submitted_files', {}],
+    ['ena_get_submitted_files', { run_accession: runId, download: true }],
     ['ena_search_runs', {}],
     ['ena_search_runs', { accession: ['PRJNA123835'] }],
     ['ena_search_runs', { accession: 'PRJNA123835', offset: 1 }],
@@ -362,7 +383,348 @@ describe('ena_get_run_files', () => {
   })
 })
 
+describe('ena_query_runs', () => {
+  it.each(['a', '𠮷', '😀'])(
+    'accepts a 200-code-point keyword built from %s',
+    async (character) => {
+      const keyword = character.repeat(200)
+      const { call, fetchImpl } = setup([])
+      await expect(call('ena_query_runs', { keyword })).resolves.toMatchObject({
+        filters: { keyword },
+        runs: []
+      })
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      const params = new URL(String(fetchImpl.mock.calls[0][0])).searchParams
+      expect(params.get('query')).toContain(`study_title="*${keyword}*"`)
+    }
+  )
+
+  it.each(['a', '𠮷', '😀'])(
+    'rejects a 201-code-point keyword built from %s before HTTP at both boundaries',
+    async (character) => {
+      const args = { keyword: character.repeat(201) }
+      const { call, fetchImpl } = setup([])
+      expect(() => call('ena_query_runs', args)).toThrow(/invalid_arguments/)
+      await expect(
+        new ParserEngine({ fetchImpl }).call(tool('ena_query_runs'), args, {})
+      ).rejects.toThrow(/keyword/)
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it('combines literal title keywords with taxonomy and strategy in one bounded search', async () => {
+    const { call, fetchImpl } = setup([
+      { run_accession: 'SRR037074', tax_id: '6239', library_strategy: 'RNA-Seq' },
+      {
+        run_accession: runId,
+        tax_id: '6239',
+        scientific_name: 'Caenorhabditis elegans',
+        study_title: 'worm transcriptome'
+      },
+      { run_accession: 'SRR037075' }
+    ])
+    const out = await call('ena_query_runs', {
+      tax_id: 6239,
+      library_strategy: 'RNA-Seq',
+      keyword: ' transcriptome ',
+      limit: 2
+    })
+    expect(out).toMatchObject({
+      filters: { tax_id: 6239, library_strategy: 'RNA-Seq', keyword: 'transcriptome' },
+      n_runs_returned: 2,
+      truncated: true,
+      runs: [
+        { run_accession: runId, tax_id: '6239', study_title: 'worm transcriptome' },
+        { run_accession: 'SRR037074', sample_title: null }
+      ]
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const request = new URL(String(fetchImpl.mock.calls[0][0]))
+    expect(request.origin + request.pathname).toBe('https://www.ebi.ac.uk/ena/portal/api/search')
+    expect(Object.fromEntries(request.searchParams)).toMatchObject({
+      result: 'read_run',
+      format: 'json',
+      limit: '3',
+      includeMetagenomes: 'true',
+      query:
+        'tax_tree(6239) AND library_strategy="RNA-Seq" AND (study_title="*transcriptome*" OR experiment_title="*transcriptome*" OR sample_title="*transcriptome*" OR description="*transcriptome*")'
+    })
+    expect(request.searchParams.has('offset')).toBe(false)
+    expect(request.searchParams.get('fields')).not.toContain('ftp')
+  })
+
+  it.each([
+    [{ tax_id: 2 }, 'tax_tree(2)'],
+    [{ library_strategy: 'WGS' }, 'library_strategy="WGS"'],
+    [{ keyword: "Crohn's & RNA" }, 'study_title="*Crohn\'s & RNA*"']
+  ])('allows an independent filter %j without an implicit human default', async (args, query) => {
+    const { call, fetchImpl } = setup([])
+    await expect(call('ena_query_runs', args as Record<string, unknown>)).resolves.toMatchObject({
+      n_runs_returned: 0,
+      truncated: false,
+      runs: []
+    })
+    const params = new URL(String(fetchImpl.mock.calls[0][0])).searchParams
+    expect(params.get('query')).toContain(query)
+    expect(params.get('query')).not.toContain('9606')
+    expect(params.get('limit')).toBe('101')
+  })
+
+  it('keeps descendant taxa and distinguishes an exact limit from truncation', async () => {
+    await expect(
+      setup([{ run_accession: 'ERR1', tax_id: '562' }]).call('ena_query_runs', {
+        tax_id: 2,
+        limit: 1
+      })
+    ).resolves.toMatchObject({ truncated: false, runs: [{ tax_id: '562' }] })
+  })
+
+  it.each([
+    {},
+    { message: 'error' },
+    [null],
+    [{}],
+    [{ run_accession: 'GSE1' }],
+    [{ run_accession: runId }, { run_accession: runId }],
+    [{ run_accession: runId, study_title: 1 }],
+    [{ run_accession: 'ERR1' }, { run_accession: 'ERR2' }, { run_accession: 'ERR3' }]
+  ])('rejects malformed or oversized search responses: %j', async (payload) => {
+    await expect(setup(payload).call('ena_query_runs', { tax_id: 6239, limit: 1 })).rejects.toThrow(
+      /Invalid ENA file report/
+    )
+  })
+
+  it.each([
+    {},
+    { tax_id: null },
+    { tax_id: -1 },
+    { tax_id: '6239' },
+    { library_strategy: 'RNA' },
+    { keyword: '   ' },
+    { keyword: '" OR tax_tree(9606)' },
+    { keyword: '*worm*' },
+    { keyword: 'worm\nRNA' },
+    { tax_id: 6239, limit: 0 }
+  ])('also rejects invalid arguments at the executor boundary: %j', async (args) => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    await expect(
+      new ParserEngine({ fetchImpl }).call(tool('ena_query_runs'), args, {})
+    ).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([400, 403, 429, 500])('propagates HTTP %i', async (status) => {
+    await expect(
+      setup({ message: 'error' }, status).call('ena_query_runs', { keyword: 'worm' })
+    ).rejects.toThrow(`HTTP ${status}`)
+  })
+})
+
+describe('ena_get_submitted_files', () => {
+  const submitted = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    run_accession: 'ERR10015065',
+    library_layout: 'PAIRED',
+    submitted_ftp: 'ftp.sra.ebi.ac.uk/vol1/run/ERR100/ERR10015065/44660_2#4.cram',
+    submitted_format: 'CRAM',
+    submitted_bytes: '34815792971',
+    submitted_md5: '2b07424b27807998926f2624e5909fec',
+    ...extra
+  })
+  const args = { run_accession: 'ERR10015065' }
+
+  it('preserves literal # in submitted CRAM paths without treating it as a URL fragment', async () => {
+    const { call, fetchImpl } = setup([submitted()])
+    await expect(call('ena_get_submitted_files', args)).resolves.toEqual({
+      ...args,
+      found: true,
+      library_layout: 'PAIRED',
+      submitted_available: true,
+      n_files: 1,
+      submitted_files: [
+        {
+          file_index: 1,
+          ftp_location: submitted().submitted_ftp,
+          format: 'CRAM',
+          size_bytes: 34815792971,
+          md5: submitted().submitted_md5
+        }
+      ]
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const params = new URL(String(fetchImpl.mock.calls[0][0])).searchParams
+    expect(params.get('fields')).toBe(
+      'run_accession,library_layout,submitted_ftp,submitted_format,submitted_bytes,submitted_md5'
+    )
+    expect(params.get('limit')).toBe('2')
+  })
+
+  it('retains file order and empty metadata positions without inferring paired mates', async () => {
+    const { call } = setup([
+      submitted({
+        submitted_ftp: 'first.bam;second.cram;third.fastq.gz',
+        submitted_format: 'BAM;;FASTQ',
+        submitted_bytes: '0;;25',
+        submitted_md5: `${'A'.repeat(32)};;${'c'.repeat(32)}`
+      })
+    ])
+    await expect(call('ena_get_submitted_files', args)).resolves.toMatchObject({
+      n_files: 3,
+      submitted_files: [
+        {
+          file_index: 1,
+          ftp_location: 'first.bam',
+          format: 'BAM',
+          size_bytes: 0,
+          md5: 'a'.repeat(32)
+        },
+        { file_index: 2, ftp_location: 'second.cram', format: null, size_bytes: null, md5: null },
+        {
+          file_index: 3,
+          ftp_location: 'third.fastq.gz',
+          format: 'FASTQ',
+          size_bytes: 25,
+          md5: 'c'.repeat(32)
+        }
+      ]
+    })
+  })
+
+  it('distinguishes a public run with no submitted files from no public run report', async () => {
+    await expect(
+      setup([
+        submitted({
+          submitted_ftp: '',
+          submitted_format: '',
+          submitted_bytes: '',
+          submitted_md5: ''
+        })
+      ]).call('ena_get_submitted_files', args)
+    ).resolves.toMatchObject({
+      found: true,
+      submitted_available: false,
+      n_files: 0,
+      submitted_files: []
+    })
+    await expect(setup([]).call('ena_get_submitted_files', args)).resolves.toMatchObject({
+      found: false,
+      submitted_available: false,
+      n_files: 0,
+      submitted_files: []
+    })
+  })
+
+  it('preserves unknown metadata as null', async () => {
+    await expect(
+      setup([submitted({ submitted_format: '', submitted_bytes: null, submitted_md5: '' })]).call(
+        'ena_get_submitted_files',
+        args
+      )
+    ).resolves.toMatchObject({
+      submitted_files: [{ format: null, size_bytes: null, md5: null }]
+    })
+  })
+
+  it.each([
+    { run_accession: 'ERR1' },
+    { submitted_ftp: ';file.cram' },
+    { submitted_ftp: '', submitted_bytes: '123' },
+    { submitted_bytes: '1;2' },
+    { submitted_bytes: '-1' },
+    { submitted_bytes: '9007199254740992' },
+    { submitted_md5: 'not-an-md5' },
+    { submitted_md5: `${'a'.repeat(32)};${'b'.repeat(32)}` },
+    { submitted_format: 'BAM;CRAM' },
+    { submitted_ftp: 3 }
+  ])('fails inconsistent or malformed submitted metadata: %j', async (extra) => {
+    await expect(setup([submitted(extra)]).call('ena_get_submitted_files', args)).rejects.toThrow(
+      /Invalid ENA file report/
+    )
+  })
+
+  it.each(['submitted_ftp', 'submitted_bytes', 'submitted_md5', 'submitted_format'])(
+    'rejects a missing requested %s field',
+    async (field) => {
+      const row = submitted()
+      delete row[field]
+      await expect(setup([row]).call('ena_get_submitted_files', args)).rejects.toThrow(
+        `missing ${field}`
+      )
+    }
+  )
+
+  it.each(['PRJNA123835', 'SRX017289', 'GSM1'])(
+    'requires a run rather than %s',
+    async (run_accession) => {
+      const { call, fetchImpl } = setup([])
+      await expect(call('ena_get_submitted_files', { run_accession })).rejects.toThrow(
+        /ERR, SRR or DRR/
+      )
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([400, 403, 404, 429, 500])('propagates HTTP %i', async (status) => {
+    await expect(
+      setup({ message: 'error' }, status).call('ena_get_submitted_files', args)
+    ).rejects.toThrow(`HTTP ${status}`)
+  })
+
+  it('does not cache empty reports', async () => {
+    const { call, fetchImpl } = setup([])
+    await call('ena_get_submitted_files', args)
+    fetchImpl.mockImplementationOnce(async () => new Response(JSON.stringify([submitted()])))
+    await expect(call('ena_get_submitted_files', args)).resolves.toMatchObject({
+      found: true,
+      n_files: 1
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe.skipIf(!process.env.LIVE_API)('ENA live file reports', () => {
+  it('discovers nonhuman RNA-Seq runs using taxonomy, strategy and keyword', async () => {
+    const out = (await new ParserEngine().call(
+      tool('ena_query_runs'),
+      {
+        tax_id: 6239,
+        library_strategy: 'RNA-Seq',
+        keyword: 'transcriptome',
+        limit: 2
+      },
+      {}
+    )) as { truncated: boolean; runs: Array<Record<string, unknown>> }
+    expect(out.truncated).toBe(true)
+    expect(out.runs).toHaveLength(2)
+    expect(
+      out.runs.every((run) => run.tax_id === '6239' && run.library_strategy === 'RNA-Seq')
+    ).toBe(true)
+  }, 120_000)
+
+  it.each([
+    ['ERR10015065', 'CRAM', 1],
+    ['SRR14611230', 'BAM', 5]
+  ])(
+    'retrieves submitted files for %s through ParserEngine',
+    async (run_accession, format, count) => {
+      const out = (await new ParserEngine().call(
+        tool('ena_get_submitted_files'),
+        { run_accession },
+        {}
+      )) as {
+        found: boolean
+        n_files: number
+        submitted_files: Array<Record<string, unknown>>
+      }
+      expect(out.found).toBe(true)
+      expect(out.n_files).toBe(count)
+      expect(
+        out.submitted_files.every((file) => file.format === format && Number(file.size_bytes) > 0)
+      ).toBe(true)
+      if (format === 'CRAM') expect(out.submitted_files[0].ftp_location).toContain('#4.cram')
+    },
+    120_000
+  )
+
   it('resolves an experiment and retrieves its known FASTQ through ParserEngine', async () => {
     const engine = new ParserEngine()
     const runs = await engine.call(tool('ena_search_runs'), { accession: 'SRX017289' }, {})

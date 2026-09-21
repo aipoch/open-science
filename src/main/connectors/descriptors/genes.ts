@@ -20,6 +20,7 @@ const ORDER = [
   'search_ontology_terms',
   'get_ontology_term',
   'get_go_annotations',
+  'search_uniprot_entries',
   'get_uniprot_entries',
   'map_reactome_pathways',
   'list_enrichment_sources',

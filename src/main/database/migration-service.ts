@@ -1,6 +1,7 @@
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
+import { pdfAnnotationsMigration } from './migrations/0043-pdf-annotations'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -830,6 +831,17 @@ const MIGRATION_MANIFEST = [
       classificationUsageMigration.statements,
       classificationUsageMigration.verifiers,
       classificationUsageMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfAnnotationsMigration,
+    checksum: checksumMigrationPayload(
+      pdfAnnotationsMigration.id,
+      pdfAnnotationsMigration.statements,
+      pdfAnnotationsMigration.verifiers,
+      pdfAnnotationsMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

@@ -69,6 +69,7 @@ beforeEach(() => {
     pendingProjectCreation: false,
     pendingArtifactMention: undefined,
     pendingLiteratureItemId: undefined,
+    pendingLiteratureAnnotation: undefined,
     pendingLiteratureProjectId: undefined,
     pendingLiteratureCollectionId: undefined,
     artifactMentionAvailability: undefined
@@ -223,6 +224,7 @@ describe('navigation store', () => {
       expect(useNavigationStore.getState()).toMatchObject({
         view: 'workspace',
         pendingLiteratureItemId: undefined,
+        pendingLiteratureAnnotation: undefined,
         userNavigationRevision: 0
       })
       guard.mockReturnValue(true)

@@ -386,7 +386,8 @@ describe('upload repository', () => {
 
   it('finalizes pending uploads into the real session directory without changing ids', async () => {
     const root = await createStorageRoot()
-    const repository = new UploadRepository(root)
+    const onFinalized = vi.fn()
+    const repository = new UploadRepository(root, { onFinalized })
     const [attachment] = await stageUploadFixtures(repository, {
       files: [
         {
@@ -406,6 +407,7 @@ describe('upload repository', () => {
       mimeType: 'text/plain',
       size: 'hello upload'.length
     })
+    expect(onFinalized).not.toHaveBeenCalled()
     expect(finalized.path).toBe(join(root, 'uploads', 'default-project', 'session-1', 'notes.txt'))
     await expect(readFile(finalized.path, 'utf8')).resolves.toBe('hello upload')
     await expect(stat(attachment.path)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -513,7 +515,9 @@ describe('upload repository', () => {
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const onFinalized = vi.fn()
     const repository = new UploadRepository(root, {
+      onFinalized,
       getClient: () => Promise.resolve(client)
     })
     const [first, second] = await stageUploadFixtures(repository, {
@@ -529,6 +533,7 @@ describe('upload repository', () => {
       'project-1'
     )
 
+    expect(onFinalized).toHaveBeenCalledWith('project-1', 'session-1', finalized)
     expect(finalized[0]).toMatchObject({
       id: first.id,
       versionNumber: 1,
@@ -574,6 +579,7 @@ describe('upload repository', () => {
       [finalized[0]],
       'project-1'
     )
+    expect(onFinalized).toHaveBeenCalledOnce()
     expect(again.versionId).toBe(finalized[0].versionId)
     await expect(client.uploadVersion.count({ where: { uploadFileId: first.id } })).resolves.toBe(1)
   })

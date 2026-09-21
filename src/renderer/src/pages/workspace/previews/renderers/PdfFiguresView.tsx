@@ -1303,7 +1303,7 @@ export const PdfFiguresView = ({
           <div className="max-w-md space-y-5 text-center">
             <ScanSearch className="mx-auto size-9 text-primary" aria-hidden="true" />
             <h3 className="text-[17px] font-medium">
-              {analysisIncomplete ? t('Analysis incomplete') : t('Figures and tables')}
+              {analysisIncomplete ? t('Analysis incomplete') : t('Figures & Tables')}
             </h3>
             <p className="text-sm leading-6 text-text-200">
               {analysisIncomplete

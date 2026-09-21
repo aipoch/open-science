@@ -28,6 +28,7 @@ import {
   type LiteratureSourceRecordView,
   type LiteratureMetadataCompletionRequest,
   type LiteratureMetadataCompletionResult,
+  type LiteraturePdfCancelImportRequest,
   type LiteraturePdfImportReceipt,
   type LiteraturePdfImportRequest,
   type LiteratureRecordImportRequest,
@@ -57,7 +58,11 @@ type LiteratureCommandOwner = Readonly<{
   formatDocument(request: LiteratureFormatDocumentRequest): Promise<LiteratureFormatDocumentResult>
   citationStyles(request: LiteratureCitationStylesRequest): Promise<LiteratureCitationStylesResult>
   importRecords(request: LiteratureRecordImportRequest): Promise<LiteratureRecordImportResult>
-  importPdf(request: LiteraturePdfImportRequest): Promise<LiteraturePdfImportReceipt>
+  importPdf(
+    request: LiteraturePdfImportRequest,
+    signal?: AbortSignal
+  ): Promise<LiteraturePdfImportReceipt>
+  cancelPdfImport(request: LiteraturePdfCancelImportRequest): { cancelled: boolean }
   transact(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt>
 }>
 
@@ -122,6 +127,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteraturePdfImportRequest],
     LiteraturePdfImportReceipt
   >('literature:import-pdf', literatureApplicationCommandContracts.importPdf),
+  cancelPdfImport: defineApplicationCommand<
+    'literature:cancel-pdf-import',
+    readonly [LiteraturePdfCancelImportRequest],
+    { cancelled: boolean }
+  >('literature:cancel-pdf-import', literatureApplicationCommandContracts.cancelPdfImport),
   importRecords: defineApplicationCommand<
     'literature:import-records',
     readonly [LiteratureRecordImportRequest],
@@ -146,6 +156,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.get,
   literatureApplicationCommands.sources,
   literatureApplicationCommands.importPdf,
+  literatureApplicationCommands.cancelPdfImport,
   literatureApplicationCommands.importRecords,
   literatureApplicationCommands.search,
   literatureApplicationCommands.transact
@@ -174,7 +185,9 @@ const registerLiteratureApplicationCommands = (
         withDataRootWrite(() => owner.formatDocument(args[0])),
       'literature:sources': ({ args }) => withDataRootWrite(() => owner.sources(args[0])),
       'literature:get': ({ args }) => withDataRootWrite(() => owner.get(args[0])),
-      'literature:import-pdf': ({ args }) => withDataRootWrite(() => owner.importPdf(args[0])),
+      'literature:import-pdf': ({ args, callerLease }) =>
+        withDataRootWrite(() => owner.importPdf(args[0], callerLease.signal)),
+      'literature:cancel-pdf-import': ({ args }) => owner.cancelPdfImport(args[0]),
       'literature:import-records': ({ args }) =>
         withDataRootWrite(() => owner.importRecords(args[0])),
       'literature:search': ({ args }) => withDataRootWrite(() => owner.search(args[0])),

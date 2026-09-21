@@ -1,4 +1,5 @@
-import { Check, CircleAlert, Download, LoaderCircle } from 'lucide-react'
+import { usePdfExportAction } from './pdf-annotations/pdf-export-context'
+import { Check, CircleAlert, Download, FileText, FilePenLine, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -6,6 +7,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -30,6 +32,7 @@ type ManagedFileDownloadButtonProps = ManagedFileDownloadInput & {
 
 const ManagedFileDownloadButtonState = ({
   source,
+  path,
   projectId,
   fileId,
   versionId,
@@ -50,6 +53,11 @@ const ManagedFileDownloadButtonState = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const { status, sizeLimitError } = download
+  const registeredExport = usePdfExportAction()
+  const pdfExport =
+    registeredExport?.path === path && registeredExport.versionId === versionId
+      ? registeredExport
+      : undefined
 
   const hasExplicitManagedVersion =
     (source === 'artifact' || source === 'upload') && Boolean(projectId && fileId && versionId)
@@ -66,9 +74,10 @@ const ManagedFileDownloadButtonState = ({
     hasResolvedVersionContext &&
     versionId !== latestVersionId &&
     versionId !== undefined
-  const idleLabel = isHistoricalVersion
-    ? t('Download options for {{name}}', { name: suggestedName })
-    : t('Download {{name}}', { name: suggestedName })
+  const idleLabel =
+    isHistoricalVersion || pdfExport
+      ? t('Download options for {{name}}', { name: suggestedName })
+      : t('Download {{name}}', { name: suggestedName })
   const label = sizeLimitError
     ? t(
         "{{name}} exceeds this browser's 512 MB download limit. Use a browser that supports streaming file saves.",
@@ -103,7 +112,8 @@ const ManagedFileDownloadButtonState = ({
           ? t('Try again')
           : t('Download')
   const isPrimary = appearance === 'primary'
-  const canOpenVersionMenu = isHistoricalVersion && !effectiveDisabled && status !== 'saving'
+  const canOpenVersionMenu =
+    (isHistoricalVersion || Boolean(pdfExport)) && !effectiveDisabled && status !== 'saving'
   const actionButton = (
     <Button
       type="button"
@@ -125,7 +135,7 @@ const ManagedFileDownloadButtonState = ({
       )}
       aria-label={label}
       disabled={effectiveDisabled || status === 'saving'}
-      onClick={isHistoricalVersion ? undefined : () => void download.execute(null)}
+      onClick={isHistoricalVersion || pdfExport ? undefined : () => void download.execute(null)}
       aria-busy={Boolean(status === 'saving')}
     >
       <span key={String(status)} className="button-feedback">
@@ -163,12 +173,64 @@ const ManagedFileDownloadButtonState = ({
               <TooltipContent>{tooltip}</TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="z-[70] min-w-52">
-              <DropdownMenuItem onSelect={() => void download.execute(versionId)}>
-                {t('Download version v{{version}}', { version: versionNumber })}
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void download.execute(null)}>
-                {t('Download latest version v{{version}}', { version: latestVersionNumber })}
-              </DropdownMenuItem>
+              {isHistoricalVersion ? (
+                <>
+                  <DropdownMenuItem onSelect={() => void download.execute(versionId)}>
+                    {t('Download version v{{version}}', { version: versionNumber })}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void download.execute(null)}>
+                    {t('Download latest version v{{version}}', { version: latestVersionNumber })}
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <DropdownMenuItem className="gap-2.5" onSelect={() => void download.execute(null)}>
+                  <FileText className="size-4 shrink-0" aria-hidden="true" />
+                  {t('Download original PDF')}
+                </DropdownMenuItem>
+              )}
+              {pdfExport ? (
+                <>
+                  {isHistoricalVersion ? <DropdownMenuSeparator /> : null}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuItem
+                        aria-disabled={pdfExport.saving || (pdfExport.disabled && !pdfExport.busy)}
+                        className={cn(
+                          'gap-2.5',
+                          (pdfExport.saving || (pdfExport.disabled && !pdfExport.busy)) &&
+                            'cursor-not-allowed opacity-50'
+                        )}
+                        onSelect={(event) => {
+                          if (pdfExport.saving || (pdfExport.disabled && !pdfExport.busy))
+                            event.preventDefault()
+                          else if (pdfExport.busy) pdfExport.cancel()
+                          else void pdfExport.execute()
+                        }}
+                      >
+                        {pdfExport.busy ? (
+                          <LoaderCircle
+                            className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <FilePenLine className="size-4 shrink-0" aria-hidden="true" />
+                        )}
+                        {pdfExport.saving
+                          ? t('Saving...')
+                          : pdfExport.busy
+                            ? t('Cancel PDF export')
+                            : pdfExport.label}
+                      </DropdownMenuItem>
+                    </TooltipTrigger>
+                    {pdfExport.disabled && !pdfExport.busy ? (
+                      <TooltipContent side="left" className="z-[120]">
+                        {pdfExport.unavailableReason ??
+                          t('Available after annotations are loaded and saved.')}
+                      </TooltipContent>
+                    ) : null}
+                  </Tooltip>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </span>

@@ -1292,7 +1292,8 @@ describe('startWebHttpServer', () => {
       configRoot: '/fake/root',
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
       rpcCapabilities: WEB_RPC_CAPABILITIES,
-      rpcChannels: ['projects:list']
+      rpcChannels: ['projects:list'],
+      taskCapabilities: ['permission-prompts-none']
     })
 
     const compressedStatic = await fetch(`${base}/app.js`, {

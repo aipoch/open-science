@@ -48,6 +48,7 @@ type PreparedDelegateExecution = Readonly<{
   runtimeHome: string
   frameworkId: string
   permissionProfile?: PermissionProfileId
+  permissionPrompts?: 'none'
   capability: DelegateExecutionCapability
   artifactCurrentRunFile?: string
   runtimeConstructionIsProcessFree?: boolean
@@ -70,6 +71,7 @@ type AcpDelegateRuntime = Readonly<{
     specialistId?: string
   }): Promise<{ sessionId: string }>
   sendAppContinuation(request: {
+    permissionPrompts?: 'none'
     sessionId: string
     text: string
     suppressUserMessage?: boolean
@@ -561,6 +563,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       sessionId: providerSessionId!,
       text,
       suppressUserMessage: true,
+      ...(scope?.permissionPrompts ? { permissionPrompts: scope.permissionPrompts } : {}),
       ...((activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId)
         ? {
             provenanceContext: {

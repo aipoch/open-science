@@ -12,6 +12,7 @@
     "src/renderer/src/pages/workspace/annotations/TextAnnotationEditors.tsx",
     "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx",
     "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.tsx",
+    "src/renderer/src/pages/workspace/annotations/annotation-controls.css",
     "src/renderer/src/pages/workspace/annotations/annotation-id.ts",
     "src/renderer/src/pages/workspace/annotations/annotation-port.ts",
     "src/renderer/src/pages/workspace/annotations/annotation-reveal.test.ts",
@@ -154,7 +155,9 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/lib/session-fork.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

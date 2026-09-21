@@ -413,7 +413,17 @@
       "src/renderer/src/stores/settings-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewTextAnnotationSurface.test.tsx",
+      "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
+      "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSubagentMessageRow.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx"
     ]
   },
   "capabilityOverlays": [],

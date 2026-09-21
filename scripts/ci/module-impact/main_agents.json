@@ -290,7 +290,8 @@
       "src/main/session-package/fork.test.ts",
       "src/main/storage/migration-target-race.test.ts",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

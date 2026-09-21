@@ -1,4 +1,4 @@
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { probeRemoteLaunch } from './remote-launch-recovery'
 import { randomUUID } from 'node:crypto'
@@ -25,6 +25,14 @@ import {
 import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
 
 const log = createLogger('compute-cancellation')
+
+type RetryReason =
+  | 'dispatch-in-flight'
+  | 'handle-unavailable'
+  | 'scheduler-unconfirmed'
+  | 'ownership-unknown'
+  | 'termination-unconfirmed'
+  | 'operation-failed'
 
 type ReaperOptions = Readonly<{
   dispatchTracker?: Pick<DispatchTracker, 'has'>
@@ -56,7 +64,13 @@ class ComputeJobCancellationOwner {
     const result = await this.operations.request(jobId, 'cancel', scope, this.now())
     if (!result.found) throw new ComputeHostUnavailableError()
     const job = await this.requireOwnedJob(jobId, scope)
-    return projectJobStatus(job, cancellationStatus(result.record))
+    const status = projectJobStatus(job, cancellationStatus(result.record))
+    log.info('Compute Job cancellation requested', {
+      jobId,
+      status: status.status,
+      cancellationStatus: status.cancellation_status
+    })
+    return status
   }
 
   async status(jobId: string, scope: ComputeJobOperationScope): Promise<JobStatusResult> {
@@ -177,7 +191,7 @@ class ComputeJobCancellationReaper {
 
     try {
       if (!handle && this.dispatchTracker.has(job.job_id)) {
-        await this.scheduleRetry(claim)
+        await this.scheduleRetry(claim, 'dispatch-in-flight')
         return
       }
       const connection = await this.connectionBroker.acquire(job.provider_id, {
@@ -202,7 +216,7 @@ class ComputeJobCancellationReaper {
         }
       }
       if (!handle) {
-        await this.scheduleRetry(claim)
+        await this.scheduleRetry(claim, 'handle-unavailable')
         return
       }
       if (handle.driver === 'slurm') {
@@ -210,7 +224,7 @@ class ComputeJobCancellationReaper {
           await this.confirm(claim)
           return
         }
-        await this.scheduleRetry(claim)
+        await this.scheduleRetry(claim, 'scheduler-unconfirmed')
         return
       }
       const ownership = await probeRemoteJobProcessOwnership(handle.pid, handle.workdir, connection)
@@ -219,26 +233,40 @@ class ComputeJobCancellationReaper {
         return
       }
       if (ownership !== 'owned') {
-        await this.scheduleRetry(claim)
+        await this.scheduleRetry(claim, 'ownership-unknown')
         return
       }
       if (await terminateRemoteJobProcessIfOwned(handle.pid, handle.workdir, connection)) {
         await this.confirm(claim)
         return
       }
-      await this.scheduleRetry(claim)
-    } catch {
-      await this.scheduleRetry(claim)
+      await this.scheduleRetry(claim, 'termination-unconfirmed')
+    } catch (error) {
+      await this.scheduleRetry(claim, 'operation-failed', error)
     }
   }
 
-  private async scheduleRetry(claim: ClaimedComputeJobOperation): Promise<void> {
+  private async scheduleRetry(
+    claim: ClaimedComputeJobOperation,
+    reason: RetryReason,
+    error?: unknown
+  ): Promise<void> {
     const now = this.now()
-    await this.operations.retry(
-      claim,
-      now,
-      new Date(now.getTime() + this.retryDelayMs(claim.operation.attemptCount))
-    )
+    const retryAt = new Date(now.getTime() + this.retryDelayMs(claim.operation.attemptCount))
+    if (await this.operations.retry(claim, now, retryAt)) {
+      // Keep repeated outages diagnosable without logging credentials, commands, or remote paths.
+      // Log the first attempt and powers of two so an offline host cannot flood the log forever.
+      const attempt = claim.operation.attemptCount
+      if (attempt === 1 || Number.isInteger(Math.log2(attempt))) {
+        log.warn('Compute Job cancellation unconfirmed; retry scheduled', {
+          jobId: claim.jobId,
+          attempt,
+          reason,
+          retryAt: retryAt.toISOString(),
+          ...(error === undefined ? {} : diagnosticErrorFields(error))
+        })
+      }
+    }
   }
 
   private async confirm(
@@ -246,6 +274,10 @@ class ComputeJobCancellationReaper {
     remoteWorkdirAbsent = false
   ): Promise<void> {
     if (await this.operations.fulfill(claim, this.now(), remoteWorkdirAbsent)) {
+      log.info('Compute Job cancellation confirmed', {
+        jobId: claim.jobId,
+        attempt: claim.operation.attemptCount
+      })
       await this.onConfirmed?.(claim.jobId)
     }
   }

@@ -17,6 +17,12 @@ const protocol = (exit = '', stdout = 'first line\nsecond line'): string =>
   ].join('\n')
 
 describe('parsePollOutput', () => {
+  it('keeps unknown process ownership retryable rather than reporting a vanished process', () => {
+    expect(parsePollOutput(protocol().replace('alive:1', 'alive:unknown'), [job], nonce)).toEqual([
+      { status: 'incomplete', job, reason: 'alive' }
+    ])
+  })
+
   it('preserves stdout from its first line', () => {
     expect(parsePollOutput(protocol('0'), [job], nonce)).toEqual([
       expect.objectContaining({

@@ -151,6 +151,89 @@ const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermis
 })
 
 describe('ACP permission broker', () => {
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'denies unapproved %s tools without parking or persisting unattended work',
+    async (frameworkId) => {
+      const emit = vi.fn()
+      const settled = vi.fn()
+      const persist = vi.fn(async () => true)
+      const broker = new AcpPermissionBroker(emit, undefined, undefined, settled, {
+        persist,
+        settleLive: vi.fn()
+      })
+      const request = createToolPermissionRequest({
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'unknown-mutation' }
+      })
+      await expect(
+        broker.requestPermission(request, {
+          profile: 'ask',
+          frameworkId,
+          permissionPrompts: 'none',
+          projectId: 'p',
+          promptMessageId: 'm'
+        })
+      ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'reject-once' } })
+      expect(settled).toHaveBeenCalledWith(
+        expect.any(String),
+        'rejected',
+        expect.objectContaining({ toolCallId: request.toolCall.toolCallId })
+      )
+      expect(emit).not.toHaveBeenCalled()
+      expect(persist).not.toHaveBeenCalled()
+      expect(broker.getPendingRequests()).toEqual([])
+      // A subsequent interactive request still waits: policy is scoped to one execution.
+      const next = broker.requestPermission(request, { profile: 'ask', frameworkId })
+      await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+      await broker.respond({ requestId: emit.mock.calls[0][0].requestId, cancelled: true })
+      await next
+    }
+  )
+
+  it('keeps full and conservative auto authorization effective without prompts', async () => {
+    const emit = vi.fn()
+    const broker = new AcpPermissionBroker(emit)
+    const request = createToolPermissionRequest({
+      providerToolName: 'Read',
+      kind: 'read',
+      rawInput: { file_path: '/workspace/file.txt' },
+      locations: [{ path: '/workspace/file.txt' }]
+    })
+    for (const profile of ['full', 'auto'] as const) {
+      await expect(
+        broker.requestPermission(request, {
+          profile,
+          cwd: '/workspace',
+          autoReviewStrategy: 'conservative',
+          permissionPrompts: 'none'
+        })
+      ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+    }
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('denies app approvals and cancels providers with no rejection option', async () => {
+    const emit = vi.fn()
+    const settled = vi.fn()
+    const broker = new AcpPermissionBroker(emit, undefined, undefined, settled)
+    await expect(
+      broker.requestAppApproval({
+        sessionId: 's',
+        title: 'Change specialist',
+        rawInput: {},
+        permissionPrompts: 'none'
+      })
+    ).resolves.toBe(false)
+    const request = createToolPermissionRequest()
+    request.options = request.options.filter((option) => !option.kind.startsWith('reject'))
+    await expect(
+      broker.requestPermission(request, { profile: 'ask', permissionPrompts: 'none' })
+    ).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(settled).toHaveBeenLastCalledWith(expect.any(String), 'cancelled', expect.any(Object))
+    expect(emit).not.toHaveBeenCalled()
+  })
+
   it('persists a prompt-bound request before publishing it and clears authority before release', async () => {
     const emitted: EmittedPermissionRequest[] = []
     let finishPersist!: (persisted: boolean) => void

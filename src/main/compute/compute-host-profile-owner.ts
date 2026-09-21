@@ -6,6 +6,7 @@ import type {
 } from '../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import {
+  isConnectionStdoutTruncated,
   classifyConnectionFailure,
   ComputeConnectionError,
   type ComputeConnectionBrokerAcquirer
@@ -260,7 +261,7 @@ export class ComputeHostProfileOwner {
     const parsed = parseProbeOutput(runResult.stdout)
     if (
       runResult.exitCode !== 0 ||
-      runResult.truncated ||
+      isConnectionStdoutTruncated(runResult) ||
       !parsed.os ||
       !parsed.detectedScheduler
     ) {

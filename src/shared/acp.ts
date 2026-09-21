@@ -913,6 +913,8 @@ export type AcpSetPermissionProfileRequest = {
 }
 
 export type AcpPromptRequest = {
+  /** Application-owned execution policy; never grants additional authority. */
+  permissionPrompts?: 'none'
   sessionId: string
   text: string
   // Renderer-owned Session preference. Main still applies the higher-priority global Memory gate.

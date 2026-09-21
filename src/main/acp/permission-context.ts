@@ -115,10 +115,12 @@ type AcpPermissionContextOptions = {
     capturePrompt: (sessionId: string) =>
       | {
           sequence: number
+          permissionPrompts?: 'none'
           promptMessageId?: string
           isCancellationAccepted: () => boolean
         }
       | undefined
+    permissionPromptsForSession?: (sessionId: string) => 'none' | undefined
     currentInteractionSequence: (sessionId: string) => number | undefined
     mcpServerNamesFor: (sessionId: string) => readonly string[]
     shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
@@ -522,7 +524,8 @@ class AcpPermissionContext {
         projectId:
           this.options.permissionGrantContext?.projectId ?? routing.resolveProjectId(appSessionId),
         permissionGrantSessionId: this.options.permissionGrantContext?.sessionId,
-        promptMessageId: promptInteraction?.promptMessageId
+        promptMessageId: promptInteraction?.promptMessageId,
+        permissionPrompts: promptInteraction?.permissionPrompts
       })
       const selectedOptionId =
         response.outcome.outcome === 'selected' ? response.outcome.optionId : undefined
@@ -740,11 +743,21 @@ class AcpPermissionContext {
     rawInput: unknown
     signal?: AbortSignal
   }): Promise<boolean> {
-    return this.broker.requestAppApproval(input)
+    return this.broker.requestAppApproval({
+      ...input,
+      permissionPrompts:
+        this.options.routing.permissionPromptsForSession?.(input.sessionId) ??
+        this.options.routing.capturePrompt(input.sessionId)?.permissionPrompts
+    })
   }
 
   requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
-    return this.broker.requestAppPermission(input)
+    return this.broker.requestAppPermission({
+      ...input,
+      permissionPrompts:
+        this.options.routing.permissionPromptsForSession?.(input.sessionId) ??
+        this.options.routing.capturePrompt(input.sessionId)?.permissionPrompts
+    })
   }
 
   respondToPermission(

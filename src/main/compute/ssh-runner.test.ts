@@ -1,3 +1,4 @@
+import { isConnectionStdoutTruncated } from './connection-broker'
 import { EventEmitter } from 'node:events'
 import { mkdirSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -907,6 +908,34 @@ describe('SystemSshRunner', () => {
       )
     }
   )
+
+  it.each([
+    ['ok', 'banner'.repeat(100), false, true],
+    ['owned'.padEnd(100, ' '), '', true, false],
+    ['ok', '', false, false]
+  ] as const)(
+    'reports protocol and diagnostic truncation separately (%s)',
+    async (stdout, stderr, stdoutTruncated, stderrTruncated) => {
+      const child = new FakeChild()
+      execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+      const promise = runner.run(target(), 'probe', { timeoutMs: 5000, maxOutputBytes: 64 })
+      child.stdout.emit('data', Buffer.from(stdout))
+      child.stderr.emit('data', Buffer.from(stderr))
+      child.emit('close', 0)
+      const result = await promise
+      expect(result).toMatchObject({
+        stdoutTruncated,
+        stderrTruncated,
+        truncated: stdoutTruncated || stderrTruncated
+      })
+      expect(isConnectionStdoutTruncated(result)).toBe(stdoutTruncated)
+    }
+  )
+
+  it('treats aggregate truncation from legacy runners conservatively', () => {
+    expect(isConnectionStdoutTruncated({ truncated: true })).toBe(true)
+    expect(isConnectionStdoutTruncated({ truncated: false })).toBe(false)
+  })
 
   it('truncates stream buffers independently when maxOutputBytes is small', async () => {
     const child = new FakeChild()

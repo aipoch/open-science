@@ -5,9 +5,9 @@ import {
   type PdfTextSelector
 } from './annotations'
 
-export type PdfBookmarkSource = Readonly<{
+export type PdfDocumentSource = Readonly<{
   kind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
-  projectId: string
+  projectId?: string
   sourceFileId: string
   versionId: string
   sessionId?: string
@@ -16,26 +16,72 @@ export type PdfBookmarkSource = Readonly<{
   path: string
 }>
 
+export type PdfBookmarkSource = PdfDocumentSource & Readonly<{ projectId: string }>
+
+export const PDF_MARK_KINDS = [
+  'highlight',
+  'underline',
+  'squiggly',
+  'strikethrough',
+  'area'
+] as const
+export type PdfMarkKind = (typeof PDF_MARK_KINDS)[number]
+export const PDF_MARK_COLORS = ['yellow', 'blue', 'green', 'pink', 'purple'] as const
+export type PdfMarkColor = (typeof PDF_MARK_COLORS)[number]
+export const PDF_MARK_TAG_LIMIT = 64
+export const PDF_MARK_TAG_COUNT = 12
+
+export type PdfBookmarkMark = Readonly<{
+  markKind?: PdfMarkKind
+  color?: PdfMarkColor
+  tags?: readonly string[]
+}>
+
 export type PdfBookmarkTextSelector = PdfTextSelector &
-  Readonly<{ pageRotation: number; coordinateVersion: 1 }>
+  Readonly<{ pageRotation: number; coordinateVersion: 1 } & PdfBookmarkMark>
 
 export type PdfBookmarkRegionSelector = Omit<PdfRegionSelector, 'image' | 'imageOmissionReason'> &
-  Readonly<{ coordinateVersion: 1 }>
+  Readonly<{ coordinateVersion: 1 } & PdfBookmarkMark>
+
+export type PdfBookmarkPageNoteSelector = Readonly<{
+  kind: 'page-note'
+  pageNumber: number
+  pageRotation: 0 | 90 | 180 | 270
+  coordinateVersion: 1
+}>
+
+export type PdfBookmarkDocumentNoteSelector = Readonly<{
+  kind: 'document-note'
+  coordinateVersion: 1
+}>
+
+export type PdfBookmarkSelector =
+  | PdfBookmarkTextSelector
+  | PdfBookmarkRegionSelector
+  | PdfBookmarkPageNoteSelector
+  | PdfBookmarkDocumentNoteSelector
 
 export type PdfBookmarkTarget = Readonly<{
   kind: 'pdf'
   source: PdfBookmarkSource
-  selector: PdfBookmarkTextSelector | PdfBookmarkRegionSelector
+  selector: PdfBookmarkSelector
 }>
 
 export const pdfBookmarkSelectorMatchesPage = (
   selector: PdfBookmarkTarget['selector'],
   pageNumber: number,
   intrinsicPageRotation: number
-): boolean =>
-  selector.coordinateVersion === 1 &&
-  selector.pageNumber === pageNumber &&
-  selector.pageRotation === intrinsicPageRotation
+): boolean => {
+  if (selector.kind === 'page-note') {
+    return selector.coordinateVersion === 1 && selector.pageNumber === pageNumber
+  }
+  return (
+    (selector.kind === 'text' || selector.kind === 'region') &&
+    selector.coordinateVersion === 1 &&
+    selector.pageNumber === pageNumber &&
+    selector.pageRotation === intrinsicPageRotation
+  )
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -64,7 +110,10 @@ const TEXT_SELECTOR_KEYS = new Set([
   'quads',
   'extractorVersion',
   'pageRotation',
-  'coordinateVersion'
+  'coordinateVersion',
+  'markKind',
+  'color',
+  'tags'
 ])
 const REGION_SELECTOR_KEYS = new Set([
   'kind',
@@ -72,8 +121,13 @@ const REGION_SELECTOR_KEYS = new Set([
   'rect',
   'pageRotation',
   'text',
-  'coordinateVersion'
+  'coordinateVersion',
+  'markKind',
+  'color',
+  'tags'
 ])
+const PAGE_NOTE_SELECTOR_KEYS = new Set(['kind', 'pageNumber', 'pageRotation', 'coordinateVersion'])
+const DOCUMENT_NOTE_SELECTOR_KEYS = new Set(['kind', 'coordinateVersion'])
 const POSITION_KEYS = new Set(['start', 'end'])
 const RECT_KEYS = new Set(['x', 'y', 'width', 'height'])
 
@@ -112,7 +166,45 @@ const normalizedQuad = (value: unknown): PdfNormalizedQuad | undefined => {
 const pageRotation = (value: unknown): 0 | 90 | 180 | 270 | undefined =>
   value === 0 || value === 90 || value === 180 || value === 270 ? value : undefined
 
-export const sanitizePdfBookmarkSource = (value: unknown): PdfBookmarkSource | undefined => {
+const markKind = (value: unknown, region: boolean): PdfMarkKind | undefined => {
+  if (value === undefined) return region ? 'area' : 'highlight'
+  return PDF_MARK_KINDS.includes(value as PdfMarkKind) && (!region || value === 'area')
+    ? (value as PdfMarkKind)
+    : undefined
+}
+
+const markColor = (value: unknown): PdfMarkColor | undefined =>
+  value === undefined
+    ? 'yellow'
+    : PDF_MARK_COLORS.includes(value as PdfMarkColor)
+      ? (value as PdfMarkColor)
+      : undefined
+
+const markTags = (value: unknown): string[] | undefined => {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > PDF_MARK_TAG_COUNT) return undefined
+  const tags = value.map((tag) =>
+    typeof tag === 'string' ? tag.trim().slice(0, PDF_MARK_TAG_LIMIT) : ''
+  )
+  if (tags.some((tag) => !tag)) return undefined
+  return [...new Set(tags)]
+}
+
+const markMetadata = (
+  selector: Record<string, unknown>,
+  region: boolean
+): PdfBookmarkMark | undefined => {
+  const hasMetadata =
+    selector.markKind !== undefined || selector.color !== undefined || selector.tags !== undefined
+  if (!hasMetadata) return {}
+  const kind = markKind(selector.markKind, region)
+  const color = markColor(selector.color)
+  const tags = markTags(selector.tags)
+  if (!kind || !color || (selector.tags !== undefined && !tags)) return undefined
+  return { markKind: kind, color, ...(tags?.length ? { tags } : {}) }
+}
+
+export const sanitizePdfDocumentSource = (value: unknown): PdfDocumentSource | undefined => {
   if (!isRecord(value) || !hasOnlyKeys(value, SOURCE_KEYS)) return undefined
   const kind = value.kind
   if (
@@ -132,7 +224,8 @@ export const sanitizePdfBookmarkSource = (value: unknown): PdfBookmarkSource | u
   const name = boundedString(value.name, PDF_BOOKMARK_LIMITS.name)?.trim()
   const path = boundedString(value.path, PDF_BOOKMARK_LIMITS.path)?.trim()
   if (
-    !projectId ||
+    (!projectId && kind !== 'literature-attachment-version') ||
+    (value.projectId !== undefined && !projectId) ||
     !sourceFileId ||
     !versionId ||
     !name ||
@@ -155,7 +248,9 @@ export const sanitizePdfBookmarkSource = (value: unknown): PdfBookmarkSource | u
   }
 }
 
-export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | undefined => {
+export const sanitizePdfDocumentTarget = (
+  value: unknown
+): (Omit<PdfBookmarkTarget, 'source'> & { source: PdfDocumentSource }) | undefined => {
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, TARGET_KEYS) ||
@@ -163,9 +258,16 @@ export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | u
     !isRecord(value.selector)
   )
     return undefined
-  const source = sanitizePdfBookmarkSource(value.source)
+  const source = sanitizePdfDocumentSource(value.source)
   if (!source) return undefined
   const selector = value.selector
+
+  if (selector.kind === 'document-note') {
+    return hasOnlyKeys(selector, DOCUMENT_NOTE_SELECTOR_KEYS) && selector.coordinateVersion === 1
+      ? { kind: 'pdf', source, selector: { kind: 'document-note', coordinateVersion: 1 } }
+      : undefined
+  }
+
   const rotation = pageRotation(selector.pageRotation)
   const pageNumber = selector.pageNumber
   if (
@@ -178,6 +280,16 @@ export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | u
     return undefined
   }
 
+  if (selector.kind === 'page-note') {
+    return hasOnlyKeys(selector, PAGE_NOTE_SELECTOR_KEYS)
+      ? {
+          kind: 'pdf',
+          source,
+          selector: { kind: 'page-note', pageNumber, pageRotation: rotation, coordinateVersion: 1 }
+        }
+      : undefined
+  }
+
   if (selector.kind === 'region') {
     if (!hasOnlyKeys(selector, REGION_SELECTOR_KEYS)) return undefined
     const rect = normalizedQuad(selector.rect)
@@ -185,7 +297,9 @@ export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | u
       selector.text === undefined
         ? undefined
         : boundedString(selector.text, ANNOTATION_LIMITS.quote)
+    const metadata = markMetadata(selector, true)
     if (
+      !metadata ||
       !rect ||
       selector.image !== undefined ||
       selector.imageOmissionReason !== undefined ||
@@ -201,6 +315,7 @@ export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | u
         rect,
         pageRotation: rotation,
         ...(selectedText ? { text: selectedText } : {}),
+        ...metadata,
         coordinateVersion: 1
       }
     }
@@ -233,6 +348,8 @@ export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | u
   ) {
     return undefined
   }
+  const metadata = markMetadata(selector, false)
+  if (!metadata) return undefined
   return {
     kind: 'pdf',
     source,
@@ -249,7 +366,19 @@ export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | u
         PDF_BOOKMARK_LIMITS.extractorVersion
       )!.trim(),
       pageRotation: rotation,
+      ...metadata,
       coordinateVersion: 1
     }
   }
+}
+
+export const sanitizePdfBookmarkSource = (value: unknown): PdfBookmarkSource | undefined => {
+  const source = sanitizePdfDocumentSource(value)
+  return source?.projectId ? { ...source, projectId: source.projectId } : undefined
+}
+export const sanitizePdfBookmarkTarget = (value: unknown): PdfBookmarkTarget | undefined => {
+  const target = sanitizePdfDocumentTarget(value)
+  return target?.source.projectId
+    ? { ...target, source: { ...target.source, projectId: target.source.projectId } }
+    : undefined
 }

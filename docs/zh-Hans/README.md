@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，�
 
 AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.31.1 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.31.1 扩展了从一个会话即可触达的科学数据：ENA 工具可将公开的 ENA/INSDC 登录号解析为对应的测序运行并附带归档生成的 FASTQ 文件，Genes 连接器新增由 g:Profiler 驱动的 GO 与通路富集分析并支持自定义统计背景，新的 NCBI 工具可解析分类单元名称、查看带版本号的基因组组装以及查询序列别名。设置中可以选择性接入专用的分类模型服务，远程访问配对请求移至安全面板顶部并支持安全撤销可信浏览器。整体稳定性更上一层——Windows 下的 R Notebook 会监督持久内核并引导网络恢复，丢失的 OpenCode 会话可在启动时找回，批准卡片、待处理消息预览与最近会话列表的表现也更加可靠。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.32.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.32.0 让 PDF 证据可以长期留存，也让产物导出具备互操作性：持久的批注与每个文件各自的文档笔记本会把文字样式、区域标记、笔记、评论、颜色和标签跟随到所属的文件版本，可导出为带批注的 PDF 或 Markdown/CSV 而不改动源文件字节；已验证的产物版本现在可以连同其确切输入一起打包为完整的 RO-Crate 归档。序列与组学工作新增异步 NCBI BLAST 搜索、附带原始提交文件的 ENA 运行检索、PRIDE 项目文件列表，以及按基因或物种发现 UniProt 蛋白质。借助经过验证的镜像源，本地 PDF 解析模型的安装不再依赖单一下载源；能力选择可以指向自定义的自托管分类服务；无人值守的 CLI 运行也可以被禁止等待人类应答。启动与长对话因批量化的恢复、延后的 Markdown 处理和更少的观察器开销而更快。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

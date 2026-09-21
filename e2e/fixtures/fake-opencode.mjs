@@ -982,9 +982,9 @@ if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
   assertValidModelLimits()
-  // This opt-in test reconnects the provider when switching runtimes and restarting the app.
-  // Keep its new sessions and message chunks distinct from IDs persisted by an earlier process.
-  const fixtureInstanceId = process.env.OPEN_SCIENCE_E2E_WSL_SETUP === '1' ? `${randomUUID()}-` : ''
+  // OpenCode Sessions can run in separate processes. Keep their Session, message, and tool-call
+  // identities distinct across processes, including after the app restarts.
+  const fixtureInstanceId = `${randomUUID()}-`
   let nextMessageId = 1
   let nextSessionId = 1
   let nextToolCallId = 1
@@ -1599,6 +1599,76 @@ if (process.argv.includes('--version')) {
           reply = 'Compaction preview complete.'
         } else if (prompt.includes(PROVIDER_BRIDGE_PROMPT)) {
           reply = verifyProviderBridge()
+        } else if (
+          prompt.includes('Background execution outcomes are now available for this Session.')
+        ) {
+          if (!prompt.includes('background-completion-e2e'))
+            throw new Error('Missing background output')
+          reply = 'Background completion received with execution output.'
+        } else if (prompt.includes('Verify Python background completion delivery.')) {
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const listed = toolResult(
+              'list_notebook_runtimes',
+              await client.callTool({ name: 'list_notebook_runtimes', arguments: {} })
+            )
+            const python = listed.runtimes.find(
+              (runtime) =>
+                runtime.language === 'python' && runtime.source === 'external' && runtime.runnable
+            )
+            if (!python) throw new Error(`No runnable external Python: ${JSON.stringify(listed)}`)
+            toolResult(
+              'notebook_bind_runtime',
+              await client.callTool({
+                name: 'notebook_bind_runtime',
+                arguments: { language: 'python', runtimeId: python.runtimeId }
+              })
+            )
+            const run = toolResult(
+              'notebook_execute',
+              await client.callTool({
+                name: 'notebook_execute',
+                arguments: {
+                  language: 'python',
+                  code: "import time\ntime.sleep(3)\nprint('background-completion-e2e')",
+                  background: true
+                }
+              })
+            )
+            if (!run.runId) throw new Error('Python background admission has no runId')
+          })
+          reply = 'Background execution submitted.'
+        } else if (prompt.includes('Verify SSH background completion delivery.')) {
+          const providerId = `ssh:${process.env.COMPUTE_TEST_SSH_ALIAS}`
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            toolResult(
+              'repl_execute',
+              await client.callTool({
+                name: 'repl_execute',
+                arguments: {
+                  code: `console.log(JSON.stringify(await host.compute.create(${JSON.stringify(providerId)}).submitJob('background-completion-e2e', "sleep 3; printf 'background-completion-e2e\\n'", { timeoutSeconds: 30 })))`
+                }
+              })
+            )
+          })
+          reply = 'Background execution submitted.'
+        } else if (prompt.includes('Verify background completion delivery.')) {
+          const run = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) =>
+              toolResult(
+                'bash_execute',
+                await client.callTool({
+                  name: 'bash_execute',
+                  arguments: {
+                    command: `node -e "setTimeout(() => console.log('background-completion-e2e'), 3000)"`,
+                    background: true
+                  }
+                })
+              )
+          )
+          if (!run.runId) throw new Error('Background admission has no runId')
+          reply = 'Background execution submitted.'
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {

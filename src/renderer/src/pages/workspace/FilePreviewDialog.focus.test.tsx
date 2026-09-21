@@ -12,6 +12,7 @@ vi.mock('./PreviewFileSurface', () => ({
     ref: Ref<PreviewFileSurfaceHandle>
     onClose: () => void
   }) => {
+    const [toolActive, setToolActive] = useState(true)
     useImperativeHandle(ref, () => ({
       requestLeave: (action: () => void) => {
         action()
@@ -20,7 +21,18 @@ vi.mock('./PreviewFileSurface', () => ({
     }))
     return (
       <>
-        <input aria-label="Preview text" />
+        <div
+          data-pdf-tool-active={toolActive}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !event.nativeEvent.isComposing && toolActive) {
+              event.preventDefault()
+              event.stopPropagation()
+              setToolActive(false)
+            }
+          }}
+        >
+          <input aria-label="Preview text" />
+        </div>
         <button id="close" onClick={onClose}>
           Close preview
         </button>
@@ -128,4 +140,42 @@ it('IME composing Escape leaves preview open', async () => {
   })
   expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
   expect(document.activeElement).toBe(field)
+})
+
+it('lets Escape exit the PDF tool before closing the surrounding preview', async () => {
+  await act(async () => root.render(<App />))
+  await act(async () => container.querySelector<HTMLButtonElement>('#card')!.click())
+  const field = document.body.querySelector('input')!
+  const escape = (): boolean =>
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    )
+  await act(async () => {
+    field.focus()
+    escape()
+  })
+  expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+  expect(field.closest('[data-pdf-tool-active]')?.getAttribute('data-pdf-tool-active')).toBe(
+    'false'
+  )
+  await act(async () => {
+    escape()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  })
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+})
+
+it('preserves the preview while a nested search input consumes Escape', async () => {
+  await act(async () => root.render(<App />))
+  await act(async () => container.querySelector<HTMLButtonElement>('#card')!.click())
+  const field = document.body.querySelector('input')!
+  field.closest('[data-pdf-tool-active]')!.setAttribute('data-pdf-tool-active', 'false')
+  field.setAttribute('data-preview-escape-boundary', '')
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  await act(async () => {
+    field.focus()
+    field.dispatchEvent(event)
+  })
+  expect(event.defaultPrevented).toBe(true)
+  expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
 })

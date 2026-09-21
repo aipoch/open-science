@@ -56,7 +56,8 @@ export const SearchResultFilters = ({
               ['all', t('All entries')],
               ['paper', t('Literature')],
               ['collection', t('Collections')],
-              ['pdf', t('With PDF')]
+              ['pdf', t('With PDF')],
+              ['note', t('Notes & Annotations')]
             ]
           : []
   return (

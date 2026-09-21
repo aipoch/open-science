@@ -102,6 +102,7 @@ Options:
   --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
   --clear-delegation | --clear-specialist  Clear one automation new-session default
+  --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Stop waiting after this many milliseconds
@@ -135,6 +136,7 @@ const VALUE_OPTIONS = {
   '--prompt': 'prompt',
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
+  '--permission-prompts': 'permissionPrompts',
   '--provider': 'provider',
   '--model': 'model',
   '--reasoning-effort': 'reasoningEffort',
@@ -349,6 +351,12 @@ export const parseCliArgs = (argv) => {
   if (options.port !== undefined) {
     options.port = parsePortOption(options.port)
   }
+  if (options.permissionPrompts !== undefined && options.permissionPrompts !== 'none') {
+    throw new CliUsageError('--permission-prompts must be none.')
+  }
+  if (options.permissionPrompts === 'none' && options.planFirst) {
+    throw new CliUsageError('--plan-first cannot be combined with --permission-prompts none.')
+  }
   if (options.approvalProfile && !['ask', 'auto', 'full'].includes(options.approvalProfile)) {
     throw new CliUsageError(`Invalid approval profile: ${options.approvalProfile}`)
   }
@@ -515,6 +523,7 @@ export const parseCliArgs = (argv) => {
   }
   const runOnlyOptions = [
     ['--plan-first', options.planFirst],
+    ['--permission-prompts', options.permissionPrompts !== undefined],
     ['--skill', options.skills !== undefined]
   ]
   for (const [label, present] of runOnlyOptions) {
@@ -1921,6 +1930,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         ...(options.session ? { sessionId: options.session } : {}),
         ...(options.approvalProfile ? { permissionProfile: options.approvalProfile } : {}),
         ...(options.skills?.length ? { skillIds: options.skills } : {}),
+        ...(options.permissionPrompts ? { permissionPrompts: options.permissionPrompts } : {}),
         ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
         ...(options.autoReviewEnabled !== undefined
           ? { autoReviewEnabled: options.autoReviewEnabled }

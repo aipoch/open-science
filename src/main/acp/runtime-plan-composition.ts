@@ -300,6 +300,12 @@ const composeAcpRuntimePlanWorkflow = (
     }
     if (input.operation === 'generate') {
       const execution = sessionInteractions.current(input.sessionId)
+      if (execution?.kind === 'prompt' && execution.permissionPrompts === 'none') {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'Plan approval is unavailable in unattended execution. Do not retry or infer approval.'
+        )
+      }
       if (!execution || execution.kind !== 'prompt') {
         throw new PlanCommandError(
           'interaction-mismatch',

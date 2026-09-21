@@ -414,6 +414,7 @@
       "src/main/artifacts/artifact-provenance-graph.test.ts",
       "src/main/artifacts/artifact-reproducibility-execution.test.ts",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
+      "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
       "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
@@ -881,7 +882,11 @@
       "src/main/notebook/managed-path-context.test.ts",
       "src/main/notebook/compute-evidence-recovery.integration.test.ts",
       "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
-      "src/main/artifacts/resumed-finalization-ownership.test.ts"
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/compute/cancellation.real-ssh.integration.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
