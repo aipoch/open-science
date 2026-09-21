@@ -189,7 +189,8 @@ class LiteraturePdfImporter {
                 filename,
                 checksum: content.checksum
               },
-              nativeAnnotations
+              nativeAnnotations,
+              combinedSignal
             )
             publish({
               phase: importedCount === undefined ? 'failed' : 'completed',
@@ -211,6 +212,7 @@ class LiteraturePdfImporter {
           const item: LiteratureItemView | undefined = await this.options.catalog.get(
             request.itemId
           )
+          combinedSignal.throwIfAborted()
           if (!item) throw new Error('Literature Item is unavailable after importing its PDF.')
           return {
             item,
@@ -255,8 +257,10 @@ class LiteraturePdfImporter {
       filename: string
       checksum: string
     },
-    parsed: NativePdfAnnotationImportResult
+    parsed: NativePdfAnnotationImportResult,
+    signal: AbortSignal
   ): Promise<number | undefined> {
+    signal.throwIfAborted()
     if (!this.options.annotations) return 0
     try {
       const source = {
@@ -278,12 +282,15 @@ class LiteraturePdfImporter {
         note: annotation.note,
         target: { source, selector: annotation.selector }
       }))
-      return await this.options.annotations.createMany(requests, {
+      const importedCount = await this.options.annotations.createMany(requests, {
         scope: { literatureVersionId: input.versionId },
         source,
         result: nativeImportReceipt(parsed)
       })
+      signal.throwIfAborted()
+      return importedCount
     } catch {
+      signal.throwIfAborted()
       // Native note extraction is enrichment. A malformed or unsupported native annotation
       // must never make the PDF itself unavailable after its immutable version was attached.
       return undefined

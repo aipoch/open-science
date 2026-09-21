@@ -241,4 +241,48 @@ describe('LiteraturePdfImporter', () => {
     expect(options.content.sweep).toHaveBeenCalled()
     expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
   })
+
+  it.each(['attachment', 'annotations', 'annotation-error'] as const)(
+    'honors cancellation during %s without reporting a completed import',
+    async (stage) => {
+      const { importer, options, path } = await setup()
+      const controller = new AbortController()
+      const cancel = (): void => controller.abort(new Error('Import cancelled'))
+      const createMany = vi.fn(async () => {
+        if (stage !== 'attachment') cancel()
+        if (stage === 'annotation-error') throw new Error('Database unavailable')
+        return 0
+      })
+      Object.assign(options, { annotations: { createMany }, onNativeImportProgress: vi.fn() })
+      vi.spyOn(nativeImport, 'parseNativePdfAnnotations').mockResolvedValue({
+        pageCount: 1,
+        annotations: [],
+        unsupportedCount: 0,
+        truncated: false
+      })
+      if (stage === 'attachment') {
+        vi.mocked(options.catalog.attachContent).mockImplementation(async () => {
+          cancel()
+          return { attachmentId: 'attachment-1', versionId: 'version-1' }
+        })
+      }
+      await expect(
+        importer.import(
+          { operationId: 'operation-1', itemId: item.id, attachment: attachment(path) },
+          controller.signal
+        )
+      ).rejects.toThrow('Import cancelled')
+      expect(createMany).toHaveBeenCalledTimes(stage === 'attachment' ? 0 : 1)
+      expect(options.onNativeImportProgress).toHaveBeenCalledWith(
+        expect.objectContaining({ phase: 'cancelled' })
+      )
+      expect(options.onNativeImportProgress).not.toHaveBeenCalledWith(
+        expect.objectContaining({ phase: 'completed' })
+      )
+      // Cancellation never deletes the immutable PDF version already attached to the item.
+      expect(options.content.sweep).not.toHaveBeenCalled()
+      expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
+      expect(importer.cancelImport('operation-1')).toEqual({ cancelled: false })
+    }
+  )
 })
