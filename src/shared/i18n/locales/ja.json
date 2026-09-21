@@ -4028,8 +4028,6 @@
     "Remove": "削除",
     "Remove credentials from the Base URL and use the API key field.": "ベース URL から認証情報を削除し、API キーフィールドを使用してください。",
     "Filter Skills by agent": "エージェントでスキルを絞り込む",
-    "Available to Main Agent": "メインエージェントで利用可能",
-    "Unavailable to Main Agent": "メインエージェントでは利用不可",
     "View Skill availability for {{count}} agents_other": "{{count}} 件のエージェントのスキル利用状況を表示",
     "View Connector availability for {{count}} agents_other": "{{count}} 件のエージェントのコネクタ利用状況を表示",
     "Open {{name}} in Specialist Settings": "スペシャリスト設定で {{name}} を開く",

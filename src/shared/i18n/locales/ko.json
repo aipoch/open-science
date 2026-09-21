@@ -4026,8 +4026,6 @@
     "Remove": "제거",
     "Remove credentials from the Base URL and use the API key field.": "기본 URL에서 자격 증명을 제거하고 API 키 필드를 사용하세요.",
     "Filter Skills by agent": "에이전트별 스킬 필터링",
-    "Available to Main Agent": "메인 에이전트에서 사용 가능",
-    "Unavailable to Main Agent": "메인 에이전트에서 사용 불가",
     "View Skill availability for {{count}} agents_other": "에이전트 {{count}}명의 스킬 사용 가능 여부 보기",
     "View Connector availability for {{count}} agents_other": "에이전트 {{count}}명의 커넥터 사용 가능 여부 보기",
     "Open {{name}} in Specialist Settings": "스페셜리스트 설정에서 {{name}} 열기",

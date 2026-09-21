@@ -1,11 +1,11 @@
-import { Bot, Check, ChevronDown, ChevronRight, Minus, Users } from 'lucide-react'
+import { Bot, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import { cn } from '@/lib/utils'
 import { setResourceAssignments } from './resource-assignment-actions'
 import { SettingsToggle } from './SettingsLayout'
 import { RequiredSkillToggle } from './RequiredSkillToggle'
@@ -18,32 +18,6 @@ import {
   type AssignableResource,
   type ResourceSpecialist
 } from './resource-assignment'
-
-// Keep role glyphs neutral; the compact corner badge carries the access state.
-const AccessStatusIcon = ({
-  enabled,
-  children
-}: {
-  enabled: boolean
-  children: React.ReactNode
-}): React.JSX.Element => (
-  <span className="relative inline-flex shrink-0 text-foreground/80">
-    {children}
-    <span
-      aria-hidden="true"
-      className={cn(
-        'absolute -right-1 -bottom-1 flex size-2.5 items-center justify-center rounded-full text-white ring-1 ring-background',
-        enabled ? 'bg-status-success-accent-foreground' : 'bg-zinc-600'
-      )}
-    >
-      {enabled ? (
-        <Check className="size-2" strokeWidth={3} />
-      ) : (
-        <Minus className="size-2" strokeWidth={3} />
-      )}
-    </span>
-  </span>
-)
 
 export const ResourceAssignmentControls = ({
   resource,
@@ -70,7 +44,6 @@ export const ResourceAssignmentControls = ({
   const pending = useRef(false)
   const [error, setError] = useState(false)
   const profiles = items.filter((item): item is ResourceSpecialist => item.kind !== 'reviewer')
-  const count = profiles.filter((item) => isResourceAssigned(item, resource)).length
   const label = resource.displayName ?? resource.name
   // Use the unfiltered count so typing never removes the search field.
   const showSearch = profiles.length > 5
@@ -103,33 +76,34 @@ export const ResourceAssignmentControls = ({
         setQuery('')
       }}
     >
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          aria-label={t('Manage access for {{name}}', { name: label })}
-          className="gap-2 rounded-lg border border-transparent px-2 text-muted-foreground hover:border-border hover:bg-muted/60"
-          data-slot="resource-assignment-trigger"
-        >
-          <span
-            aria-label={
-              resource.mainEnabled ? t('Available to Main Agent') : t('Unavailable to Main Agent')
-            }
-          >
-            <AccessStatusIcon enabled={resource.mainEnabled}>
-              <Bot className="size-4" aria-hidden="true" />
-            </AccessStatusIcon>
-          </span>
-          <span className="inline-flex items-center gap-2 text-xs tabular-nums">
-            <AccessStatusIcon enabled={count > 0}>
-              <Users className="size-4" aria-hidden="true" />
-            </AccessStatusIcon>
-            {count}
-          </span>
-          <ChevronDown className="size-3" aria-hidden="true" />
-        </Button>
-      </PopoverTrigger>
+      <TooltipProvider>
+        <Tooltip>
+          <PopoverTrigger asChild>
+            <TooltipTrigger
+              asChild
+              onFocus={(event) => {
+                // Returning focus from the menu should not reopen a hover tooltip.
+                if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+              }}
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={disabled}
+                aria-label={t('Manage access for {{name}}', { name: label })}
+                className="text-muted-foreground hover:text-foreground"
+                data-slot="resource-assignment-trigger"
+              >
+                <SlidersHorizontal className="size-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+          </PopoverTrigger>
+          <TooltipContent side="top">
+            <p className="font-medium">{t('Manage access for {{name}}', { name: label })}</p>
+            <p>{t('Control access separately for Main Agent and each Specialist.')}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <PopoverContent
         align="end"
         className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"

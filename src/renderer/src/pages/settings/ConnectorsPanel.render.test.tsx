@@ -343,8 +343,6 @@ describe('ConnectorsPanel (groups)', () => {
         ?.getAttribute('data-resource-kind')
     ).toBe('connector')
     expect(europePmcRow?.querySelector('[data-slot="skill-usage-agents-trigger"]')).not.toBeNull()
-    expect(pubmedRow?.querySelector('[aria-label="Available to Main Agent"]')).not.toBeNull()
-    expect(europePmcRow?.querySelector('[aria-label="Unavailable to Main Agent"]')).not.toBeNull()
   })
 
   it('combines Main Agent and Specialists in the All Agents/Specialists filter', () => {

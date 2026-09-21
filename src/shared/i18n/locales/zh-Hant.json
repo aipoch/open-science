@@ -4029,8 +4029,6 @@
     "Remove": "移除",
     "Remove credentials from the Base URL and use the API key field.": "請從基礎 URL 中移除憑證，改用 API 金鑰欄位。",
     "Filter Skills by agent": "按智能體篩選技能",
-    "Available to Main Agent": "主智能體可用",
-    "Unavailable to Main Agent": "主智能體不可用",
     "View Skill availability for {{count}} agents_other": "查看 {{count}} 個智能體的技能可用性",
     "View Connector availability for {{count}} agents_other": "查看 {{count}} 個智能體的連接器可用性",
     "Open {{name}} in Specialist Settings": "在專家設定中開啟 {{name}}",

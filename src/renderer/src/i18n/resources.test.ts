@@ -2998,8 +2998,6 @@ describe('Russian catalog quality', () => {
       'Этот коннектор больше не существует. Черновик не сохранён.'
     ],
     ['Used by', 'Используют'],
-    ['Available to Main Agent', 'Доступен главному агенту'],
-    ['Unavailable to Main Agent', 'Недоступен главному агенту'],
     ['Filter Connectors by agent', 'Фильтровать коннекторы по агенту'],
     ['Filter Skills by agent', 'Фильтровать навыки по агенту'],
     ['All Agents/Specialists', 'Все агенты и специалисты'],

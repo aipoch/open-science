@@ -4305,8 +4305,6 @@
     "Export": "Exportar",
     "Remove": "Eliminar",
     "Remove credentials from the Base URL and use the API key field.": "Elimine las credenciales de la URL base y use el campo de clave API.",
-    "Available to Main Agent": "Disponible para el agente principal",
-    "Unavailable to Main Agent": "No disponible para el agente principal",
     "View Skill availability for {{count}} agents_one": "Ver la disponibilidad de la habilidad para {{count}} agente",
     "View Skill availability for {{count}} agents_other": "Ver la disponibilidad de la habilidad para {{count}} agentes",
     "View Skill availability for {{count}} agents_many": "Ver la disponibilidad de la habilidad para {{count}} agentes",

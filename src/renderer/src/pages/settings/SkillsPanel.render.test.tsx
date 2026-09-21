@@ -626,8 +626,6 @@ describe('SkillsPanel (list view)', () => {
     expect(betaRow?.textContent).not.toContain('Main Agent')
     expect(alphaRow?.textContent).toContain('Used by')
     expect(betaRow?.textContent).toContain('Used by')
-    expect(alphaRow?.querySelector('[aria-label="Available to Main Agent"]')).not.toBeNull()
-    expect(betaRow?.querySelector('[aria-label="Unavailable to Main Agent"]')).not.toBeNull()
     const tagMenu = alphaRow?.querySelector('[aria-label="Manage Tags"]')
     const controls = alphaRow?.querySelector('[data-slot="resource-assignment-trigger"]')
     expect(tagMenu!.compareDocumentPosition(controls!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)

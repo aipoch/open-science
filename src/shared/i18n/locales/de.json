@@ -3871,8 +3871,6 @@
     "Export": "Exportieren",
     "Remove": "Entfernen",
     "Remove credentials from the Base URL and use the API key field.": "Entfernen Sie Anmeldedaten aus der Basis-URL und verwenden Sie stattdessen das API-Schlüsselfeld.",
-    "Available to Main Agent": "Verfügbar für den Hauptagenten",
-    "Unavailable to Main Agent": "Für den Hauptagenten nicht verfügbar",
     "View Skill availability for {{count}} agents_one": "Verfügbarkeit von Fähigkeiten für {{count}} Agenten anzeigen",
     "View Skill availability for {{count}} agents_other": "Verfügbarkeit von Fähigkeiten für {{count}} Agenten anzeigen",
     "View Connector availability for {{count}} agents_one": "Konnektorverfügbarkeit für {{count}} Agenten anzeigen",
