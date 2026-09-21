@@ -53,7 +53,7 @@ const candidate = z.object({
   source: z.object({}).passthrough()
 })
 
-const LIBRARY_TOOLS: ResponsesBridgeNamespacedTool[] = [
+const LIBRARY_CORE_TOOLS: ResponsesBridgeNamespacedTool[] = [
   tool(
     LITERATURE_LIBRARY_MCP_SERVER_NAME,
     LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
@@ -138,7 +138,37 @@ const LIBRARY_TOOLS: ResponsesBridgeNamespacedTool[] = [
   )
 ]
 
-const LITERATURE_TOOLS: ResponsesBridgeNamespacedTool[] = [
+const LIBRARY_OPTIONAL_TOOLS: Readonly<{
+  formatReferences: ResponsesBridgeNamespacedTool
+  formatCitationDocument: ResponsesBridgeNamespacedTool
+  prepareLatexBundle: ResponsesBridgeNamespacedTool
+  acquirePdf: ResponsesBridgeNamespacedTool
+}> = {
+  formatReferences: LIBRARY_CORE_TOOLS[3]!,
+  formatCitationDocument: LIBRARY_CORE_TOOLS[4]!,
+  prepareLatexBundle: LIBRARY_CORE_TOOLS[5]!,
+  acquirePdf: LIBRARY_CORE_TOOLS[7]!
+}
+
+const libraryTools = (
+  options: {
+    formatReferences?: boolean
+    formatCitationDocument?: boolean
+    prepareLatexBundle?: boolean
+    acquirePdf?: boolean
+  } = {}
+): ResponsesBridgeNamespacedTool[] => [
+  ...LIBRARY_CORE_TOOLS.slice(0, 3),
+  ...(options.formatReferences === false ? [] : [LIBRARY_OPTIONAL_TOOLS.formatReferences]),
+  ...(options.formatCitationDocument === false
+    ? []
+    : [LIBRARY_OPTIONAL_TOOLS.formatCitationDocument]),
+  ...(options.prepareLatexBundle === false ? [] : [LIBRARY_OPTIONAL_TOOLS.prepareLatexBundle]),
+  LIBRARY_CORE_TOOLS[6]!,
+  ...(options.acquirePdf === false ? [] : [LIBRARY_OPTIONAL_TOOLS.acquirePdf])
+]
+
+const LITERATURE_CORE_TOOLS: ResponsesBridgeNamespacedTool[] = [
   tool(
     LITERATURE_MCP_SERVER_NAME,
     LITERATURE_READ_DOCUMENT_TOOL_NAME,
@@ -164,6 +194,11 @@ const LITERATURE_TOOLS: ResponsesBridgeNamespacedTool[] = [
   )
 ]
 
+const literatureTools = (options: { elements?: boolean } = {}): ResponsesBridgeNamespacedTool[] => [
+  LITERATURE_CORE_TOOLS[0]!,
+  ...(options.elements === false ? [] : LITERATURE_CORE_TOOLS.slice(1))
+]
+
 const ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
   tool(
     ARTIFACT_MCP_SERVER_NAME,
@@ -186,15 +221,26 @@ const notebookTools = (options: NotebookToolEnvironmentOptions): ResponsesBridge
 
 export const createCodexBridgeMcpTools = (options: {
   notebook?: NotebookToolEnvironmentOptions
-  library?: boolean
-  literature?: boolean
+  library?:
+    | boolean
+    | {
+        formatReferences?: boolean
+        formatCitationDocument?: boolean
+        prepareLatexBundle?: boolean
+        acquirePdf?: boolean
+      }
+  literature?: boolean | { elements?: boolean }
   artifacts?: boolean
 }): ResponsesBridgeNamespacedTool[] => {
   const tools = [
     ...(options.artifacts ? ARTIFACT_TOOLS : []),
     ...(options.notebook ? notebookTools(options.notebook) : []),
-    ...(options.library ? LIBRARY_TOOLS : []),
-    ...(options.literature ? LITERATURE_TOOLS : [])
+    ...(options.library
+      ? libraryTools(typeof options.library === 'object' ? options.library : {})
+      : []),
+    ...(options.literature
+      ? literatureTools(typeof options.literature === 'object' ? options.literature : {})
+      : [])
   ]
   return tools
 }
@@ -207,4 +253,4 @@ export const codexBridgeStaticMcpTools = (): ResponsesBridgeNamespacedTool[] =>
     artifacts: true
   })
 
-export { ARTIFACT_TOOLS, LIBRARY_TOOLS, LITERATURE_TOOLS, notebookTools }
+export { ARTIFACT_TOOLS, LIBRARY_CORE_TOOLS, libraryTools, literatureTools, notebookTools }

@@ -786,6 +786,18 @@ export class AcpSessionCapabilityOwner {
       policyAllowsSessionCapability(request.policy, 'literature-library') &&
       Boolean(this.options.library) &&
       Boolean(this.options.mcpHttpHost)
+    const literatureHandler =
+      literatureAllowed && this.options.literature
+        ? this.options.literature.handlerFor(request.routingIds.literature, request.projectId)
+        : undefined
+    const libraryHandler =
+      libraryAllowed && this.options.library
+        ? this.options.library.handlerFor(
+            request.routingIds.literature,
+            request.projectId,
+            request.sessionCwd
+          )
+        : undefined
 
     const servers =
       transport === 'stdio'
@@ -944,8 +956,15 @@ export class AcpSessionCapabilityOwner {
                 wslSetupTools: request.wslSetupEnabled
               }
             : undefined,
-          library: libraryAllowed,
-          literature: literatureAllowed
+          library: libraryAllowed
+            ? {
+                formatReferences: Boolean(libraryHandler?.formatReferences),
+                formatCitationDocument: Boolean(libraryHandler?.formatCitationDocument),
+                prepareLatexBundle: Boolean(libraryHandler?.prepareLatexBundle),
+                acquirePdf: Boolean(libraryHandler?.acquirePdf)
+              }
+            : false,
+          literature: literatureAllowed ? { elements: Boolean(literatureHandler?.elements) } : false
         })
       : []
     const bridgeMcpNamespaces = request.bridgeMcpAliasesEnabled
