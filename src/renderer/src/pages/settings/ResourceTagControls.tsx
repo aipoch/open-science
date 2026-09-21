@@ -424,7 +424,7 @@ const TagSelection = ({
         />
       )}
       {value.length > 0 ? (
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1">
+        <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
           {tags
             .filter((tag) => value.includes(tag.id))
             .map((tag) => (

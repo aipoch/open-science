@@ -72,6 +72,7 @@ import {
   selectFrameworkApiEndpoints,
   useSettingsStore
 } from '@/stores/settings-store'
+import { takeSettingsReturnFocusTarget } from '@/stores/settings-return-focus'
 import {
   INITIAL_SETTINGS_ROUTE,
   settingsPanelRoute,
@@ -1306,8 +1307,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           data-slot="settings-dialog"
           className="pointer-events-none fixed inset-0 z-50 outline-none data-[state=closed]:animate-out motion-reduce:data-[state=closed]:animate-none"
           onOpenAutoFocus={() => {
+            const activeElement = document.activeElement
+            const capturedReturnFocus = takeSettingsReturnFocusTarget()
+            if (returnFocusRef.current?.isConnected) return
             returnFocusRef.current =
-              document.activeElement instanceof HTMLElement ? document.activeElement : null
+              capturedReturnFocus ??
+              (activeElement instanceof HTMLElement && activeElement !== document.body
+                ? activeElement
+                : null)
           }}
           onCloseAutoFocus={(event) => {
             const returnFocus = returnFocusRef.current

@@ -4,6 +4,7 @@ import {
   type SettingsPanelId,
   type SettingsRoute
 } from '../pages/settings/settings-navigation'
+import { rememberSettingsReturnFocusTarget } from './settings-return-focus'
 
 export type SettingsNavigationIntent = Readonly<{
   requestId: number
@@ -49,14 +50,19 @@ export const createSettingsNavigationSlice = ({
   getState,
   setState
 }: SettingsNavigationSliceOptions): SettingsNavigationActions => {
-  const openTo = (route: SettingsRoute): void =>
+  const openTo = (route: SettingsRoute): void => {
+    rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
     setState({
       isSettingsOpen: true,
       pendingSettingsIntent: { requestId: ++settingsNavigationRequestId, route }
     })
+  }
 
   return {
-    openSettings: () => setState({ isSettingsOpen: true }),
+    openSettings: () => {
+      rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
+      setState({ isSettingsOpen: true })
+    },
 
     openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
     openSettingsToOpenAlex: () =>
@@ -80,6 +86,7 @@ export const createSettingsNavigationSlice = ({
       openTo({ panel: 'compute', view: { kind: 'detail', providerId } }),
 
     openSettingsToComputeAuthentication: (providerId, errorCode) => {
+      rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
       const requestId = ++settingsNavigationRequestId
       setState({
         isSettingsOpen: true,

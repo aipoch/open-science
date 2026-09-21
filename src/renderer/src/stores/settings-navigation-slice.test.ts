@@ -1,5 +1,5 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialSettingsNavigationState,
@@ -7,6 +7,7 @@ import {
   type SettingsNavigationActions,
   type SettingsNavigationState
 } from './settings-navigation-slice'
+import { takeSettingsReturnFocusTarget } from './settings-return-focus'
 
 type TestStore = SettingsNavigationState & SettingsNavigationActions
 
@@ -23,7 +24,30 @@ describe('settings navigation slice', () => {
   let store: StoreApi<TestStore>
 
   beforeEach(() => {
+    takeSettingsReturnFocusTarget()
     store = createHarness()
+  })
+
+  afterEach(() => {
+    takeSettingsReturnFocusTarget()
+    vi.unstubAllGlobals()
+  })
+
+  it('captures the opener once and consumes it as transient focus state', () => {
+    class FocusTarget {}
+    const body = new FocusTarget()
+    const opener = new FocusTarget()
+    const settingsControl = new FocusTarget()
+    const documentStub = { activeElement: opener, body }
+    vi.stubGlobal('HTMLElement', FocusTarget)
+    vi.stubGlobal('document', documentStub)
+
+    store.getState().openSettings()
+    documentStub.activeElement = settingsControl
+    store.getState().openSettingsToPanel('storage')
+
+    expect(takeSettingsReturnFocusTarget()).toBe(opener)
+    expect(takeSettingsReturnFocusTarget()).toBeNull()
   })
 
   it('opens normally without replacing a pending landing intent', () => {
