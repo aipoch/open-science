@@ -237,6 +237,7 @@ export type SessionCapabilityProvision = Readonly<{
   shellRuntimeAgentContract?: ShellRuntimeAgentContract
   bridgeMcpTools?: ResponsesBridgeNamespacedTool[]
   bridgeMcpNamespaces?: readonly string[]
+  registerBridgeMcpSession?: (appSessionId: string, providerSessionId: string) => void
   wslSetup?: true
   includeFrameworkMcpServers: (servers: readonly McpServer[]) => SessionCapabilities
   prepareCommit?: (appSessionId: string) => Promise<void>
@@ -269,6 +270,11 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
 }
 
 type SessionCapabilityOwnerOptions = {
+  registerBridgeMcpSession?: (
+    sessionId: string,
+    tools: ResponsesBridgeNamespacedTool[],
+    namespaces: readonly string[]
+  ) => void
   unregisterBridgeMcpSession?: (sessionId: string) => boolean | undefined
   artifacts?: SessionCapabilityArtifactOptions
   notebook?: SessionCapabilityNotebookOptions
@@ -346,6 +352,7 @@ export class AcpSessionCapabilityOwner {
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly shellRuntimeBindings = new Map<string, ShellRuntimeBinding>()
   private readonly committedSessionIds = new Set<string>()
+  private readonly bridgeMcpSessionKeys = new Map<string, string>()
   private readonly provisionalRoutingOwners = new Map<string, object>()
   private provisionalGeneration = 0
   private artifactSessionSequence = 0
@@ -450,6 +457,7 @@ export class AcpSessionCapabilityOwner {
     let terminal = false
     let provisionalCleanupComplete = false
     let preparedSetupSessionId: string | undefined
+    let bridgeMcpSessionKey: string | undefined
 
     return Object.freeze({
       mcpServers: built.mcpServers,
@@ -459,6 +467,16 @@ export class AcpSessionCapabilityOwner {
         : {}),
       bridgeMcpTools: built.bridgeMcpTools ?? [],
       bridgeMcpNamespaces: built.bridgeMcpNamespaces ?? [],
+      registerBridgeMcpSession: (appSessionId: string, providerSessionId: string): void => {
+        if (!request.bridgeMcpAliasesEnabled) return
+        bridgeMcpSessionKey = providerSessionId
+        this.options.registerBridgeMcpSession?.(
+          providerSessionId,
+          built.bridgeMcpTools ?? [],
+          built.bridgeMcpNamespaces ?? []
+        )
+        this.bridgeMcpSessionKeys.set(appSessionId, providerSessionId)
+      },
       ...(wslSetupEnabled ? { wslSetup: true as const } : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]): SessionCapabilities => {
         if (terminal) throw new Error('ACP session capability provision is already finalized.')
@@ -640,6 +658,10 @@ export class AcpSessionCapabilityOwner {
               )
             : this.options.wslSetupSessions?.forget?.(preparedSetupSessionId)
           : undefined
+        if (bridgeMcpSessionKey) {
+          this.options.unregisterBridgeMcpSession?.(bridgeMcpSessionKey)
+          bridgeMcpSessionKey = undefined
+        }
         if (provisionalCleanupComplete) return setupRollback
         const ownsStableIdentity =
           ownershipFacts.ownsStableIdentity &&
@@ -1078,6 +1100,11 @@ export class AcpSessionCapabilityOwner {
     if (!this.committedSessionIds.has(appSessionId)) return
 
     this.options.unregisterBridgeMcpSession?.(appSessionId)
+    const bridgeMcpSessionKey = this.bridgeMcpSessionKeys.get(appSessionId)
+    if (bridgeMcpSessionKey && bridgeMcpSessionKey !== appSessionId) {
+      this.options.unregisterBridgeMcpSession?.(bridgeMcpSessionKey)
+    }
+    this.bridgeMcpSessionKeys.delete(appSessionId)
 
     if (this.options.mcpHttpHost) {
       const routingIds = [
@@ -1147,6 +1174,11 @@ export class AcpSessionCapabilityOwner {
     ])
     for (const sessionId of ownedSessionIds) {
       this.options.unregisterBridgeMcpSession?.(sessionId)
+      const bridgeMcpSessionKey = this.bridgeMcpSessionKeys.get(sessionId)
+      if (bridgeMcpSessionKey && bridgeMcpSessionKey !== sessionId) {
+        this.options.unregisterBridgeMcpSession?.(bridgeMcpSessionKey)
+      }
+      this.bridgeMcpSessionKeys.delete(sessionId)
       this.releaseSessionCapabilities(sessionId)
       this.releaseCommittedNotebookCapability(sessionId)
       this.releaseCommittedSkillImportCapability(sessionId)
@@ -1167,6 +1199,7 @@ export class AcpSessionCapabilityOwner {
     this.descriptors.clear()
     this.shellRuntimeBindings.clear()
     this.committedSessionIds.clear()
+    this.bridgeMcpSessionKeys.clear()
     // In-flight provisions retain terminal cleanup ownership across teardown. A same-id successor
     // supersedes that ownership when it starts provisioning.
   }

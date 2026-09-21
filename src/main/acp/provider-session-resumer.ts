@@ -32,7 +32,6 @@ import type {
   AcpSessionRegistry
 } from './session-registry'
 import { AcpSessionResumePolicy } from './session-resume-policy'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
 
 const log = createLogger('acp')
 
@@ -68,11 +67,6 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   clearLivePermissionProfile: (sessionId: string) => void
-  registerBridgeMcpSession?: (
-    sessionId: string,
-    tools: ResponsesBridgeNamespacedTool[],
-    namespaces: readonly string[]
-  ) => void
   resolveSpecialistIdentity?: (
     specialistId: string,
     frameworkId: string
@@ -620,11 +614,7 @@ export class AcpProviderSessionResumer {
         aggregate.setSpecialistPrefix(specialistProjection.identity?.prefix || undefined)
         aggregate.setSpecialistId(specialistId)
         capability.commit(request.sessionId)
-        this.deps.registerBridgeMcpSession?.(
-          request.sessionId,
-          capability.bridgeMcpTools ?? [],
-          capability.bridgeMcpNamespaces ?? []
-        )
+        capability.registerBridgeMcpSession?.(request.sessionId, resumedProviderSessionId)
         capability = undefined
         provisionalSession = undefined
         identity.release()

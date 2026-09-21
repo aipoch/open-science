@@ -15,7 +15,6 @@ import {
   type SessionCapabilityProvision
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type {
   AcpPrimarySessionIdentityReservation,
@@ -60,11 +59,6 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   peekClaudeReplay: (sessionId: string) => string | undefined
   commitClaudeReplay: (sessionId: string) => void
-  registerBridgeMcpSession?: (
-    sessionId: string,
-    tools: ResponsesBridgeNamespacedTool[],
-    namespaces: readonly string[]
-  ) => void
   updateCwd: (cwd: string) => void
   emitState: () => void
   diagnosticContext: () => Readonly<Record<string, unknown>>
@@ -217,11 +211,7 @@ export class AcpProviderSessionAdopter {
         }
         if (hasAuthoritativeSpecialistBinding) aggregate.setSpecialistId(specialistId)
         capability.commit(stableAppSessionId)
-        this.deps.registerBridgeMcpSession?.(
-          stableAppSessionId,
-          capability.bridgeMcpTools ?? [],
-          capability.bridgeMcpNamespaces ?? []
-        )
+        capability.registerBridgeMcpSession?.(stableAppSessionId, provisionalSession.sessionId)
         this.deps.commitClaudeReplay(stableAppSessionId)
         provisionalSession = undefined
         capability = undefined

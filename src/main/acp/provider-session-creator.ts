@@ -17,7 +17,6 @@ import {
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
 import type {
   AcpPrimarySessionIdentityReservationResult,
   AcpSessionRegistry
@@ -52,11 +51,6 @@ type AcpProviderSessionCreatorDependencies = Readonly<{
   // session creation.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
-  registerBridgeMcpSession?: (
-    sessionId: string,
-    tools: ResponsesBridgeNamespacedTool[],
-    namespaces: readonly string[]
-  ) => void
   updateCwd: (cwd: string) => void
   pushEvent: (event: CreationEvent) => void
   emitState: () => void
@@ -180,11 +174,7 @@ export class AcpProviderSessionCreator {
         aggregate.setSpecialistPrefix(specialist.prefix || undefined)
         aggregate.setSpecialistId(request.specialistId)
         provisionedCapability.commit(session.sessionId)
-        this.deps.registerBridgeMcpSession?.(
-          session.sessionId,
-          provisionedCapability.bridgeMcpTools ?? [],
-          provisionedCapability.bridgeMcpNamespaces ?? []
-        )
+        provisionedCapability.registerBridgeMcpSession?.(session.sessionId, session.sessionId)
         provisionalSession = undefined
         identityReservation.release()
         reservation = undefined
