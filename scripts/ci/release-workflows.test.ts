@@ -22,6 +22,7 @@ type Job = {
   if?: string
   needs?: string | string[]
   outputs?: Record<string, string>
+  permissions?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
   strategy?: { matrix?: { shard?: number[] } }
@@ -499,6 +500,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'nightly.yml',
       'nightly-publish.yml',
       'release.yml',
+      'release-sbom-poc.yml',
       'runtime-resource-soak.yml',
       'source-regression.yml',
       'windows-full-test.yml',
@@ -511,6 +513,79 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
         }
       }
     }
+  })
+
+  it('automatically probes final stable-release SBOM coverage without publication rights', () => {
+    const sbom = workflow('release-sbom-poc.yml')
+    const job = sbom.jobs['sbom-poc']
+    const triggers = sbom.on as {
+      push: { branches: string[]; paths: string[] }
+      release: { types: string[] }
+      workflow_call: { inputs: { tag: { required: boolean; type: string } } }
+      workflow_dispatch: { inputs: { tag: { required: boolean; type: string } } }
+    }
+
+    expect(triggers.workflow_call.inputs.tag).toMatchObject({
+      required: true,
+      type: 'string'
+    })
+    expect(triggers.release).toEqual({ types: ['published'] })
+    expect(triggers.push).toEqual({
+      branches: ['main'],
+      paths: ['.github/workflows/release-sbom-poc.yml', 'scripts/ci/validate-release-sbom.mjs']
+    })
+    expect(triggers.workflow_dispatch.inputs.tag).toMatchObject({
+      required: false,
+      type: 'string'
+    })
+    expect(sbom.permissions).toEqual({ contents: 'read' })
+    expect(sbom.concurrency).toEqual({
+      group: 'release-sbom-poc-${{ github.event.release.tag_name || inputs.tag || github.sha }}',
+      'cancel-in-progress': false
+    })
+    expect(job).toMatchObject({
+      if: "${{ github.event_name != 'release' || github.event.release.prerelease == false }}",
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 20
+    })
+    expect(step(job, 'Resolve stable release').run).toContain(
+      'gh release list --exclude-drafts --exclude-pre-releases'
+    )
+    expect(step(job, 'Download final macOS arm64 archive').run).toContain(
+      "--pattern '*-mac-arm64.zip'"
+    )
+    expect(step(job, 'Generate SPDX SBOM from final archive')).toMatchObject({
+      uses: 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+      with: {
+        file: '${{ steps.artifact.outputs.path }}',
+        format: 'spdx-json',
+        'output-file': 'release-sbom.spdx.json',
+        'dependency-snapshot': false,
+        'upload-artifact': false,
+        'upload-release-assets': false,
+        'syft-version': 'v1.52.0'
+      }
+    })
+    expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
+      'node scripts/ci/validate-release-sbom.mjs'
+    )
+    expect(step(job, 'Upload PoC evidence')).toMatchObject({
+      if: '${{ always() }}',
+      with: {
+        'retention-days': 7,
+        'if-no-files-found': 'warn'
+      }
+    })
+    const text = readFileSync(join(process.cwd(), '.github/workflows/release-sbom-poc.yml'), 'utf8')
+    expect(text).not.toContain('actions/attest')
+    expect(text).not.toContain('contents: write')
+
+    expect(workflow('release.yml').jobs['release-sbom-poc']).toMatchObject({
+      needs: 'publish',
+      permissions: { contents: 'read' },
+      uses: './.github/workflows/release-sbom-poc.yml',
+      with: { tag: '${{ github.ref_name }}' }
+    })
   })
 
   it.each([
