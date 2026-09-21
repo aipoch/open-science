@@ -9,6 +9,14 @@ const BASE = 'https://api.genome.ucsc.edu'
 // bed-like rows are {chrom,chromStart,chromEnd,name,score,...}.
 const CONSERVATION_MAX_SPAN = 100_000
 
+// Assembly-specific phyloP score tracks; composite/alignment tracks are not numeric scores.
+const DEFAULT_CONSERVATION_TRACKS = new Map<string, string>([
+  ['hg19', 'phyloP100wayAll'],
+  ['hg38', 'phyloP100way'],
+  ['mm10', 'phyloP60wayAll'],
+  ['mm39', 'phyloP35way']
+])
+
 // ---- small helpers --------------------------------------------------------------------------
 
 // Reads an integer arg, applying a default when unset and clamping into [lo, hi].
@@ -229,7 +237,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
     id: 'ucsc_conservation',
     connector: 'genomes',
     description:
-      "Evolutionary conservation summary for a region from UCSC phyloP / phastCons tracks (base-wise scores over multi-species alignments). Args: chrom (chr-prefixed); start (0-based half-open); end (exclusive; span capped at 100000 bp — split larger); genome (default hg38); track (optional; defaults to phyloP100wayAll for hg19 and phyloP100way for other genomes; positive=conserved, negative=fast-evolving; alternatives hg38 phastCons100way, phyloP30way, phastCons30way, phyloP447way, phyloP470way; hg19 phastCons100way); include_values (also return per-base {start,end,value} rows capped at max_values, values_truncated flags the cap; default false = summary only); max_values (per-base cap default 2000). Returns {genome, track, chrom, start, end, span_bp, n_bases_covered, coverage_fraction, mean, min, max} (+values, values_truncated when requested). Stats weighted by each row's base span, clipped to window; uncovered bases lower coverage_fraction, not zero-scored. Non-score tracks raise; an upstream-truncated row list also raises.",
+      "Evolutionary conservation summary for a region from UCSC phyloP / phastCons tracks (base-wise scores over multi-species alignments). Args: chrom (chr-prefixed); start (0-based half-open); end (exclusive; span capped at 100000 bp — split larger); genome (default hg38); track (optional; defaults: hg19 phyloP100wayAll, hg38 phyloP100way, mm10 phyloP60wayAll, mm39 phyloP35way; other genomes retain the phyloP100way fallback, which may not exist — specify a score track from ucsc_list_tracks when needed; positive=conserved, negative=fast-evolving; alternatives hg38 phastCons100way, phyloP30way, phastCons30way, phyloP447way, phyloP470way; hg19 phastCons100way); include_values (also return per-base {start,end,value} rows capped at max_values, values_truncated flags the cap; default false = summary only); max_values (per-base cap default 2000). Returns {genome, track, chrom, start, end, span_bp, n_bases_covered, coverage_fraction, mean, min, max} (+values, values_truncated when requested). Stats weighted by each row's base span, clipped to window; uncovered bases lower coverage_fraction, not zero-scored. Non-score tracks raise; an upstream-truncated row list also raises.",
     input: {
       type: 'object',
       properties: {
@@ -253,9 +261,7 @@ export const GENOMES_UCSC_TOOLS: ToolDescriptor[] = [
       const track =
         a.track != null && String(a.track).trim() !== ''
           ? String(a.track)
-          : genome === 'hg19'
-            ? 'phyloP100wayAll'
-            : 'phyloP100way'
+          : (DEFAULT_CONSERVATION_TRACKS.get(genome) ?? 'phyloP100way')
       const chrom = String(a.chrom)
       const { start, end } = regionBounds(a.start, a.end)
       const includeValues = a.include_values === true
