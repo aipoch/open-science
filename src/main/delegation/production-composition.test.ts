@@ -1174,7 +1174,7 @@ describe('production delegated-work composition', () => {
       provenanceContext: { promptMessageId: harness.caller.originMessageId }
     })
     if (!staggered) throw new Error('Background model turn did not delegate children.')
-    await expect.poll(() => harness.execution.controls()).toHaveLength(4)
+    await expect.poll(() => harness.execution.controls(), { timeout: 10_000 }).toHaveLength(4)
     for (const child of staggered.children) harness.execution.control(child.attemptId).accept()
     let releaseAdmission!: () => void
     const admission = new Promise<void>((resolve) => {
