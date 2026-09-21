@@ -315,7 +315,9 @@ describe('artifact IPC handlers', () => {
       mutation: () => Promise<Result>
     ): Promise<Result> => {
       mutationScopes.push({ projectId, sessionId })
-      return mutation()
+      const result = await mutation()
+      callOrder.push('mutation-released')
+      return result
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
@@ -332,7 +334,14 @@ describe('artifact IPC handlers', () => {
       promptMessageId: 'prompt-1',
       artifactVersionIds: ['version-1']
     })
+    const onPublished = vi.fn(() => {
+      callOrder.push('enrichment')
+      throw new Error('enrichment unavailable')
+    })
+    const logger = { error: vi.fn() }
     const handlers = createArtifactHandlers(repository, registry, {
+      onPublished,
+      logger,
       provenance: provenance as never,
       withSessionMutation
     })
@@ -340,7 +349,18 @@ describe('artifact IPC handlers', () => {
     await handlers.finalizeRunArtifacts({ claimId, messageId: 'message-1' })
 
     expect(mutationScopes).toEqual([{ projectId: 'default-project', sessionId: 'session-1' }])
-    expect(callOrder).toEqual(['sqlite-finalize', 'compatibility', 'sqlite-activate'])
+    expect(callOrder).toEqual([
+      'sqlite-finalize',
+      'compatibility',
+      'sqlite-activate',
+      'mutation-released',
+      'enrichment'
+    ])
+    expect(onPublished).toHaveBeenCalledWith([finalizedArtifact])
+    expect(logger.error).toHaveBeenCalledWith(
+      'artifact publication enrichment failed',
+      expect.any(Error)
+    )
     expect(provenance.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: 'message-1',

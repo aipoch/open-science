@@ -52,7 +52,8 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
       await scroller.hover()
       await page.mouse.wheel(0, 300)
       await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
-      await expect(page.locator('body')).not.toHaveAttribute('data-scroll-locked')
+      // The preview owns the top scroll lock: its PDF scrolls while the background stays locked.
+      await expect(page.locator('body')).toHaveAttribute('data-scroll-locked', '1')
       if (close === 'button') {
         await page.screenshot({ path: testInfo.outputPath('attachment-preview.png') })
         await preview.getByRole('button', { name: 'Close preview of paper.pdf' }).click()

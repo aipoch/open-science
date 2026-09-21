@@ -222,41 +222,53 @@ const parsed = {
   truncated: false
 }
 
-it('imports native provenance once per source and returns the current operation identity on reuse', async () => {
-  const { options, service } = fixture()
-  parseNative.mockResolvedValue(parsed)
-  expect(await service.importNative(importRequest)).toMatchObject({
-    importedCount: 1,
-    unsupportedCount: 3
-  })
-  expect(options.repository.createMany).toHaveBeenCalledWith(
-    [
+it.each(['upload-version', 'artifact-version'] as const)(
+  'imports %s native provenance once per source across sessions',
+  async (sourceKind) => {
+    const { options, service } = fixture()
+    const source = await options.resolveSessionPdfVersion(importRequest)
+    vi.mocked(options.resolveSessionPdfVersion).mockResolvedValue({
+      ...source!,
+      sourceKind,
+      sourceSessionId: 'session-1'
+    })
+    const nativeRequest = { ...importRequest, sourceKind }
+    parseNative.mockResolvedValue(parsed)
+    expect(await service.importNative(nativeRequest)).toMatchObject({
+      importedCount: 1,
+      unsupportedCount: 3
+    })
+    expect(options.repository.createMany).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          origin: 'imported',
+          externalSubtype: 'Text',
+          note: 'External comment',
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        })
+      ],
       expect.objectContaining({
-        origin: 'imported',
-        externalSubtype: 'Text',
-        note: 'External comment',
-        projectId: 'project-1',
-        sessionId: 'session-1'
+        result: expect.objectContaining({ pageCount: expect.any(Number) })
       })
-    ],
-    expect.objectContaining({ result: expect.objectContaining({ pageCount: expect.any(Number) }) })
-  )
-  expect(
-    await service.importNative({ ...importRequest, operationId: 'operation-2' })
-  ).toMatchObject({ operationId: 'operation-2', importedCount: 1 })
-  expect(parseNative).toHaveBeenCalledOnce()
-  for (const [progress] of vi.mocked(options.onNativeImportProgress!).mock.calls) {
-    expect(pdfNativeAnnotationImportProgressSchema.safeParse(progress).success).toBe(true)
+    )
+    expect(
+      await service.importNative({ ...nativeRequest, operationId: 'operation-2' })
+    ).toMatchObject({ operationId: 'operation-2', importedCount: 1 })
+    expect(parseNative).toHaveBeenCalledOnce()
+    for (const [progress] of vi.mocked(options.onNativeImportProgress!).mock.calls) {
+      expect(pdfNativeAnnotationImportProgressSchema.safeParse(progress).success).toBe(true)
+    }
+    await service.importNative({
+      ...nativeRequest,
+      operationId: 'operation-3',
+      sessionId: 'session-2'
+    })
+    const calls = vi.mocked(options.repository.createMany).mock.calls
+    expect(calls).toHaveLength(1)
+    expect(parseNative).toHaveBeenCalledOnce()
   }
-  await service.importNative({
-    ...importRequest,
-    operationId: 'operation-3',
-    sessionId: 'session-2'
-  })
-  const calls = vi.mocked(options.repository.createMany).mock.calls
-  expect(calls).toHaveLength(1)
-  expect(parseNative).toHaveBeenCalledOnce()
-})
+)
 
 it('cancels after parsing and closes the lease without writing', async () => {
   const { options, service } = fixture()

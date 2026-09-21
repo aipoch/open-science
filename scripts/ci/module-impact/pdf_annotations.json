@@ -32,6 +32,7 @@
     "src/main/pdf-annotations/native-import.test.ts",
     "src/main/pdf-annotations/native-import.benchmark.test.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.ts",
+    "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.test.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"
   ],
@@ -65,6 +66,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx",
       "src/main/pdf-annotations/native-import.test.ts",
       "src/main/pdf-annotations/native-import.benchmark.test.ts",
+      "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts"
     ],
     "contract": [

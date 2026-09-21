@@ -4509,6 +4509,29 @@ const createApplicationModules = async (
     )
   )
   const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
+    onPublished: (artifacts) => {
+      for (const artifact of artifacts) {
+        if (
+          !artifact.projectId ||
+          !artifact.artifactId ||
+          !artifact.versionId ||
+          !(artifact.mimeType === 'application/pdf' || artifact.name.toLowerCase().endsWith('.pdf'))
+        )
+          continue
+        void pdfAnnotationService
+          .importNative({
+            operationId: crypto.randomUUID(),
+            projectId: artifact.projectId,
+            sessionId: artifact.sessionId,
+            sourceKind: 'artifact-version',
+            sourceFileId: artifact.artifactId,
+            versionId: artifact.versionId
+          })
+          .catch((error) =>
+            storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
+          )
+      }
+    },
     provenance: artifactProvenanceRepository,
     openLatestManagedFile: (request) =>
       managedFileVersionService.openLatest({

@@ -2410,7 +2410,8 @@ export const PdfPreviewContent = ({
     document,
     pdfBookmarkSource,
     pdfAnnotations.sessionId,
-    nativeImportProgress?.phase === 'completed' ? nativeImportProgress.operationId : undefined
+    nativeImportProgress?.phase === 'completed' ? nativeImportProgress.operationId : undefined,
+    pdfAnnotations.available
   )
   const pdfExport = usePdfExport({
     document,
