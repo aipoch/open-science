@@ -13,6 +13,7 @@ import {
   type ModelReasoningEffort,
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
+import { LITERATURE_CITATION_LOCALES, LITERATURE_CITATION_STYLES } from '../../shared/literature'
 import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
@@ -160,6 +161,71 @@ const SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     }) as ResponsesBridgeNamespacedTool['parameters']
   }
 ]
+const LIBRARY_SCOPE = z.enum(['library', 'project', 'collection', 'items'])
+const LIBRARY_TOOLS: ResponsesBridgeNamespacedTool[] = [
+  {
+    namespace: namespaceFor('open-science-library'),
+    name: 'search_library',
+    description:
+      "Browse or search the user's Open-Science Literature Library. Use scope project by default; use library only when the user explicitly requests the global Library.",
+    parameters: z.toJSONSchema(
+      z.object({
+        query: z.string().trim().min(1).max(2_000).optional(),
+        scope: LIBRARY_SCOPE.optional(),
+        collectionId: z.string().trim().min(1).max(512).optional(),
+        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(200).optional(),
+        offset: z.number().int().min(0).optional(),
+        limit: z.number().int().min(1).max(20).optional()
+      }),
+      { target: 'draft-7' }
+    ) as ResponsesBridgeNamespacedTool['parameters']
+  },
+  {
+    namespace: namespaceFor('open-science-library'),
+    name: 'read_library_abstract',
+    description:
+      'Read a complete abstract for one Library record or bounded abstracts for up to five records. Use the same scope as the originating search.',
+    parameters: z.toJSONSchema(
+      z.object({
+        itemId: z.string().trim().min(1).max(512).optional(),
+        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(5).optional(),
+        scope: LIBRARY_SCOPE.optional(),
+        collectionId: z.string().trim().min(1).max(512).optional()
+      }),
+      { target: 'draft-7' }
+    ) as ResponsesBridgeNamespacedTool['parameters']
+  },
+  {
+    namespace: namespaceFor('open-science-library'),
+    name: 'read_library_pdf',
+    description:
+      'Retrieve relevant prose passages with page numbers from one PDF attached to a Library record after finding it with search_library.',
+    parameters: z.toJSONSchema(
+      z.object({
+        itemId: z.string().trim().min(1).max(512),
+        attachmentId: z.string().trim().min(1).max(512).optional(),
+        query: z.string().trim().min(1).max(2_000),
+        scope: LIBRARY_SCOPE.optional(),
+        collectionId: z.string().trim().min(1).max(512).optional()
+      }),
+      { target: 'draft-7' }
+    ) as ResponsesBridgeNamespacedTool['parameters']
+  },
+  {
+    namespace: namespaceFor('open-science-library'),
+    name: 'format_references',
+    description:
+      'Format trusted Library records for the requested citation style and locale. Use the returned citation strings verbatim.',
+    parameters: z.toJSONSchema(
+      z.object({
+        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(20),
+        styleId: z.enum(LITERATURE_CITATION_STYLES).default('apa'),
+        locale: z.enum(LITERATURE_CITATION_LOCALES).default('en-US')
+      }),
+      { target: 'draft-7' }
+    ) as ResponsesBridgeNamespacedTool['parameters']
+  }
+]
 class BackendRoutePlanner {
   private readonly providers: BackendRouteProviderPort
   constructor({ providers }: { providers: BackendRouteProviderPort }) {
@@ -236,6 +302,7 @@ class BackendRoutePlanner {
             codexBridgeTools: Object.freeze([
               ...NOTEBOOK_TOOLS,
               ...ARTIFACT_TOOLS,
+              ...LIBRARY_TOOLS,
               ...(input.conversationSkillImportEnabled ? SKILL_IMPORT_TOOLS : [])
             ]),
             reviewerBridgeTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
