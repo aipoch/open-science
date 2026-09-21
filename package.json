@@ -33,6 +33,7 @@
     "test:e2e:p0": "playwright test e2e/certification",
     "test:cli": "vitest run packages/open-science",
     "test:npm-release": "vitest run scripts/validate-npm-release.test.ts",
+    "test:session-isolation:live": "node scripts/test-session-isolation-live.mjs",
     "test:coverage": "vitest run --coverage",
     "eval:reviewer": "node scripts/reviewer-model-evaluation.mjs",
     "eval:reviewer:live": "electron scripts/reviewer-model-evaluation-live.mjs",

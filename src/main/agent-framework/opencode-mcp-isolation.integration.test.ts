@@ -24,7 +24,7 @@ it.runIf(opencodePath)(
     const root = await mkdtemp(join(tmpdir(), 'open-science-opencode-mcp-isolation-'))
     const workspace = join(root, 'workspace')
     await mkdir(workspace)
-    const calls: string[] = []
+    const calls: Array<{ owner: string; turn: string }> = []
     const mcp = createServer(async (request, response) => {
       if (request.method !== 'POST') {
         response.writeHead(405).end()
@@ -50,13 +50,17 @@ it.runIf(opencodePath)(
             {
               name: 'identity',
               description: 'Read the tool owner.',
-              inputSchema: { type: 'object', properties: {} }
+              inputSchema: {
+                type: 'object',
+                properties: { turn: { type: 'string' } },
+                required: ['turn']
+              }
             }
           ]
         }
       } else if (body.method === 'tools/call') {
         const owner = String(request.headers['x-test-session'])
-        calls.push(owner)
+        calls.push({ owner, turn: body.params.arguments.turn })
         result = { content: [{ type: 'text', text: owner }] }
       } else result = {}
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -71,6 +75,9 @@ it.runIf(opencodePath)(
         entry.function?.name?.endsWith('identity')
       )
       const last = body.messages?.at(-1)
+      const turn = [...JSON.stringify(body.messages).matchAll(/ISOLATION_TURN:([a-z0-9-]+)/g)].at(
+        -1
+      )?.[1]
       const invoke = Boolean(tool && last?.role !== 'tool' && last?.role !== 'assistant')
       const delta = invoke
         ? {
@@ -80,7 +87,7 @@ it.runIf(opencodePath)(
                 index: 0,
                 id: 'identity-call',
                 type: 'function',
-                function: { name: tool.function.name, arguments: '{}' }
+                function: { name: tool.function.name, arguments: JSON.stringify({ turn }) }
               }
             ]
           }
@@ -171,8 +178,8 @@ it.runIf(opencodePath)(
           ]
         })
         .start()
-    const prompt = async (current: acp.ActiveSession) => {
-      current.prompt('Call the identity tool once.')
+    const prompt = async (current: acp.ActiveSession, turn: string) => {
+      current.prompt(`Call the identity tool once: ISOLATION_TURN:${turn}`)
       for (;;) {
         const update = await current.nextUpdate()
         if (update.kind === 'stop') return
@@ -183,16 +190,28 @@ it.runIf(opencodePath)(
       const shared = await start()
       const originalShared = await session(shared, 'shared-original')
       await session(shared, 'shared-fork')
-      await prompt(originalShared)
-      expect(calls.splice(0)).toEqual(['shared-fork'])
+      await prompt(originalShared, 'shared-original')
+      expect(calls.splice(0)).toEqual([{ owner: 'shared-fork', turn: 'shared-original' }])
 
       // The coordinator now allocates this process boundary for every primary OpenCode Session.
       const original = await session(await start(), 'original')
       const fork = await session(await start(), 'fork')
-      await prompt(original)
-      await prompt(fork)
-      await prompt(original)
-      expect(calls).toEqual(['original', 'fork', 'original'])
+      await prompt(original, 'original-first')
+      await prompt(fork, 'fork-first')
+      await prompt(original, 'original-again')
+      expect(calls.splice(0)).toEqual([
+        { owner: 'original', turn: 'original-first' },
+        { owner: 'fork', turn: 'fork-first' },
+        { owner: 'original', turn: 'original-again' }
+      ])
+      await Promise.all([prompt(original, 'original-concurrent'), prompt(fork, 'fork-concurrent')])
+      expect(calls).toHaveLength(2)
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          { owner: 'original', turn: 'original-concurrent' },
+          { owner: 'fork', turn: 'fork-concurrent' }
+        ])
+      )
     } catch (error) {
       throw new Error(`${String(error)}\n${stderr.join('').slice(-6000)}`)
     } finally {

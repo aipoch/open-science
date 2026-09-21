@@ -64,3 +64,31 @@ OPENCODE_ACP_PATH=/absolute/path/to/opencode npx vitest run src/main/agent-frame
 Process isolation increases the number of OpenCode processes when multiple Sessions are loaded.
 It does not grant forks permission to read or modify their source Session's Compute Jobs; historical
 record visibility is a separate policy.
+
+### Live isolation checks for Claude Code and Codex
+
+`npm run test:session-isolation:live` requires all four executable paths below and fails if any
+is missing, so an upgrade check cannot silently pass with skipped engine tests:
+
+```bash
+CLAUDE_NATIVE_PATH=/absolute/path/to/claude \
+CODEX_ACP_PATH=/absolute/path/to/codex-acp/dist/index.js \
+CODEX_NATIVE_PATH=/absolute/path/to/codex \
+OPENCODE_ACP_PATH=/absolute/path/to/opencode \
+npm run test:session-isolation:live
+```
+
+The matrix starts real ACP adapters and native agents against temporary stores and deterministic
+local model endpoints. It does not use account credentials. Claude Code and both Codex model routes
+(Responses and Chat Completions bridge) each run with stdio and HTTP MCP. Every case makes 36 calls
+across the Notebook, artifact, and Plan server identities. Each call checks its tool name, unique
+turn marker, and actual connection owner. Cases cover same-directory Session switching, overlapping
+tool calls, close/resume, sibling credential rebinding, and process restart with durable Sessions.
+The test MCP endpoints are probes; they do not execute Notebook code or modify real artifacts.
+
+Verified on 2026-09-21: Claude Code 2.1.274 with claude-agent-acp 0.70.0; Codex 0.153.4 with
+codex-acp 1.6.2; OpenCode 1.18.14. The Claude/Codex matrix passed all 216 ownership checks.
+OpenCode's shared-process control reproduces the original defect, while separate processes preserve
+ownership through sequential and concurrent calls. Re-run this matrix after adapter/native upgrades;
+these observations are scoped to the tested versions and transports, not a certification of every
+provider, authentication mode, or tool's internal behavior.
