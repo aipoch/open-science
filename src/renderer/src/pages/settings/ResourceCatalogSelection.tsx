@@ -77,7 +77,7 @@ export const ResourceSelectionCheckbox = ({
   return (
     <input
       type="checkbox"
-      className="size-4 shrink-0 accent-primary"
+      className="ml-2 size-4 shrink-0 accent-primary"
       aria-label={t('Select {{name}}', { name: resource.name })}
       checked={selection.ids.has(resource.id)}
       disabled={selection.locked}

@@ -460,20 +460,7 @@ export function ConnectorsPanel({
                   <li
                     key={connector.id}
                     data-slot="settings-list-row"
-                    onClick={(event) => {
-                      // Keep nested controls and portal events out of row navigation.
-                      // Row styles preserve pointer hits on disabled buttons instead of passing through.
-                      const target = event.target
-                      if (
-                        event.defaultPrevented ||
-                        !(target instanceof Element) ||
-                        !event.currentTarget.contains(target) ||
-                        target.closest('button, a, input, select, textarea, [role="button"]')
-                      )
-                        return
-                      onNavigate({ kind: 'detail', id: connector.id })
-                    }}
-                    className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer -mx-2 flex min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                    className="-mx-2 flex items-center gap-2"
                   >
                     <ResourceSelectionCheckbox
                       selection={selection}
@@ -485,75 +472,98 @@ export function ConnectorsPanel({
                         mainEnabled: connector.enabled
                       }}
                     />
-                    <ConnectorGlyph size={24} />
-                    <div className="min-w-0 flex-1">
-                      <button
-                        type="button"
-                        onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                        className="block w-full min-w-0 text-left"
-                      >
-                        <span className="block truncate text-sm text-foreground">
-                          {connector.displayName}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {connectorDescription(connector, t)}
-                        </span>
-                      </button>
-                      <div
-                        className="mt-0.5 flex min-w-0 items-center gap-2"
-                        data-connector-metadata={connector.id}
-                      >
-                        {connector.enabled || usages.length > 0 ? (
-                          <span className="inline-flex shrink-0 items-center gap-1">
-                            <span
-                              data-slot="skill-usage-agents-label"
-                              className="text-xs text-muted-foreground"
-                            >
-                              {t('Used by')}
-                            </span>
-                            <SkillUsageAgents
-                              resourceKind="Connector"
-                              mainEnabled={connector.enabled}
-                              usages={usages}
-                              onOpenSpecialist={onOpenSpecialist}
-                            />
+                    <div
+                      data-slot="resource-row-content"
+                      onClick={(event) => {
+                        // Keep nested controls and portal events out of row navigation.
+                        // Row styles preserve pointer hits on disabled buttons instead of passing through.
+                        const target = event.target
+                        if (
+                          event.defaultPrevented ||
+                          !(target instanceof Element) ||
+                          !event.currentTarget.contains(target) ||
+                          target.closest('button, a, input, select, textarea, [role="button"]')
+                        )
+                          return
+                        onNavigate({ kind: 'detail', id: connector.id })
+                      }}
+                      className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                    >
+                      <ConnectorGlyph size={24} />
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                          className="block w-full min-w-0 text-left"
+                        >
+                          <span className="block truncate text-sm text-foreground">
+                            {connector.displayName}
                           </span>
-                        ) : null}
-                        <ResourceTagBadges
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {connectorDescription(connector, t)}
+                          </span>
+                        </button>
+                        <div
+                          className="mt-0.5 flex min-w-0 items-center gap-2"
+                          data-connector-metadata={connector.id}
+                        >
+                          {connector.enabled || usages.length > 0 ? (
+                            <span className="inline-flex shrink-0 items-center gap-1">
+                              <span
+                                data-slot="skill-usage-agents-label"
+                                className="text-xs text-muted-foreground"
+                              >
+                                {t('Used by')}
+                              </span>
+                              <SkillUsageAgents
+                                resourceKind="Connector"
+                                mainEnabled={connector.enabled}
+                                usages={usages}
+                                onOpenSpecialist={onOpenSpecialist}
+                              />
+                            </span>
+                          ) : null}
+                          <ResourceTagBadges
+                            reference={{
+                              resourceType: 'catalog.connector',
+                              resourceId: connector.id
+                            }}
+                            onOpenTag={onOpenTag}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <ResourceTagMenu
                           reference={{
                             resourceType: 'catalog.connector',
                             resourceId: connector.id
                           }}
-                          onOpenTag={onOpenTag}
                         />
+                        <ResourceAssignmentControls
+                          onOpenSpecialist={onOpenSpecialist}
+                          resource={{
+                            id: connector.id,
+                            name: connector.name,
+                            displayName: connector.displayName,
+                            kind: 'connector',
+                            group: groupKey,
+                            mainEnabled: connector.enabled
+                          }}
+                          disabled={selection.locked}
+                          onErrorChange={setAccessError}
+                          onSetMain={(enabled) => setConnectorEnabled(connector.id, enabled)}
+                        />
+                        <button
+                          type="button"
+                          aria-label={t('View details for {{name}}', {
+                            name: connector.displayName
+                          })}
+                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                          className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
+                        >
+                          <ChevronRight className="size-4" aria-hidden="true" />
+                        </button>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <ResourceTagMenu
-                        reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
-                      />
-                      <ResourceAssignmentControls
-                        onOpenSpecialist={onOpenSpecialist}
-                        resource={{
-                          id: connector.id,
-                          name: connector.name,
-                          displayName: connector.displayName,
-                          kind: 'connector',
-                          group: groupKey,
-                          mainEnabled: connector.enabled
-                        }}
-                        disabled={selection.locked}
-                        onErrorChange={setAccessError}
-                        onSetMain={(enabled) => setConnectorEnabled(connector.id, enabled)}
-                      />
-                      <button
-                        type="button"
-                        aria-label={t('View details for {{name}}', { name: connector.displayName })}
-                        onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                        className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
-                      >
-                        <ChevronRight className="size-4" aria-hidden="true" />
-                      </button>
                     </div>
                   </li>
                 )
@@ -790,20 +800,7 @@ export function ConnectorsPanel({
                       <li
                         key={server.id}
                         data-slot="settings-list-row"
-                        onClick={(event) => {
-                          // Keep nested controls and portal events out of row navigation.
-                          // Row styles preserve pointer hits on disabled buttons instead of passing through.
-                          const target = event.target
-                          if (
-                            event.defaultPrevented ||
-                            !(target instanceof Element) ||
-                            !event.currentTarget.contains(target) ||
-                            target.closest('button, a, input, select, textarea, [role="button"]')
-                          )
-                            return
-                          onNavigate({ kind: 'edit', id: server.id })
-                        }}
-                        className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer -mx-2 flex min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                        className="-mx-2 flex items-center gap-2"
                       >
                         <ResourceSelectionCheckbox
                           selection={selection}
@@ -815,182 +812,200 @@ export function ConnectorsPanel({
                             mainEnabled: server.enabled
                           }}
                         />
-                        <ConnectorGlyph size={24} />
-                        <div className="min-w-0 flex-1">
-                          <button
-                            type="button"
-                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                            className="block w-full min-w-0 text-left"
-                          >
-                            <span className="block truncate text-sm text-foreground">
-                              {server.displayName}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {server.name}
-                              {server.description ? ` · ${server.description}` : ''}
-                            </span>
-                          </button>
-                          <div
-                            className="mt-0.5 flex min-w-0 items-center gap-2"
-                            data-connector-metadata={server.id}
-                          >
-                            <span
-                              className={`shrink-0 text-xs ${
-                                server.availability &&
-                                !server.checking &&
-                                !retryingIds.has(server.id)
-                                  ? 'text-destructive'
-                                  : 'text-muted-foreground'
-                              }`}
+                        <div
+                          data-slot="resource-row-content"
+                          onClick={(event) => {
+                            // Keep nested controls and portal events out of row navigation.
+                            // Row styles preserve pointer hits on disabled buttons instead of passing through.
+                            const target = event.target
+                            if (
+                              event.defaultPrevented ||
+                              !(target instanceof Element) ||
+                              !event.currentTarget.contains(target) ||
+                              target.closest('button, a, input, select, textarea, [role="button"]')
+                            )
+                              return
+                            onNavigate({ kind: 'edit', id: server.id })
+                          }}
+                          className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                        >
+                          <ConnectorGlyph size={24} />
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                              className="block w-full min-w-0 text-left"
                             >
-                              {retryingIds.has(server.id)
-                                ? t('Checking…')
-                                : server.checking
-                                  ? t('Checking…')
-                                  : server.availability === 'unavailable'
-                                    ? t('Unavailable')
-                                    : server.availability === 'credential_unavailable'
-                                      ? t('Credentials unavailable')
-                                      : server.availability === 'unauthenticated'
-                                        ? t('Sign-in required')
-                                        : server.enabled
-                                          ? t('Connected')
-                                          : t('Disabled')}
-                            </span>
-                            {server.enabled || usages.length > 0 ? (
-                              <span className="inline-flex shrink-0 items-center gap-1">
-                                <span
-                                  data-slot="skill-usage-agents-label"
-                                  className="text-xs text-muted-foreground"
-                                >
-                                  {t('Used by')}
-                                </span>
-                                <SkillUsageAgents
-                                  resourceKind="Connector"
-                                  mainEnabled={server.enabled}
-                                  usages={usages}
-                                  onOpenSpecialist={onOpenSpecialist}
-                                />
+                              <span className="block truncate text-sm text-foreground">
+                                {server.displayName}
                               </span>
-                            ) : null}
-                            <ResourceTagBadges
-                              reference={{
-                                resourceType: 'catalog.connector',
-                                resourceId: server.id
-                              }}
-                              onOpenTag={onOpenTag}
-                            />
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {server.name}
+                                {server.description ? ` · ${server.description}` : ''}
+                              </span>
+                            </button>
+                            <div
+                              className="mt-0.5 flex min-w-0 items-center gap-2"
+                              data-connector-metadata={server.id}
+                            >
+                              <span
+                                className={`shrink-0 text-xs ${
+                                  server.availability &&
+                                  !server.checking &&
+                                  !retryingIds.has(server.id)
+                                    ? 'text-destructive'
+                                    : 'text-muted-foreground'
+                                }`}
+                              >
+                                {retryingIds.has(server.id)
+                                  ? t('Checking…')
+                                  : server.checking
+                                    ? t('Checking…')
+                                    : server.availability === 'unavailable'
+                                      ? t('Unavailable')
+                                      : server.availability === 'credential_unavailable'
+                                        ? t('Credentials unavailable')
+                                        : server.availability === 'unauthenticated'
+                                          ? t('Sign-in required')
+                                          : server.enabled
+                                            ? t('Connected')
+                                            : t('Disabled')}
+                              </span>
+                              {server.enabled || usages.length > 0 ? (
+                                <span className="inline-flex shrink-0 items-center gap-1">
+                                  <span
+                                    data-slot="skill-usage-agents-label"
+                                    className="text-xs text-muted-foreground"
+                                  >
+                                    {t('Used by')}
+                                  </span>
+                                  <SkillUsageAgents
+                                    resourceKind="Connector"
+                                    mainEnabled={server.enabled}
+                                    usages={usages}
+                                    onOpenSpecialist={onOpenSpecialist}
+                                  />
+                                </span>
+                              ) : null}
+                              <ResourceTagBadges
+                                reference={{
+                                  resourceType: 'catalog.connector',
+                                  resourceId: server.id
+                                }}
+                                onOpenTag={onOpenTag}
+                              />
+                            </div>
                           </div>
-                        </div>
-                        {server.availability === 'unavailable' && server.enabled ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={retryingIds.has(server.id)}
-                            onClick={() => void retry(server.id)}
-                          >
-                            {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
-                          </Button>
-                        ) : null}
-                        {(server.availability === 'unauthenticated' && !server.oauth) ||
-                        server.availability === 'credential_unavailable' ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                          >
-                            {t('Configure')}
-                          </Button>
-                        ) : null}
-                        {server.oauth && server.availability !== 'credential_unavailable' ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={
-                              server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                                ? 'outline'
-                                : 'default'
-                            }
-                            onClick={() =>
-                              server.oauth?.hasTokens && server.availability !== 'unauthenticated'
-                                ? setOAuthConnectionServer(server)
-                                : setOAuthSignInServer(server)
-                            }
-                          >
-                            {server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                              ? t('Connected')
-                              : server.availability === 'unauthenticated'
-                                ? t('Retry')
-                                : t('Sign in')}
-                          </Button>
-                        ) : null}
-                        <ResourceTagMenu
-                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
-                        />
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                          {server.availability === 'unavailable' && server.enabled ? (
                             <Button
                               type="button"
-                              variant="ghost"
-                              size="icon"
-                              aria-label={t('Actions for {{name}}', { name: server.displayName })}
+                              size="sm"
+                              variant="outline"
+                              disabled={retryingIds.has(server.id)}
+                              onClick={() => void retry(server.id)}
                             >
-                              <ChevronDown aria-hidden="true" />
+                              {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="gap-2 text-xs"
-                              onSelect={() => onNavigate({ kind: 'export', id: server.id })}
+                          ) : null}
+                          {(server.availability === 'unauthenticated' && !server.oauth) ||
+                          server.availability === 'credential_unavailable' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
                             >
-                              <Download className="size-3.5" aria-hidden="true" />
-                              {t('Export')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2 text-xs"
-                              onSelect={() => onNavigate({ kind: 'edit', id: server.id })}
+                              {t('Configure')}
+                            </Button>
+                          ) : null}
+                          {server.oauth && server.availability !== 'credential_unavailable' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={
+                                server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                                  ? 'outline'
+                                  : 'default'
+                              }
+                              onClick={() =>
+                                server.oauth?.hasTokens && server.availability !== 'unauthenticated'
+                                  ? setOAuthConnectionServer(server)
+                                  : setOAuthSignInServer(server)
+                              }
                             >
-                              <Pencil className="size-3.5" aria-hidden="true" />
-                              {t('Edit')}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="gap-2 text-xs text-destructive"
-                              onSelect={() => void requestRemoval(server)}
-                            >
-                              <Trash2 className="size-3.5" aria-hidden="true" />
-                              {t('Remove')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <ResourceAssignmentControls
-                            onOpenSpecialist={onOpenSpecialist}
-                            resource={{
-                              id: server.id,
-                              name: server.name,
-                              displayName: server.displayName,
-                              kind: 'connector',
-                              group: 'custom',
-                              mainEnabled: server.enabled
-                            }}
-                            disabled={selection.locked}
-                            onErrorChange={setAccessError}
-                            mainBlocked={cannotEnableCustomServer(server)}
-                            onSetMain={(enabled) => setCustomServerEnabled(server.id, enabled)}
+                              {server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                                ? t('Connected')
+                                : server.availability === 'unauthenticated'
+                                  ? t('Retry')
+                                  : t('Sign in')}
+                            </Button>
+                          ) : null}
+                          <ResourceTagMenu
+                            reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
                           />
-                          <button
-                            type="button"
-                            aria-label={t('View details for {{name}}', {
-                              name: server.displayName
-                            })}
-                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                            className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
-                          >
-                            <ChevronRight className="size-4" aria-hidden="true" />
-                          </button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t('Actions for {{name}}', { name: server.displayName })}
+                              >
+                                <ChevronDown aria-hidden="true" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="gap-2 text-xs"
+                                onSelect={() => onNavigate({ kind: 'export', id: server.id })}
+                              >
+                                <Download className="size-3.5" aria-hidden="true" />
+                                {t('Export')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2 text-xs"
+                                onSelect={() => onNavigate({ kind: 'edit', id: server.id })}
+                              >
+                                <Pencil className="size-3.5" aria-hidden="true" />
+                                {t('Edit')}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="gap-2 text-xs text-destructive"
+                                onSelect={() => void requestRemoval(server)}
+                              >
+                                <Trash2 className="size-3.5" aria-hidden="true" />
+                                {t('Remove')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <ResourceAssignmentControls
+                              onOpenSpecialist={onOpenSpecialist}
+                              resource={{
+                                id: server.id,
+                                name: server.name,
+                                displayName: server.displayName,
+                                kind: 'connector',
+                                group: 'custom',
+                                mainEnabled: server.enabled
+                              }}
+                              disabled={selection.locked}
+                              onErrorChange={setAccessError}
+                              mainBlocked={cannotEnableCustomServer(server)}
+                              onSetMain={(enabled) => setCustomServerEnabled(server.id, enabled)}
+                            />
+                            <button
+                              type="button"
+                              aria-label={t('View details for {{name}}', {
+                                name: server.displayName
+                              })}
+                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                              className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
+                            >
+                              <ChevronRight className="size-4" aria-hidden="true" />
+                            </button>
+                          </div>
                         </div>
                       </li>
                     )

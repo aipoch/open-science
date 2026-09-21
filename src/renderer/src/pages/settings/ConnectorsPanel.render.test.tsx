@@ -261,7 +261,7 @@ describe('ConnectorsPanel (groups)', () => {
     const row = Array.from(
       document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
     ).find((row) => row.textContent?.includes(name as string))!
-    act(() => row.click())
+    act(() => row.querySelector<HTMLElement>('[data-slot="resource-row-content"]')!.click())
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith(destination)
     onNavigate.mockClear()
     act(() => row.querySelector<HTMLButtonElement>('button')!.click())

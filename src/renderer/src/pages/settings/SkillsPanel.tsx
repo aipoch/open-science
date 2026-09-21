@@ -614,21 +614,7 @@ const SkillsPanel = ({
                         <li
                           key={skill.catalogEntryKey ?? skill.id}
                           data-slot="settings-list-row"
-                          onClick={(event) => {
-                            // Keep nested controls and portal events out of row navigation.
-                            // Row styles preserve pointer hits on disabled buttons instead of passing through.
-                            const target = event.target
-                            if (
-                              !available ||
-                              event.defaultPrevented ||
-                              !(target instanceof Element) ||
-                              !event.currentTarget.contains(target) ||
-                              target.closest('button, a, input, select, textarea, [role="button"]')
-                            )
-                              return
-                            onNavigate({ kind: 'detail', id: skill.id })
-                          }}
-                          className={`group/row [&_button:disabled]:pointer-events-auto -mx-2 flex min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 ${available ? 'cursor-pointer' : ''}`}
+                          className="-mx-2 flex items-center gap-2"
                         >
                           {available ? (
                             <ResourceSelectionCheckbox
@@ -642,186 +628,216 @@ const SkillsPanel = ({
                               }}
                             />
                           ) : null}
-                          <div className="min-w-0 flex-1">
-                            <button
-                              type="button"
-                              disabled={!available}
-                              onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                              className="block w-full min-w-0 text-left disabled:cursor-default"
-                            >
-                              <span className="block truncate text-sm text-foreground">
-                                {skill.displayName}
-                              </span>
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {skill.description}
-                              </span>
-                            </button>
-                            <div className="mt-0.5 flex min-w-0 items-center gap-2">
-                              {!available ? (
-                                <span className="shrink-0 text-xs text-destructive">
-                                  {t('Identity conflict')}
+                          <div
+                            data-slot="resource-row-content"
+                            onClick={(event) => {
+                              // Keep nested controls and portal events out of row navigation.
+                              // Row styles preserve pointer hits on disabled buttons instead of passing through.
+                              const target = event.target
+                              if (
+                                !available ||
+                                event.defaultPrevented ||
+                                !(target instanceof Element) ||
+                                !event.currentTarget.contains(target) ||
+                                target.closest(
+                                  'button, a, input, select, textarea, [role="button"]'
+                                )
+                              )
+                                return
+                              onNavigate({ kind: 'detail', id: skill.id })
+                            }}
+                            className={`group/row [&_button:disabled]:pointer-events-auto flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 ${available ? 'cursor-pointer' : ''}`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                disabled={!available}
+                                onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                                className="block w-full min-w-0 text-left disabled:cursor-default"
+                              >
+                                <span className="block truncate text-sm text-foreground">
+                                  {skill.displayName}
                                 </span>
-                              ) : null}
-                              {available && (skill.enabled || usages.length > 0) ? (
-                                <span className="inline-flex shrink-0 items-center gap-1">
-                                  <span
-                                    data-slot="skill-usage-agents-label"
-                                    className="text-xs text-muted-foreground"
-                                  >
-                                    {t('Used by')}
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {skill.description}
+                                </span>
+                              </button>
+                              <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                                {!available ? (
+                                  <span className="shrink-0 text-xs text-destructive">
+                                    {t('Identity conflict')}
                                   </span>
-                                  <SkillUsageAgents
-                                    mainEnabled={skill.enabled}
-                                    usages={usages}
-                                    onOpenSpecialist={onOpenSpecialist}
+                                ) : null}
+                                {available && (skill.enabled || usages.length > 0) ? (
+                                  <span className="inline-flex shrink-0 items-center gap-1">
+                                    <span
+                                      data-slot="skill-usage-agents-label"
+                                      className="text-xs text-muted-foreground"
+                                    >
+                                      {t('Used by')}
+                                    </span>
+                                    <SkillUsageAgents
+                                      mainEnabled={skill.enabled}
+                                      usages={usages}
+                                      onOpenSpecialist={onOpenSpecialist}
+                                    />
+                                  </span>
+                                ) : null}
+                                {available ? (
+                                  <ResourceTagBadges
+                                    reference={{
+                                      resourceType: 'catalog.skill',
+                                      resourceId: skill.id
+                                    }}
+                                    onOpenTag={onOpenTag}
                                   />
-                                </span>
-                              ) : null}
+                                ) : null}
+                              </div>
+                            </div>
+                            {exportStatus?.id === skill.id ? (
+                              <span
+                                role="status"
+                                className="shrink-0 text-xs text-muted-foreground"
+                              >
+                                {exportStatus.message}
+                              </span>
+                            ) : null}
+                            <div className="flex shrink-0 items-center gap-2">
                               {available ? (
-                                <ResourceTagBadges
+                                <ResourceTagMenu
                                   reference={{
                                     resourceType: 'catalog.skill',
                                     resourceId: skill.id
                                   }}
-                                  onOpenTag={onOpenTag}
                                 />
                               ) : null}
+                              {skill.source !== 'featured' ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={exportingId !== undefined}
+                                      aria-label={t('Actions for {{name}}', {
+                                        name: skill.displayName
+                                      })}
+                                    >
+                                      <ChevronDown aria-hidden="true" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    {available && canExportSkills ? (
+                                      <DropdownMenuItem
+                                        className="gap-2 text-xs"
+                                        onSelect={() =>
+                                          void exportSkill(skill.id, skill.displayName)
+                                        }
+                                      >
+                                        <Download className="size-3.5" aria-hidden="true" />
+                                        {t('Export')}
+                                      </DropdownMenuItem>
+                                    ) : null}
+                                    {available && skill.source === 'personal' ? (
+                                      <DropdownMenuItem
+                                        className="gap-2 text-xs"
+                                        onSelect={() => onNavigate({ kind: 'edit', id: skill.id })}
+                                      >
+                                        <Pencil className="size-3.5" aria-hidden="true" />{' '}
+                                        {t('Edit')}
+                                      </DropdownMenuItem>
+                                    ) : null}
+                                    <DropdownMenuSeparator />
+                                    {deleteBlockedReason ? (
+                                      <TooltipProvider delayDuration={800}>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <DropdownMenuItem
+                                              aria-disabled="true"
+                                              data-slot="skill-delete-blocked"
+                                              className="gap-2 text-xs text-muted-foreground hover:text-muted-foreground data-[highlighted]:text-muted-foreground"
+                                              onSelect={(event) => event.preventDefault()}
+                                            >
+                                              <Trash2
+                                                className="size-3.5 shrink-0"
+                                                aria-hidden="true"
+                                              />
+                                              <span className="min-w-0 flex-1">{t('Delete')}</span>
+                                              <Info
+                                                data-slot="skill-delete-blocked-tip"
+                                                className="size-3.5 shrink-0"
+                                                aria-hidden="true"
+                                              />
+                                            </DropdownMenuItem>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="left" className="max-w-64">
+                                            {deleteBlockedReason}
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    ) : (
+                                      <DropdownMenuItem
+                                        className="gap-2 text-xs text-destructive"
+                                        onSelect={() => {
+                                          if (skill.source === 'featured') return
+                                          setDeleteError(undefined)
+                                          void deleteSkill(
+                                            skill.id,
+                                            skill.source,
+                                            skill.directoryName
+                                          ).catch((error) =>
+                                            setDeleteError({
+                                              id: skill.id,
+                                              message:
+                                                skillOperationErrorMessage(error) ||
+                                                t('This Skill is protected and cannot be deleted.')
+                                            })
+                                          )
+                                        }}
+                                      >
+                                        <Trash2 className="size-3.5 shrink-0" aria-hidden="true" />
+                                        <span>{t('Delete')}</span>
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : null}
+                              <ResourceAssignmentControls
+                                onOpenSpecialist={onOpenSpecialist}
+                                resource={{
+                                  id: skill.id,
+                                  name: skill.displayName,
+                                  kind: 'skill',
+                                  group: skill.source,
+                                  mainEnabled: skill.enabled,
+                                  mainRequired: skill.activationPolicy === 'always-on'
+                                }}
+                                disabled={!available || selection.locked}
+                                onErrorChange={setAccessError}
+                                onSetMain={(enabled) => setSkillEnabled(skill.id, enabled)}
+                              />
+                              <button
+                                type="button"
+                                aria-label={t('View details for {{name}}', {
+                                  name: skill.displayName
+                                })}
+                                disabled={!available}
+                                onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
+                                className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
+                              >
+                                <ChevronRight className="size-4" aria-hidden="true" />
+                              </button>
                             </div>
-                          </div>
-                          {exportStatus?.id === skill.id ? (
-                            <span role="status" className="shrink-0 text-xs text-muted-foreground">
-                              {exportStatus.message}
-                            </span>
-                          ) : null}
-                          <div className="flex shrink-0 items-center gap-2">
-                            {available ? (
-                              <ResourceTagMenu
-                                reference={{ resourceType: 'catalog.skill', resourceId: skill.id }}
+                            {deleteError?.id === skill.id ? (
+                              <ErrorNotice
+                                inline
+                                role="alert"
+                                tone="amber"
+                                className="basis-full"
+                                description={deleteError.message}
                               />
                             ) : null}
-                            {skill.source !== 'featured' ? (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    disabled={exportingId !== undefined}
-                                    aria-label={t('Actions for {{name}}', {
-                                      name: skill.displayName
-                                    })}
-                                  >
-                                    <ChevronDown aria-hidden="true" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  {available && canExportSkills ? (
-                                    <DropdownMenuItem
-                                      className="gap-2 text-xs"
-                                      onSelect={() => void exportSkill(skill.id, skill.displayName)}
-                                    >
-                                      <Download className="size-3.5" aria-hidden="true" />
-                                      {t('Export')}
-                                    </DropdownMenuItem>
-                                  ) : null}
-                                  {available && skill.source === 'personal' ? (
-                                    <DropdownMenuItem
-                                      className="gap-2 text-xs"
-                                      onSelect={() => onNavigate({ kind: 'edit', id: skill.id })}
-                                    >
-                                      <Pencil className="size-3.5" aria-hidden="true" /> {t('Edit')}
-                                    </DropdownMenuItem>
-                                  ) : null}
-                                  <DropdownMenuSeparator />
-                                  {deleteBlockedReason ? (
-                                    <TooltipProvider delayDuration={800}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <DropdownMenuItem
-                                            aria-disabled="true"
-                                            data-slot="skill-delete-blocked"
-                                            className="gap-2 text-xs text-muted-foreground hover:text-muted-foreground data-[highlighted]:text-muted-foreground"
-                                            onSelect={(event) => event.preventDefault()}
-                                          >
-                                            <Trash2
-                                              className="size-3.5 shrink-0"
-                                              aria-hidden="true"
-                                            />
-                                            <span className="min-w-0 flex-1">{t('Delete')}</span>
-                                            <Info
-                                              data-slot="skill-delete-blocked-tip"
-                                              className="size-3.5 shrink-0"
-                                              aria-hidden="true"
-                                            />
-                                          </DropdownMenuItem>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="left" className="max-w-64">
-                                          {deleteBlockedReason}
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  ) : (
-                                    <DropdownMenuItem
-                                      className="gap-2 text-xs text-destructive"
-                                      onSelect={() => {
-                                        if (skill.source === 'featured') return
-                                        setDeleteError(undefined)
-                                        void deleteSkill(
-                                          skill.id,
-                                          skill.source,
-                                          skill.directoryName
-                                        ).catch((error) =>
-                                          setDeleteError({
-                                            id: skill.id,
-                                            message:
-                                              skillOperationErrorMessage(error) ||
-                                              t('This Skill is protected and cannot be deleted.')
-                                          })
-                                        )
-                                      }}
-                                    >
-                                      <Trash2 className="size-3.5 shrink-0" aria-hidden="true" />
-                                      <span>{t('Delete')}</span>
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            ) : null}
-                            <ResourceAssignmentControls
-                              onOpenSpecialist={onOpenSpecialist}
-                              resource={{
-                                id: skill.id,
-                                name: skill.displayName,
-                                kind: 'skill',
-                                group: skill.source,
-                                mainEnabled: skill.enabled,
-                                mainRequired: skill.activationPolicy === 'always-on'
-                              }}
-                              disabled={!available || selection.locked}
-                              onErrorChange={setAccessError}
-                              onSetMain={(enabled) => setSkillEnabled(skill.id, enabled)}
-                            />
-                            <button
-                              type="button"
-                              aria-label={t('View details for {{name}}', {
-                                name: skill.displayName
-                              })}
-                              disabled={!available}
-                              onClick={() => onNavigate({ kind: 'detail', id: skill.id })}
-                              className="rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:opacity-100"
-                            >
-                              <ChevronRight className="size-4" aria-hidden="true" />
-                            </button>
                           </div>
-                          {deleteError?.id === skill.id ? (
-                            <ErrorNotice
-                              inline
-                              role="alert"
-                              tone="amber"
-                              className="basis-full"
-                              description={deleteError.message}
-                            />
-                          ) : null}
                         </li>
                       )
                     })}

@@ -28,6 +28,17 @@ for (const kind of ['skills', 'connectors']) {
     await expect(page.getByRole('tooltip')).toHaveCount(0)
     await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
     await page.getByRole('checkbox', { name: `Select ${name}`, exact: true }).check()
+    const checkbox = row.getByRole('checkbox')
+    const content = row.locator('[data-slot="resource-row-content"]')
+    const checkboxBounds = (await checkbox.boundingBox())!
+    const contentBounds = (await content.boundingBox())!
+    expect(checkboxBounds.x + checkboxBounds.width).toBeLessThan(contentBounds.x)
+    await checkbox.hover()
+    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(content).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await content.hover()
+    await expect(content).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     const bar = page.getByRole('region', { name: 'Selected resources' })
     await expect(bar.getByRole('button', { name: /Unlink Specialists/ })).toHaveCount(0)
     await expect(bar.getByRole('button', { name: 'Delete selected' })).toHaveCount(0)

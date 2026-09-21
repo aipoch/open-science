@@ -271,7 +271,7 @@ describe('SkillsPanel (list view)', () => {
     const onNavigate = vi.fn()
     act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
     const row = document.body.querySelector<HTMLElement>('[data-slot="settings-list-row"]')!
-    act(() => row.click())
+    act(() => row.querySelector<HTMLElement>('[data-slot="resource-row-content"]')!.click())
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
     onNavigate.mockClear()
     act(() => row.querySelector<HTMLElement>('[data-slot="skill-usage-agents-label"]')!.click())
@@ -513,7 +513,7 @@ describe('SkillsPanel (list view)', () => {
     expect(title?.disabled).toBe(true)
     act(() => {
       title?.click()
-      document.body.querySelector<HTMLElement>('[data-slot="settings-list-row"]')?.click()
+      document.body.querySelector<HTMLElement>('[data-slot="resource-row-content"]')?.click()
     })
     expect(onNavigate).not.toHaveBeenCalled()
   })
