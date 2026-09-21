@@ -806,6 +806,28 @@ def read_inputs():
     ).toMatchObject({ reads: [], writeState: 'complete' })
   })
 
+  it('does not replay a helper whose export is rebound to another callable', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    return open("old.csv")\ndef replacement():\n    return open("new.csv")\nread_inputs = replacement',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
   it('drops helper evidence after a cross-cell export rebind', async () => {
     const context = await fileContext(
       'python',

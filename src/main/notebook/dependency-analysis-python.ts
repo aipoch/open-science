@@ -7041,17 +7041,44 @@ const analyzePythonFileAccessTree = (
   const helperScopes: Array<Map<string, HelperFunction>> = []
   for (const { module, exports } of helperModules) {
     const topLevelFunctions = new Map<string, PyNode>()
+    const finalBindings = new Map<string, 'function' | 'other'>()
     for (const statement of Array.isArray(module.body) ? module.body : []) {
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
         statement.name &&
         !statement.decorator_list?.length
-      )
+      ) {
         topLevelFunctions.set(statement.name, statement)
+        finalBindings.set(statement.name, 'function')
+      }
+      const reboundNames = (() => {
+        if (statement.type === 'Assign')
+          return (statement.targets ?? []).flatMap((target) =>
+            target.type === 'Name' && target.id ? [target.id] : []
+          )
+        if (['AnnAssign', 'AugAssign'].includes(statement.type))
+          return statement.target?.type === 'Name' && statement.target.id
+            ? [statement.target.id]
+            : []
+        if (statement.type === 'For')
+          return statement.target?.type === 'Name' && statement.target.id
+            ? [statement.target.id]
+            : []
+        if (statement.type === 'Import')
+          return ((statement.names as PyAlias[] | undefined) ?? []).map(
+            (alias) => alias.asname || alias.name.split('.')[0] || alias.name
+          )
+        if (statement.type === 'ImportFrom')
+          return ((statement.names as PyAlias[] | undefined) ?? [])
+            .filter((alias) => alias.name !== '*')
+            .map((alias) => alias.asname || alias.name)
+        return []
+      })()
+      for (const name of reboundNames) finalBindings.set(name, 'other')
     }
     for (const name of exports) {
       const fn = topLevelFunctions.get(name)
-      if (!fn) continue
+      if (!fn || finalBindings.get(name) !== 'function') continue
       exportedHelperNames.add(name)
       helperFunctions.set(name, { function: fn, module, topLevel: true })
     }
