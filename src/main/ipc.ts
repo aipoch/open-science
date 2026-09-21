@@ -1825,8 +1825,7 @@ const createApplicationModules = async (
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),
-        bookmarkRepository.deleteSessions(sessionIds),
-        pdfAnnotationRepository.deleteSessions(sessionIds)
+        bookmarkRepository.deleteSessions(sessionIds)
       ])
     },
     onSessionsReconciled: async (sessionIds) => {

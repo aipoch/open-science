@@ -390,12 +390,17 @@ const TagSelection = ({
     if (value.some((id) => !live.has(id))) onChange(value.filter((id) => live.has(id)))
   }, [status, tags, value, onChange])
   return (
-    <div className="flex min-w-0 flex-col items-start gap-2" role="group" aria-label={t('Tags')}>
+    <div
+      className="flex min-h-8 w-full min-w-0 items-center gap-2"
+      role="group"
+      aria-label={t('Tags')}
+    >
       {status === 'error' ? (
         <Button
           type="button"
           variant="outline"
           size="sm"
+          className="shrink-0"
           disabled={disabled}
           onClick={() => void load()}
         >
@@ -409,6 +414,7 @@ const TagSelection = ({
               type="button"
               variant="outline"
               size="sm"
+              className="shrink-0"
               disabled={disabled || status !== 'ready'}
             >
               <Plus className="mr-1 size-3.5" aria-hidden="true" />
@@ -418,11 +424,11 @@ const TagSelection = ({
         />
       )}
       {value.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1">
           {tags
             .filter((tag) => value.includes(tag.id))
             .map((tag) => (
-              <span key={tag.id} className="group/tag relative inline-flex min-w-0">
+              <span key={tag.id} className="group/tag relative inline-flex min-w-0 shrink-0">
                 <TagBadge tag={tag} />
                 <button
                   type="button"

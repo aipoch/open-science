@@ -6325,6 +6325,7 @@
     "Remove {{tag}} from this annotation": "Retirer {{tag}} de cette annotation",
     "Figures & Tables": "Figures et tableaux",
     "Notes & Annotations": "Notes et annotations",
+    "Quoted text": "Texte cité",
     "All marks": "Toutes les marques",
     "Commented": "Commentées",
     "Uncommented": "Sans commentaire",
@@ -6411,6 +6412,14 @@
     "Unsupported native annotations: {{count}}_many": "Annotation native non prise en charge: {{count}}",
     "Unsupported native annotations: {{count}}_other": "Annotation native non prise en charge: {{count}}",
     "Native annotation import failed.": "Échec de l’importation des annotations natives.",
-    "Native annotation import limit reached. Some annotations were not imported.": "La limite d’importation des annotations natives a été atteinte. Certaines annotations n’ont pas été importées."
+    "Native annotation import limit reached. Some annotations were not imported.": "La limite d’importation des annotations natives a été atteinte. Certaines annotations n’ont pas été importées.",
+    "Show notes sidebar": "Afficher le panneau des notes",
+    "Hide notes sidebar": "Masquer le panneau des notes",
+    "Resize notes sidebar": "Redimensionner le panneau des notes",
+    "Open full notes view": "Ouvrir la vue complète des notes",
+    "Notes scope": "Portée des notes",
+    "All notes": "Toutes les notes",
+    "Current page": "Page actuelle",
+    "No annotations on this page.": "Aucune annotation sur cette page."
   }
 }

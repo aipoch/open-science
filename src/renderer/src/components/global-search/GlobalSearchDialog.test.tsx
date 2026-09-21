@@ -1,3 +1,4 @@
+import { pdfAnnotationSchema, type PdfAnnotation } from '../../../../shared/pdf-annotations'
 import { LITERATURE_OVERSIZED_REFERENCE } from '../../../../shared/literature-export'
 // @vitest-environment jsdom
 import { act } from 'react'
@@ -63,6 +64,20 @@ vi.mock('@/pages/workspace/artifact-preview', () => ({
 vi.mock('@/pages/workspace/FilePreviewDialog', () => ({
   FilePreviewDialog: ({ item }: { item?: { name: string } }) =>
     item ? <div data-testid="library-file-dialog">{item.name}</div> : null
+}))
+vi.mock('@/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog', () => ({
+  PdfAnnotationPreviewDialog: ({
+    annotation,
+    onClose
+  }: {
+    annotation: PdfAnnotation
+    onClose: () => void
+  }) => (
+    <div data-testid="pdf-note-search-preview" data-annotation={annotation.id}>
+      {annotation.target.source.name}
+      <button onClick={onClose}>Close note preview</button>
+    </div>
+  )
 }))
 beforeEach(setupSearch)
 afterEach(teardownSearch)
@@ -191,6 +206,129 @@ const selectFilter = async (name: string, option: string): Promise<void> => {
 }
 
 describe('GlobalSearchDialog', () => {
+  it('previews Notes under Library before opening their PDF and refreshes edited notes', async () => {
+    const annotation = pdfAnnotationSchema.parse({
+      id: 'search-note',
+      literatureVersionId: 'note-version',
+      version: 1,
+      kind: 'document-note',
+      origin: 'user',
+      tagIds: [],
+      note: 'Distinctive note content',
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z',
+      target: {
+        source: {
+          kind: 'literature-attachment-version',
+          sourceFileId: 'note-file',
+          versionId: 'note-version',
+          checksum: 'a'.repeat(64),
+          name: 'notes.pdf',
+          path: 'literature-attachment-version:note-version'
+        },
+        selector: { kind: 'document-note', coordinateVersion: 1 }
+      }
+    })
+    let notify = (): void => undefined
+    const unsubscribe = vi.fn()
+    window.api.pdfAnnotations = {
+      onChanged: vi.fn((listener) => {
+        notify = () => listener({ scope: { literatureVersionId: 'note-version' } })
+        return unsubscribe
+      })
+    } as unknown as Window['api']['pdfAnnotations']
+    vi.mocked(window.api.literature.search).mockResolvedValue({
+      entries: [{ id: annotation.id, annotation }],
+      totalCount: 1
+    })
+    const navigation = useNavigationStore.getState().view
+    await renderSearch()
+    await waitFor(() =>
+      expect(rows('library')[0]?.textContent).toContain('Distinctive note content')
+    )
+    expect(rows('library')[0].textContent).toContain('notes.pdf')
+    expect(rows('library')[0].textContent).toContain('Notes & Annotations')
+    await act(async () => clickRow('library'))
+    expect(screen.queryByTestId('pdf-note-search-preview')).toBeNull()
+    expect(screen.getByTestId('global-search-detail').getAttribute('data-open')).toBe('true')
+    expect(screen.getByRole('region', { name: 'Notes' }).textContent).toContain(annotation.note)
+    expect(detail().querySelector('h3')?.textContent).toBe('notes.pdf')
+    expect(detail().textContent).toContain('Document note')
+    expect(rows('library')[0].querySelector('.search-result-title')?.hasAttribute('title')).toBe(
+      false
+    )
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Show annotation source' }))
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('pdf-note-search-preview').getAttribute('data-annotation')).toBe(
+        annotation.id
+      )
+    )
+    expect(useNavigationStore.getState().view).toBe(navigation)
+    expect(onClose).not.toHaveBeenCalled()
+    await act(async () =>
+      fireEvent.click(screen.getByTestId('pdf-note-search-preview').querySelector('button')!)
+    )
+    expect(screen.queryByTestId('pdf-note-search-preview')).toBeNull()
+    vi.mocked(window.api.literature.search).mockResolvedValue({
+      entries: [{ id: annotation.id, annotation: { ...annotation, note: 'Edited note content' } }],
+      totalCount: 1
+    })
+    await act(async () => notify())
+    await waitFor(() => expect(rows('library')[0]?.textContent).toContain('Edited note content'))
+    await waitFor(() => expect(detail().textContent).toContain('Edited note content'))
+    const quoteAnnotation = pdfAnnotationSchema.parse({
+      ...annotation,
+      kind: 'highlight',
+      target: {
+        ...annotation.target,
+        selector: {
+          kind: 'text',
+          exact: 'Quoted finding',
+          pageNumber: 1,
+          pageRotation: 0,
+          coordinateVersion: 1,
+          extractorVersion: 'pdfjs-test',
+          position: { start: 0, end: 14 },
+          quads: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.1 }]
+        }
+      }
+    })
+    vi.mocked(window.api.literature.search).mockResolvedValue({
+      entries: [{ id: annotation.id, annotation: quoteAnnotation }],
+      totalCount: 1
+    })
+    await search('Quoted finding')
+    await act(async () => fireEvent.click(document.querySelector('[data-category="library"]')!))
+    await waitFor(() => expect(rows('library')[0]?.textContent).toContain('Quoted finding'))
+    expect(rows('library')[0].querySelector('.search-result-title')?.textContent).toBe(
+      annotation.note
+    )
+    expect(rows('library')[0].querySelector('[aria-label="Quoted text"]')?.textContent).toBe(
+      'Quoted finding'
+    )
+    expect(
+      rows('library')[0].querySelector('[aria-label="Quoted text"] .search-match')?.textContent
+    ).toBe('Quoted finding')
+    await act(async () => fireEvent.keyDown(input(), { key: 'ArrowDown' }))
+    expect(screen.queryByTestId('pdf-note-search-preview')).toBeNull()
+    expect(screen.getByRole('region', { name: 'Quoted text' }).textContent).toContain(
+      'Quoted finding'
+    )
+    expect(screen.getByRole('region', { name: 'Notes' }).textContent).toContain(annotation.note)
+    expect(detail().textContent).toContain('Page 1')
+    await act(async () => fireEvent.keyDown(input(), { key: 'Enter' }))
+    expect(screen.getByTestId('pdf-note-search-preview')).toBeDefined()
+    await act(async () =>
+      fireEvent.click(screen.getByTestId('pdf-note-search-preview').querySelector('button')!)
+    )
+    await act(async () => fireEvent.doubleClick(rows('library')[0]))
+    expect(screen.getByTestId('pdf-note-search-preview')).toBeDefined()
+    await renderSearch(false)
+    expect(unsubscribe).toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'refreshes Library changes without accepting stale results (pending: %s)',
     async (pending) => {

@@ -143,9 +143,9 @@ it('requires one complete scope and binds global Literature writes to the exact 
     createPdfAnnotationRequestSchema.safeParse({ ...global, target: annotationRequest.target })
       .success
   ).toBe(false)
+  expect(listPdfAnnotationsRequestSchema.safeParse({ projectId: 'p1' }).success).toBe(true)
   for (const scope of [
     {},
-    { projectId: 'p1' },
     { sessionId: 's1' },
     { projectId: 'p1', sessionId: 's1', literatureVersionId: 'v1' }
   ])

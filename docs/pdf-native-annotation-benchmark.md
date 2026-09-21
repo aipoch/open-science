@@ -80,3 +80,40 @@ is the first visible canvas, not a claim that every pixel or all pages have fini
   a 60 FPS guarantee.
 - This is one technical manual on one Mac, not coverage of image-heavy scans, every page position,
   Windows/Linux graphics drivers, or an end-to-end production upload latency benchmark.
+
+## Notebook capacity, 2026-09-21
+
+`e2e/pdf-notebook-capacity.spec.ts` runs the **production Electron application**, its SQLite database,
+IPC handlers and actual reader. The fixture imports a generated 100-page PDF and seeds 500, 2000,
+and 10,000 highlights/comments evenly over those pages. Each run uses its own temporary storage.
+Seeding and application startup are excluded from the UI timings.
+
+```bash
+npm run build
+PDF_NOTES_BENCHMARK=1 npx playwright test e2e/pdf-notebook-capacity.spec.ts
+# Optional smaller sample:
+PDF_NOTES_BENCHMARK=1 PDF_NOTES_COUNTS=500,2000 npx playwright test e2e/pdf-notebook-capacity.spec.ts
+```
+
+The JSON attachment reports tab-click-to-first-card time, sidebar-open time, document-wide SQLite
+search time, mounted cards, total renderer DOM nodes and current-page cards. The test checks that
+the first batch contains at most 100 cards and that global search finds the last seeded note.
+
+Single-run observations on macOS arm64 (1440 × 960 window):
+
+|  Notes | Before: cards / DOM nodes | After: cards / DOM nodes | Before / after notebook ready | Before / after sidebar open | After global search |
+| -----: | ------------------------: | -----------------------: | ----------------------------: | --------------------------: | ------------------: |
+|    500 |              500 / 24,173 |              100 / 5,409 |                  637 / 447 ms |                344 / 113 ms |               27 ms |
+|   2000 |             2000 / 94,812 |              100 / 5,514 |                 1072 / 298 ms |               1127 / 122 ms |               11 ms |
+| 10,000 |              Not measured |              100 / 6,074 |                   — / 1877 ms |                  — / 118 ms |               35 ms |
+
+Current-page mode mounted 5, 20 and 100 cards respectively. The provider still fetched all records
+for the selected file; the improvement bounds the initial React/DOM work, not the data size.
+Search still covered the last record beyond the first rendered batch. The shorter 2000-note time
+than the 500-note time reflects warm-up/order effects; these are not medians or stable budgets.
+Other tests were running during some samples, so use the node/card counts as the clearest scaling
+evidence rather than treating the precise timings as guaranteed speedups.
+
+This generated, small PDF isolates notebook overhead. It does not represent large source-byte
+verification costs, many-document libraries, worst-case comment lengths, image-heavy PDFs or
+Windows/Linux performance. It provides no frame-rate or global-search throughput guarantee.

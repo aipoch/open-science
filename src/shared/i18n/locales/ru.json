@@ -6466,6 +6466,7 @@
     "Remove {{tag}} from this annotation": "Удалить тег «{{tag}}» из этой аннотации",
     "Figures & Tables": "Рисунки и таблицы",
     "Notes & Annotations": "Заметки и аннотации",
+    "Quoted text": "Цитируемый текст",
     "All marks": "Все отметки",
     "Commented": "С комментарием",
     "Uncommented": "Без комментария",
@@ -6554,6 +6555,14 @@
     "Unsupported native annotations: {{count}}_many": "Неподдерживаемая нативная аннотация: {{count}}",
     "Unsupported native annotations: {{count}}_other": "Неподдерживаемая нативная аннотация: {{count}}",
     "Native annotation import failed.": "Не удалось импортировать встроенные аннотации.",
-    "Native annotation import limit reached. Some annotations were not imported.": "Достигнут лимит импорта встроенных аннотаций. Некоторые аннотации не импортированы."
+    "Native annotation import limit reached. Some annotations were not imported.": "Достигнут лимит импорта встроенных аннотаций. Некоторые аннотации не импортированы.",
+    "Show notes sidebar": "Показать панель заметок",
+    "Hide notes sidebar": "Скрыть панель заметок",
+    "Resize notes sidebar": "Изменить ширину панели заметок",
+    "Open full notes view": "Открыть полный вид заметок",
+    "Notes scope": "Область заметок",
+    "All notes": "Все заметки",
+    "Current page": "Текущая страница",
+    "No annotations on this page.": "На этой странице пока нет аннотаций."
   }
 }

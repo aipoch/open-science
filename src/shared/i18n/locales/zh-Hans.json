@@ -5993,6 +5993,7 @@
     "Remove {{tag}} from this annotation": "从此标注中移除“{{tag}}”",
     "Figures & Tables": "图表",
     "Notes & Annotations": "笔记与标注",
+    "Quoted text": "引用原文",
     "All marks": "全部标记",
     "Commented": "有评论",
     "Uncommented": "无评论",
@@ -6075,6 +6076,14 @@
     "Imported {{count}} native annotations._other": "已导入 {{count}} 条原生批注。",
     "Unsupported native annotations: {{count}}_other": "不支持的原生批注：{{count}}",
     "Native annotation import failed.": "原生批注导入失败。",
-    "Native annotation import limit reached. Some annotations were not imported.": "已达到原生批注导入上限，部分批注未导入。"
+    "Native annotation import limit reached. Some annotations were not imported.": "已达到原生批注导入上限，部分批注未导入。",
+    "Show notes sidebar": "显示笔记侧栏",
+    "Hide notes sidebar": "隐藏笔记侧栏",
+    "Resize notes sidebar": "调整笔记侧栏宽度",
+    "Open full notes view": "打开完整笔记视图",
+    "Notes scope": "笔记范围",
+    "All notes": "全部笔记",
+    "Current page": "当前页",
+    "No annotations on this page.": "此页暂无批注。"
   }
 }

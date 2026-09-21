@@ -60,7 +60,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "PdfAnnotation_origin_check" CHECK ("origin" IN ('user', 'imported') AND ("origin" = 'imported' OR "externalSubtype" IS NULL) AND ("externalSubtype" IS NULL OR (length(trim("externalSubtype")) > 0 AND length("externalSubtype") <= 64))),
     CONSTRAINT "PdfAnnotation_json_check" CHECK (json_valid("selectorJson") AND json_type("selectorJson") = 'object' AND length("selectorJson") <= 65536),
     CONSTRAINT "PdfAnnotation_content_check" CHECK (length("note") <= 20000),
-    CONSTRAINT "PdfAnnotation_scope_check" CHECK (("projectId" IS NOT NULL AND "sessionId" IS NOT NULL) OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = 'literature-attachment-version' AND "sourceSessionId" IS NULL))
+    CONSTRAINT "PdfAnnotation_scope_check" CHECK (("projectId" IS NOT NULL) OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = 'literature-attachment-version' AND "sourceSessionId" IS NULL))
 );`,
   `CREATE TABLE IF NOT EXISTS "pdf_annotation_imports" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -1045,7 +1045,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_createdAt_id_idx" ON "bookmarks"("projectId", "sessionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "bookmarks_projectId_sessionId_sourceKind_sourceId_idx" ON "bookmarks"("projectId", "sessionId", "sourceKind", "sourceId");`,
-  `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_sessionId_createdAt_id_idx" ON "pdf_annotations"("projectId", "sessionId", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_createdAt_id_idx" ON "pdf_annotations"("projectId", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_sourceFileId_versionId_createdAt_id_idx" ON "pdf_annotations"("projectId", "sourceFileId", "versionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotations_projectId_sourceKind_sourceFileId_versionId_createdAt_id_idx" ON "pdf_annotations"("projectId", "sourceKind", "sourceFileId", "versionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotations_sourceKind_sourceFileId_versionId_createdAt_id_idx" ON "pdf_annotations"("sourceKind", "sourceFileId", "versionId", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "pdf_annotation_imports_projectId_sessionId_idx" ON "pdf_annotation_imports"("projectId", "sessionId");`,

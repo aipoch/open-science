@@ -15,6 +15,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   const file = join(directory, 'native-notes.pdf')
   const pdf = await PDFDocument.create()
   const sheet = pdf.addPage([300, 1400])
+  sheet.drawText('Selection placement', { x: 20, y: 1340, size: 14 })
   sheet.drawText('External evidence', { x: 20, y: 300, size: 14 })
   sheet.node.set(
     PDFName.of('Annots'),
@@ -74,11 +75,92 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   const cards = page.locator('li[data-annotation-id]')
   await expect(cards).toHaveCount(2)
+  await app.setMainWindowSize(1440, 960)
+  await page.getByRole('tab', { name: 'Original PDF', exact: true }).click()
+  const selectableText = page.locator('.textLayer span').filter({ hasText: 'Selection placement' })
+  await expect(selectableText).toBeVisible()
+  const textBox = (await selectableText.boundingBox())!
+  await page.mouse.move(textBox.x + 1, textBox.y + textBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(textBox.x + textBox.width - 1, textBox.y + textBox.height / 2, { steps: 8 })
+  await page.mouse.up()
+  const selectionToolbar = page.locator('[data-selection-action-menu]')
+  await expect(selectionToolbar).toBeVisible()
+  // Read the fixed anchor rather than its short entrance animation transform.
+  const toolbarTop = await selectionToolbar.evaluate((element) => parseFloat(element.style.top))
+  await selectionToolbar.getByRole('button', { name: 'Annotate', exact: true }).click()
+  const annotationEditor = page.locator('.annotation-popover').filter({
+    has: page.getByRole('button', { name: 'Save annotation', exact: true })
+  })
+  await expect(annotationEditor).toBeVisible()
+  await expect
+    .poll(async () => Math.abs((await annotationEditor.boundingBox())!.y - toolbarTop))
+    .toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('annotation-editor-replaces-selection.png') })
+  await annotationEditor.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
+  const notesSidebar = page.locator('[data-pdf-notes-sidebar="true"]')
+  await expect(notesSidebar).toBeVisible()
+  await expect(notesSidebar.locator('[data-annotation-id]')).toHaveCount(2)
+  await expect(notesSidebar.locator('[data-annotation-page-group="1"]')).toBeVisible()
+  const originalView = page.locator('[data-pdf-original-view]')
+  expect((await originalView.boundingBox())!.width).toBeGreaterThanOrEqual(752)
+  await notesSidebar
+    .getByRole('button', { name: 'Show annotation source', exact: true })
+    .first()
+    .click()
+  await expect(originalView.locator('[data-pdf-bookmark-revealed="true"]')).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('notes-sidebar-wide.png') })
+  const resizeNotes = notesSidebar.getByRole('separator', { name: 'Resize notes sidebar' })
+  await resizeNotes.focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(resizeNotes).toHaveAttribute('aria-valuenow', '336')
+  const handle = (await resizeNotes.boundingBox())!
+  const handleX = handle.x + handle.width / 2
+  const handleY = handle.y + handle.height / 2
+  await page.mouse.move(handleX, handleY)
+  await page.mouse.down()
+  await page.mouse.move(handleX - 32, handleY, { steps: 4 })
+  await page.mouse.up()
+  await expect(resizeNotes).toHaveAttribute('aria-valuenow', '368')
+  await notesSidebar.getByRole('button', { name: 'Current page', exact: true }).click()
+  await notesSidebar.getByRole('button', { name: 'Add note', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add page note', exact: true }).click()
+  await notesSidebar
+    .getByPlaceholder('Add a private note')
+    .fill('Sidebar draft survives layout changes')
+  await app.setMainWindowSize(1100, 960)
+  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toHaveCount(0)
+  await expect(notesSidebar).toHaveCount(0)
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(page.getByPlaceholder('Add a private note')).toHaveValue(
+    'Sidebar draft survives layout changes'
+  )
+  await page.getByRole('tab', { name: 'Original PDF', exact: true }).click()
+  await app.setMainWindowSize(1440, 960)
+  await expect(notesSidebar.getByPlaceholder('Add a private note')).toHaveValue(
+    'Sidebar draft survives layout changes'
+  )
+  await notesSidebar.getByRole('button', { name: 'Open full notes view', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Notes & Annotations', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await expect(page.getByPlaceholder('Add a private note')).toHaveValue(
+    'Sidebar draft survives layout changes'
+  )
+  await page.getByRole('tab', { name: 'Original PDF', exact: true }).click()
+  await notesSidebar.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await notesSidebar.getByRole('button', { name: 'Hide notes sidebar', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeFocused()
+  await app.setMainWindowSize(1280, 960)
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   await page.evaluate(async (versionId) => {
     const marks = await window.api.pdfAnnotations.list({ literatureVersionId: versionId })
     const tags = await window.api.tags.snapshot()
     await window.api.tags.setAssignment({
-      tagId: tags.tags.find((tag) => tag.systemKey === 'favorite')!.id,
+      tagId: tags.tags.find((tag) => 'systemKey' in tag && tag.systemKey === 'favorite')!.id,
       resourceType: 'pdf.annotation',
       resourceId: marks.items.find((mark) => mark.externalSubtype === 'Text')!.id,
       assigned: true
@@ -113,10 +195,22 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.mouse.wheel(0, scrollBefore > 100 ? -250 : 250)
   await expect.poll(() => pdfScroller.evaluate((node) => node.scrollTop)).not.toBe(scrollBefore)
   await preview.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await app.setMainWindowSize(660, 900)
+  await app.setMainWindowZoomFactor(2)
+  await page.screenshot({ path: testInfo.outputPath('notes-tabs-narrow.png') })
+  const extraTags = Array.from({ length: 6 }, (_, index) => `Research topic ${index + 1}`)
+  await page.evaluate(async (names) => {
+    for (const name of names)
+      await window.api.tags.create({ name, iconKey: 'tag', colorKey: 'blue' })
+  }, extraTags)
   await preview.getByRole('button', { name: 'Add note', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Add document note', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add page note', exact: true }).click()
+  const saveNote = preview.getByRole('button', { name: 'Save', exact: true })
+  const saveBeforeTags = await saveNote.boundingBox()
   await preview.getByRole('button', { name: 'Add or remove Tags', exact: true }).click()
   await page.getByRole('option', { name: 'Favorites', exact: true }).click()
+  for (const name of extraTags) await page.getByRole('option', { name, exact: true }).click()
+  expect(await saveNote.boundingBox()).toEqual(saveBeforeTags)
   await page.keyboard.press('Escape')
   const removeTag = preview
     .getByRole('group', { name: 'Tags', exact: true })
@@ -135,6 +229,14 @@ test('imports external notes, preserves provenance through undo, and persists an
   })
   expect(inset).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('tag-inset-remove.png') })
+  const selectedTags = removeTag.locator('../..')
+  expect(await selectedTags.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true)
+  const saveAfterTags = await saveNote.boundingBox()
+  expect(saveAfterTags).toEqual(saveBeforeTags)
+  await app.setMainWindowZoomFactor(1)
+  await app.setMainWindowSize(1280, 960)
+  await page.screenshot({ path: testInfo.outputPath('tag-editor-wide.png') })
+  await removeTag.locator('..').hover()
   await removeTag.click()
   await expect(removeTag).toHaveCount(0)
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -143,7 +245,35 @@ test('imports external notes, preserves provenance through undo, and persists an
     .click()
   await expect(taggedPdf).toBeVisible()
   await expect(taggedPdf).toBeFocused()
-  await taggedPdf.click()
+  await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  const globalSearch = page.getByRole('dialog', { name: 'Global search', exact: true })
+  await globalSearch.getByRole('combobox', { name: 'Global search' }).fill('External sticky note')
+  await globalSearch.locator('[data-category="library"]').click()
+  const noteResult = globalSearch.getByRole('listbox').getByRole('option')
+  await expect(noteResult).toHaveCount(1)
+  await expect(noteResult).toContainText('Notes & Annotations')
+  await expect(noteResult).toContainText('native-notes.pdf')
+  await noteResult.click()
+  await expect(preview).toBeHidden()
+  const noteDetails = globalSearch.getByTestId('global-search-detail')
+  await expect(noteDetails).toHaveAttribute('data-open', 'true')
+  await expect(noteDetails.getByRole('region', { name: 'Notes', exact: true })).toContainText(
+    'External sticky note'
+  )
+  await expect(noteDetails.getByRole('heading', { name: 'native-notes.pdf' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('search-note-detail.png') })
+  const showNoteSource = noteDetails.getByRole('button', { name: 'Show annotation source' })
+  await showNoteSource.click()
+  await expect(preview).toBeVisible()
+  await expect(preview.locator('[data-pdf-bookmark-revealed="true"]')).toBeVisible()
+  await preview
+    .getByRole('button', { name: 'Close preview of native-notes.pdf', exact: true })
+    .click()
+  await expect(noteResult).toBeVisible()
+  await expect(showNoteSource).toBeFocused()
+  await expect(noteDetails).toHaveAttribute('data-open', 'true')
+  await noteResult.dblclick()
   await expect(preview.locator('[data-pdf-bookmark-revealed="true"]')).toBeVisible()
   await preview.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   await cards

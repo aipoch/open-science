@@ -55,18 +55,24 @@ const PdfAnnotationsStateProvider = ({
   projectId,
   sessionId,
   literatureVersionId,
+  sourceFileId,
+  versionId,
+  loadAnnotations = true,
   writable = true,
   children
 }: React.PropsWithChildren<{
   projectId?: string
   sessionId?: string
   literatureVersionId?: string
+  sourceFileId?: string
+  versionId?: string
+  loadAnnotations?: boolean
   writable?: boolean
 }>): React.JSX.Element => {
   const scopeKey = literatureVersionId
     ? `literature:${literatureVersionId}`
-    : projectId && sessionId
-      ? `${projectId}\u0000${sessionId}`
+    : projectId
+      ? `${projectId}\u0000${sessionId ?? ''}\u0000${sourceFileId ?? ''}\u0000${versionId ?? ''}`
       : ''
   const scope = useMemo(
     () => (literatureVersionId ? { literatureVersionId } : { projectId, sessionId }),
@@ -84,7 +90,7 @@ const PdfAnnotationsStateProvider = ({
   const [state, setState] = useState<ScopeState>({
     key: scopeKey,
     annotations: [],
-    loading: Boolean(scopeKey),
+    loading: Boolean(scopeKey) && loadAnnotations,
     pending: 0,
     undoSources: [],
     redoSources: []
@@ -93,7 +99,7 @@ const PdfAnnotationsStateProvider = ({
     setState({
       key: scopeKey,
       annotations: [],
-      loading: Boolean(scopeKey),
+      loading: Boolean(scopeKey) && loadAnnotations,
       pending: 0,
       undoSources: [],
       redoSources: []
@@ -130,7 +136,7 @@ const PdfAnnotationsStateProvider = ({
   useEffect(() => {
     let active = true
     runtime.current.overlays = new Map()
-    if (!scopeKey) return
+    if (!scopeKey || !loadAnnotations) return
     const load = async (): Promise<void> => {
       let cursor: { createdAt: string; id: string } | undefined
       const loaded = new Map<string, PdfAnnotation>()
@@ -138,11 +144,14 @@ const PdfAnnotationsStateProvider = ({
       do {
         const result = await window.api.pdfAnnotations.list({
           ...scope,
+          sourceFileId,
+          versionId,
           cursor,
           limit: PDF_ANNOTATION_LIMITS.pageSize
         })
         if (!active) return
-        source = result.source
+        source ??=
+          result.source ?? (sourceFileId && versionId ? result.items[0]?.target.source : undefined)
         for (const item of result.items) loaded.set(item.id, item)
         cursor = result.nextCursor
       } while (cursor)
@@ -179,7 +188,9 @@ const PdfAnnotationsStateProvider = ({
           ? sortAnnotations([...loaded.values()])
           : previous.annotations,
         source:
-          JSON.stringify(source) === JSON.stringify(previous.source) ? previous.source : source,
+          source === undefined || JSON.stringify(source) === JSON.stringify(previous.source)
+            ? previous.source
+            : source,
         loading: false,
         pending: runtime.current.pending,
         undoSources: runtime.current.undo.map((change) => sourceKey(changeSource(change))),
@@ -197,14 +208,19 @@ const PdfAnnotationsStateProvider = ({
     return () => {
       active = false
     }
-  }, [loadAttempt, scope, runtime, scopeKey])
+  }, [loadAttempt, scope, runtime, scopeKey, loadAnnotations, sourceFileId, versionId])
 
   const retryLoad = useCallback(() => {
-    setState((current) => ({ ...current, loading: Boolean(scopeKey), loadError: undefined }))
+    setState((current) => ({
+      ...current,
+      loading: Boolean(scopeKey) && loadAnnotations,
+      loadError: undefined
+    }))
     setLoadAttempt((attempt) => attempt + 1)
-  }, [scopeKey])
+  }, [scopeKey, loadAnnotations])
 
   useEffect(() => {
+    if (!loadAnnotations || !scopeKey) return
     if (useTagStore.getState().status === 'idle') void useTagStore.getState().load()
     let active = true
     let queued = false
@@ -216,34 +232,94 @@ const PdfAnnotationsStateProvider = ({
         if (active) setLoadAttempt((attempt) => attempt + 1)
       })
     }
+    // Assignment writes emit pdfAnnotations.onChanged with a CAS token. Only global Tag
+    // deletion needs projection here; an older Tag snapshot must not overwrite a newer save.
+    let knownTags = useTagStore.getState().tags
+    const stopTagState = useTagStore.subscribe((next) => {
+      if (next.status !== 'ready') return
+      const ids = new Set(next.tags.map((tag) => tag.id))
+      const removed = new Set(knownTags.filter((tag) => !ids.has(tag.id)).map((tag) => tag.id))
+      knownTags = next.tags
+      if (!removed.size) return
+      void runtime.current.queue.then(() => {
+        if (!active) return
+        let changed = false
+        for (const [id, annotation] of runtime.current.items) {
+          const tagIds = annotation.tagIds.filter((tagId) => !removed.has(tagId))
+          if (tagIds.length === annotation.tagIds.length) continue
+          const updated = { ...annotation, tagIds }
+          runtime.current.items.set(id, updated)
+          runtime.current.overlays.set(id, updated)
+          changed = true
+        }
+        if (changed) publish(true)
+      })
+    })
     const stopTags = window.api.tags?.onChanged?.(() => {
       void useTagStore.getState().load()
-      refresh()
     })
     const stopAnnotations = window.api.pdfAnnotations?.onChanged?.((event) => {
       const other = event.scope
       if (
         other.literatureVersionId !== scope.literatureVersionId ||
-        other.projectId !== scope.projectId ||
-        other.sessionId !== scope.sessionId
+        other.projectId !== scope.projectId
       )
         return
-      void runtime.current.queue.finally(() => {
+      const reconcile = async (): Promise<void> => {
         if (!active) return
-        // The local command already committed this value. Avoid fetching the entire notebook
-        // again for our own event; remote edits and completed imports still invalidate it.
         if (event.id && runtime.current.items.get(event.id)?.updatedAt === event.updatedAt) return
-        refresh()
+        if (!event.id) {
+          refresh()
+          return
+        }
+        const result = await window.api.pdfAnnotations.list({
+          ...scope,
+          sourceFileId,
+          versionId,
+          id: event.id,
+          limit: 1
+        })
+        if (!active) return
+        const previous = runtime.current.items.get(event.id)
+        const next = result.items[0]
+        if (!previous && !next) return
+        if (
+          previous?.updatedAt === next?.updatedAt &&
+          previous?.tagIds.join('\u0000') === next?.tagIds.join('\u0000')
+        )
+          return
+        if (previous?.updatedAt !== next?.updatedAt) {
+          const key = sourceKey((next ?? previous)!.target.source)
+          runtime.current.undo = runtime.current.undo.filter(
+            (change) => sourceKey(changeSource(change)) !== key
+          )
+          runtime.current.redo = runtime.current.redo.filter(
+            (change) => sourceKey(changeSource(change)) !== key
+          )
+        }
+        if (next) runtime.current.items.set(event.id, next)
+        else runtime.current.items.delete(event.id)
+        runtime.current.overlays.set(event.id, next ?? null)
+        publish(true)
+      }
+      // Remote reconciliation and local commands share the queue: a slow read cannot overwrite a later save.
+      runtime.current.queue = runtime.current.queue.then(reconcile).catch(() => {
+        if (active) refresh()
       })
     })
-    const stopLiterature = window.api.literature?.onChanged?.(refresh)
+    const stopLiterature = literatureVersionId
+      ? window.api.literature?.onChanged?.((event) => {
+          if (!event || event.itemIds === undefined || event.itemIds.length > 0) refresh()
+        })
+      : undefined
     return () => {
       active = false
+      stopTagState()
       stopTags?.()
       stopAnnotations?.()
       stopLiterature?.()
     }
-  }, [scope])
+  }, [scope, scopeKey, loadAnnotations, sourceFileId, versionId, literatureVersionId, publish])
 
   // Serialize local writes, including history replay, so each command captures the committed prior value.
   const enqueue = useCallback(
@@ -394,7 +470,8 @@ const PdfAnnotationsStateProvider = ({
             externalSubtype: to.externalSubtype,
             tagIds,
             note: to.note,
-            createdAt: to.createdAt
+            createdAt: to.createdAt,
+            createdInSessionId: to.sessionId ?? null
           })
         } else {
           result = await window.api.pdfAnnotations.update({
@@ -438,6 +515,10 @@ const PdfAnnotationsStateProvider = ({
   const index = useMemo(() => indexPdfAnnotations(state.annotations), [state.annotations])
   const value = useMemo<PdfAnnotationPort>(
     () => ({
+      document:
+        literatureVersionId || versionId
+          ? { sourceFileId, versionId: (literatureVersionId ?? versionId)! }
+          : undefined,
       scoped: Boolean(scopeKey),
       sessionId,
       source: state.key === scopeKey ? state.source : undefined,
@@ -452,7 +533,7 @@ const PdfAnnotationsStateProvider = ({
           ? (index.get(sourceKey(source))?.pages.get(page) ?? EMPTY_PDF_ANNOTATIONS)
           : EMPTY_PDF_ANNOTATIONS,
       total: state.key === scopeKey ? state.annotations.length : 0,
-      loading: state.key === scopeKey ? state.loading : Boolean(scopeKey),
+      loading: state.key === scopeKey ? state.loading : Boolean(scopeKey) && loadAnnotations,
       loadError: state.key === scopeKey ? state.loadError : undefined,
       history: (source) => ({
         canUndo: state.undoSources.includes(sourceKey(source)),
@@ -466,7 +547,22 @@ const PdfAnnotationsStateProvider = ({
       update,
       remove
     }),
-    [scopeKey, sessionId, writable, state, index, replay, retryLoad, create, update, remove]
+    [
+      scopeKey,
+      sessionId,
+      writable,
+      state,
+      index,
+      replay,
+      retryLoad,
+      create,
+      update,
+      remove,
+      sourceFileId,
+      versionId,
+      literatureVersionId,
+      loadAnnotations
+    ]
   )
   return <PdfAnnotationsContext.Provider value={value}>{children}</PdfAnnotationsContext.Provider>
 }
@@ -474,14 +570,18 @@ const PdfAnnotationsProvider = ({
   projectId,
   sessionId,
   literatureVersionId,
+  sourceFileId,
+  versionId,
   ...props
 }: React.ComponentProps<typeof PdfAnnotationsStateProvider>): React.JSX.Element => (
   <PdfAnnotationsStateProvider
     key={
       literatureVersionId
         ? `literature:${literatureVersionId}`
-        : `${projectId ?? ''}\u0000${sessionId ?? ''}`
+        : `${projectId ?? ''}\u0000${sessionId ?? ''}\u0000${sourceFileId ?? ''}\u0000${versionId ?? ''}`
     }
+    sourceFileId={sourceFileId}
+    versionId={versionId}
     literatureVersionId={literatureVersionId}
     projectId={projectId}
     sessionId={sessionId}

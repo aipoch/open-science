@@ -332,31 +332,27 @@ describe('application database migrations', () => {
     const before = await client.literatureItem.findMany()
     await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0042_pdf_annotations', '0043_pdf_annotation_tags', '0044_literature_pdf_annotations', '0045_pdf_annotation_origin', '0046_pdf_annotation_import_receipt')`
+      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations')`
     )
     const ledger = await client.$queryRawUnsafe(
       'SELECT * FROM "_open_science_migrations" ORDER BY id'
     )
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0038_literature_search_text',
-      to: '0046_pdf_annotation_import_receipt',
+      to: '0043_pdf_annotations',
       applied: [
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
     expect(await client.literatureItem.findMany()).toEqual(before)
     expect(
       await client.$queryRawUnsafe(
-        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0042_pdf_annotations', '0043_pdf_annotation_tags', '0044_literature_pdf_annotations', '0045_pdf_annotation_origin', '0046_pdf_annotation_import_receipt') ORDER BY id`
+        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations') ORDER BY id`
       )
     ).toEqual(ledger)
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -706,14 +702,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: null,
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -726,8 +718,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0046_pdf_annotation_import_receipt',
-      to: '0046_pdf_annotation_import_receipt'
+      from: '0043_pdf_annotations',
+      to: '0043_pdf_annotations'
     })
   })
 
@@ -762,14 +754,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -880,11 +868,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(
@@ -981,11 +965,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1030,7 +1010,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -1096,14 +1076,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -1197,14 +1173,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$queryRaw<
@@ -1327,7 +1299,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0046_pdf_annotation_import_receipt'
+      migrationId: '0043_pdf_annotations'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1344,7 +1316,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0046_pdf_annotation_import_receipt',
+      from: '0043_pdf_annotations',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1394,11 +1366,7 @@ describe('application database migrations', () => {
       { id: '0040_literature_collection_revision' },
       { id: '0041_bookmarks' },
       { id: '0042_classification_usage' },
-      { id: '0042_pdf_annotations' },
-      { id: '0043_pdf_annotation_tags' },
-      { id: '0044_literature_pdf_annotations' },
-      { id: '0045_pdf_annotation_origin' },
-      { id: '0046_pdf_annotation_import_receipt' },
+      { id: '0043_pdf_annotations' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1494,14 +1462,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     expect(backupEvents).toEqual([
       {
@@ -1598,11 +1562,7 @@ describe('application database migrations', () => {
       { id: '0040_literature_collection_revision' },
       { id: '0041_bookmarks' },
       { id: '0042_classification_usage' },
-      { id: '0042_pdf_annotations' },
-      { id: '0043_pdf_annotation_tags' },
-      { id: '0044_literature_pdf_annotations' },
-      { id: '0045_pdf_annotation_origin' },
-      { id: '0046_pdf_annotation_import_receipt' }
+      { id: '0043_pdf_annotations' }
     ])
   })
 
@@ -1738,11 +1698,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt',
+        '0043_pdf_annotations',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1880,7 +1836,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -2011,11 +1967,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(
@@ -2155,11 +2107,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -2251,11 +2199,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(
@@ -2350,11 +2294,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2483,11 +2423,7 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ]
     })
     await expect(
@@ -3010,8 +2946,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0045_pdf_annotation_origin.backup',
-      'open-science.db.before-0046_pdf_annotation_import_receipt.backup',
+      'open-science.db.before-0042_classification_usage.backup',
+      'open-science.db.before-0043_pdf_annotations.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3323,14 +3259,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3389,7 +3321,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3464,14 +3396,10 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

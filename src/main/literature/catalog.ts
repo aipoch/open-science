@@ -1,4 +1,4 @@
-import { deletePdfAnnotations } from '../pdf-annotations/repository'
+import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   LITERATURE_OVERSIZED_REFERENCE,
@@ -32,6 +32,7 @@ import {
   type LiteratureChangedEvent,
   type LiteratureDuplicatePolicy,
   type LiteratureCollectionView,
+  type LiteratureAnnotationSearchView,
   type LiteratureCatalogReceipt,
   type LiteratureCatalogSearchPage,
   type LiteratureCatalogSearchRequest,
@@ -63,6 +64,7 @@ type LiteratureCatalogClient = Pick<
   | 'projectLiterature'
   | 'projectDeletionIntent'
   | 'tagAssignment'
+  | 'pdfAnnotation'
 >
 
 const log = createLogger('literature-catalog')
@@ -1022,7 +1024,12 @@ class LiteratureCatalog {
     request: LiteratureCatalogSearchRequest,
     client: Pick<
       LiteratureCatalogClient,
-      'literatureItem' | 'literatureCollection' | '$queryRaw' | 'projectDeletionIntent'
+      | 'literatureItem'
+      | 'literatureCollection'
+      | '$queryRaw'
+      | 'projectDeletionIntent'
+      | 'pdfAnnotation'
+      | 'tagAssignment'
     >,
     boundResponse = true
   ): Promise<LiteratureCatalogSearchPage> {
@@ -1106,7 +1113,7 @@ class LiteratureCatalog {
     if (request.scope === 'global-search') {
       // Rank lightweight identities across both kinds, then hydrate only the requested page.
       const [papers, collections] = await Promise.all([
-        request.entryKind === 'collection'
+        request.entryKind === 'collection' || request.entryKind === 'note'
           ? []
           : client.$queryRaw<{ id: string; title: string; updatedAt: Date }[]>(
               Prisma.sql`SELECT i.id, i.title, i."updatedAt" FROM "LiteratureItem" i WHERE ${where}`
@@ -1148,28 +1155,84 @@ class LiteratureCatalog {
               }
             })
       ])
+      // Search stored annotation text only; PDF bytes/rendering are never needed here.
+      const includeNotes = !request.entryKind || request.entryKind === 'note'
+      const quote = Prisma.sql`COALESCE(json_extract(a."selectorJson", '$.selector.exact'), '')`
+      const needle = query.toLowerCase()
+      const notePredicates = [
+        Prisma.sql`(a.note <> '' OR ${quote} <> '')`,
+        Prisma.sql`(
+        (a."sourceKind" = 'literature-attachment-version' AND EXISTS (
+          SELECT 1 FROM "LiteratureAttachmentVersion" v
+          JOIN "LiteratureAttachment" attachment ON attachment.id = v."attachmentId"
+          JOIN "LiteratureItem" item ON item.id = attachment."itemId"
+          WHERE v.id = a."versionId" AND attachment.id = a."sourceFileId"
+            AND item."deletedAt" IS NULL AND item."mergedIntoItemId" IS NULL
+            ${
+              projectId
+                ? Prisma.sql`AND EXISTS (SELECT 1 FROM "ProjectLiterature" link
+              JOIN "Project" project ON project.id = link."projectId"
+              WHERE link."itemId" = item.id AND project.id = ${projectId}
+                AND project."deletedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM "ProjectDeletionIntent" d WHERE d."projectId" = project.id))`
+                : Prisma.empty
+            }
+        )) OR (a."sourceKind" <> 'literature-attachment-version' AND EXISTS (
+          SELECT 1 FROM "Project" project
+          WHERE project.id = a."projectId"
+            AND project."deletedAt" IS NULL
+            AND NOT EXISTS (SELECT 1 FROM "ProjectDeletionIntent" d WHERE d."projectId" = project.id)
+            ${projectId ? Prisma.sql`AND project.id = ${projectId}` : Prisma.empty}
+        )))`
+      ]
+      if (needle)
+        notePredicates.push(
+          Prisma.sql`(instr(lower(a.note), ${needle}) > 0 OR instr(lower(${quote}), ${needle}) > 0)`
+        )
+      if (request.updatedAfter !== undefined)
+        notePredicates.push(Prisma.sql`a."updatedAt" >= ${new Date(request.updatedAfter)}`)
+      const noteWhere = Prisma.join(notePredicates, ' AND ')
+      const score =
+        !needle || request.searchSort === 'recent'
+          ? Prisma.sql`0`
+          : Prisma.sql`CASE
+        WHEN lower(a.note) = ${needle} OR lower(${quote}) = ${needle} THEN 3
+        WHEN instr(lower(a.note), ${needle}) = 1 OR instr(lower(${quote}), ${needle}) = 1 THEN 2 ELSE 1 END`
+      const [noteCount, notes] = includeNotes
+        ? await Promise.all([
+            client.$queryRaw<{ total: bigint }[]>(
+              Prisma.sql`SELECT COUNT(*) AS total FROM "pdf_annotations" a WHERE ${noteWhere}`
+            ),
+            request.countOnly
+              ? []
+              : client.$queryRaw<{ id: string; updatedAt: Date; score: number }[]>(Prisma.sql`
+          SELECT a.id, a."updatedAt", ${score} AS score FROM "pdf_annotations" a WHERE ${noteWhere}
+          ORDER BY score DESC, a."updatedAt" DESC, a.id ASC LIMIT ${offset + limit}`)
+          ])
+        : [[], []]
+      const totalCount = papers.length + collections.length + Number(noteCount[0]?.total ?? 0)
       const ranked = [
         ...papers.map((item) => ({
           id: item.id,
           title: item.title,
           updatedAt: item.updatedAt.getTime(),
-          kind: 'paper' as const
+          kind: 'paper' as const,
+          score: request.searchSort === 'recent' ? 0 : searchTitleRank(item.title, query)
         })),
         ...collections.map((item) => ({
           id: item.id,
           title: item.name,
           updatedAt: item.updatedAt.getTime(),
-          kind: 'collection' as const
+          kind: 'collection' as const,
+          score: request.searchSort === 'recent' ? 0 : searchTitleRank(item.name, query)
+        })),
+        ...notes.map((note) => ({
+          ...note,
+          updatedAt: note.updatedAt.getTime(),
+          score: Number(note.score),
+          kind: 'note' as const
         }))
-      ].sort(
-        (a, b) =>
-          (request.searchSort !== 'recent'
-            ? searchTitleRank(b.title, query) - searchTitleRank(a.title, query)
-            : 0) ||
-          b.updatedAt - a.updatedAt ||
-          a.id.localeCompare(b.id)
-      )
-      if (request.countOnly) return { entries: [], totalCount: ranked.length }
+      ].sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+      if (request.countOnly) return { entries: [], totalCount }
       const page = ranked.slice(offset, offset + limit)
       const selectedPapers = await client.literatureItem.findMany({
         where: { id: { in: page.filter((item) => item.kind === 'paper').map((item) => item.id) } },
@@ -1191,10 +1254,31 @@ class LiteratureCatalog {
           }
         ])
       )
-      const entries = page.flatMap((item) => {
-        const view = item.kind === 'paper' ? paperViews.get(item.id) : collectionViews.get(item.id)
-        return view ? [view] : []
-      })
+      const noteViews = new Map(
+        (
+          await readAnnotations(
+            client,
+            await client.pdfAnnotation.findMany({
+              where: {
+                id: { in: page.filter((item) => item.kind === 'note').map((item) => item.id) }
+              }
+            })
+          )
+        ).map((annotation) => [annotation.id, { id: annotation.id, annotation }])
+      )
+      const entries = page.flatMap(
+        (
+          item
+        ): (LiteratureItemView | LiteratureCollectionView | LiteratureAnnotationSearchView)[] => {
+          const view =
+            item.kind === 'paper'
+              ? paperViews.get(item.id)
+              : item.kind === 'note'
+                ? noteViews.get(item.id)
+                : collectionViews.get(item.id)
+          return view ? [view] : []
+        }
+      )
       const bounded = boundedLiteraturePage(
         entries,
         0,
@@ -1205,8 +1289,8 @@ class LiteratureCatalog {
       const nextOffset = offset + bounded.entries.length
       return {
         entries: bounded.entries,
-        totalCount: ranked.length,
-        nextOffset: nextOffset < ranked.length ? nextOffset : undefined
+        totalCount,
+        nextOffset: nextOffset < totalCount ? nextOffset : undefined
       }
     }
 

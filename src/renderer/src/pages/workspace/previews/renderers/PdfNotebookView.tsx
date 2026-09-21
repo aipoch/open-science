@@ -6,6 +6,8 @@ import { TagBadge } from '../../../settings/tag-visuals'
 import { tagPresentation } from '../../../settings/tag-presentation'
 import {
   ArrowUpRight,
+  PanelRightClose,
+  Maximize2,
   Download,
   ChevronDown,
   FileText,
@@ -23,7 +25,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -341,18 +343,42 @@ const PdfNotebookView = ({
   active,
   onOpenPdf,
   sourceLoading = false,
-  pageCount
+  pageCount,
+  sidebar = false,
+  currentPage = 1,
+  selectedId,
+  onCloseSidebar,
+  onExpandNotes
 }: {
   source?: PdfAnnotationSource
   active: boolean
   onOpenPdf?: () => void
   sourceLoading?: boolean
   pageCount?: number
+  sidebar?: boolean
+  currentPage?: number
+  selectedId?: string
+  onCloseSidebar?: () => void
+  onExpandNotes?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const annotationPort = usePdfAnnotations()
   const { loading, loadError, retryLoad, available, create, update, remove } = annotationPort
+  const [scope, setScope] = useState<'all' | 'page'>('all')
+  const [editingPage, setEditingPage] = useState(currentPage)
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [composingQuery, setComposingQuery] = useState(false)
+  const changeQuery = useCallback((value: string) => {
+    setQuery(value)
+    if (!value.trim()) setDebouncedQuery('')
+  }, [])
+  useEffect(() => {
+    if (composingQuery || !query.trim()) return
+    const timer = setTimeout(() => setDebouncedQuery(query), 250)
+    return () => clearTimeout(timer)
+  }, [query, composingQuery])
+  const [renderLimit, setRenderLimit] = useState(100)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const filtersId = useId()
   const listRef = useRef<HTMLOListElement>(null)
@@ -365,10 +391,12 @@ const PdfNotebookView = ({
   const [newNotePage, setNewNotePage] = useState('1')
   const [newNote, setNewNote] = useState('')
   const [newNoteTags, setNewNoteTags] = useState<string[]>([])
-  const [exportFormat, setExportFormat] = useState<'markdown' | 'csv' | 'json'>('markdown')
+  const [exportFormat, setExportFormat] = useState<'markdown' | 'csv'>('markdown')
   const [pendingId, setPendingId] = useState<string>()
   const [error, setError] = useState<string>()
 
+  const scopedPage = editingId || newNoteKind ? editingPage : currentPage
+  const effectiveSort = sidebar ? 'page' : sort
   const globalTags = useTagStore((state) => state.tags)
   const tagsById = useMemo(() => new Map(globalTags.map((tag) => [tag.id, tag])), [globalTags])
   const tagNames = useCallback(
@@ -380,19 +408,23 @@ const PdfNotebookView = ({
     [tagsById, t]
   )
   const all = active || editingId ? annotationPort.forSource(source) : EMPTY_PDF_ANNOTATIONS
-  const searchQuery = query.trim().toLocaleLowerCase()
+  const scoped =
+    sidebar && scope === 'page' && (active || editingId)
+      ? annotationPort.forPage(source, scopedPage)
+      : all
+  const searchQuery = debouncedQuery.trim().toLocaleLowerCase()
   const hasQuery = Boolean(searchQuery)
   const activeFilterCount = [
     hasQuery,
     filter !== 'all',
     kindFilter !== 'all',
     colorFilter !== 'all',
-    sort !== 'page'
+    effectiveSort !== 'page'
   ].filter(Boolean).length
   const searchText = useMemo(
     () =>
       new Map(
-        all.map((annotation) => [
+        scoped.map((annotation) => [
           annotation.id,
           hasQuery
             ? [
@@ -409,14 +441,14 @@ const PdfNotebookView = ({
             : ''
         ])
       ),
-    [all, hasQuery, tagNames]
+    [scoped, hasQuery, tagNames]
   )
   const ordered = useMemo(
     () =>
-      [...all].sort((left, right) => {
-        if (sort !== 'page')
+      [...scoped].sort((left, right) => {
+        if (effectiveSort !== 'page')
           return (
-            (sort === 'newest' ? -1 : 1) *
+            (effectiveSort === 'newest' ? -1 : 1) *
             (left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
           )
         const leftPage =
@@ -436,7 +468,7 @@ const PdfNotebookView = ({
           left.id.localeCompare(right.id)
         )
       }),
-    [all, sort]
+    [scoped, effectiveSort]
   )
   const filtered = useMemo(
     () =>
@@ -455,13 +487,13 @@ const PdfNotebookView = ({
   const editedAnnotation = editingId
     ? all.find((annotation) => annotation.id === editingId)
     : undefined
-  const visible = useMemo(
-    () =>
-      editedAnnotation && !filtered.includes(editedAnnotation)
-        ? [editedAnnotation, ...filtered]
-        : filtered,
-    [editedAnnotation, filtered]
-  )
+  // Bound initial React/DOM work without dropping any notes from search or export.
+  const visible = useMemo(() => {
+    const batch = filtered.slice(0, renderLimit)
+    return editedAnnotation && !batch.includes(editedAnnotation)
+      ? [editedAnnotation, ...batch]
+      : batch
+  }, [editedAnnotation, filtered, renderLimit])
 
   useEffect(() => {
     if (!active || !source) return
@@ -487,10 +519,12 @@ const PdfNotebookView = ({
       ) as HTMLElement | undefined
       if (!card) {
         if (all.some((annotation) => annotation.id === target.id)) {
-          setQuery('')
+          setScope('all')
+          changeQuery('')
           setFilter('all')
           setKindFilter('all')
           setColorFilter('all')
+          setRenderLimit(Math.max(100, ordered.findIndex((item) => item.id === target.id) + 1))
         }
         return
       }
@@ -498,7 +532,7 @@ const PdfNotebookView = ({
       card.focus({ preventScroll: true })
       return true
     })
-  }, [active, source, visible, all])
+  }, [active, source, visible, all, ordered, changeQuery])
 
   const reveal = async (bookmark: PdfAnnotation): Promise<void> => {
     setPendingId(bookmark.id)
@@ -585,23 +619,7 @@ const PdfNotebookView = ({
     let content: string
     let mimeType: string
     let extension: string
-    if (exportFormat === 'json') {
-      content = JSON.stringify(
-        {
-          format: 'open-science-pdf-annotations',
-          version: 1,
-          source,
-          annotations: filtered,
-          tags: globalTags.filter((tag) =>
-            filtered.some((annotation) => annotation.tagIds.includes(tag.id))
-          )
-        },
-        null,
-        2
-      )
-      mimeType = 'application/json;charset=utf-8'
-      extension = 'json'
-    } else if (exportFormat === 'csv') {
+    if (exportFormat === 'csv') {
       const escape = (value: string | number | undefined): string => {
         const raw = value === undefined ? '' : String(value)
         const text = /^[\s]*[=+@-]/u.test(raw) ? `'${raw}` : raw
@@ -740,47 +758,128 @@ const PdfNotebookView = ({
       }
     >
       <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-2.5">
+        {sidebar ? (
+          <TooltipProvider>
+            <div className="mb-2 flex min-w-0 items-center gap-1">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {t('Notes & Annotations')}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Open full notes view')}
+                    onClick={onExpandNotes}
+                  >
+                    <Maximize2 className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Open full notes view')}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Hide notes sidebar')}
+                    onClick={onCloseSidebar}
+                  >
+                    <PanelRightClose className="size-4" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('Hide notes sidebar')}</TooltipContent>
+              </Tooltip>
+            </div>
+          </TooltipProvider>
+        ) : null}
         <TooltipProvider>
           <div className="flex min-w-0 items-center gap-1.5">
-            <Select
-              value={exportFormat}
-              onValueChange={(value) => setExportFormat(value as typeof exportFormat)}
-            >
-              <SelectTrigger
-                aria-label={t('Export format')}
-                className="h-8 w-auto rounded-md border border-border bg-background px-2 text-xs"
+            {sidebar ? (
+              <div
+                className="mr-auto flex min-w-0 items-center gap-0.5 rounded-md bg-muted p-0.5"
+                role="group"
+                aria-label={t('Notes scope')}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="z-[120]">
-                <SelectItem value="markdown">{t('Markdown')}</SelectItem>
-                <SelectItem value="csv">{t('CSV')}</SelectItem>
-                <SelectItem value="json">{t('JSON')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button
                   type="button"
+                  variant="ghost"
                   size="sm"
-                  variant="outline"
-                  className="h-8 shrink-0 px-2 @min-[36rem]/pdf-notebook:px-2.5"
-                  aria-label={
-                    filtered.length < all.length ? t('Export filtered notes') : t('Export notes')
-                  }
-                  disabled={filtered.length === 0}
-                  onClick={exportNotes}
+                  className={cn(
+                    'h-7 min-w-0 shrink px-2 text-xs',
+                    scope === 'all'
+                      ? 'bg-bg-000 text-foreground shadow-sm hover:bg-bg-000'
+                      : 'text-muted-foreground'
+                  )}
+                  aria-pressed={scope === 'all'}
+                  onClick={() => setScope('all')}
                 >
-                  <Download className="size-3.5" aria-hidden="true" />
-                  <span className="hidden @min-[36rem]/pdf-notebook:inline">
-                    {filtered.length < all.length ? t('Export filtered notes') : t('Export notes')}
-                  </span>
+                  <span className="truncate">{t('All notes')}</span>
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent className="z-[120]">
-                {filtered.length < all.length ? t('Export filtered notes') : t('Export notes')}
-              </TooltipContent>
-            </Tooltip>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    'h-7 min-w-0 shrink px-2 text-xs',
+                    scope === 'page'
+                      ? 'bg-bg-000 text-foreground shadow-sm hover:bg-bg-000'
+                      : 'text-muted-foreground'
+                  )}
+                  aria-pressed={scope === 'page'}
+                  onClick={() => setScope('page')}
+                >
+                  <span className="truncate">{t('Current page')}</span>
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Select
+                  value={exportFormat}
+                  onValueChange={(value) => setExportFormat(value as typeof exportFormat)}
+                >
+                  <SelectTrigger
+                    aria-label={t('Export format')}
+                    className="h-8 w-auto rounded-md border border-border bg-background px-2 text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="z-[120]">
+                    <SelectItem value="markdown">{t('Markdown')}</SelectItem>
+                    <SelectItem value="csv">{t('CSV')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 shrink-0 px-2 @min-[36rem]/pdf-notebook:px-2.5"
+                      aria-label={
+                        filtered.length < all.length
+                          ? t('Export filtered notes')
+                          : t('Export notes')
+                      }
+                      disabled={filtered.length === 0}
+                      onClick={exportNotes}
+                    >
+                      <Download className="size-3.5" aria-hidden="true" />
+                      <span className="hidden @min-[36rem]/pdf-notebook:inline">
+                        {filtered.length < all.length
+                          ? t('Export filtered notes')
+                          : t('Export notes')}
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="z-[120]">
+                    {filtered.length < all.length ? t('Export filtered notes') : t('Export notes')}
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
             <DropdownMenu modal={false}>
               <Tooltip>
                 <TooltipTrigger
@@ -815,6 +914,7 @@ const PdfNotebookView = ({
               >
                 <DropdownMenuItem
                   onSelect={() => {
+                    setEditingPage(currentPage)
                     setNewNoteKind('document-note')
                     setError(undefined)
                   }}
@@ -824,6 +924,8 @@ const PdfNotebookView = ({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() => {
+                    setEditingPage(currentPage)
+                    setNewNotePage(String(currentPage))
                     setNewNoteKind('page-note')
                     setError(undefined)
                   }}
@@ -857,35 +959,44 @@ const PdfNotebookView = ({
               </TooltipTrigger>
               <TooltipContent className="z-[120]">{t('Search & filter')}</TooltipContent>
             </Tooltip>
-            <div className="ml-auto flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1">
-              <PdfAnnotationHistoryControls
-                source={source}
-                onError={() =>
-                  setError(
-                    t('Annotation history could not be applied. Reload annotations and try again.')
-                  )
-                }
-              />
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label={t('Refresh')}
-                disabled={loading || pendingId !== undefined || editingId !== undefined}
-                onClick={() => {
-                  retryLoad()
-                  setError(undefined)
-                }}
-              >
-                <RefreshCw className="size-3.5" aria-hidden="true" />
-              </Button>
-            </div>
+            {!sidebar ? (
+              <div className="ml-auto flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1">
+                <PdfAnnotationHistoryControls
+                  source={source}
+                  onError={() =>
+                    setError(
+                      t(
+                        'Annotation history could not be applied. Reload annotations and try again.'
+                      )
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={t('Refresh')}
+                  disabled={loading || pendingId !== undefined || editingId !== undefined}
+                  onClick={() => {
+                    retryLoad()
+                    setError(undefined)
+                  }}
+                >
+                  <RefreshCw className="size-3.5" aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
           </div>
         </TooltipProvider>
+        {sidebar && scope === 'page' ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t('Page {{page}}', { page: scopedPage })}
+          </p>
+        ) : null}
       </header>
       {newNoteKind ? (
-        <div className="flex shrink-0 flex-wrap items-end gap-2 border-b border-border/70 bg-bg-000/70 px-4 py-3">
-          <div className="min-w-52 flex-1">
+        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-b border-border/70 bg-bg-000/70 px-4 py-3">
+          <div className="col-span-2 min-w-0">
             <label className="mb-1 block text-xs font-medium" htmlFor="pdf-notebook-note">
               {newNoteKind === 'page-note' ? t('Page note') : t('Document note')}
             </label>
@@ -896,6 +1007,14 @@ const PdfNotebookView = ({
               maxLength={20_000}
               placeholder={t('Add a private note')}
               onChange={(event) => setNewNote(event.target.value)}
+            />
+          </div>
+          <div className={cn('min-w-0 space-y-1', newNoteKind === 'document-note' && 'col-span-2')}>
+            <span className="text-xs font-medium">{t('Tags')}</span>
+            <TagSelection
+              value={newNoteTags}
+              onChange={setNewNoteTags}
+              disabled={pendingId !== undefined || !available}
             />
           </div>
           {newNoteKind === 'page-note' ? (
@@ -911,15 +1030,7 @@ const PdfNotebookView = ({
               />
             </label>
           ) : null}
-          <div className="min-w-40 space-y-1">
-            <span className="text-xs font-medium">{t('Tags')}</span>
-            <TagSelection
-              value={newNoteTags}
-              onChange={setNewNoteTags}
-              disabled={pendingId !== undefined || !available}
-            />
-          </div>
-          <div className="flex gap-1">
+          <div className="col-span-2 flex justify-end gap-1">
             <Button
               type="button"
               size="sm"
@@ -954,7 +1065,7 @@ const PdfNotebookView = ({
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  setQuery('')
+                  changeQuery('')
                   setFilter('all')
                   setKindFilter('all')
                   setColorFilter('all')
@@ -970,23 +1081,30 @@ const PdfNotebookView = ({
             aria-label={t('Search annotations')}
             placeholder={t('Search quotes, notes, and tags…')}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => changeQuery(event.target.value)}
+            onCompositionStart={() => setComposingQuery(true)}
+            onCompositionEnd={(event) => {
+              setComposingQuery(false)
+              changeQuery(event.currentTarget.value)
+            }}
             className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
           />
           <div className="flex flex-wrap gap-1.5">
-            <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
-              <SelectTrigger
-                aria-label={t('Sort annotations')}
-                className="h-7 min-w-24 flex-1 rounded-md border border-border bg-background px-2 text-xs"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="z-[120]">
-                <SelectItem value="page">{t('Page order')}</SelectItem>
-                <SelectItem value="newest">{t('Newest first')}</SelectItem>
-                <SelectItem value="oldest">{t('Oldest first')}</SelectItem>
-              </SelectContent>
-            </Select>
+            {!sidebar ? (
+              <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
+                <SelectTrigger
+                  aria-label={t('Sort annotations')}
+                  className="h-7 min-w-24 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="z-[120]">
+                  <SelectItem value="page">{t('Page order')}</SelectItem>
+                  <SelectItem value="newest">{t('Newest first')}</SelectItem>
+                  <SelectItem value="oldest">{t('Oldest first')}</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : null}
             <Select value={filter} onValueChange={(value) => setFilter(value as Filter)}>
               <SelectTrigger
                 aria-label={t('Annotation filter')}
@@ -1056,16 +1174,22 @@ const PdfNotebookView = ({
           {error}
         </p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className={cn('min-h-0 flex-1 overflow-y-auto', sidebar ? 'px-3 py-2' : 'p-4')}>
         {loading && all.length === 0 ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+          <div className="flex min-h-full items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             {t('Loading annotations…')}
           </div>
         ) : visible.length === 0 ? (
-          <div className="mx-auto flex max-w-md flex-col items-center gap-2 py-16 text-center text-sm text-muted-foreground">
+          <div className="mx-auto flex min-h-full max-w-md flex-col items-center justify-center gap-2 py-6 text-center text-sm text-muted-foreground">
             <Highlighter className="size-8 opacity-40" aria-hidden="true" />
-            <p>{all.length ? t('No matching annotations.') : t('No annotations yet.')}</p>
+            <p>
+              {sidebar && scope === 'page'
+                ? t('No annotations on this page.')
+                : all.length
+                  ? t('No matching annotations.')
+                  : t('No annotations yet.')}
+            </p>
             <p className="text-xs">
               {all.length
                 ? t('Change the search or filters to see more annotations.')
@@ -1078,8 +1202,8 @@ const PdfNotebookView = ({
             ) : null}
           </div>
         ) : (
-          <ol ref={listRef} className="mx-auto grid max-w-3xl gap-2">
-            {visible.map((bookmark) => {
+          <ol ref={listRef} className={cn('mx-auto grid max-w-3xl', sidebar ? 'gap-0' : 'gap-2')}>
+            {visible.map((bookmark, index) => {
               const color = bookmark.color ?? 'yellow'
               const palette = annotationColorClasses(color)
               const itemKind = bookmark.kind
@@ -1109,148 +1233,180 @@ const PdfNotebookView = ({
                 ) : (
                   <Highlighter className="size-3.5" aria-hidden="true" />
                 )
+              const previous = visible[index - 1]?.target.selector
+              const previousPage =
+                previous && previous.kind !== 'document-note' ? previous.pageNumber : undefined
               return (
-                <li
-                  key={bookmark.id}
-                  data-annotation-id={bookmark.id}
-                  tabIndex={-1}
-                  className={cn(
-                    '@container/annotation-card group rounded-xl border border-border/80 bg-bg-000 p-3 shadow-sm transition-shadow hover:shadow-md',
-                    editingId !== bookmark.id &&
-                      '[content-visibility:auto] [contain-intrinsic-size:auto_12rem]'
-                  )}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-start gap-2">
-                      <span
-                        className={cn('mt-1 size-2.5 shrink-0 rounded-full', palette.dot)}
-                        aria-label={t(color[0].toUpperCase() + color.slice(1))}
-                      />
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="order-first inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-bg-20 px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                          {page === undefined ? t('Document') : t('Page {{page}}', { page })}
-                        </span>
+                <Fragment key={bookmark.id}>
+                  {sidebar && scope === 'all' && (index === 0 || previousPage !== page) ? (
+                    <li
+                      className="pt-3 pb-1 first:pt-1"
+                      data-annotation-page-group={page ?? 'document'}
+                    >
+                      <h3 className="text-xs font-medium text-muted-foreground">
+                        {page === undefined ? t('Document') : t('Page {{page}}', { page })}
+                      </h3>
+                    </li>
+                  ) : null}
+                  <li
+                    data-annotation-id={bookmark.id}
+                    tabIndex={-1}
+                    className={cn(
+                      '@container/annotation-card group bg-bg-000',
+                      sidebar
+                        ? 'border-b border-border/70 py-3'
+                        : 'rounded-xl border border-border/80 p-3 shadow-sm transition-shadow hover:shadow-md',
+                      sidebar &&
+                        selectedId === bookmark.id &&
+                        'bg-primary/5 ring-1 ring-inset ring-primary/30',
+                      editingId !== bookmark.id &&
+                        '[content-visibility:auto] [contain-intrinsic-size:auto_12rem]'
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-start gap-2">
                         <span
-                          className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-text-000"
-                          title={itemLabel}
-                        >
-                          {kindIcon}
-                          <span className="truncate">{itemLabel}</span>
-                        </span>
-                        {showExternalSubtype ? (
-                          <span className="hidden text-[10px] text-muted-foreground @min-[40rem]/annotation-card:inline">
-                            {externalSubtype}
-                          </span>
-                        ) : null}
-                        <span
-                          className={cn(
-                            'hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium @min-[40rem]/annotation-card:inline',
-                            bookmark.origin === 'imported'
-                              ? 'bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300'
-                              : 'bg-muted text-muted-foreground'
-                          )}
-                          title={bookmark.externalSubtype ?? undefined}
-                        >
-                          {bookmark.origin === 'imported' ? t('Imported') : t('Created')}
-                        </span>
-                        <PdfAnnotationTagControls
-                          annotation={bookmark}
-                          tags={globalTags}
-                          disabled={!available || pendingId === bookmark.id}
-                          onChange={(tagIds) => void updateTags(bookmark.id, tagIds)}
+                          className={cn('mt-1 size-2.5 shrink-0 rounded-full', palette.dot)}
+                          aria-label={t(color[0].toUpperCase() + color.slice(1))}
                         />
-                      </div>
-                      <div className="flex shrink-0 items-center gap-0.5">
-                        {canReveal ? (
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <span className="order-first inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-border/70 bg-bg-20 px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                            {page === undefined ? t('Document') : t('Page {{page}}', { page })}
+                          </span>
+                          <span
+                            className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm font-semibold text-text-000"
+                            title={itemLabel}
+                          >
+                            {kindIcon}
+                            <span className="truncate">{itemLabel}</span>
+                          </span>
+                          {showExternalSubtype ? (
+                            <span className="hidden text-[10px] text-muted-foreground @min-[40rem]/annotation-card:inline">
+                              {externalSubtype}
+                            </span>
+                          ) : null}
+                          <span
+                            className={cn(
+                              'hidden shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium @min-[40rem]/annotation-card:inline',
+                              bookmark.origin === 'imported'
+                                ? 'bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300'
+                                : 'bg-muted text-muted-foreground'
+                            )}
+                            title={bookmark.externalSubtype ?? undefined}
+                          >
+                            {bookmark.origin === 'imported' ? t('Imported') : t('Created')}
+                          </span>
+                          <PdfAnnotationTagControls
+                            annotation={bookmark}
+                            tags={globalTags}
+                            disabled={!available || pendingId === bookmark.id}
+                            onChange={(tagIds) => void updateTags(bookmark.id, tagIds)}
+                          />
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          {canReveal ? (
+                            <button
+                              type="button"
+                              aria-label={t('Show annotation source')}
+                              disabled={pendingId === bookmark.id}
+                              onClick={() => void reveal(bookmark)}
+                              className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                            </button>
+                          ) : null}
                           <button
                             type="button"
-                            aria-label={t('Show annotation source')}
-                            disabled={pendingId === bookmark.id}
-                            onClick={() => void reveal(bookmark)}
+                            aria-label={t('Edit annotation note')}
+                            disabled={
+                              !available || pendingId === bookmark.id || editingId !== undefined
+                            }
+                            onClick={() => {
+                              setEditingPage(currentPage)
+                              setEditingId(bookmark.id)
+                              setError(undefined)
+                            }}
                             className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
-                            <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                            <Pencil className="size-3.5" aria-hidden="true" />
                           </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          aria-label={t('Edit annotation note')}
-                          disabled={
-                            !available || pendingId === bookmark.id || editingId !== undefined
-                          }
-                          onClick={() => {
-                            setEditingId(bookmark.id)
-                            setError(undefined)
-                          }}
-                          className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <Pencil className="size-3.5" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={t('Delete annotation')}
-                          disabled={!available || pendingId === bookmark.id}
-                          onClick={() => void deleteAnnotation(bookmark.id)}
-                          className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          <Trash2 className="size-3.5" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="mt-2">
-                      <div className="w-full text-left">
-                        {selector.kind === 'region' ? (
-                          <>
-                            <PdfAreaPreview
-                              rect={selector.rect}
-                              color={color}
-                              page={selector.pageNumber}
-                            />
-                            <span className="sr-only">{quote}</span>
-                          </>
-                        ) : selector.kind === 'text' ? (
-                          <blockquote
-                            className={cn(
-                              'relative rounded-r-md border-y border-r border-border/70 px-3 py-2.5 pl-8 text-sm leading-5 text-foreground/90',
-                              'border-l-2',
-                              palette.stroke,
-                              palette.wash
-                            )}
-                            title={quote}
+                          <button
+                            type="button"
+                            aria-label={t('Delete annotation')}
+                            disabled={!available || pendingId === bookmark.id}
+                            onClick={() => void deleteAnnotation(bookmark.id)}
+                            className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
-                            <Quote
-                              className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground/70"
-                              aria-hidden="true"
-                            />
-                            <span className="line-clamp-3 break-words">{quote}</span>
-                          </blockquote>
-                        ) : null}
-                        {bookmark.note ? (
-                          <div className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-bg-20 px-3 py-2.5 text-sm text-text-200">
-                            <MessageSquareText
-                              className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-                              aria-hidden="true"
-                            />
-                            <span className="line-clamp-4 whitespace-pre-wrap break-words">
-                              {bookmark.note}
-                            </span>
-                          </div>
-                        ) : null}
+                            <Trash2 className="size-3.5" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-2">
+                        <div className="w-full text-left">
+                          {selector.kind === 'region' ? (
+                            <>
+                              <PdfAreaPreview
+                                rect={selector.rect}
+                                color={color}
+                                page={selector.pageNumber}
+                              />
+                              <span className="sr-only">{quote}</span>
+                            </>
+                          ) : selector.kind === 'text' ? (
+                            <blockquote
+                              className={cn(
+                                'relative rounded-r-md border-y border-r border-border/70 px-3 py-2.5 pl-8 text-sm leading-5 text-foreground/90',
+                                'border-l-2',
+                                palette.stroke,
+                                palette.wash
+                              )}
+                              title={quote}
+                            >
+                              <Quote
+                                className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground/70"
+                                aria-hidden="true"
+                              />
+                              <span className="line-clamp-3 break-words">{quote}</span>
+                            </blockquote>
+                          ) : null}
+                          {bookmark.note ? (
+                            <div className="mt-3 flex items-start gap-2 rounded-md border border-border/60 bg-bg-20 px-3 py-2.5 text-sm text-text-200">
+                              <MessageSquareText
+                                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                              <span className="line-clamp-4 whitespace-pre-wrap break-words">
+                                {bookmark.note}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  {editingId === bookmark.id ? (
-                    <PdfAnnotationNoteEditor
-                      key={bookmark.id}
-                      annotation={bookmark}
-                      pending={pendingId === bookmark.id}
-                      onCancel={() => setEditingId(undefined)}
-                      onSave={(input) => void saveNote(bookmark.id, input)}
-                    />
-                  ) : null}
-                </li>
+                    {editingId === bookmark.id ? (
+                      <PdfAnnotationNoteEditor
+                        key={bookmark.id}
+                        annotation={bookmark}
+                        pending={pendingId === bookmark.id}
+                        onCancel={() => setEditingId(undefined)}
+                        onSave={(input) => void saveNote(bookmark.id, input)}
+                      />
+                    ) : null}
+                  </li>
+                </Fragment>
               )
             })}
+            {filtered.length > renderLimit ? (
+              <li className="flex justify-center py-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRenderLimit((limit) => limit + 100)}
+                >
+                  {t('Load more')}
+                </Button>
+              </li>
+            ) : null}
           </ol>
         )}
       </div>

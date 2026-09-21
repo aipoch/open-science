@@ -69,16 +69,25 @@ const AnnotationTrigger = ({
   actionMenuLabel?: string
 }): React.ReactPortal => {
   const triggerRef = useRef<HTMLElement | null>(null)
+  const triggerSizeRef = useRef({
+    width: FALLBACK_TRIGGER_WIDTH,
+    height: FALLBACK_TRIGGER_HEIGHT
+  })
   const capturedTextRef = useRef(range.toString())
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false, visible: true })
 
   const updatePosition = useCallback((): void => {
     const trigger = triggerRef.current
+    // Keep the measured toolbar geometry when the editor replaces it.
+    // Falling back after it unmounts would move the anchor near viewport edges.
+    if (trigger?.offsetWidth && trigger.offsetHeight) {
+      triggerSizeRef.current = { width: trigger.offsetWidth, height: trigger.offsetHeight }
+    }
     const next = anchorRangeTrigger(range, backward, {
       width: window.innerWidth,
       height: window.innerHeight,
-      triggerWidth: trigger?.offsetWidth || FALLBACK_TRIGGER_WIDTH,
-      triggerHeight: trigger?.offsetHeight || FALLBACK_TRIGGER_HEIGHT
+      triggerWidth: triggerSizeRef.current.width,
+      triggerHeight: triggerSizeRef.current.height
     })
     const visible =
       range.toString() === capturedTextRef.current &&
@@ -113,7 +122,7 @@ const AnnotationTrigger = ({
     <>
       <PopoverAnchor asChild>
         <span
-          className="pointer-events-none fixed z-[100] h-7 w-px"
+          className={cn('pointer-events-none fixed z-[100] w-px', hidden ? 'h-0' : 'h-7')}
           style={{ left: position.left, top: position.top }}
           aria-hidden="true"
         />
@@ -137,7 +146,7 @@ const AnnotationTrigger = ({
               }
             }}
             data-positioned={position.ready}
-            className="annotation-selection-toolbar fixed z-[100] flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-menu"
+            className="annotation-selection-toolbar pointer-events-auto fixed z-[100] flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-menu"
             style={{
               left: position.left,
               top: position.top,
@@ -208,7 +217,7 @@ const AnnotationTrigger = ({
           }}
           type="button"
           data-annotation-trigger="true"
-          className="fixed z-[100] inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold leading-4 text-primary-foreground shadow-md focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="pointer-events-auto fixed z-[100] inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold leading-4 text-primary-foreground shadow-md focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           style={{
             left: position.left,
             top: position.top,

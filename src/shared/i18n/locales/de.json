@@ -6155,6 +6155,7 @@
     "Select annotation": "Anmerkung auswählen",
     "Figures & Tables": "Abbildungen und Tabellen",
     "Notes & Annotations": "Notizen & Anmerkungen",
+    "Quoted text": "Zitierter Text",
     "All marks": "Alle Markierungen",
     "Commented": "Kommentiert",
     "Uncommented": "Unkommentiert",
@@ -6239,6 +6240,14 @@
     "Unsupported native annotations: {{count}}_one": "Nicht unterstützte native Anmerkung: {{count}}",
     "Unsupported native annotations: {{count}}_other": "Nicht unterstützte native Anmerkung: {{count}}",
     "Native annotation import failed.": "Native Anmerkungen konnten nicht importiert werden.",
-    "Native annotation import limit reached. Some annotations were not imported.": "Das Importlimit für native Anmerkungen wurde erreicht. Einige Anmerkungen wurden nicht importiert."
+    "Native annotation import limit reached. Some annotations were not imported.": "Das Importlimit für native Anmerkungen wurde erreicht. Einige Anmerkungen wurden nicht importiert.",
+    "Show notes sidebar": "Notizseitenleiste anzeigen",
+    "Hide notes sidebar": "Notizseitenleiste ausblenden",
+    "Resize notes sidebar": "Breite der Notizseitenleiste ändern",
+    "Open full notes view": "Vollständige Notizansicht öffnen",
+    "Notes scope": "Notizbereich",
+    "All notes": "Alle Notizen",
+    "Current page": "Aktuelle Seite",
+    "No annotations on this page.": "Auf dieser Seite sind noch keine Anmerkungen vorhanden."
   }
 }

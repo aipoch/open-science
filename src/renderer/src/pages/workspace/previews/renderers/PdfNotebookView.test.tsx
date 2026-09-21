@@ -2,7 +2,7 @@
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import * as annotationContext from '../../pdf-annotations/pdf-annotations-context'
 import * as annotationReveal from '../../annotations/annotation-reveal'
-import { fireEvent, getByRole } from '@testing-library/react'
+import { fireEvent, getByRole, waitFor } from '@testing-library/react'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -108,6 +108,7 @@ describe('PdfNotebookView', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    vi.useRealTimers()
     vi.restoreAllMocks()
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
@@ -122,6 +123,92 @@ describe('PdfNotebookView', () => {
     expect(item).toBeDefined()
     await act(async () => fireEvent.click(item))
   }
+
+  it('bounds mounted cards while searching all notes and allowing another batch', async () => {
+    const items = Array.from({ length: 205 }, (_, index) => ({
+      ...bookmark(`note-${index}`, `Evidence ${index}`, 'highlight'),
+      createdAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-21T00:00:00.000Z'
+    }))
+    vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({ items, total: items.length })
+    await act(async () =>
+      root.render(
+        <PdfAnnotationsProvider projectId="project-1" sessionId="session-1">
+          <PdfNotebookView source={source} active />
+        </PdfAnnotationsProvider>
+      )
+    )
+    expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(100)
+    await act(async () => fireEvent.click(getByRole(container, 'button', { name: 'Load more' })))
+    expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(200)
+    await act(async () =>
+      fireEvent.click(getByRole(container, 'button', { name: 'Search & filter' }))
+    )
+    await act(async () =>
+      fireEvent.change(getByRole(container, 'searchbox', { name: 'Search annotations' }), {
+        target: { value: 'Evidence 204' }
+      })
+    )
+    await waitFor(() => expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(1))
+    expect(
+      container.querySelector('[data-annotation-id]')?.getAttribute('data-annotation-id')
+    ).toBe('note-204')
+  })
+
+  it('groups sidebar notes by page, follows the current page, and preserves editing across layouts', async () => {
+    const renderSidebar = async (page: number, sidebar = true, active = true): Promise<void> => {
+      await act(async () => {
+        root.render(
+          createElement(
+            PdfAnnotationsProvider,
+            { projectId: 'project-1', sessionId: 'session-1' },
+            createElement(PdfNotebookView, { source, active, sidebar, currentPage: page })
+          )
+        )
+      })
+    }
+    await renderSidebar(1)
+    await vi.waitFor(() =>
+      expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(2)
+    )
+    expect(
+      [...container.querySelectorAll('[data-annotation-page-group]')].map((node) =>
+        node.getAttribute('data-annotation-page-group')
+      )
+    ).toEqual(['1', '2'])
+    await act(async () => fireEvent.click(getByRole(container, 'button', { name: 'Current page' })))
+    expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(1)
+    expect(
+      container.querySelector('[data-annotation-id]')?.getAttribute('data-annotation-id')
+    ).toBe('bookmark-1')
+    await act(async () =>
+      fireEvent.click(getByRole(container, 'button', { name: 'Edit annotation note' }))
+    )
+    const field = container.querySelector<HTMLTextAreaElement>('[aria-label="Annotation note"]')!
+    await act(async () => fireEvent.change(field, { target: { value: 'Keep sidebar draft' } }))
+    await renderSidebar(2)
+    expect(
+      container.querySelector('[data-annotation-id]')?.getAttribute('data-annotation-id')
+    ).toBe('bookmark-1')
+    for (const [sidebar, active] of [
+      [false, true],
+      [false, false],
+      [true, true]
+    ]) {
+      await renderSidebar(2, sidebar, active)
+      expect(container.querySelector('textarea')).toBe(field)
+      expect(field.value).toBe('Keep sidebar draft')
+    }
+    await act(async () => fireEvent.click(getByRole(container, 'button', { name: 'Cancel' })))
+    expect(
+      container.querySelector('[data-annotation-id]')?.getAttribute('data-annotation-id')
+    ).toBe('bookmark-2')
+    await renderSidebar(3)
+    expect(container.textContent).toContain('No annotations on this page.')
+    await act(async () => fireEvent.click(getByRole(container, 'button', { name: 'All notes' })))
+    expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(2)
+    expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(1)
+  })
 
   it('lists PDF marks and filters commented annotations', async () => {
     await act(async () => {
@@ -180,7 +267,7 @@ describe('PdfNotebookView', () => {
         target: { value: 'IMPORTANT' }
       })
     )
-    expect(container.querySelectorAll('li')).toHaveLength(1)
+    await waitFor(() => expect(container.querySelectorAll('li')).toHaveLength(1))
     await toggleFilters()
     expect(container.querySelector('[aria-label="Search annotations"]')).toBeNull()
     expect(container.querySelectorAll('li')).toHaveLength(1)
@@ -215,7 +302,7 @@ describe('PdfNotebookView', () => {
             target: { value: 'no matching note' }
           })
         )
-        expect(container.querySelector('li')).toBeNull()
+        await waitFor(() => expect(container.querySelector('li')).toBeNull())
       }
       let outcome: ReturnType<typeof annotationReveal.requestPdfAnnotationReveal>
       await act(async () => {
@@ -226,6 +313,58 @@ describe('PdfNotebookView', () => {
       expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
     }
   )
+
+  it('debounces typing, waits for composition, and clears pending searches immediately', async () => {
+    await renderNotebook()
+    await toggleFilters()
+    vi.useFakeTimers()
+    const search = getByRole(container, 'searchbox', {
+      name: 'Search annotations'
+    }) as HTMLInputElement
+    const type = async (value: string): Promise<void> => {
+      await act(async () => fireEvent.change(search, { target: { value } }))
+      expect(search.value).toBe(value)
+    }
+    const advance = async (ms: number): Promise<void> => {
+      await act(async () => vi.advanceTimersByTimeAsync(ms))
+    }
+    await type('missing')
+    await advance(200)
+    await type('important')
+    await advance(200)
+    expect(container.querySelectorAll('li')).toHaveLength(2)
+    await advance(50)
+    expect(container.querySelectorAll('li')).toHaveLength(1)
+
+    await type('missing')
+    await advance(100)
+    await act(async () => fireEvent.compositionStart(search))
+    await type('笔')
+    await advance(500)
+    expect(container.querySelectorAll('li')).toHaveLength(1)
+    await act(async () => fireEvent.compositionEnd(search, { target: { value: '笔记' } }))
+    await advance(249)
+    expect(container.querySelectorAll('li')).toHaveLength(1)
+    await advance(1)
+    expect(container.querySelectorAll('li')).toHaveLength(0)
+
+    await type('important')
+    await type('')
+    expect(container.querySelectorAll('li')).toHaveLength(2)
+    await advance(500)
+    expect(container.querySelectorAll('li')).toHaveLength(2)
+
+    await type('important')
+    await advance(250)
+    await type('missing')
+    await act(async () =>
+      fireEvent.click(getByRole(container, 'button', { name: 'Clear filters' }))
+    )
+    expect(search.value).toBe('')
+    expect(container.querySelectorAll('li')).toHaveLength(2)
+    await advance(500)
+    expect(container.querySelectorAll('li')).toHaveLength(2)
+  })
 
   it('offers both note scopes from one action and preserves the draft when switching scope', async () => {
     await renderNotebook()
@@ -260,12 +399,12 @@ describe('PdfNotebookView', () => {
     await act(async () => {
       fireEvent.change(search, { target: { value: 'IMPORTANT' } })
     })
-    expect(container.querySelectorAll('li')).toHaveLength(1)
+    await waitFor(() => expect(container.querySelectorAll('li')).toHaveLength(1))
     expect(container.textContent).toContain('Review this claim.')
     await act(async () => {
       fireEvent.change(search, { target: { value: 'missing phrase' } })
     })
-    expect(container.textContent).toContain('No matching annotations.')
+    await waitFor(() => expect(container.textContent).toContain('No matching annotations.'))
     expect(container.textContent).not.toContain('No annotations yet.')
     await act(async () => {
       fireEvent.change(search, { target: { value: '' } })
@@ -498,6 +637,7 @@ describe('PdfNotebookView', () => {
         target: { value: 'no matching quote' }
       })
     )
+    await waitFor(() => expect(container.querySelectorAll('li')).toHaveLength(1))
     expect(container.querySelector('textarea')).toBe(field)
     expect(field.value).toBe('Keep this draft')
     await act(async () =>
@@ -508,7 +648,7 @@ describe('PdfNotebookView', () => {
     expect(container.textContent).toContain('No matching annotations.')
   })
 
-  it('exports complete versioned JSON including source, selectors, colors and timestamps', async () => {
+  it.each(['Markdown', 'CSV'])('exports notes as %s', async (format) => {
     let exported!: Blob
     const previousCreate = URL.createObjectURL
     const previousRevoke = URL.revokeObjectURL
@@ -520,7 +660,16 @@ describe('PdfNotebookView', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     try {
       await renderNotebook()
-      await selectOption('Export format', 'JSON')
+      await act(async () =>
+        fireEvent.keyDown(container.querySelector('[aria-label="Export format"]')!, {
+          key: 'ArrowDown'
+        })
+      )
+      const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      expect(options.map((option) => option.textContent)).toEqual(['Markdown', 'CSV'])
+      await act(async () =>
+        fireEvent.click(options.find((option) => option.textContent === format)!)
+      )
       await act(async () => {
         fireEvent.click(
           [...container.querySelectorAll('button')].find((button) =>
@@ -533,16 +682,15 @@ describe('PdfNotebookView', () => {
         reader.onload = () => resolve(String(reader.result))
         reader.readAsText(exported)
       })
-      expect(JSON.parse(content)).toEqual({
-        format: 'open-science-pdf-annotations',
-        version: 1,
-        tags: useTagStore.getState().tags,
-        source,
-        annotations: [
-          bookmark('bookmark-1', 'Review this claim.', 'highlight'),
-          bookmark('bookmark-2', '', 'area')
-        ]
-      })
+      expect(exported.type).toBe(
+        format === 'CSV' ? 'text/csv;charset=utf-8' : 'text/markdown;charset=utf-8'
+      )
+      expect(content).toContain('A highlighted passage')
+      expect(content).toContain('Review this claim.')
+      expect(content).toContain('important')
+      expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe(
+        `paper-notes.${format === 'CSV' ? 'csv' : 'md'}`
+      )
     } finally {
       URL.createObjectURL = previousCreate
       URL.revokeObjectURL = previousRevoke

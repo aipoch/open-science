@@ -66,7 +66,7 @@ export const pdfAnnotationScope = ({
 const hasValidScope = (scope: PdfAnnotationScope): boolean =>
   scope.literatureVersionId !== undefined
     ? scope.projectId === undefined && scope.sessionId === undefined
-    : Boolean(scope.projectId && scope.sessionId)
+    : Boolean(scope.projectId)
 const cursorSchema = z.object({ createdAt: z.iso.datetime(), id: identity }).strict()
 const annotationKindSchema = z.enum([...PDF_MARK_KINDS, 'page-note', 'document-note'] as [
   PdfAnnotationKind,
@@ -151,6 +151,7 @@ const createSchema = scopeSchema
     id: identity.max(TAG_RESOURCE_ID_MAX_LENGTH),
     target: targetSchema,
     createdAt: z.iso.datetime().optional(),
+    createdInSessionId: identity.nullable().optional(),
     kind: annotationKindSchema,
     color: colorSchema.optional(),
     origin: annotationOriginSchema.optional(),
@@ -212,6 +213,7 @@ export const deletePdfAnnotationRequestSchema = scopeSchema
 
 export const pdfAnnotationSchema = createSchema
   .safeExtend({
+    createdInSessionId: z.never().optional(),
     origin: annotationOriginSchema,
     version: z.literal(1),
     createdAt: z.iso.datetime(),

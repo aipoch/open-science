@@ -3,8 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { createProjectDbClient } from '../projects/prisma-client'
-import { pdfAnnotationsMigration } from './migrations/0042-pdf-annotations'
-import { migrateApplicationDatabase } from './migration-service'
+import { migrateApplicationDatabase, verifyCurrentApplicationSchema } from './migration-service'
 
 it('upgrades an existing database without copying or changing Bookmarks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pdf-annotation-migration-'))
@@ -28,25 +27,22 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
     })
     const before = await client.bookmark.findMany()
     await client.$executeRawUnsafe('DROP TABLE "pdf_annotations"')
+    await client.$executeRawUnsafe('DROP TABLE "pdf_annotation_imports"')
     await client.$executeRawUnsafe(
-      'DELETE FROM "_open_science_migrations" WHERE id >= \'0042_pdf_annotations\''
+      'DELETE FROM "_open_science_migrations" WHERE id >= \'0043_pdf_annotations\''
     )
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: [
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
-      ]
+      applied: ['0043_pdf_annotations']
     })
     expect(await client.bookmark.findMany()).toEqual(before)
     expect(await client.pdfAnnotation.count()).toBe(0)
+    expect(await client.pdfAnnotationImport.count()).toBe(0)
     const columns = await client.$queryRawUnsafe<Array<{ name: string; notnull: bigint }>>(
       'PRAGMA table_info("pdf_annotations")'
     )
     expect(columns.find(({ name }) => name === 'projectId')?.notnull).toBe(0n)
     expect(columns.find(({ name }) => name === 'sessionId')?.notnull).toBe(0n)
+    expect(columns.map(({ name }) => name)).not.toContain('tagsJson')
     const row = {
       id: 'library-note',
       sourceKind: 'literature-attachment-version',
@@ -81,73 +77,30 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
       })
     ).rejects.toThrow()
     await expect(
-      client.pdfAnnotation.create({ data: { ...row, id: 'invalid-half-scope', projectId: 'p1' } })
+      client.pdfAnnotation.create({ data: { ...row, id: 'invalid-half-scope', sessionId: 's1' } })
     ).rejects.toThrow()
+    await expect(
+      client.pdfAnnotation.create({ data: { ...row, id: 'project-note', projectId: 'p1' } })
+    ).resolves.toMatchObject({ sessionId: null })
+    await client.pdfAnnotationImport.create({
+      data: {
+        id: 'receipt-1',
+        sourceKind: row.sourceKind,
+        sourceFileId: row.sourceFileId,
+        versionId: row.versionId,
+        checksum: row.checksum,
+        resultJson: JSON.stringify({
+          nativeRefs: [],
+          pageCount: 1,
+          unsupportedCount: 0,
+          truncated: false
+        })
+      }
+    })
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
     expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [] })
+    expect(await client.pdfAnnotationImport.count()).toBe(1)
     expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
-  } finally {
-    await client.$disconnect()
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-it('retires test tag names without losing annotation content or creating global Tags', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'pdf-tag-retirement-'))
-  const client = createProjectDbClient(root)
-  try {
-    await migrateApplicationDatabase(client)
-    await client.project.create({ data: { id: 'p1', name: 'Research' } })
-    const tagsBefore = await client.tag.findMany()
-    await client.$executeRawUnsafe('DROP TABLE "pdf_annotations"')
-    for (const statement of pdfAnnotationsMigration.statements)
-      await client.$executeRawUnsafe(statement)
-    await client.$executeRawUnsafe(
-      'DELETE FROM "_open_science_migrations" WHERE id >= ?',
-      '0043_pdf_annotation_tags'
-    )
-    const selector = JSON.stringify({
-      version: 1,
-      selector: { kind: 'document-note', coordinateVersion: 1 }
-    })
-    await client.$executeRawUnsafe(
-      `INSERT INTO "pdf_annotations" ("id", "projectId", "sessionId", "sourceKind", "sourceFileId", "versionId", "checksum", "name", "path", "kind", "selectorJson", "tagsJson", "note", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      'a1',
-      'p1',
-      's1',
-      'upload-version',
-      'f1',
-      'v1',
-      'a'.repeat(64),
-      'paper.pdf',
-      'upload-version:v1',
-      'document-note',
-      selector,
-      '["test tag"]',
-      'Keep this note',
-      new Date()
-    )
-    expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: [
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
-      ]
-    })
-    expect(await client.pdfAnnotation.findUnique({ where: { id: 'a1' } })).toMatchObject({
-      note: 'Keep this note',
-      origin: 'user',
-      externalSubtype: null,
-      selectorJson: selector,
-      versionId: 'v1'
-    })
-    expect(await client.tag.findMany()).toEqual(tagsBefore)
-    expect(await client.tagAssignment.count()).toBe(0)
-    const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
-      'PRAGMA table_info("pdf_annotations")'
-    )
-    expect(columns.map(({ name }) => name)).not.toContain('tagsJson')
-    expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [] })
   } finally {
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })

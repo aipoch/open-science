@@ -9,8 +9,6 @@
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/pdf-annotations-context.ts",
-    "src/shared/pdf-annotations.test.ts",
-    "src/shared/pdf-annotations.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationHistoryControls.tsx",
     "src/renderer/src/pages/workspace/pdf-annotations/pdf-annotation-history-keyboard.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/pdf-annotation-index.ts",
@@ -34,17 +32,18 @@
     "src/main/pdf-annotations/native-import.test.ts",
     "src/main/pdf-annotations/native-import.benchmark.test.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/use-native-pdf-visibility.ts",
-    "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts"
+    "src/renderer/src/pages/workspace/pdf-annotations/native-pdf-rendering.test.ts",
+    "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"
   ],
   "interfacePaths": [
-    "src/shared/pdf-annotations.ts",
     "src/main/pdf-annotations/application-commands.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/pdf-annotations-context.ts",
     "src/main/pdf-annotations/repository.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/pdf-export-context.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.ts",
     "src/renderer/src/pages/workspace/pdf-annotations/PdfExportProvider.tsx",
-    "src/main/pdf-annotations/native-import.ts"
+    "src/main/pdf-annotations/native-import.ts",
+    "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.tsx"
   ],
   "consumerModules": [
     "workspace_previews",
@@ -55,7 +54,6 @@
   ],
   "testFiles": {
     "owner": [
-      "src/shared/pdf-annotations.test.ts",
       "src/main/pdf-annotations/repository.integration.test.ts",
       "src/main/pdf-annotations/service.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx",
@@ -74,7 +72,8 @@
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-electron-adapter.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/preload/index.test.ts"
+      "src/preload/index.test.ts",
+      "src/shared/pdf-annotations.test.ts"
     ],
     "consumer": [
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",

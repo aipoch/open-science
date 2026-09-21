@@ -1,3 +1,9 @@
+import {
+  LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
+  createLiteratureAttachmentVersionReference,
+  parseLiteratureAttachmentVersionReference
+} from './literature-attachment-reference'
+import { pdfAnnotationSchema } from './pdf-annotations'
 import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 
@@ -75,7 +81,6 @@ const LITERATURE_METADATA_FIELDS = [
   'url'
 ] as const
 const LITERATURE_METADATA_PROVIDERS = ['crossref', 'pubmed'] as const
-const LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX = 'literature-attachment-version:'
 
 type LiteratureIdentifierScheme = (typeof LITERATURE_IDENTIFIER_SCHEMES)[number]
 
@@ -395,7 +400,7 @@ const literatureCatalogSearchRequestSchema = z
     refreshDuplicates: z.boolean().optional(),
     updatedAfter: z.number().int().nonnegative().optional(),
     searchSort: z.enum(['relevance', 'recent']).optional(),
-    entryKind: z.enum(['paper', 'collection', 'pdf']).optional(),
+    entryKind: z.enum(['paper', 'collection', 'pdf', 'note']).optional(),
     allItemIds: z.boolean().optional(),
     countOnly: z.boolean().optional(),
     itemIds: z.array(nonEmptyTextSchema).max(200).optional(),
@@ -429,6 +434,14 @@ const literatureCatalogSearchRequestSchema = z
     }
   )
 
+export const literatureAnnotationSearchViewSchema = z
+  .object({
+    id: nonEmptyTextSchema,
+    annotation: pdfAnnotationSchema
+  })
+  .strict()
+export type LiteratureAnnotationSearchView = z.infer<typeof literatureAnnotationSearchViewSchema>
+
 const literatureCatalogSearchPageSchema = z
   .object({
     entries: z.array(
@@ -437,7 +450,8 @@ const literatureCatalogSearchPageSchema = z
         literatureInboxCandidateViewSchema,
         literatureCollectionViewSchema,
         literatureProjectCountViewSchema,
-        literatureDuplicateGroupSchema
+        literatureDuplicateGroupSchema,
+        literatureAnnotationSearchViewSchema
       ])
     ),
     itemIds: z.array(nonEmptyTextSchema).optional(),
@@ -1168,24 +1182,6 @@ type LiteratureMetadataCompletionRequest = z.infer<typeof literatureMetadataComp
 type LiteratureMetadataValue = z.infer<typeof literatureMetadataValueSchema>
 type LiteratureMetadataConflict = z.infer<typeof literatureMetadataConflictSchema>
 type LiteratureMetadataCompletionResult = z.infer<typeof literatureMetadataCompletionResultSchema>
-
-const createLiteratureAttachmentVersionReference = (versionId: string): string => {
-  const normalized = versionId.trim()
-  if (!normalized) throw new Error('Literature Attachment Version id is required.')
-  return `${LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX}${encodeURIComponent(normalized)}`
-}
-
-const parseLiteratureAttachmentVersionReference = (reference: string): string | undefined => {
-  if (!reference.startsWith(LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX)) return undefined
-  const encoded = reference.slice(LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX.length)
-  if (!encoded) return undefined
-  try {
-    const versionId = decodeURIComponent(encoded)
-    return versionId && !versionId.includes('/') ? versionId : undefined
-  } catch {
-    return undefined
-  }
-}
 
 export {
   literatureFullTextCandidateSchema,

@@ -71,6 +71,23 @@ describe('PdfAnnotation persistence', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('preserves creation provenance when a different Session restores or retries a shared note', async () => {
+    const original = await repository.create(request)
+    await repository.delete({ ...scope, sessionId: 'session-2', id: original.id })
+    const restore = {
+      ...request,
+      sessionId: 'session-2',
+      createdInSessionId: 'session-1',
+      createdAt: original.createdAt
+    }
+    expect((await repository.create(restore)).sessionId).toBe('session-1')
+    expect((await repository.recoverCreate(restore))?.sessionId).toBe('session-1')
+    await repository.delete({ projectId: scope.projectId, id: original.id })
+    expect(
+      (await repository.create({ ...restore, createdInSessionId: null })).sessionId
+    ).toBeUndefined()
+  })
+
   it('atomically retains native import receipts after deletion and across restart without resurrecting marks', async () => {
     const native = {
       ...request,
@@ -99,8 +116,20 @@ describe('PdfAnnotation persistence', () => {
     expect(await repository.createMany([native], receipt)).toBe(0)
     const page = await repository.list({ ...scope, sourceFileId: 'file-1', versionId: 'version-1' })
     expect(page).toEqual({ items: [], total: 0, nativeImport: receipt.result })
-    await repository.deleteSessions([scope.sessionId])
-    expect(await client.pdfAnnotationImport.count()).toBe(0)
+    await client.session.deleteMany()
+    expect(
+      await repository.nativeImportReceipt(
+        { projectId: scope.projectId, sessionId: 'another-session' },
+        request.target.source
+      )
+    ).toEqual(receipt.result)
+    expect(
+      await repository.createMany([{ ...native, sessionId: 'another-session' }], {
+        ...receipt,
+        scope: { ...scope, sessionId: 'another-session' }
+      })
+    ).toBe(0)
+    expect(await client.pdfAnnotationImport.count()).toBe(1)
   })
 
   it('round-trips exact source identity independently of Bookmarks and Session projections', async () => {
@@ -112,9 +141,12 @@ describe('PdfAnnotation persistence', () => {
     expect(await repository.list(scope)).toEqual({ total: 1, items: [created] })
     expect(created.target.source.sessionId).toBe('source-session')
     expect(await client.bookmark.count()).toBe(0)
-    expect(await repository.list({ ...scope, sessionId: 'other' })).toEqual({ total: 0, items: [] })
+    expect(await repository.list({ ...scope, sessionId: 'other' })).toEqual({
+      total: 1,
+      items: [created]
+    })
   })
-  it('looks up a tagged annotation by ID without bypassing its session or PDF version scope', async () => {
+  it('shares a tagged annotation across sessions but keeps project and PDF version boundaries', async () => {
     const created = await repository.create(request)
     await repository.create({ ...request, id: 'annotation-2' })
     expect(await repository.list({ ...scope, id: created.id, limit: 1 })).toEqual({
@@ -122,8 +154,11 @@ describe('PdfAnnotation persistence', () => {
       items: [created]
     })
     expect((await repository.list({ ...scope, sessionId: 'other', id: created.id })).items).toEqual(
-      []
+      [created]
     )
+    expect((await repository.list({ projectId: scope.projectId, id: created.id })).items).toEqual([
+      created
+    ])
     expect((await repository.list({ ...scope, versionId: 'other', id: created.id })).items).toEqual(
       []
     )
@@ -160,11 +195,11 @@ describe('PdfAnnotation persistence', () => {
       target: request.target
     })
     await expect(
-      repository.update({ ...scope, sessionId: 'other', id: request.id, note: 'No' })
-    ).rejects.toThrow('not found')
-    expect(await repository.delete({ ...scope, sessionId: 'other', id: request.id })).toBe(false)
-    await repository.deleteSessions([scope.sessionId])
-    expect((await repository.list(scope)).total).toBe(0)
+      repository.update({ ...scope, sessionId: 'other', id: request.id, note: 'Shared' })
+    ).resolves.toMatchObject({ note: 'Shared', sessionId: scope.sessionId })
+    expect(await repository.delete({ ...scope, sessionId: 'other', id: request.id })).toBe(true)
+    await client.session.deleteMany()
+    expect((await repository.list(scope)).total).toBe(1)
   })
   it('imports a batch in one idempotent write path', async () => {
     const batch = [
@@ -261,7 +296,7 @@ describe('PdfAnnotation persistence', () => {
     expect(await client.tagAssignment.count()).toBe(0)
   })
 
-  it('removes associations at annotation, Session and Project boundaries while keeping shared Tags', async () => {
+  it('retains document notes after Session deletion and cleans their Project associations', async () => {
     await repository.create(request)
     await repository.create({ ...request, id: 'other-session', sessionId: 's2' })
     await client.project.create({ data: { id: 'other-project', name: 'Other' } })
@@ -276,12 +311,13 @@ describe('PdfAnnotation persistence', () => {
     })
     await repository.delete({ ...scope, id: request.id })
     expect(await client.tagAssignment.count()).toBe(2)
-    await repository.deleteSessions(['s2'])
-    expect(await client.tagAssignment.count()).toBe(1)
+    await client.session.deleteMany({ where: { id: 's2' } })
+    expect(await client.tagAssignment.count()).toBe(2)
     await new ProjectRepository(async () => client).delete('other-project')
+    expect(await client.tagAssignment.count()).toBe(1)
+    await new ProjectRepository(async () => client).delete(scope.projectId)
     expect(await client.tagAssignment.count()).toBe(0)
     expect(await client.tag.count({ where: { id: { in: ['review', 'method'] } } })).toBe(2)
-    await repository.deleteSessions(['s2'])
     expect(await client.pdfAnnotation.count()).toBe(0)
   })
 
@@ -369,7 +405,7 @@ describe('PdfAnnotation persistence', () => {
       await expect(
         repository.update({ id: request.id, ...scope, note: 'Wrong scope' })
       ).rejects.toThrow('not found')
-      await repository.deleteSessions([scope.sessionId])
+      await client.session.deleteMany()
       await new ProjectRepository(async () => client).delete(scope.projectId)
       expect(await repository.get(request.id)).toEqual(global)
       const snapshot = await new TagRepository(async () => client).snapshot(1)

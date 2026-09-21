@@ -398,6 +398,79 @@ describe('PdfPreviewContent', () => {
     ])
   })
 
+  it('offers a resizable notes sidebar only within the reader width budget and retains one notebook', async () => {
+    let width = 1200
+    const callbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          callbacks.push(callback)
+        }
+        observe = vi.fn()
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+      }
+    )
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width)
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+        />
+      )
+      await flush()
+    })
+    const button = await vi.waitFor(() => {
+      const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Show notes sidebar"]')
+      expect(toggle).not.toBeNull()
+      return toggle!
+    })
+    const notebook = container.querySelector('[data-pdf-notebook-view]')!
+    const loadCount = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    await act(async () => button.click())
+    const navigationToggle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Show navigation"]'
+    )!
+    expect(navigationToggle.closest('[role="tablist"]')).not.toBeNull()
+    expect(navigationToggle.closest('[data-pdf-controls="interaction"]')).toBeNull()
+    expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
+    expect(notebook.getAttribute('aria-hidden')).toBe('false')
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      '320px'
+    )
+    const separator = container.querySelector<HTMLElement>('[aria-label="Resize notes sidebar"]')!
+    await act(async () =>
+      separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    )
+    expect(separator.getAttribute('aria-valuenow')).toBe('336')
+    const resize = async (next: number): Promise<void> => {
+      width = next
+      await act(async () => {
+        callbacks.forEach((callback) => callback([], {} as ResizeObserver))
+        await flush()
+      })
+    }
+    await resize(900)
+    expect(container.querySelector('[aria-label="Show notes sidebar"]')).toBeNull()
+    expect(notebook.hasAttribute('inert')).toBe(true)
+    await resize(1200)
+    expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
+    )
+    expect(notebook.hasAttribute('inert')).toBe(true)
+    await resize(1480)
+    expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
+    expect(container.querySelectorAll('[data-pdf-notebook-view]')).toHaveLength(1)
+    expect(container.querySelector('[data-pdf-notebook-view]')).toBe(notebook)
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loadCount)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(destroyDocument).not.toHaveBeenCalled()
+  })
+
   it('switches Literature reading modes without releasing or resetting the original PDF', async () => {
     window.api.pdfStructure = {
       readCached: vi.fn().mockResolvedValue(undefined),
@@ -751,6 +824,8 @@ describe('PdfPreviewContent', () => {
       ).toBe(false)
       expect(window.api.pdfAnnotations.list).toHaveBeenCalledWith({
         literatureVersionId: 'version-1',
+        sourceFileId: 'attachment-1',
+        versionId: 'version-1',
         limit: 100,
         cursor: undefined
       })

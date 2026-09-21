@@ -81,12 +81,8 @@
     "src/main/database/tag-ordering-migration.test.ts",
     "src/main/database/migrations/0042-classification-usage.ts",
     "src/main/database/classification-usage.test.ts",
-    "src/main/database/migrations/0042-pdf-annotations.ts",
     "src/main/database/pdf-annotations-migration.test.ts",
-    "src/main/database/migrations/0043-pdf-annotation-tags.ts",
-    "src/main/database/migrations/0044-literature-pdf-annotations.ts",
-    "src/main/database/migrations/0045-pdf-annotation-origin.ts",
-    "src/main/database/migrations/0046-pdf-annotation-import-receipt.ts"
+    "src/main/database/migrations/0043-pdf-annotations.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",

@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   MousePointer2,
   PanelLeft,
+  PanelRight,
   Highlighter,
   Underline,
   Waves,
@@ -31,7 +32,16 @@ import {
 } from 'lucide-react'
 import { Tabs } from 'radix-ui'
 import type { TextLayerBuilder as PdfTextLayerBuilder } from 'pdfjs-dist/web/pdf_viewer.mjs'
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { TagSelection } from '../../../settings/ResourceTagControls'
@@ -149,6 +159,9 @@ const MAX_ZOOM = 3
 const ZOOM_BUTTON_STEP = 0.25
 const READING_POSITION_UPDATE_MS = 100
 const OUTLINE_DEFAULT_WIDTH = 240
+const NOTES_SIDEBAR_MIN_READER_WIDTH = 1120
+const NOTES_SIDEBAR_MIN_WIDTH = 300
+const NOTES_SIDEBAR_MAX_WIDTH = 420
 // Wheel zoom is proportional to accumulated deltaY so one trackpad/pinch gesture (many small
 // events) maps to a controlled amount rather than a full step per event. ~100px notch ≈ 0.25.
 const ZOOM_WHEEL_SENSITIVITY = 0.0025
@@ -2091,6 +2104,29 @@ export const PdfPreviewContent = ({
   const [figuresBusy, setFiguresBusy] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
   const [outlineWidth, setOutlineWidth] = useState(OUTLINE_DEFAULT_WIDTH)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [notesWidth, setNotesWidth] = useState(320)
+  const [readerWidth, setReaderWidth] = useState(0)
+  const readerRef = useRef<HTMLDivElement>(null)
+  const notebookPanelId = useId()
+  const notesToggleRef = useRef<HTMLButtonElement>(null)
+  const notesTabRef = useRef<HTMLButtonElement>(null)
+  const notesResizeRef = useRef<
+    { pointerId: number; startX: number; startWidth: number } | undefined
+  >(undefined)
+  const hasReadingTabs =
+    Boolean(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search'
+  const notesAvailableWidth = readerWidth - (outlineOpen ? outlineWidth : 0)
+  const canShowNotesSidebar =
+    presentation !== 'search' && notesAvailableWidth >= NOTES_SIDEBAR_MIN_READER_WIDTH
+  const showNotesSidebar = canShowNotesSidebar && notesOpen && readingMode === 'original'
+  const maxNotesWidth = Math.min(
+    NOTES_SIDEBAR_MAX_WIDTH,
+    Math.max(NOTES_SIDEBAR_MIN_WIDTH, notesAvailableWidth - 752)
+  )
+  const effectiveNotesWidth = Math.min(notesWidth, maxNotesWidth)
+  const resizeNotes = (width: number): void =>
+    setNotesWidth(Math.max(NOTES_SIDEBAR_MIN_WIDTH, Math.min(maxNotesWidth, width)))
   const [currentPage, setCurrentPage] = useState(1)
   const currentPageRef = useRef(1)
   const [pageLabels, setPageLabels] = useState<
@@ -2130,6 +2166,8 @@ export const PdfPreviewContent = ({
     setFiguresVisited(false)
     setOutlineOpen(false)
     setOutlineWidth(OUTLINE_DEFAULT_WIDTH)
+    setNotesOpen(false)
+    setNotesWidth(320)
     setCurrentPage(1)
     setSelectedEvidenceId(undefined)
     setSelectedBookmarkId(undefined)
@@ -2256,6 +2294,8 @@ export const PdfPreviewContent = ({
     let measuredFitWidth = 0
 
     const measure = (): void => {
+      const measuredReaderWidth = readerRef.current?.clientWidth ?? 0
+      setReaderWidth((current) => (current === measuredReaderWidth ? current : measuredReaderWidth))
       const raw = element.clientWidth
       if (raw <= 0) return
       const width = Math.min(raw, FIT_PAGE_WIDTH)
@@ -2271,6 +2311,7 @@ export const PdfPreviewContent = ({
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measure)
     observer.observe(element)
+    if (readerRef.current) observer.observe(readerRef.current)
     return () => observer.disconnect()
   }, [captureViewportAnchor])
 
@@ -2923,45 +2964,117 @@ export const PdfPreviewContent = ({
             ) : null}
           </div>
         ) : null}
-        {(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search' ? (
-          <Tabs.List
-            aria-label={t('PDF reading mode')}
-            className="flex h-8 shrink-0 justify-center gap-4 border-b border-border bg-bg-000 px-2"
-          >
-            <Tabs.Trigger
-              value="original"
-              className="flex h-full items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+        {hasReadingTabs ? (
+          <TooltipProvider>
+            <Tabs.List
+              aria-label={t('PDF reading mode')}
+              className="relative flex h-8 min-w-0 shrink-0 justify-center gap-2 border-b border-border bg-bg-000 px-10"
             >
-              <FileText className="size-3.5 shrink-0" aria-hidden="true" />
-              {t('Original PDF')}
-            </Tabs.Trigger>
-            {attachmentVersionId ? (
-              <Tabs.Trigger
-                value="figures"
-                className="flex h-full items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
-              >
-                <Images className="size-3.5 shrink-0" aria-hidden="true" />
-                {t('Figures & Tables')}
-                {figuresBusy ? (
-                  <span role="status" aria-label={t('Analyzing PDF…')} title={t('Analyzing PDF…')}>
-                    <LoaderCircle
-                      className="size-3.5 animate-spin text-primary motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  </span>
-                ) : null}
-              </Tabs.Trigger>
-            ) : null}
-            <Tabs.Trigger
-              value="notes"
-              className="flex h-full items-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
-            >
-              <NotebookPen className="size-3.5 shrink-0" aria-hidden="true" />
-              {t('Notes & Annotations')}
-            </Tabs.Trigger>
-          </Tabs.List>
+              {document && readingMode === 'original' && (pageCount > 1 || attachmentVersionId) ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={outlineOpen ? 'secondary' : 'ghost'}
+                      size="icon-sm"
+                      className="absolute left-2 top-0.5 size-7"
+                      aria-label={outlineOpen ? t('Hide navigation') : t('Show navigation')}
+                      aria-controls="pdf-navigation-sidebar"
+                      aria-expanded={outlineOpen}
+                      onClick={() => setOutlineOpen((open) => !open)}
+                    >
+                      <PanelLeft className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {outlineOpen ? t('Hide navigation') : t('Show navigation')}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              <Tooltip>
+                <Tabs.Trigger
+                  value="original"
+                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                  asChild
+                >
+                  <TooltipTrigger>
+                    <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{t('Original PDF')}</span>
+                  </TooltipTrigger>
+                </Tabs.Trigger>
+                <PdfToolbarTooltip plain side="bottom" label={t('Original PDF')} />
+              </Tooltip>
+              {attachmentVersionId ? (
+                <Tooltip>
+                  <Tabs.Trigger
+                    value="figures"
+                    className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                    asChild
+                  >
+                    <TooltipTrigger>
+                      <Images className="size-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{t('Figures & Tables')}</span>
+                      {figuresBusy ? (
+                        <span
+                          className="shrink-0"
+                          role="status"
+                          aria-label={t('Analyzing PDF…')}
+                          title={t('Analyzing PDF…')}
+                        >
+                          <LoaderCircle
+                            className="size-3.5 animate-spin text-primary motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                        </span>
+                      ) : null}
+                    </TooltipTrigger>
+                  </Tabs.Trigger>
+                  <PdfToolbarTooltip plain side="bottom" label={t('Figures & Tables')} />
+                </Tooltip>
+              ) : null}
+              <Tooltip>
+                <Tabs.Trigger
+                  value="notes"
+                  ref={notesTabRef}
+                  aria-controls={notebookPanelId}
+                  className="flex h-full min-w-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-1 text-sm text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-semibold data-[state=active]:text-primary focus-visible:outline-ring"
+                  asChild
+                >
+                  <TooltipTrigger>
+                    <NotebookPen className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{t('Notes & Annotations')}</span>
+                  </TooltipTrigger>
+                </Tabs.Trigger>
+                <PdfToolbarTooltip plain side="bottom" label={t('Notes & Annotations')} />
+              </Tooltip>
+              {canShowNotesSidebar && readingMode === 'original' ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={showNotesSidebar ? 'secondary' : 'ghost'}
+                      size="icon-sm"
+                      className="absolute right-2 top-0.5 size-7"
+                      aria-label={
+                        showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')
+                      }
+                      ref={notesToggleRef}
+                      aria-expanded={showNotesSidebar}
+                      aria-controls={notebookPanelId}
+                      onClick={() => setNotesOpen((open) => !open)}
+                    >
+                      <PanelRight className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {showNotesSidebar ? t('Hide notes sidebar') : t('Show notes sidebar')}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+            </Tabs.List>
+          </TooltipProvider>
         ) : null}
-        <div className="relative min-h-0 flex-1">
+        <div ref={readerRef} className="relative min-h-0 flex-1">
           <Tabs.Content value="original" forceMount asChild>
             <div
               className={cn(
@@ -2971,6 +3084,7 @@ export const PdfPreviewContent = ({
               inert={readingMode !== 'original'}
               aria-hidden={readingMode !== 'original'}
               data-pdf-original-view
+              style={showNotesSidebar ? { right: effectiveNotesWidth } : undefined}
             >
               {document && outlineOpen && (pageCount > 1 || attachmentVersionId) ? (
                 <PdfOutlineSidebar
@@ -3122,7 +3236,9 @@ export const PdfPreviewContent = ({
                       canAnnotateText={canAnnotateText}
                       textMarkStyle={textMarkStyle}
                       onTextMarkStyleChange={setTextMarkStyle}
-                      navigationAvailable={pageCount > 1 || Boolean(attachmentVersionId)}
+                      navigationAvailable={
+                        !hasReadingTabs && (pageCount > 1 || Boolean(attachmentVersionId))
+                      }
                       navigationOpen={outlineOpen}
                       searchOpen={searchOpen}
                       onNavigationToggle={() => setOutlineOpen((open) => !open)}
@@ -3191,24 +3307,88 @@ export const PdfPreviewContent = ({
             </Tabs.Content>
           ) : null}
           {(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search' ? (
-            <Tabs.Content value="notes" forceMount asChild>
+            <Tabs.Content
+              value="notes"
+              forceMount
+              asChild
+              role={showNotesSidebar ? 'complementary' : 'tabpanel'}
+            >
               <div
                 className={cn(
-                  'absolute inset-0',
-                  readingMode !== 'notes' && 'invisible pointer-events-none'
+                  'absolute inset-y-0 right-0',
+                  showNotesSidebar ? 'border-l border-border bg-bg-000' : 'left-0',
+                  readingMode !== 'notes' && !showNotesSidebar && 'invisible pointer-events-none'
                 )}
-                inert={readingMode !== 'notes'}
-                aria-hidden={readingMode !== 'notes'}
+                id={notebookPanelId}
+                style={showNotesSidebar ? { width: effectiveNotesWidth } : undefined}
+                inert={readingMode !== 'notes' && !showNotesSidebar}
+                aria-hidden={readingMode !== 'notes' && !showNotesSidebar}
+                aria-label={showNotesSidebar ? t('Notes & Annotations') : undefined}
                 data-pdf-notebook-view
+                data-pdf-notes-sidebar={showNotesSidebar || undefined}
               >
                 <PdfNotebookView
                   key={`${pdfBookmarkSource?.projectId}:${pdfBookmarkSource?.versionId}:${pdfBookmarkSource?.checksum}`}
                   source={pdfBookmarkSource}
-                  active={readingMode === 'notes'}
+                  active={readingMode === 'notes' || showNotesSidebar}
+                  sidebar={showNotesSidebar}
+                  currentPage={currentPage}
+                  selectedId={selectedBookmarkId}
+                  onCloseSidebar={() => {
+                    setNotesOpen(false)
+                    notesToggleRef.current?.focus()
+                  }}
+                  onExpandNotes={() => {
+                    setReadingMode('notes')
+                    notesTabRef.current?.focus()
+                  }}
                   sourceLoading={pdfAnnotations.loading}
                   onOpenPdf={() => setReadingMode('original')}
                   pageCount={pageCount}
                 />
+                {showNotesSidebar ? (
+                  <button
+                    type="button"
+                    role="separator"
+                    aria-label={t('Resize notes sidebar')}
+                    aria-orientation="vertical"
+                    aria-valuemin={NOTES_SIDEBAR_MIN_WIDTH}
+                    aria-valuemax={maxNotesWidth}
+                    aria-valuenow={effectiveNotesWidth}
+                    className="group absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      resizeNotes(effectiveNotesWidth + (event.key === 'ArrowLeft' ? 16 : -16))
+                    }}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || !event.isPrimary) return
+                      event.currentTarget.setPointerCapture(event.pointerId)
+                      notesResizeRef.current = {
+                        pointerId: event.pointerId,
+                        startX: event.clientX,
+                        startWidth: effectiveNotesWidth
+                      }
+                    }}
+                    onPointerMove={(event) => {
+                      const gesture = notesResizeRef.current
+                      if (gesture?.pointerId === event.pointerId)
+                        resizeNotes(gesture.startWidth + gesture.startX - event.clientX)
+                    }}
+                    onPointerUp={(event) => {
+                      if (notesResizeRef.current?.pointerId !== event.pointerId) return
+                      notesResizeRef.current = undefined
+                      if (event.currentTarget.hasPointerCapture(event.pointerId))
+                        event.currentTarget.releasePointerCapture(event.pointerId)
+                    }}
+                    onPointerCancel={() => {
+                      notesResizeRef.current = undefined
+                    }}
+                  >
+                    <span className="mx-auto block h-full w-px bg-transparent group-hover:bg-primary/50 group-focus-visible:bg-primary/60" />
+                  </button>
+                ) : null}
               </div>
             </Tabs.Content>
           ) : null}
@@ -3329,7 +3509,7 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
     pdfBookmarkResolution?.key === pdfBookmarkResolutionKey ? pdfBookmarkResolution : undefined
   const pdfBookmarkSource = isLibrary
     ? libraryAnnotations.source
-    : currentPdfBookmarkResolution?.source
+    : (currentPdfBookmarkResolution?.source ?? libraryAnnotations.source)
   const pdfBookmarkSourceUnavailable = isLibrary
     ? Boolean(libraryAnnotations.loadError)
     : (currentPdfBookmarkResolution?.unavailable ??
@@ -3454,14 +3634,19 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
 export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
   const parentAnnotations = usePdfAnnotations()
   const target = resolvePdfContextTarget(props.item)
-  return target?.sourceKind === 'literature-attachment-version' ? (
+  if (!target || parentAnnotations.document?.versionId === target.sourceVersionId)
+    return <PdfPreviewRendererContent {...props} />
+  const library = target.sourceKind === 'literature-attachment-version'
+  return (
     <PdfAnnotationsProvider
-      literatureVersionId={target.sourceVersionId}
+      literatureVersionId={library ? target.sourceVersionId : undefined}
+      projectId={library ? undefined : props.item.projectId}
+      sessionId={library ? undefined : parentAnnotations.sessionId}
+      sourceFileId={target.sourceFileId}
+      versionId={target.sourceVersionId}
       writable={!parentAnnotations.scoped || parentAnnotations.available}
     >
       <PdfPreviewRendererContent {...props} />
     </PdfAnnotationsProvider>
-  ) : (
-    <PdfPreviewRendererContent {...props} />
   )
 }

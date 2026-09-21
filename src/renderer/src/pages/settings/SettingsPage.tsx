@@ -387,8 +387,10 @@ const SETTINGS_WRITE_ERROR_COPY: Record<SettingsWriteErrorCode, string> = {
 const EMPTY_USAGE_SESSIONS = [] as const
 const EMPTY_USAGE_PROJECTS = [] as const
 
-const TaggedPdfPreviewDialog = lazy(() =>
-  import('./TaggedPdfPreviewDialog').then((module) => ({ default: module.TaggedPdfPreviewDialog }))
+const PdfAnnotationPreviewDialog = lazy(() =>
+  import('../workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((module) => ({
+    default: module.PdfAnnotationPreviewDialog
+  }))
 )
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
@@ -435,7 +437,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const scope =
         reference.literatureItemId && reference.versionId
           ? { literatureVersionId: reference.versionId }
-          : { projectId: reference.projectId, sessionId: reference.sessionId }
+          : { projectId: reference.projectId }
       const result = await window.api.pdfAnnotations.list({ ...scope, id, limit: 1 })
       if (sequence !== tagAnnotationRequest.current) return
       const annotation = result.items.find((item) => item.id === id)
@@ -2249,7 +2251,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       </Dialog.Portal>
       {open && tagAnnotationPreview ? (
         <Suspense fallback={null}>
-          <TaggedPdfPreviewDialog
+          <PdfAnnotationPreviewDialog
             {...tagAnnotationPreview}
             onClose={() => setTagAnnotationPreview(undefined)}
             onError={setTagAnnotationError}

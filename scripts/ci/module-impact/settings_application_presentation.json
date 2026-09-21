@@ -134,8 +134,7 @@
     "src/renderer/src/pages/settings/validation-message.test.ts",
     "src/renderer/src/pages/settings/validation-message.ts",
     "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
-    "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
-    "src/renderer/src/pages/settings/TaggedPdfPreviewDialog.tsx"
+    "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",

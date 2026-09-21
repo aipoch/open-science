@@ -5993,6 +5993,7 @@
     "Remove {{tag}} from this annotation": "從此標註中移除「{{tag}}」",
     "Figures & Tables": "圖表",
     "Notes & Annotations": "筆記與標註",
+    "Quoted text": "引用原文",
     "All marks": "全部標記",
     "Commented": "有評論",
     "Uncommented": "無評論",
@@ -6075,6 +6076,14 @@
     "Imported {{count}} native annotations._other": "已匯入 {{count}} 則原生註解。",
     "Unsupported native annotations: {{count}}_other": "不支援的原生註解：{{count}}",
     "Native annotation import failed.": "原生批註匯入失敗。",
-    "Native annotation import limit reached. Some annotations were not imported.": "已達到原生批註匯入上限，部分批註未匯入。"
+    "Native annotation import limit reached. Some annotations were not imported.": "已達到原生批註匯入上限，部分批註未匯入。",
+    "Show notes sidebar": "顯示筆記側欄",
+    "Hide notes sidebar": "隱藏筆記側欄",
+    "Resize notes sidebar": "調整筆記側欄寬度",
+    "Open full notes view": "開啟完整筆記檢視",
+    "Notes scope": "筆記範圍",
+    "All notes": "全部筆記",
+    "Current page": "目前頁面",
+    "No annotations on this page.": "此頁尚無註解。"
   }
 }

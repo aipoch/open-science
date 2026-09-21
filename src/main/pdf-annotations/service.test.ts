@@ -145,14 +145,6 @@ describe('PdfAnnotationService', () => {
         id: request.id
       })
     ).rejects.toThrow('read-only')
-    await expect(
-      service.setTagAssignment({
-        resourceType: 'pdf.annotation',
-        resourceId: request.id,
-        tagId: 'review',
-        assigned: true
-      })
-    ).rejects.toThrow('read-only')
     expect(options.repository.create).not.toHaveBeenCalled()
     expect(options.repository.update).not.toHaveBeenCalled()
     expect(options.repository.delete).not.toHaveBeenCalled()
@@ -262,7 +254,8 @@ it('imports native provenance once per source and returns the current operation 
     sessionId: 'session-2'
   })
   const calls = vi.mocked(options.repository.createMany).mock.calls
-  expect(calls[0][0][0].id).not.toBe(calls[1][0][0].id)
+  expect(calls).toHaveLength(1)
+  expect(parseNative).toHaveBeenCalledOnce()
 })
 
 it('cancels after parsing and closes the lease without writing', async () => {
@@ -321,4 +314,49 @@ it('parses outside the Session writer and revalidates source availability before
   await expect(service.importNative(importRequest)).rejects.toThrow('source is not available')
   expect(options.runWithSessionAuthority).toHaveBeenCalledOnce()
   expect(options.repository.createMany).not.toHaveBeenCalled()
+})
+
+it('allows document-scoped reads and edits independently of the annotation creator session', async () => {
+  const { options, service } = fixture()
+  await service.list({ projectId: 'project-1', sourceFileId: 'upload-1', versionId: 'version-1' })
+  expect(options.sessions.loadSessionWithDiagnostics).not.toHaveBeenCalled()
+  await service.update({ projectId: 'project-1', id: request.id, note: 'Shared' })
+  expect(options.repository.update).toHaveBeenCalledWith({
+    projectId: 'project-1',
+    id: request.id,
+    note: 'Shared'
+  })
+  await service.setTagAssignment({
+    resourceType: 'pdf.annotation',
+    resourceId: request.id,
+    tagId: 'review',
+    assigned: true
+  })
+  expect(options.repository.update).toHaveBeenLastCalledWith(
+    expect.objectContaining({ projectId: 'project-1', tagIds: ['review'] })
+  )
+  expect(vi.mocked(options.repository.update).mock.calls.at(-1)![0].sessionId).toBeUndefined()
+})
+
+it('restores native project annotations by verified file version without the creator Session', async () => {
+  const { options, service } = fixture()
+  parseNative.mockResolvedValue(parsed)
+  await service.importNative(importRequest)
+  const imported = vi.mocked(options.repository.createMany).mock.calls[0][0][0]
+  await service.create({ ...imported, sessionId: undefined })
+  expect(options.repository.create).toHaveBeenLastCalledWith({ ...imported, sessionId: undefined })
+  await service.create({ ...imported, sessionId: 'session-2' })
+  expect(options.repository.create).toHaveBeenLastCalledWith({
+    ...imported,
+    sessionId: 'session-2'
+  })
+  for (const change of [{ path: '/untrusted.pdf' }, { checksum: 'b'.repeat(64) }]) {
+    await expect(
+      service.create({
+        ...imported,
+        sessionId: undefined,
+        target: { ...imported.target, source: { ...imported.target.source, ...change } }
+      })
+    ).rejects.toThrow('source is not available')
+  }
 })

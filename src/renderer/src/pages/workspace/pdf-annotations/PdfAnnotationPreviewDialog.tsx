@@ -1,12 +1,12 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import type { PdfAnnotation } from '../../../../../shared/pdf-annotations'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { FilePreviewDialog } from '../workspace/FilePreviewDialog'
-import { PdfAnnotationsProvider } from '../workspace/pdf-annotations/PdfAnnotationsProvider'
-import { requestPdfAnnotationReveal } from '../workspace/annotations/annotation-reveal'
+import { FilePreviewDialog } from '../FilePreviewDialog'
+import { PdfAnnotationsProvider } from './PdfAnnotationsProvider'
+import { requestPdfAnnotationReveal } from '../annotations/annotation-reveal'
 
-export const TaggedPdfPreviewDialog = ({
+export const PdfAnnotationPreviewDialog = ({
   annotation,
   item,
   onClose,
@@ -42,7 +42,8 @@ export const TaggedPdfPreviewDialog = ({
   return (
     <PdfAnnotationsProvider
       projectId={annotation.projectId}
-      sessionId={annotation.sessionId}
+      sourceFileId={annotation.target.source.sourceFileId}
+      versionId={annotation.target.source.versionId}
       literatureVersionId={annotation.literatureVersionId}
     >
       <FilePreviewDialog item={item} onClose={onClose} allowReadingContext={false} />

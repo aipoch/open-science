@@ -65,7 +65,8 @@ model Bookmark {
   @@map("bookmarks")
 }
 
-// PDF annotations are owned independently from generic Bookmarks. The selector is versioned JSON
+// PDF annotations belong to a managed file version. sessionId records creation context only.
+// They are owned independently from generic Bookmarks. The selector is versioned JSON
 // so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
 model PdfAnnotation {
   id              String   @id
@@ -88,7 +89,8 @@ model PdfAnnotation {
   updatedAt       DateTime @updatedAt
   project         Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@index([projectId, sessionId, createdAt, id])
+  @@index([projectId, createdAt, id])
+  @@index([projectId, sourceFileId, versionId, createdAt, id])
   @@index([projectId, sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([sourceKind, sourceFileId, versionId, createdAt, id])
   @@map("pdf_annotations")

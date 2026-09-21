@@ -5993,6 +5993,7 @@
     "Remove {{tag}} from this annotation": "この注釈から{{tag}}を削除",
     "Figures & Tables": "図表",
     "Notes & Annotations": "ノートと注釈",
+    "Quoted text": "引用文",
     "All marks": "すべてのマーク",
     "Commented": "コメント付き",
     "Uncommented": "コメントなし",
@@ -6075,6 +6076,14 @@
     "Imported {{count}} native annotations._other": "ネイティブ注釈を{{count}}件インポートしました。",
     "Unsupported native annotations: {{count}}_other": "サポートされていないネイティブ注釈：{{count}}",
     "Native annotation import failed.": "PDF 内の注釈を読み込めませんでした。",
-    "Native annotation import limit reached. Some annotations were not imported.": "PDF 内の注釈の読み込み上限に達しました。一部の注釈は読み込まれていません。"
+    "Native annotation import limit reached. Some annotations were not imported.": "PDF 内の注釈の読み込み上限に達しました。一部の注釈は読み込まれていません。",
+    "Show notes sidebar": "ノートサイドバーを表示",
+    "Hide notes sidebar": "ノートサイドバーを非表示",
+    "Resize notes sidebar": "ノートサイドバーの幅を変更",
+    "Open full notes view": "ノートの全体表示を開く",
+    "Notes scope": "ノートの範囲",
+    "All notes": "すべてのノート",
+    "Current page": "現在のページ",
+    "No annotations on this page.": "このページにはまだ注釈がありません。"
   }
 }

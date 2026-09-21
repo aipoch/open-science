@@ -760,7 +760,7 @@ describe('SettingsPage layout', () => {
             id: annotation.id,
             limit: 1,
             ...(kind === 'project'
-              ? { projectId: 'project-a', sessionId: 'session-a' }
+              ? { projectId: 'project-a' }
               : { literatureVersionId: 'pdf-version' })
           })
         )

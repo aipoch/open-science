@@ -7,6 +7,7 @@ import type {
 } from '../../../../../shared/pdf-annotations'
 
 type PdfAnnotationPort = Readonly<{
+  document?: Readonly<{ sourceFileId?: string; versionId: string }>
   sessionId?: string
   source?: PdfAnnotationSource
   scoped: boolean

@@ -21,7 +21,6 @@ const importReceiptId = (scope: PdfAnnotationScope, source: PdfAnnotationSource)
     .update(
       JSON.stringify([
         scope.projectId ?? null,
-        scope.sessionId ?? null,
         source.kind,
         source.sourceFileId,
         source.versionId,
@@ -48,11 +47,19 @@ type Client = Pick<
   | 'pdfAnnotationImport'
   | 'tagAssignment'
   | 'tag'
+  | 'project'
+  | 'projectDeletionIntent'
   | 'literatureAttachmentVersion'
 >
 type Transaction = Pick<
   Prisma.TransactionClient,
-  'pdfAnnotation' | 'pdfAnnotationImport' | 'tagAssignment' | 'tag' | 'literatureAttachmentVersion'
+  | 'pdfAnnotation'
+  | 'pdfAnnotationImport'
+  | 'tagAssignment'
+  | 'tag'
+  | 'project'
+  | 'projectDeletionIntent'
+  | 'literatureAttachmentVersion'
 >
 const selectorEnvelope = z.object({ version: z.literal(1), selector: z.unknown() }).strict()
 
@@ -89,6 +96,11 @@ const annotationFromRow = (row: PdfAnnotationRow, tagIds: string[]): PdfAnnotati
 const recover = (existing: PdfAnnotation, request: CreatePdfAnnotationRequest): PdfAnnotation => {
   const content = {
     ...request,
+    createdInSessionId: undefined,
+    sessionId:
+      request.createdInSessionId === undefined
+        ? request.sessionId
+        : (request.createdInSessionId ?? undefined),
     origin: request.origin ?? 'user',
     tagIds: [...request.tagIds].sort(),
     version: 1,
@@ -104,7 +116,7 @@ const recover = (existing: PdfAnnotation, request: CreatePdfAnnotationRequest): 
 }
 
 const readAnnotations = async (
-  client: Transaction,
+  client: Pick<Transaction, 'tagAssignment'>,
   rows: PdfAnnotationRow[]
 ): Promise<PdfAnnotation[]> => {
   if (!rows.length) return []
@@ -181,7 +193,7 @@ const scopeWhere = (
   request: ListPdfAnnotationsRequest
 ): {
   projectId: string | null
-  sessionId: string | null
+  sessionId?: null
   sourceKind?: string
   versionId?: string
 } => {
@@ -192,13 +204,23 @@ const scopeWhere = (
       sourceKind: 'literature-attachment-version',
       versionId: request.literatureVersionId
     }
-  if (!request.literatureVersionId && request.projectId && request.sessionId)
-    return { projectId: request.projectId, sessionId: request.sessionId }
+  if (!request.literatureVersionId && request.projectId) return { projectId: request.projectId }
   throw new Error('PDF annotation scope is not available.')
 }
 
-// The catalog row is checked inside the write transaction so delete/trash cannot race a write.
-const requireLibraryVersion = async (
+const requireProject = async (
+  client: Pick<Transaction, 'project' | 'projectDeletionIntent'>,
+  projectId: string
+): Promise<void> => {
+  const [project, deletion] = await Promise.all([
+    client.project.findFirst({ where: { id: projectId, deletedAt: null }, select: { id: true } }),
+    client.projectDeletionIntent.findUnique({ where: { projectId }, select: { projectId: true } })
+  ])
+  if (!project || deletion) throw new Error('Project not available.')
+}
+
+// Check the owning Project or catalog row inside the transaction so deletion cannot race a write.
+const requireDocumentOwner = async (
   transaction: Transaction,
   row: {
     sourceKind: string
@@ -208,7 +230,10 @@ const requireLibraryVersion = async (
     projectId: string | null
   }
 ): Promise<void> => {
-  if (row.projectId !== null) return
+  if (row.projectId !== null) {
+    await requireProject(transaction, row.projectId)
+    return
+  }
   const version = await transaction.literatureAttachmentVersion.findFirst({
     where: {
       id: row.versionId,
@@ -270,6 +295,7 @@ class PdfAnnotationRepository {
         }
       : {}
     return client.$transaction(async (transaction) => {
+      if (request.projectId) await requireProject(transaction, request.projectId)
       const rows = await transaction.pdfAnnotation.findMany({
         where: { ...scope, ...after },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -284,7 +310,6 @@ class PdfAnnotationRepository {
           ? await transaction.pdfAnnotationImport.findFirst({
               where: {
                 projectId: request.projectId ?? null,
-                sessionId: request.sessionId ?? null,
                 versionId: request.literatureVersionId ?? request.versionId,
                 sourceFileId: request.sourceFileId
               }
@@ -305,7 +330,7 @@ class PdfAnnotationRepository {
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
       const existing = await transaction.pdfAnnotation.findUnique({ where: { id: request.id } })
-      if (existing) await requireLibraryVersion(transaction, existing)
+      if (existing) await requireDocumentOwner(transaction, existing)
       return existing
         ? recover((await readAnnotations(transaction, [existing]))[0], request)
         : undefined
@@ -322,7 +347,7 @@ class PdfAnnotationRepository {
     if (existing) return existing
     try {
       const created = await client.$transaction(async (transaction) => {
-        await requireLibraryVersion(transaction, {
+        await requireDocumentOwner(transaction, {
           projectId: request.projectId ?? null,
           sourceKind: source.kind,
           versionId: source.versionId,
@@ -333,7 +358,10 @@ class PdfAnnotationRepository {
           data: {
             id: request.id,
             projectId: request.projectId,
-            sessionId: request.sessionId,
+            sessionId:
+              request.createdInSessionId === undefined
+                ? request.sessionId
+                : (request.createdInSessionId ?? undefined),
             sourceSessionId: source.sessionId,
             sourceKind: source.kind,
             sourceFileId: source.sourceFileId,
@@ -418,7 +446,7 @@ class PdfAnnotationRepository {
     if (receipt) pdfNativeImportReceiptSchema.parse(receipt.result)
     const client = await this.getClient()
     const created = await client.$transaction(async (transaction) => {
-      await requireLibraryVersion(transaction, {
+      await requireDocumentOwner(transaction, {
         projectId: importScope.projectId ?? null,
         sourceKind: source.kind,
         versionId: source.versionId,
@@ -453,7 +481,10 @@ class PdfAnnotationRepository {
           data: pending.map((request) => ({
             id: request.id,
             projectId: request.projectId,
-            sessionId: request.sessionId,
+            sessionId:
+              request.createdInSessionId === undefined
+                ? request.sessionId
+                : (request.createdInSessionId ?? undefined),
             sourceSessionId: request.target.source.sessionId,
             sourceKind: request.target.source.kind,
             sourceFileId: request.target.source.sourceFileId,
@@ -487,7 +518,7 @@ class PdfAnnotationRepository {
       const current = await transaction.pdfAnnotation.findFirst({ where: scope })
       if (!current)
         throw new Error('PDF annotation not found or changed. Reload annotations and try again.')
-      await requireLibraryVersion(transaction, current)
+      await requireDocumentOwner(transaction, current)
       const updated = await transaction.pdfAnnotation.updateMany({
         where: scope,
         data: {
@@ -517,7 +548,7 @@ class PdfAnnotationRepository {
     const scope = { id: request.id, ...scopeWhere(request) }
     const count = await client.$transaction(async (transaction) => {
       const existing = await transaction.pdfAnnotation.findFirst({ where: scope })
-      if (existing) await requireLibraryVersion(transaction, existing)
+      if (existing) await requireDocumentOwner(transaction, existing)
       const count = await deletePdfAnnotations(transaction, {
         ...scope,
         ...(expectedUpdatedAt ? { updatedAt: new Date(expectedUpdatedAt) } : {})
@@ -529,14 +560,5 @@ class PdfAnnotationRepository {
     if (count) await this.notifyChanged({ scope: request, id: request.id })
     return count > 0
   }
-
-  async deleteSessions(sessionIds: readonly string[]): Promise<void> {
-    if (!sessionIds.length) return
-    const client = await this.getClient()
-    const count = await client.$transaction((transaction) =>
-      deletePdfAnnotations(transaction, { sessionId: { in: [...new Set(sessionIds)] } })
-    )
-    if (count) await this.notifyChanged()
-  }
 }
-export { PdfAnnotationRepository, deletePdfAnnotations }
+export { PdfAnnotationRepository, deletePdfAnnotations, readAnnotations }

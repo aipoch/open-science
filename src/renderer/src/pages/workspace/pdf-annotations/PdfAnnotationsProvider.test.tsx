@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, useEffect } from 'react'
+import { useTagStore } from '@/stores/tag-store'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { PdfAnnotationsProvider } from './PdfAnnotationsProvider'
@@ -201,7 +202,7 @@ it('ignores its own commit and other scopes, but reloads externally changed anno
       id: 'a1',
       updatedAt: items.get('a1')!.updatedAt
     })
-    notify({ scope: { projectId: 'p1', sessionId: 'another-session' } })
+    notify({ scope: { projectId: 'another-project', sessionId: 'another-session' } })
   })
   expect(list).toHaveBeenCalledTimes(1)
   expect(port.history(annotation.target.source).canUndo).toBe(true)
@@ -540,4 +541,86 @@ it('reuses unchanged refresh snapshots but publishes globally removed tag associ
   })
   expect(port.annotations).not.toBe(before)
   expect(port.annotations[0].tagIds).toEqual(['new-tag'])
+})
+
+it('loads only the requested PDF and leaves the workspace authority context unloaded', async () => {
+  installStore([annotation])
+  await act(async () =>
+    root.render(
+      <PdfAnnotationsProvider projectId="p1" sessionId="s1" loadAnnotations={false}>
+        <Probe />
+      </PdfAnnotationsProvider>
+    )
+  )
+  expect(port.available).toBe(true)
+  expect(window.api.pdfAnnotations.list).not.toHaveBeenCalled()
+  await act(async () =>
+    root.render(
+      <PdfAnnotationsProvider projectId="p1" sessionId="s1" sourceFileId="f1" versionId="v1">
+        <Probe />
+      </PdfAnnotationsProvider>
+    )
+  )
+  expect(window.api.pdfAnnotations.list).toHaveBeenCalledWith(
+    expect.objectContaining({ projectId: 'p1', sourceFileId: 'f1', versionId: 'v1' })
+  )
+  expect(port.source).toEqual(annotation.target.source)
+})
+
+it('reconciles cross-session document changes one record at a time and keeps other documents untouched', async () => {
+  const other = {
+    ...annotation,
+    id: 'other',
+    target: { ...annotation.target, source: { ...annotation.target.source, versionId: 'v2' } }
+  }
+  installStore([annotation, other])
+  let notify!: Parameters<Window['api']['pdfAnnotations']['onChanged']>[0]
+  window.api.pdfAnnotations.onChanged = vi.fn((listener) => {
+    notify = listener
+    return () => {}
+  })
+  await mount()
+  const changed = { ...annotation, note: 'Another session', updatedAt: '2026-09-21T00:00:00.000Z' }
+  vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({ items: [changed], total: 1 })
+  await act(async () => {
+    notify({
+      scope: { projectId: 'p1', sessionId: 's2' },
+      id: annotation.id,
+      updatedAt: changed.updatedAt
+    })
+  })
+  expect(window.api.pdfAnnotations.list).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: annotation.id, limit: 1 })
+  )
+  expect(port.annotations).toContainEqual(other)
+  expect(port.annotations).toContainEqual(changed)
+})
+
+it('projects deleted Tags without reloading notes or applying stale assignment snapshots', async () => {
+  installStore([{ ...annotation, tagIds: ['tag-a'] }])
+  useTagStore.setState({
+    status: 'ready',
+    revision: 100,
+    tags: [
+      { id: 'tag-a', name: 'A', colorKey: 'blue', iconKey: 'tag', createdAt: 1, updatedAt: 1 }
+    ],
+    assignments: [
+      { tagId: 'tag-a', resourceType: 'pdf.annotation', resourceId: annotation.id, createdAt: 1 }
+    ]
+  })
+  await mount()
+  const notes = port.annotations
+  await act(async () => {
+    useTagStore.setState({ revision: 101 })
+  })
+  expect(port.annotations).toBe(notes)
+  await act(async () => {
+    useTagStore.setState({ revision: 102, assignments: [] })
+  })
+  expect(port.annotations).toBe(notes)
+  await act(async () => {
+    useTagStore.setState({ revision: 103, tags: [] })
+  })
+  expect(port.annotations[0].tagIds).toEqual([])
+  expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(1)
 })

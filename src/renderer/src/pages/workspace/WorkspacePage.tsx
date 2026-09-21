@@ -1254,6 +1254,7 @@ const WorkspacePage = ({
         }}
       >
         <PdfAnnotationsProvider
+          loadAnnotations={false}
           projectId={bookmarkSession?.projectId}
           sessionId={bookmarkSession?.id}
           writable={bookmarksWritable}

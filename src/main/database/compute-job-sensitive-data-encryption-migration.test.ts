@@ -90,14 +90,10 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0042_pdf_annotations',
-        '0043_pdf_annotation_tags',
-        '0044_literature_pdf_annotations',
-        '0045_pdf_annotation_origin',
-        '0046_pdf_annotation_import_receipt'
+        '0043_pdf_annotations'
       ],
       from: '0015_session_model_call_usage',
-      to: '0046_pdf_annotation_import_receipt'
+      to: '0043_pdf_annotations'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)

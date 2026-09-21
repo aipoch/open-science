@@ -460,6 +460,7 @@ const AnnotationDraftEditor = ({
         <PopoverContent
           align="start"
           side="bottom"
+          sideOffset={0}
           collisionPadding={presentation.collisionPadding}
           className={cn(
             presentation.contentClassName,

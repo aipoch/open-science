@@ -5991,6 +5991,7 @@
     "Remove {{tag}} from this annotation": "이 주석에서 {{tag}} 제거",
     "Figures & Tables": "그림 및 표",
     "Notes & Annotations": "노트 및 주석",
+    "Quoted text": "인용문",
     "All marks": "모든 표시",
     "Commented": "댓글 있음",
     "Uncommented": "댓글 없음",
@@ -6073,6 +6074,14 @@
     "Imported {{count}} native annotations._other": "네이티브 주석 {{count}}개를 가져왔습니다.",
     "Unsupported native annotations: {{count}}_other": "지원되지 않는 네이티브 주석: {{count}}",
     "Native annotation import failed.": "PDF 내 주석을 가져오지 못했습니다.",
-    "Native annotation import limit reached. Some annotations were not imported.": "PDF 내 주석 가져오기 한도에 도달했습니다. 일부 주석을 가져오지 못했습니다."
+    "Native annotation import limit reached. Some annotations were not imported.": "PDF 내 주석 가져오기 한도에 도달했습니다. 일부 주석을 가져오지 못했습니다.",
+    "Show notes sidebar": "노트 사이드바 표시",
+    "Hide notes sidebar": "노트 사이드바 숨기기",
+    "Resize notes sidebar": "노트 사이드바 너비 조절",
+    "Open full notes view": "전체 노트 보기 열기",
+    "Notes scope": "노트 범위",
+    "All notes": "모든 노트",
+    "Current page": "현재 페이지",
+    "No annotations on this page.": "이 페이지에는 아직 주석이 없습니다."
   }
 }
