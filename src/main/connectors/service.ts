@@ -1,11 +1,6 @@
 import { isSensitiveDiagnosticKey, redactSensitiveText } from '../diagnostic-redaction'
 import { ParserEngine } from './engine'
-import {
-  ALL_CONNECTOR_IDS,
-  getBundledConnectorConflicts,
-  getDescriptor,
-  validateToolArguments
-} from './registry'
+import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
   classifyCustomMcpFailure,
   hasUsableCustomMcpCredentials,
@@ -421,12 +416,6 @@ export class ConnectorService {
           signal
         )
 
-    const credentialConnectors = authorization
-      ? authorization.connectors
-      : await this.currentConnectors()
-    signal?.throwIfAborted()
-    this.assertBundledRouteAvailable(connector, credentialConnectors)
-
     // Bundled tools that need privileged local behavior run here, after the same gate, instead of the
     // read-only HTTP engine.
     signal?.throwIfAborted()
@@ -435,6 +424,10 @@ export class ConnectorService {
       return signal ? localHandler(args, context, signal) : localHandler(args, context)
     }
 
+    const credentialConnectors = authorization
+      ? authorization.connectors
+      : await this.currentConnectors()
+    signal?.throwIfAborted()
     const credentialResult = await this.credentialsForDescriptor(
       descriptor,
       connector,
@@ -450,9 +443,7 @@ export class ConnectorService {
     // approval already granted to this exact Main call.
     if (credentialResult.prompted && access.specialistScoped) {
       await this.resolveAccess(connector, method, context, [connector], signal)
-      const current = await this.currentConnectors()
-      this.assertBundledRouteAvailable(connector, current)
-      credentials = this.credentials(current)
+      credentials = this.credentials(await this.currentConnectors())
       signal?.throwIfAborted()
       if (
         descriptor.requiredCredential &&
@@ -744,18 +735,6 @@ export class ConnectorService {
     return Boolean(custom.url)
   }
 
-  private assertBundledRouteAvailable(
-    connector: string,
-    connectors: StoredConnectors | undefined
-  ): void {
-    if (getBundledConnectorConflicts(connectors).includes(connector)) {
-      throw new ConnectorGateError(
-        'connector_unavailable',
-        `Bundled Connector "${connector}" conflicts with a custom Connector ID or name, or its deletion cleanup is pending. Resolve the configuration conflict or complete cleanup in Settings before retrying.`
-      )
-    }
-  }
-
   // The Permission Broker owns Connector policy precedence as well as durable grant matching. This
   // service supplies only the registered identity and current settings snapshot.
   private async ensureAuthorized(
@@ -773,7 +752,6 @@ export class ConnectorService {
       signal?.throwIfAborted()
       const connectors = await this.currentConnectors()
       signal?.throwIfAborted()
-      this.assertBundledRouteAvailable(connectorLabel, connectors)
       if (!this.isEnabled(connectorLabel, connectors)) {
         throw new ConnectorGateError('connector_disabled', disabledConnectorMessage(connectorLabel))
       }

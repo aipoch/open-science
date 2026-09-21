@@ -1,7 +1,6 @@
 import { Script } from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import {
-  getBundledConnectorConflicts,
   getConnectorTools,
   getDescriptor,
   validateToolArguments,
@@ -10,28 +9,6 @@ import {
 import { CONNECTOR_CATALOG } from './catalog'
 
 describe('registry + catalog', () => {
-  it('detects historical custom identity and filesystem collisions without mutating names', () => {
-    const servers = [
-      { id: 'zenodo', name: 'legacy' },
-      { id: 'other', name: 'Zenodo' },
-      { id: 'third', name: 'chemistry' }
-    ]
-    const before = structuredClone(servers)
-    expect(getBundledConnectorConflicts({ customMcpServers: servers }).sort()).toEqual([
-      'chemistry',
-      'zenodo'
-    ])
-    expect(getBundledConnectorConflicts()).toEqual([])
-    expect(servers).toEqual(before)
-  })
-  it('keeps pending deletion IDs reserved without requiring a surviving custom configuration', () => {
-    const snapshot = {
-      pendingCustomServerDeletionIds: ['zenodo', 'Chemistry', 'unrelated', 'zenodo']
-    }
-    const before = structuredClone(snapshot)
-    expect(getBundledConnectorConflicts(snapshot).sort()).toEqual(['chemistry', 'zenodo'])
-    expect(snapshot).toEqual(before)
-  })
   it('resolves a tool by connector+method', () => {
     expect(getDescriptor('chemistry', 'pubchem_get_compounds')?.id).toBe('pubchem_get_compounds')
     expect(getDescriptor('chemistry', 'nope')).toBeUndefined()

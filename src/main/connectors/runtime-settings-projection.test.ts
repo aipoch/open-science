@@ -1,7 +1,3 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { ALL_CONNECTOR_IDS } from './registry'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -15,74 +11,6 @@ const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors
 })
 
 describe('ConnectorRuntimeSettingsProjection', () => {
-  it('keeps a historical custom Zenodo document intact and resumes bundled sync after conflict removal', async () => {
-    const skillsDir = await mkdtemp(join(tmpdir(), 'connector-conflict-'))
-    const stored = connectors({
-      disabledConnectorIds: ALL_CONNECTOR_IDS.filter((id) => id !== 'zenodo'),
-      customMcpServers: [
-        {
-          id: 'old-server',
-          name: 'zenodo',
-          displayName: 'Old Zenodo',
-          transport: 'stdio',
-          command: 'old-mcp',
-          enabled: true
-        }
-      ]
-    })
-    const before = structuredClone(stored)
-    const listTools = vi.fn().mockResolvedValue([])
-    const projection = new ConnectorRuntimeSettingsProjection({
-      readConnectors: async () => stored,
-      skillsDir,
-      mcpClientManager: { listTools }
-    })
-    try {
-      await mkdir(join(skillsDir, 'mcp-zenodo'))
-      const file = join(skillsDir, 'mcp-zenodo', 'SKILL.md')
-      await writeFile(file, 'historical custom doc')
-      await projection.refresh()
-      await projection.refreshCustomServer('old-server')
-      expect(await readFile(file, 'utf8')).toBe('historical custom doc')
-      expect(projection.materializedCustomSkillNames()).toEqual([])
-      expect(listTools).not.toHaveBeenCalled()
-      expect(stored).toEqual(before)
-      stored.customMcpServers = []
-      await projection.refresh()
-      expect(await readFile(file, 'utf8')).toContain('### search_records')
-    } finally {
-      await rm(skillsDir, { recursive: true, force: true })
-    }
-  })
-
-  it('preserves docs across restart with a pending deletion and resumes only after cleanup', async () => {
-    const skillsDir = await mkdtemp(join(tmpdir(), 'connector-pending-deletion-'))
-    const stored = connectors({
-      disabledConnectorIds: ALL_CONNECTOR_IDS.filter((id) => id !== 'zenodo'),
-      pendingCustomServerDeletionIds: ['zenodo']
-    })
-    try {
-      await mkdir(join(skillsDir, 'mcp-zenodo'))
-      const file = join(skillsDir, 'mcp-zenodo', 'SKILL.md')
-      await writeFile(file, 'historical custom doc')
-      const options = {
-        readConnectors: async () => stored,
-        skillsDir,
-        mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) }
-      }
-      await new ConnectorRuntimeSettingsProjection(options).refresh()
-      expect(await readFile(file, 'utf8')).toBe('historical custom doc')
-      const restarted = new ConnectorRuntimeSettingsProjection(options)
-      await restarted.refresh()
-      expect(await readFile(file, 'utf8')).toBe('historical custom doc')
-      stored.pendingCustomServerDeletionIds = []
-      await restarted.refresh()
-      expect(await readFile(file, 'utf8')).toContain('### search_records')
-    } finally {
-      await rm(skillsDir, { recursive: true, force: true })
-    }
-  })
-
   it('owns the current snapshot and synchronizes bundled and enabled custom Skill docs', async () => {
     const stored = connectors({
       disabledConnectorIds: ['chemistry'],
@@ -124,8 +52,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(projection.current()).toBe(stored)
     expect(syncBundledSkillDocs).toHaveBeenCalledWith(
       '/config/skills',
-      expect.not.arrayContaining(['chemistry']),
-      []
+      expect.not.arrayContaining(['chemistry'])
     )
     expect(syncCustomSkillDocs).toHaveBeenCalledWith(
       '/config/skills',

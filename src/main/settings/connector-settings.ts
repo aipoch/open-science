@@ -46,7 +46,7 @@ import {
   isCustomMcpServerRouteSafe
 } from '../connectors/custom-mcp-bootstrap'
 import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
-import { getBundledConnectorConflicts, getConnectorTools } from '../connectors/registry'
+import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
@@ -216,15 +216,11 @@ class ConnectorSettingsModule {
   }
 
   // Bundled connectors are default-on. Keep this projection on the durable owner so runtime
-  // configuration, Skill provisioning, and renderer views all apply the same opt-out and
-  // identity-conflict rules.
+  // configuration, Skill provisioning, and renderer views all apply the same opt-out rule.
   enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
 
-    const conflicts = getBundledConnectorConflicts(connectors)
-    return CONNECTOR_CATALOG.map((meta) => meta.id).filter(
-      (id) => !disabled.has(id) && !conflicts.includes(id)
-    )
+    return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
   }
 
   materializedCustomSkillNames(): string[] {
@@ -545,15 +541,6 @@ class ConnectorSettingsModule {
   }
 
   async setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot> {
-    if (request.enabled) {
-      // Identity validation must not resolve secrets or migrate legacy credentials on rejection.
-      const { connectors } = await this.repository.getSettings()
-      if (getBundledConnectorConflicts(connectors).includes(request.id)) {
-        throw new Error(
-          `Cannot enable bundled Connector "${request.id}": a custom Connector has a conflicting ID or name, or its deletion cleanup is pending. Resolve the configuration conflict or complete cleanup in Settings first.`
-        )
-      }
-    }
     await this.repository.setConnectorDisabled(request.id, !request.enabled)
 
     return this.connectorsSnapshot()
@@ -1198,7 +1185,7 @@ class ConnectorSettingsModule {
   }
 
   private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
-    const enabled = new Set(this.enabledConnectorIds(connectors))
+    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
     const autoAllow = new Set(connectors?.autoAllowIds ?? [])
 
     return CONNECTOR_CATALOG.map((meta) => ({
@@ -1208,7 +1195,7 @@ class ConnectorSettingsModule {
       description: meta.description,
       sources: meta.sources,
       requiresNcbi: meta.requiresNcbi,
-      enabled: enabled.has(meta.id),
+      enabled: !disabled.has(meta.id),
       autoAllow: autoAllow.has(meta.id),
       group: meta.group ?? 'featured'
     })).sort((a, b) => a.displayName.localeCompare(b.displayName))

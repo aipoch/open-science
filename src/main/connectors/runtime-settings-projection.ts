@@ -5,7 +5,7 @@ import {
   type CustomMcpFailureAvailability
 } from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
-import { ALL_CONNECTOR_IDS, getBundledConnectorConflicts } from './registry'
+import { ALL_CONNECTOR_IDS } from './registry'
 import { customConnectorSkillName } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
 import { createLogger, errorLogFields } from '../logger'
@@ -130,12 +130,9 @@ class ConnectorRuntimeSettingsProjection {
       }
 
       const disabled = new Set(connectors?.disabledConnectorIds ?? [])
-      const conflicts = getBundledConnectorConflicts(connectors)
-      const enabledIds = ALL_CONNECTOR_IDS.filter(
-        (id) => !disabled.has(id) && !conflicts.includes(id)
-      )
+      const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
 
-      await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds, conflicts)
+      await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds)
       const customServers = selectEnabledCustomServers(connectors)
       const customSync = await this.syncCustomSkillDocs(
         this.options.skillsDir,
