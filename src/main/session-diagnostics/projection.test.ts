@@ -34,17 +34,6 @@ describe('diagnostic log event projection', () => {
         unresponsiveDurationMs: 123
       }
     })
-    expect(
-      JSON.stringify(
-        projectDiagnosticLog({
-          msg: 'private-message',
-          data: {
-            reason: 'private-reason',
-            error: { message: 'private-error' }
-          }
-        })
-      )
-    ).not.toContain('private')
   })
 })
 
@@ -101,6 +90,8 @@ it('omits unrecognized operation vocabulary instead of passing through private t
     projectDiagnosticLog({
       msg: 'PRIVATE_EVENT',
       data: {
+        reason: 'private-reason',
+        error: { message: 'private-error' },
         operation: 'PRIVATE_OPERATION',
         phase: '/PRIVATE_PATH',
         outcome: 'PRIVATE_OUTCOME',

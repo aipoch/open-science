@@ -134,13 +134,8 @@ export function projectDiagnosticSession(value: unknown): ObjectValue {
     'agentConfiguration'
   ])
     if (session[key]) result[key] = projectFields(session[key])
-  for (const key of ['messages', 'activities', 'activityGroups'])
+  for (const key of ['messages', 'activities', 'activityGroups', 'runtimeSessionAdmissions'])
     if (Array.isArray(session[key])) result[key] = list(session[key], key, key === 'messages')
-  if (Array.isArray(session.runtimeSessionAdmissions))
-    result.runtimeSessionAdmissions = list(
-      session.runtimeSessionAdmissions,
-      'runtimeSessionAdmissions'
-    )
   if (session.sessionDetailsGeneration && object(session.sessionDetailsGeneration).usage)
     object(result.sessionDetailsGeneration).usage = projectFields(
       object(session.sessionDetailsGeneration).usage

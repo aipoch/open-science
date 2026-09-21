@@ -19,8 +19,16 @@ beforeEach(() => {
   inspectDiagnostics.mockResolvedValue({
     items: [
       { id: 'session', name: 'session.json', kind: 'session', available: true },
+      { id: 'database', name: 'db', kind: 'database', available: true },
       { id: 'log:main.log', name: 'main.log', kind: 'log', available: true },
-      { id: 'db', name: 'db', kind: 'database', available: false, reason: 'unreadable' }
+      { id: 'log:main.1.log', name: 'main.1.log', kind: 'log', available: true },
+      {
+        id: 'invalid:backup',
+        name: 'session.json.invalid-1-1',
+        kind: 'invalid-session',
+        available: false,
+        reason: 'unreadable'
+      }
     ]
   })
   exportDiagnostics.mockResolvedValue({ status: 'partial', path: '/tmp/report.tar.gz' })
@@ -46,21 +54,33 @@ const render = async (): Promise<void> => {
 }
 const button = (name: string): HTMLButtonElement =>
   [...document.querySelectorAll('button')].find((item) => item.textContent === name)!
-it('exports only checked available items and reports partial success', async () => {
+it('exports only selected available items, opts into historical logs and reports partial success', async () => {
   await render()
   const checkboxes = [...document.querySelectorAll<HTMLInputElement>('input')]
-  expect(checkboxes.map((item) => item.checked)).toEqual([true, true, false])
-  expect(document.body.textContent).toContain(
-    'When reporting an issue to developers, include screenshots of the problem.'
+  expect(checkboxes.map((item) => item.checked)).toEqual([true, true, true, false, false])
+  expect(checkboxes[4].disabled).toBe(true)
+  expect(checkboxes[1].closest('label')?.textContent).toContain('Session database records')
+  expect(checkboxes[2].closest('label')?.textContent).toContain(
+    'Current application log metadata, including activity outside this session.'
   )
-  expect(checkboxes[2].disabled).toBe(true)
-  expect(checkboxes[2].closest('label')?.textContent).toContain('Session database records')
-  await act(async () => fireEvent.click(checkboxes[1]))
+  expect(checkboxes[3].closest('label')?.textContent).toContain(
+    'Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.'
+  )
+  await act(async () => fireEvent.click(checkboxes[2]))
   await act(async () => fireEvent.click(button('Export')))
   expect(exportDiagnostics).toHaveBeenCalledWith(
-    expect.objectContaining({ projectId: 'p', sessionId: 's', selectedItems: ['session'] })
+    expect.objectContaining({
+      projectId: 'p',
+      sessionId: 's',
+      selectedItems: ['session', 'database']
+    })
   )
   expect(document.body.textContent).toContain('Diagnostics exported with missing information.')
+  await act(async () => fireEvent.click(checkboxes[3]))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedItems: ['session', 'database', 'log:main.1.log'] })
+  )
 })
 it('cancels an in-flight inspection using its operation identity', async () => {
   inspectDiagnostics.mockReturnValue(new Promise(() => {}))
@@ -110,38 +130,6 @@ it('retains the dialog if cancellation fails so the task is not silently abandon
     'Could not cancel diagnostic export.'
   )
   expect(onClose).not.toHaveBeenCalled()
-})
-
-it('defaults to current logs and requires an explicit selection for historical logs', async () => {
-  inspectDiagnostics.mockResolvedValue({
-    items: [
-      { id: 'session', name: 'session.json', kind: 'session', available: true },
-      { id: 'database', name: 'db', kind: 'database', available: true },
-      { id: 'log:main.log', name: 'main.log', kind: 'log', available: true },
-      { id: 'log:main.1.log', name: 'main.1.log', kind: 'log', available: true },
-      { id: 'log:main.2.log', name: 'main.2.log', kind: 'log', available: true }
-    ]
-  })
-  await render()
-  const checkboxes = [...document.querySelectorAll<HTMLInputElement>('input')]
-  expect(checkboxes.map((item) => item.checked)).toEqual([true, true, true, false, false])
-  expect(checkboxes[2].closest('label')?.textContent).toContain(
-    'Current application log metadata, including activity outside this session.'
-  )
-  expect(checkboxes[3].closest('label')?.textContent).toContain(
-    'Select manually to investigate earlier issues.'
-  )
-  await act(async () => fireEvent.click(button('Export')))
-  expect(exportDiagnostics).toHaveBeenLastCalledWith(
-    expect.objectContaining({ selectedItems: ['session', 'database', 'log:main.log'] })
-  )
-  await act(async () => fireEvent.click(checkboxes[3]))
-  await act(async () => fireEvent.click(button('Export')))
-  expect(exportDiagnostics).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      selectedItems: ['session', 'database', 'log:main.log', 'log:main.1.log']
-    })
-  )
 })
 
 it('waits for the final cancellation report and keeps cleanup failures visible', async () => {

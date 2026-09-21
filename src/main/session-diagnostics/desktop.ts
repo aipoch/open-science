@@ -14,7 +14,7 @@ import type {
 
 type Sources = Pick<
   SessionDiagnosticWorkerInput,
-  'dataRoot' | 'configRoot' | 'logPath' | 'homePath' | 'appVersion'
+  'dataRoot' | 'configRoot' | 'logPath' | 'appVersion'
 >
 type Options = {
   createWorker: (options: WorkerOptions) => Worker

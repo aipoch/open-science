@@ -28,7 +28,6 @@ async function fixture(): Promise<SessionDiagnosticWorkerInput> {
     sessionId: 'session',
     dataRoot: join(root, 'data'),
     configRoot: join(root, 'config'),
-    homePath: root,
     logPath: join(root, 'logs/main.log'),
     directory: join(root, 'output'),
     appVersion: 'test'
@@ -261,7 +260,7 @@ describe('session diagnostics isolated collector', () => {
         payload: JSON.stringify({
           password: 'nested-secret',
           auth: ['array-secret'],
-          path: `${input.homePath}/private-file`,
+          path: `${input.configRoot}/private-file`,
           keyText: '-----BEGIN PRIVATE KEY-----\nPEMSECRET\n-----END PRIVATE KEY-----'
         })
       },
@@ -280,7 +279,7 @@ describe('session diagnostics isolated collector', () => {
       'array-secret',
       'PEMSECRET',
       'RAWPEMSECRET',
-      input.homePath
+      input.configRoot
     ])
       expect(log).not.toContain(secret)
     const first = JSON.parse(log.split('\n')[0])

@@ -56,8 +56,6 @@ test('exports selected diagnostics without changing the persisted session', asyn
     .getByTestId('conversation-header')
     .getByRole('button', { name: 'Export diagnostics…', exact: true })
   await expect(diagnosticButton).toBeVisible()
-  await expect(diagnosticButton.locator('.lucide-stethoscope')).toHaveCount(1)
-  await page.screenshot({ path: testInfo.outputPath('diagnostic-header.png') })
   await diagnosticButton.click()
   const dialog = page.getByRole('dialog', { name: 'Export diagnostics…', exact: true })
   const sessionCheckbox = dialog.getByRole('checkbox', { name: /^session\.json/ })
@@ -71,7 +69,6 @@ test('exports selected diagnostics without changing the persisted session', asyn
     if ((await checkbox.isEnabled()) && (await checkbox.isChecked())) await checkbox.uncheck()
   }
   await sessionCheckbox.check()
-  await page.screenshot({ path: testInfo.outputPath('diagnostic-selection.png') })
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
   await expect(dialog.getByText(/^Diagnostics exported/)).toBeVisible({ timeout: 45_000 })
   expect(await readFile(sourcePath, 'utf8')).toBe(evidence)

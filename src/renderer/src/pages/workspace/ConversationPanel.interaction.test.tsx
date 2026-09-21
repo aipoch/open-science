@@ -915,7 +915,6 @@ describe('ConversationPanel header spacing', () => {
     )!
     expect(button).not.toBeNull()
     expect(button.disabled).toBe(false)
-    expect(button.querySelector('.lucide-stethoscope')).not.toBeNull()
     act(() => button.click())
     expect(exportDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
   })

@@ -1,4 +1,3 @@
-import { homedir } from 'node:os'
 import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
 import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
 import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
@@ -1173,7 +1172,6 @@ const createApplicationModules = async (
         dataRoot: resolveDataRoot(),
         configRoot: resolveConfigRoot(),
         logPath: getLogFilePath(),
-        homePath: homedir(),
         appVersion: app.getVersion()
       }),
       chooseDestination: async (defaultName) => {

@@ -86,7 +86,6 @@ function setup(
       dataRoot: join(root, 'data'),
       configRoot: join(root, 'config'),
       logPath: join(root, 'logs', 'main.log'),
-      homePath: root,
       appVersion: '1.0'
     })
   })
@@ -230,7 +229,7 @@ describe('isolated diagnostic desktop lifecycle', () => {
     const { owner, target } = setup({
       response: {
         kind: 'error',
-        error: 'password=do-not-leak',
+        ...{ error: 'password=do-not-leak' },
         report: 'collection failed: source unavailable'
       }
     })

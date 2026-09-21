@@ -193,7 +193,7 @@ export async function runSessionDiagnosticWorker(
             name: item.name,
             available: item.available,
             sizeBytes: item.sizeBytes,
-            reason: item.reason ? item.reason : undefined
+            reason: item.reason
           }))
         }
       }
@@ -233,7 +233,7 @@ export async function runSessionDiagnosticWorker(
         id: source.id,
         selected: false,
         status: source.available ? 'skipped' : 'missing',
-        reason: source.reason ? source.reason : undefined,
+        reason: source.reason,
         collectedAt: new Date().toISOString()
       }))
     for (const id of selected) {
@@ -395,6 +395,6 @@ export async function runSessionDiagnosticWorker(
   } catch (error) {
     const message = diagnosticFailure(error)
     record(message)
-    return { kind: 'error', error: message, report: log.join('\n') }
+    return { kind: 'error', report: log.join('\n') }
   }
 }

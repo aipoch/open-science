@@ -28,7 +28,6 @@ export type SessionDiagnosticWorkerInput = SessionDiagnosticIdentity & {
   dataRoot: string
   configRoot: string
   logPath?: string
-  homePath: string
   appVersion: string
   selectedItems?: string[]
   directory?: string
@@ -36,4 +35,4 @@ export type SessionDiagnosticWorkerInput = SessionDiagnosticIdentity & {
 export type SessionDiagnosticWorkerResult =
   | { kind: 'inspection'; inspection: SessionDiagnosticInspection }
   | { kind: 'archive'; partial: boolean; report: string }
-  | { kind: 'error'; error: string; report: string }
+  | { kind: 'error'; report: string }
