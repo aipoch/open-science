@@ -730,10 +730,18 @@ class AcpRuntimeCoordinator {
       owner && !this.retiredRuntimes.has(owner)
         ? owner
         : await this.runtimeForTarget(request.agentTarget, request.sessionId, request.cwd)
-    const response = await runtime.resetSessionContext(request)
-    this.bindSessionRuntime(response.sessionId, runtime)
-    this.lastRuntime = runtime
-    return response
+    // A cold reset has no attached Session yet. Keep background workflow completion from
+    // retiring its generation before reset commits ownership, and release failed allocations.
+    this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
+    try {
+      const response = await runtime.resetSessionContext(request)
+      this.bindSessionRuntime(response.sessionId, runtime)
+      this.lastRuntime = runtime
+      return response
+    } finally {
+      this.runtimeActivityCounts.set(runtime, this.runtimeActivityCounts.get(runtime)! - 1)
+      await this.retireUnusedTargetedRuntime(runtime)
+    }
   }
 
   async waitForPromptOwnershipRelease(sessionId: string): Promise<void> {

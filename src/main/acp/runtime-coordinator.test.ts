@@ -632,6 +632,66 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.at(-1)!.requestRetirement).toHaveBeenCalledOnce()
   })
 
+  it('retires an isolated OpenCode process after a failed cold reset', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks })
+      fake.resetSessionContext.mockRejectedValue(new Error('reset failed'))
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider',
+      model: 'model',
+      reasoningEffort: 'default'
+    } as const
+    const request = { sessionId: 'cold', cwd: '/same-project', agentTarget }
+    await expect(coordinator.resetSessionContext(request)).rejects.toThrow('reset failed')
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    expect(coordinator.getOwnedSessionIds()).toEqual([])
+
+    await coordinator.resumeSession(request)
+    expect(created).toHaveLength(3)
+    expect(created[2].resumeSession).toHaveBeenCalledWith(request)
+  })
+
+  it('keeps a pending cold OpenCode reset alive when background work finishes', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const entered = createDeferred()
+    const release = createDeferred()
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks })
+      fake.resetSessionContext.mockImplementation(async ({ sessionId }) => {
+        entered.resolve()
+        await release.promise
+        fake.emitState({ sessionId, sessionIds: [sessionId] })
+        return { sessionId, cwd: '/same-project', frameworkId: 'opencode', contextReset: true }
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider',
+      model: 'model',
+      reasoningEffort: 'default'
+    } as const
+    const request = { sessionId: 'cold', cwd: '/same-project', agentTarget }
+    const pending = coordinator.resetSessionContext(request)
+    await entered.promise
+    await coordinator.withActivity({ session: request }, async () => undefined)
+    expect(created).toHaveLength(2)
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+    release.resolve()
+    await pending
+    expect(coordinator.getOwnedSessionIds()).toEqual(['cold'])
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+
+    await coordinator.deleteSession({ sessionId: 'cold' })
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+  })
+
   it('isolates cold OpenCode resumes and reuses each Session process', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
