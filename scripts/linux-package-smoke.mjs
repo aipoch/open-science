@@ -18,6 +18,10 @@ import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs
 const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x86_64\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
 const STARTUP_TIMEOUT_MS = 60_000
+const REQUIRED_LINUX_PRISMA_ENGINES = [
+  'libquery_engine-debian-openssl-3.0.x.so.node',
+  'libquery_engine-rhel-openssl-3.0.x.so.node'
+]
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -124,11 +128,17 @@ const assertPackagedResources = async (
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')
   )
-  if (nativeEngines.length !== 1) {
-    throw new Error(`Packaged Linux must contain exactly one Prisma engine in ${prismaRoot}.`)
-  }
-  if (!/query_engine-.+\.so\.node$/.test(nativeEngines[0])) {
-    throw new Error(`Packaged Linux Prisma engine is incompatible: ${nativeEngines[0]}.`)
+  const missingEngines = REQUIRED_LINUX_PRISMA_ENGINES.filter(
+    (name) => !nativeEngines.includes(name)
+  )
+  const unexpectedEngines = nativeEngines.filter(
+    (name) => !REQUIRED_LINUX_PRISMA_ENGINES.includes(name)
+  )
+  if (missingEngines.length > 0 || unexpectedEngines.length > 0) {
+    throw new Error(
+      `Packaged Linux must contain Prisma engines ${REQUIRED_LINUX_PRISMA_ENGINES.join(', ')}; ` +
+        `found ${nativeEngines.join(', ') || 'none'} in ${prismaRoot}.`
+    )
   }
 }
 
