@@ -1115,7 +1115,9 @@ describe('Compute service architecture', () => {
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
       'src/main/pdf-annotations/repository.integration.test.ts',
-      'src/main/pdf-annotations/service.test.ts'
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts'
     ])
   })
 

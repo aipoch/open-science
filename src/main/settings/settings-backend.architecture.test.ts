@@ -1489,7 +1489,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
       'src/main/compute/cancellation-runtime.integration.test.ts',
       'src/main/pdf-annotations/repository.integration.test.ts',
-      'src/main/pdf-annotations/service.test.ts'
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts'
     ])
     expect(
       [
