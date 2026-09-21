@@ -150,8 +150,10 @@ const GENERATED_SOURCE_OMISSIONS = [
   'window.announceWindowFindContentReady',
   'window.announceWindowFindReady',
   'window.clearFind',
+  'window.closeActionMenu',
   'window.closeFind',
   'window.findInPage',
+  'window.onActionMenuClosed',
   'window.onCloseActivePane',
   'window.onCloseConfirmDismiss',
   'window.onCloseConfirmRequest',
@@ -159,6 +161,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'window.onHideWindowFind',
   'window.onShowWindowFind',
   'window.onWindowFindAppearance',
+  'window.openActionMenu',
   'window.sendCloseConfirmResponse'
 ] as const
 

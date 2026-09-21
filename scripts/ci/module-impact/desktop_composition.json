@@ -155,7 +155,9 @@
     "src/main/credential-identity/macos.test.ts",
     "src/main/credential-identity/probe-logging.test.ts",
     "src/main/process-tree-windows.ts",
-    "src/main/process-tree.windows.integration.test.ts"
+    "src/main/process-tree.windows.integration.test.ts",
+    "src/main/action-menu-overlay.test.ts",
+    "src/main/action-menu-overlay.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -291,7 +293,8 @@
       "src/main/credential-identity/windows-profile-key.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/action-menu-overlay.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

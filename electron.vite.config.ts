@@ -43,6 +43,7 @@ export default defineConfig(({ command }) => ({
         input: {
           index: resolve('src/preload/index.ts'),
           'find-overlay': resolve('src/preload/find-overlay.ts'),
+          'action-menu-overlay': resolve('src/preload/action-menu-overlay.ts'),
           'installation-assistant': resolve('src/preload/installation-assistant.ts')
         }
       }
@@ -80,6 +81,7 @@ export default defineConfig(({ command }) => ({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
+          'action-menu-overlay': resolve('src/renderer/action-menu-overlay.html'),
           'installation-assistant': resolve('src/renderer/installation-assistant.html'),
           'office-preview': resolve('src/renderer/office-preview.html'),
           'reviewer-paged-preview': resolve('src/renderer/reviewer-paged-preview.html')

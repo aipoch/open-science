@@ -3,20 +3,13 @@
 // "…" menu shows the file identity, Copy path, and an "On this machine" group with Download
 // (same save pipeline as managed files) and Save as artifact (same staging pipeline as composer
 // uploads). Kept in its own module so PreviewFileSurface stays source-neutral.
-import { Check, ExternalLink, File, MoreHorizontal, RotateCw } from 'lucide-react'
+import { Check, ExternalLink, MoreHorizontal, RotateCw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
-import { ActionMenuItems } from '@/components/action-menu'
+import { ActionMenuDropdown } from '@/components/action-menu'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { errorDetail } from '@/lib/error-detail'
 import { usePreviewActions } from './preview-actions/preview-action-hooks'
@@ -151,43 +144,23 @@ export const LocalFileHeaderActions = ({
           </Tooltip>
         </TooltipProvider>
       ) : null}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-text-000 hover:text-text-000"
-            aria-label={t('More actions')}
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        {/* z-[70] keeps the menu above the full-screen preview modal (z-[61]). */}
-        <DropdownMenuContent align="end" className="z-[70] w-56">
-          <div className="flex items-center gap-2 px-2 py-1.5">
-            <File className="size-4 shrink-0 text-text-100" aria-hidden="true" />
-            <div className="min-w-0">
-              <div className="truncate text-[12px] font-medium text-text-000">{name}</div>
-              <div className="truncate text-[10px] text-text-100">{path}</div>
-            </div>
-          </div>
-          <DropdownMenuSeparator />
-          <ActionMenuItems
-            entries={identityEntries}
-            onSelect={previewActions.execute}
-            compact={false}
-          />
-          <DropdownMenuLabel className="px-1 text-[10px] font-medium uppercase tracking-wider">
-            {t('On this machine')}
-          </DropdownMenuLabel>
-          <ActionMenuItems
-            entries={machineEntries}
-            onSelect={previewActions.execute}
-            compact={false}
-          />
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <ActionMenuDropdown
+        entries={[...identityEntries, { kind: 'separator' }, ...machineEntries]}
+        onSelect={previewActions.execute}
+        contentClassName="z-[70] w-56"
+        sections={{ download: t('On this machine') }}
+        header={<div className="whitespace-pre-line px-2 py-1.5 text-xs">{`${name}\n${path}`}</div>}
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className="text-text-000 hover:text-text-000"
+          aria-label={t('More actions')}
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </Button>
+      </ActionMenuDropdown>
     </>
   )
 }

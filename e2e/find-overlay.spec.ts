@@ -7,6 +7,7 @@ test('refocuses the open find overlay and follows app language changes', async (
   app
 }, testInfo) => {
   const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
   await page.getByRole('button', { name: 'New project' }).click()
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Find overlay project')
