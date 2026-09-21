@@ -1,3 +1,4 @@
+import { getActiveSourceContents } from './source-preview-view'
 import { BrowserWindow, ipcMain, type IpcMainEvent, type WebContents } from 'electron'
 
 import { resolveFindOverlayOwner } from './find-overlay-registry'
@@ -10,9 +11,10 @@ import {
   type WindowFindResult
 } from '../shared/window-controls'
 
-// The MAIN window's webContents is what actually gets searched and emits found-in-page. It needs no
+// The main renderer or its focused native source gets searched and emits found-in-page. It needs no
 // send(): results are delivered to the OVERLAY that issued the request, not echoed to the main window.
 type FindTargetWebContents = {
+  isDestroyed?: () => boolean
   findInPage: (
     text: string,
     options: { findNext: boolean; forward: boolean; matchCase: boolean }
@@ -39,6 +41,7 @@ type WindowFindIpcDeps = {
   // Defaults to BrowserWindow.fromWebContents, which resolves the owning BrowserWindow of a child
   // WebContentsView to its parent.
   resolveMainWindow?: (sender: WebContents) => FindWindow | null
+  resolveSearchTarget?: (window: FindWindow) => FindTargetWebContents
 }
 
 const isWindowFindRequest = (value: unknown): value is WindowFindRequest => {
@@ -63,6 +66,17 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): (() => voi
     ((sender) =>
       (resolveFindOverlayOwner(sender)?.mainWindow as FindWindow | null) ??
       BrowserWindow.fromWebContents(sender))
+  const resolveTarget = (sender: WebContents): FindTargetWebContents | undefined => {
+    const owner = resolveMainWindow(sender)
+    return (
+      (owner &&
+        (deps.resolveSearchTarget?.(owner) ??
+          getActiveSourceContents(owner.webContents) ??
+          owner.webContents)) ||
+      undefined
+    )
+  }
+  const searchedTargets = new WeakMap<OverlayWebContents, FindTargetWebContents>()
   const activeRequests = new WeakMap<
     FindTargetWebContents,
     { nativeRequestId: number; rendererRequestId: number; replyTo: OverlayWebContents }
@@ -95,9 +109,17 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): (() => voi
 
   const onRequest = (event: IpcMainEvent, request: unknown): void => {
     if (!isWindowFindRequest(request) || request.text.length === 0) return
-    const webContents = resolveMainWindow(event.sender)?.webContents
+    const webContents = resolveTarget(event.sender)
     if (!webContents) return
 
+    const previous = searchedTargets.get(event.sender)
+    if (previous && previous !== webContents) {
+      activeRequests.delete(previous)
+      if (listening.has(previous)) previous.stopFindInPage('clearSelection')
+    }
+    searchedTargets.set(event.sender, webContents)
+    const owner = resolveFindOverlayOwner(event.sender)
+    if (owner) owner.clearSearch = () => onClear(event)
     installResultListener(webContents)
     activeRequests.set(webContents, {
       nativeRequestId: webContents.findInPage(request.text, {
@@ -111,15 +133,19 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): (() => voi
   }
 
   const onClear = (event: IpcMainEvent): void => {
-    const webContents = resolveMainWindow(event.sender)?.webContents
+    const webContents = searchedTargets.get(event.sender) ?? resolveTarget(event.sender)
     if (!webContents) return
     activeRequests.delete(webContents)
-    webContents.stopFindInPage('clearSelection')
+    if (!webContents.isDestroyed?.()) webContents.stopFindInPage('clearSelection')
+    searchedTargets.delete(event.sender)
+    const owner = resolveFindOverlayOwner(event.sender)
+    if (owner) owner.clearSearch = undefined
   }
 
   // The overlay asked to close (X button or its own Escape). Invoke the owner's close handle, which
   // hides the overlay view, clears the main selection, and refocuses the main window.
   const onClose = (event: IpcMainEvent): void => {
+    onClear(event)
     resolveFindOverlayOwner(event.sender)?.closeOverlay()
   }
 

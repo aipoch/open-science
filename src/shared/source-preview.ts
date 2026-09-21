@@ -3,9 +3,19 @@ const SOURCE_PREVIEW_FRAME_NAME = 'open-science-source-preview'
 const SOURCE_PREVIEW_SANDBOX =
   'allow-same-origin allow-scripts allow-forms allow-storage-access-by-user-activation'
 const SOURCE_PREVIEW_LOAD_STATE_CHANNEL = 'source-preview:load-state'
+const SOURCE_PREVIEW_UPDATE_VIEW_CHANNEL = 'source-preview:update-view'
+
+type SourcePreviewViewUpdate = {
+  instanceId: string
+  sourceUrl: string
+  attempt: number
+  bounds: { x: number; y: number; width: number; height: number } | null
+}
+
 const SOURCE_PREVIEW_RELEASE_CHANNEL = 'source-preview:release'
 
 type SourcePreviewLoadBase = {
+  instanceId?: string
   navigationId: number
   sourceUrl: string
   currentUrl: string
@@ -43,6 +53,7 @@ export {
   SOURCE_PREVIEW_SANDBOX,
   SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
   SOURCE_PREVIEW_RELEASE_CHANNEL,
+  SOURCE_PREVIEW_UPDATE_VIEW_CHANNEL,
   parseHttpsSourceUrl
 }
-export type { SourcePreviewLoadState }
+export type { SourcePreviewLoadState, SourcePreviewViewUpdate }

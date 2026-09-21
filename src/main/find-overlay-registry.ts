@@ -5,7 +5,11 @@
 // unreliable for the overlay. Instead the overlay manager records the pairing when it creates the view:
 // the find-IPC handler routes search requests to owner.mainWindow, and the close channel invokes
 // owner.closeOverlay to hide the bar.
-export type FindOverlayOwner = { mainWindow: unknown; closeOverlay: () => void }
+export type FindOverlayOwner = {
+  mainWindow: unknown
+  closeOverlay: () => void
+  clearSearch?: () => void
+}
 
 const owners = new WeakMap<object, FindOverlayOwner>()
 

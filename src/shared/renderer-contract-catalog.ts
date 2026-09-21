@@ -86,7 +86,7 @@ import type {
   WslSetupStatus,
   WslSetupConversationBootstrap
 } from './wsl-setup'
-import type { SourcePreviewLoadState } from './source-preview'
+import type { SourcePreviewLoadState, SourcePreviewViewUpdate } from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
   ArtifactPreviewResult,
@@ -614,7 +614,11 @@ import {
   type RendererSurfaceProfile
 } from './renderer-contract'
 import { DATABASE_STARTUP_CHANNELS } from './database-startup'
-import { SOURCE_PREVIEW_LOAD_STATE_CHANNEL, SOURCE_PREVIEW_RELEASE_CHANNEL } from './source-preview'
+import {
+  SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
+  SOURCE_PREVIEW_RELEASE_CHANNEL,
+  SOURCE_PREVIEW_UPDATE_VIEW_CHANNEL
+} from './source-preview'
 
 const WEB = 'web'
 const LOCAL = 'local'
@@ -2482,7 +2486,12 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('source-preview', [SOURCE_PREVIEW_LOAD_STATE_CHANNEL, ELECTRON_EVENT], {
     optionalRoot: true
   }),
-  'sourcePreview.release': callable<(sourceUrl: string) => void>()(
+  'sourcePreview.updateView': callable<(request: SourcePreviewViewUpdate) => void>()(
+    'source-preview',
+    [SOURCE_PREVIEW_UPDATE_VIEW_CHANNEL, SEND],
+    { optionalRoot: true }
+  ),
+  'sourcePreview.release': callable<(sourceUrl: string, instanceId?: string) => void>()(
     'source-preview',
     [SOURCE_PREVIEW_RELEASE_CHANNEL, SEND],
     { optionalRoot: true }

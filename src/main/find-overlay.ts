@@ -4,7 +4,11 @@ import {
   WINDOW_FIND_SHOW_CHANNEL,
   type WindowFindAppearance
 } from '../shared/window-controls'
-import { unregisterFindOverlayOwner, type FindOverlayOwner } from './find-overlay-registry'
+import {
+  resolveFindOverlayOwner,
+  unregisterFindOverlayOwner,
+  type FindOverlayOwner
+} from './find-overlay-registry'
 
 // Preferred geometry for the find overlay, in CSS pixels. 420px ~ 26rem at the app's 16px base.
 const OVERLAY_WIDTH = 420
@@ -122,7 +126,9 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
     if (!opened) return
     opened = false
     view?.setBounds(ZERO_BOUNDS)
-    deps.mainWindow.webContents.stopFindInPage('clearSelection')
+    const clearSearch = view && resolveFindOverlayOwner(view.webContents)?.clearSearch
+    if (clearSearch) clearSearch()
+    else deps.mainWindow.webContents.stopFindInPage('clearSelection')
     deps.mainWindow.webContents.send(WINDOW_FIND_HIDE_CHANNEL)
     deps.mainWindow.webContents.focus()
   }

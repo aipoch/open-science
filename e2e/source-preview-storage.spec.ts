@@ -3,9 +3,8 @@ import { webcrypto } from 'node:crypto'
 import { createServer } from 'node:https'
 import { once } from 'node:events'
 import { X509CertificateGenerator } from '@peculiar/x509'
-import type { Frame, Page } from 'playwright'
+import type { Page } from 'playwright'
 import { expect } from '@playwright/test'
-import { SOURCE_PREVIEW_FRAME_NAME, SOURCE_PREVIEW_SANDBOX } from '../src/shared/source-preview'
 import { test } from './fixtures/electron-app'
 
 // A real HTTPS transport is required: Playwright routing disables the HTTP cache and cannot
@@ -56,7 +55,11 @@ test('retains source cookies, cache and local storage while session storage ends
     response.writeHead(200, {
       'Content-Type': 'text/html',
       'Cache-Control': 'no-store',
-      'Set-Cookie': 'serverCookie=retained; Secure; SameSite=None; Max-Age=3600; Path=/'
+      'Set-Cookie': [
+        'serverCookie=retained; Secure; SameSite=None; Max-Age=3600; Path=/',
+        'defaultCookie=retained; Secure; Max-Age=3600; Path=/',
+        'strictCookie=retained; Secure; SameSite=Strict; Max-Age=3600; Path=/'
+      ]
     }).end(`<!doctype html><html><body><h1>Source storage fixture</h1>
       <button id="access">Allow storage</button><output id="result"></output>
       <script>document.getElementById('access').onclick = async () => {
@@ -70,50 +73,64 @@ test('retains source cookies, cache and local storage while session storage ends
   if (!address || typeof address === 'string') throw new Error('Missing HTTPS fixture port')
   const origin = `https://127.0.0.1:${address.port}`
   const mountSource = async (page: Page): Promise<void> => {
-    // Use the production sandbox contract in a trusted renderer child. This drives the real
-    // main-process admission and permission handlers without relying on external providers.
-    await page.evaluate(
-      ({ origin, name, sandbox }) => {
-        document.querySelector('#storage-fixture')?.remove()
-        const frame = document.createElement('iframe')
-        frame.id = 'storage-fixture'
-        frame.name = name
-        frame.setAttribute('sandbox', sandbox)
-        frame.style.cssText =
-          'position:fixed;inset:0;width:90vw;height:80vh;z-index:9999;background:white'
-        document.body.append(frame)
-        frame.src = `${origin}/page`
-      },
-      { origin, name: SOURCE_PREVIEW_FRAME_NAME, sandbox: SOURCE_PREVIEW_SANDBOX }
-    )
-    await expect(page.frameLocator('#storage-fixture').getByRole('heading')).toHaveText(
-      'Source storage fixture'
-    )
+    const previousPage = page
+      .context()
+      .pages()
+      .find((candidate) => candidate.url() === `${origin}/page`)
+    const closed = previousPage?.waitForEvent('close')
+    await page.evaluate((origin) => {
+      const previous = document.querySelector<HTMLElement>('#storage-fixture')
+      if (previous) window.api.sourcePreview!.release(`${origin}/page`, previous.dataset.instanceId)
+      previous?.remove()
+      const host = document.createElement('div')
+      host.id = 'storage-fixture'
+      host.dataset.instanceId = crypto.randomUUID()
+      document.body.append(host)
+      window.api.sourcePreview!.updateView({
+        instanceId: host.dataset.instanceId,
+        sourceUrl: `${origin}/page`,
+        attempt: 0,
+        bounds: { x: 20, y: 20, width: 600, height: 500 }
+      })
+    }, origin)
+    await closed
+    await expect
+      .poll(() =>
+        page
+          .context()
+          .pages()
+          .some((candidate) => candidate.url() === `${origin}/page`)
+      )
+      .toBe(true)
+    await expect(sourceFrame(page).getByRole('heading')).toHaveText('Source storage fixture')
   }
-  const sourceFrame = (page: Page): Frame => {
-    const frame = page.frames().find((frame) => frame.url() === `${origin}/page`)
-    if (!frame) throw new Error('Missing source frame')
-    return frame
+  const sourceFrame = (page: Page): Page => {
+    const source = page
+      .context()
+      .pages()
+      .find((candidate) => candidate.url() === `${origin}/page`)
+    if (!source) throw new Error('Missing native source page')
+    return source
   }
   try {
     let page = await app.completeOnboarding()
     await app.trustSourcePreviewCertificate(pem)
     await mountSource(page)
-    await page
-      .frameLocator('#storage-fixture')
-      .getByRole('button', { name: 'Allow storage' })
-      .click()
-    await expect(page.frameLocator('#storage-fixture').locator('#result')).toHaveText('granted')
     const initial = await sourceFrame(page).evaluate(async () => {
+      document.cookie = 'cookieCheck=accepted; Secure; Path=/'
       localStorage.setItem('source-persistent', 'retained')
       sessionStorage.setItem('source-session', 'current window')
       document.cookie = 'clientCookie=retained; Secure; SameSite=None; Max-Age=3600; Path=/'
       return {
+        cookieCheck: document.cookie.includes('cookieCheck=accepted'),
         cookies: await (await fetch('/echo')).text(),
         cached: await (await fetch('/cache')).text(),
         privileged: typeof (globalThis as { api?: unknown }).api
       }
     })
+    expect(initial.cookieCheck).toBe(true)
+    expect(initial.cookies).toContain('defaultCookie=retained')
+    expect(initial.cookies).toContain('strictCookie=retained')
     expect(initial.cookies).toContain('serverCookie=retained')
     expect(initial.cookies).toContain('clientCookie=retained')
     expect(initial.cached).toBe('cached evidence')

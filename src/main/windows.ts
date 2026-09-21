@@ -1,3 +1,4 @@
+import { createSourcePreviewViews } from './source-preview-view'
 import {
   app,
   BrowserWindow,
@@ -324,6 +325,7 @@ const createMainWindow = (
     minHeight: 720,
     title: 'Open-Science'
   })
+  createSourcePreviewViews(window)
   if (opts) configureMainWindow(window, opts)
 
   // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main

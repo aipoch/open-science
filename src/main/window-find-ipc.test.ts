@@ -91,6 +91,34 @@ describe('window find IPC', () => {
     })
   })
 
+  it('clears the previous native source target and ignores its late search result', () => {
+    const host = createTargetWindow()
+    const source = createTargetWindow()
+    const overlay = createOverlay()
+    let active = source.webContents
+    registerWindowFindIpcHandlers({
+      resolveMainWindow: () => host,
+      resolveSearchTarget: () => active
+    })
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    expect(source.webContents.findInPage).toHaveBeenCalledOnce()
+    active = host.webContents
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 2, text: 'new', findNext: true, forward: true }
+    )
+    expect(source.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
+    source.emitFoundInPage({ requestId: 17, activeMatchOrdinal: 1, matches: 2, finalUpdate: true })
+    expect(overlay.send).not.toHaveBeenCalled()
+    ipcMain.emit(WINDOW_FIND_CLEAR_CHANNEL, { sender: overlay })
+    expect(host.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
+  })
+
   it('does not return an asynchronous result from a superseded query to the overlay', () => {
     const target = createTargetWindow()
     target.webContents.findInPage.mockReturnValueOnce(17).mockReturnValueOnce(18)

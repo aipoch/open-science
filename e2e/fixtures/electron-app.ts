@@ -353,6 +353,18 @@ type ElectronApp = {
   captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowSize: (width: number, height: number) => Promise<void>
+  pressSourcePreviewShortcut: (
+    url: string,
+    key: string,
+    modifiers?: ShortcutModifier[]
+  ) => Promise<void>
+  sourcePreviewViews: () => Promise<
+    Array<{
+      url: string
+      visible: boolean
+      bounds: { x: number; y: number; width: number; height: number }
+    }>
+  >
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
 }
@@ -966,6 +978,9 @@ class ElectronAppHarness implements ElectronApp {
       if (!mainWindow) return false
 
       return mainWindow.contentView.children.some((view) => {
+        const contents = (view as Electron.WebContentsView).webContents
+        if (!contents || contents.isDestroyed() || !contents.getURL().includes('/find-overlay/'))
+          return false
         const bounds = view.getBounds()
         return bounds.width > 0 && bounds.height > 0
       })
@@ -1009,6 +1024,50 @@ class ElectronAppHarness implements ElectronApp {
         BrowserWindow.getAllWindows()[0].setSize(width, height)
       },
       { width, height }
+    )
+  }
+
+  async pressSourcePreviewShortcut(
+    url: string,
+    key: string,
+    modifiers: ShortcutModifier[] = []
+  ): Promise<void> {
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, { url, key, modifiers }) => {
+        const contents = BrowserWindow.getAllWindows()
+          .flatMap((window) => window.contentView.children)
+          .map((view) => (view as Electron.WebContentsView).webContents)
+          .find((contents) => contents && !contents.isDestroyed() && contents.getURL() === url)
+        if (!contents) throw new Error('Source preview was not found.')
+        contents.focus()
+        contents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers })
+        contents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers })
+      },
+      { url, key, modifiers }
+    )
+  }
+
+  async sourcePreviewViews(): Promise<
+    Array<{
+      url: string
+      visible: boolean
+      bounds: { x: number; y: number; width: number; height: number }
+    }>
+  > {
+    return this.runningApplication.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().flatMap((window) =>
+        window.contentView.children.flatMap((view) => {
+          const contents = (view as Electron.WebContentsView).webContents
+          if (
+            !contents ||
+            contents === window.webContents ||
+            contents.isDestroyed() ||
+            !contents.getURL().startsWith('https:')
+          )
+            return []
+          return [{ url: contents.getURL(), visible: view.getVisible(), bounds: view.getBounds() }]
+        })
+      )
     )
   }
 

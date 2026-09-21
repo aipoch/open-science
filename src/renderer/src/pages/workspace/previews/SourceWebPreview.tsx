@@ -1,3 +1,4 @@
+import { useSourcePreviewView } from './use-source-preview-view'
 import { ExternalLink, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -71,6 +72,9 @@ const SourceWebPreviewContent = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const closeLabel = t('Close preview of {{title}}', { title: item.title })
+  const nativeView = Boolean(window.api?.sourcePreview?.updateView)
+  const [instanceId] = useState(() => crypto.randomUUID())
+  const nativeHostRef = useRef<HTMLDivElement>(null)
   const hasLifecycleMonitor = Boolean(window.api?.sourcePreview?.onLoadState)
   const [frameAttempt, setFrameAttempt] = useState(0)
   const [progressRun, setProgressRun] = useState(0)
@@ -82,6 +86,12 @@ const SourceWebPreviewContent = ({
   const progressTimerRef = useRef<number | undefined>(undefined)
   const completionTimerRef = useRef<number | undefined>(undefined)
   const isMountedRef = useRef(false)
+  useSourcePreviewView(
+    nativeHostRef,
+    { instanceId, sourceUrl: sourceUrl.href, attempt: frameAttempt },
+    nativeView && isFrameReady,
+    loadState.phase === 'loaded'
+  )
 
   const finishProgress = useCallback((): void => {
     window.clearTimeout(progressTimerRef.current)
@@ -104,6 +114,7 @@ const SourceWebPreviewContent = ({
 
     // Subscribe before inserting the iframe so even an immediate browser-process failure is observed.
     const removeListener = subscribe((state) => {
+      if (nativeView && state.instanceId !== instanceId) return
       if (parseHttpsSourceUrl(state.sourceUrl)?.href !== sourceUrl.href) return
       if (state.navigationId < minimumNavigationIdRef.current) return
 
@@ -127,7 +138,7 @@ const SourceWebPreviewContent = ({
       active = false
       removeListener()
     }
-  }, [finishProgress, sourceUrl.href, stopProgress])
+  }, [finishProgress, sourceUrl.href, stopProgress, nativeView, instanceId])
 
   useEffect(() => {
     isMountedRef.current = true
@@ -136,10 +147,13 @@ const SourceWebPreviewContent = ({
       // StrictMode immediately replays mount effects without removing the iframe. Defer release so
       // that replay can retain the active main-process tracking record; a real unmount stays false.
       void Promise.resolve().then(() => {
-        if (!isMountedRef.current) window.api?.sourcePreview?.release?.(sourceUrl.href)
+        if (!isMountedRef.current) {
+          if (nativeView) window.api?.sourcePreview?.release?.(sourceUrl.href, instanceId)
+          else window.api?.sourcePreview?.release?.(sourceUrl.href)
+        }
       })
     }
-  }, [sourceUrl.href])
+  }, [sourceUrl.href, instanceId, nativeView])
 
   useEffect(() => {
     let currentProgress = INITIAL_PROGRESS
@@ -273,7 +287,15 @@ const SourceWebPreviewContent = ({
         ) : null}
       </header>
       <div className="relative min-h-0 flex-1 bg-white">
-        {isFrameReady ? (
+        {nativeView ? (
+          <div
+            ref={nativeHostRef}
+            data-source-preview-frame=""
+            data-source-preview-native=""
+            data-source-url={sourceUrl.href}
+            className="absolute inset-0"
+          />
+        ) : isFrameReady ? (
           <iframe
             key={frameAttempt}
             data-source-preview-frame=""

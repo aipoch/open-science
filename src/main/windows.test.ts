@@ -110,6 +110,7 @@ let lastWindowOptions: BrowserWindowConstructorOptions | undefined
 let loadRendererDocument = (): Promise<void> => Promise.resolve()
 
 class FakeBrowserWindow {
+  removeListener = vi.fn()
   closeMock = vi.fn()
   destroyMock = vi.fn()
   loadFileMock = vi.fn(() => loadRendererDocument())
@@ -148,6 +149,8 @@ class FakeBrowserWindow {
     getURL: (): string => 'file:///app/index.html',
     mainFrame: this.mainFrame,
     session: {
+      on: vi.fn(),
+      removeListener: vi.fn(),
       setPermissionRequestHandler: (handler: PermissionRequestHandler): void => {
         permissionRequestHandler = handler
       },

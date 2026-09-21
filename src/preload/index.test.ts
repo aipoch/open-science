@@ -717,6 +717,7 @@ describe('preload bridge — public surface inventory', () => {
       'sideChat.start',
       'sourcePreview.onLoadState',
       'sourcePreview.release',
+      'sourcePreview.updateView',
       'specialist.abortPackageUpload',
       'specialist.addMarketplaceSource',
       'specialist.beginPackageUpload',

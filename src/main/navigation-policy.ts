@@ -131,5 +131,10 @@ const createFrameNavigationGuard = (
 // navigations remain confined by the source-preview frame registry.
 const isAllowedExternalNavigation = (url: string): boolean => isAllowedExternalUrl(url)
 
-export { createFrameNavigationGuard, isAllowedExternalNavigation, isAllowedExternalUrl }
+export {
+  createFrameNavigationGuard,
+  isAllowedExternalNavigation,
+  isAllowedExternalUrl,
+  isAllowedSourceDescendantNavigation
+}
 export type { FrameNavigationGuard }
