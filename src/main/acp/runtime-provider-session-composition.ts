@@ -88,6 +88,8 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
     registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
+    registerBridgeMcpSession: (sessionId, tools, namespaces) =>
+      base.connectionResources.registerBridgeMcpSession(sessionId, tools, namespaces),
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,
@@ -105,6 +107,8 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveProjectAgentContext: options.resolveProjectAgentContext,
     peekClaudeReplay: (sessionId) => base.handoffContinuity.peekClaudeReplay(sessionId),
     commitClaudeReplay: (sessionId) => base.handoffContinuity.commitClaudeReplay(sessionId),
+    registerBridgeMcpSession: (sessionId, tools, namespaces) =>
+      base.connectionResources.registerBridgeMcpSession(sessionId, tools, namespaces),
     updateCwd,
     emitState,
     diagnosticContext
@@ -178,6 +182,8 @@ const composeAcpRuntimeProviderSessionOwners = (
     adopter: providerSessionAdopter,
     clearLivePermissionProfile: (sessionId) =>
       session.permissionContext.clearLivePermissionProfile(sessionId),
+    registerBridgeMcpSession: (sessionId, tools, namespaces) =>
+      base.connectionResources.registerBridgeMcpSession(sessionId, tools, namespaces),
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,

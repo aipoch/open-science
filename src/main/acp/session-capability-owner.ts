@@ -44,6 +44,8 @@ import {
   shellRuntimeAgentContract,
   type ShellRuntimeAgentContract
 } from '../notebook/shell-runtime'
+import { createCodexBridgeMcpTools, namespaceFor } from '../settings/codex-bridge-tools'
+import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
 
 const log = createLogger('acp')
 
@@ -204,6 +206,8 @@ type BuiltSessionCapabilities = SessionCapabilities &
   Readonly<{
     shellRuntime?: ShellRuntimeBinding
     shellRuntimeAgentContract?: ShellRuntimeAgentContract
+    bridgeMcpTools?: ResponsesBridgeNamespacedTool[]
+    bridgeMcpNamespaces?: readonly string[]
   }>
 
 export type ProvisionSessionCapabilitiesRequest = Omit<
@@ -231,6 +235,8 @@ export type SessionCapabilityProvision = Readonly<{
   mcpServers: McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
   shellRuntimeAgentContract?: ShellRuntimeAgentContract
+  bridgeMcpTools?: ResponsesBridgeNamespacedTool[]
+  bridgeMcpNamespaces?: readonly string[]
   wslSetup?: true
   includeFrameworkMcpServers: (servers: readonly McpServer[]) => SessionCapabilities
   prepareCommit?: (appSessionId: string) => Promise<void>
@@ -263,6 +269,7 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
 }
 
 type SessionCapabilityOwnerOptions = {
+  unregisterBridgeMcpSession?: (sessionId: string) => boolean | undefined
   artifacts?: SessionCapabilityArtifactOptions
   notebook?: SessionCapabilityNotebookOptions
   skillImport?: SessionCapabilitySkillImportOptions
@@ -450,6 +457,8 @@ export class AcpSessionCapabilityOwner {
       ...(built.shellRuntimeAgentContract
         ? { shellRuntimeAgentContract: built.shellRuntimeAgentContract }
         : {}),
+      bridgeMcpTools: built.bridgeMcpTools ?? [],
+      bridgeMcpNamespaces: built.bridgeMcpNamespaces ?? [],
       ...(wslSetupEnabled ? { wslSetup: true as const } : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]): SessionCapabilities => {
         if (terminal) throw new Error('ACP session capability provision is already finalized.')
@@ -903,9 +912,34 @@ export class AcpSessionCapabilityOwner {
       literatureProvisionedWithSessionNew: request.literatureEnabled
     })
 
+    const bridgeMcpTools = request.bridgeMcpAliasesEnabled
+      ? createCodexBridgeMcpTools({
+          artifacts: artifactsAllowed,
+          notebook: notebookAllowed
+            ? {
+                memoryTools: memoryToolsEnabled,
+                shellRuntime,
+                wslSetupTools: request.wslSetupEnabled
+              }
+            : undefined,
+          library: libraryAllowed,
+          literature: literatureAllowed
+        })
+      : []
+    const bridgeMcpNamespaces = request.bridgeMcpAliasesEnabled
+      ? [
+          namespaceFor(ARTIFACT_MCP_SERVER_NAME),
+          namespaceFor(NOTEBOOK_MCP_SERVER_NAME),
+          namespaceFor(LITERATURE_LIBRARY_MCP_SERVER_NAME),
+          namespaceFor(LITERATURE_MCP_SERVER_NAME)
+        ]
+      : []
+
     return Object.freeze({
       mcpServers: modelFacingServers,
       descriptor,
+      bridgeMcpTools,
+      bridgeMcpNamespaces,
       ...(shellRuntime
         ? {
             shellRuntime,
@@ -1043,6 +1077,8 @@ export class AcpSessionCapabilityOwner {
   revokeSession(appSessionId: string): void {
     if (!this.committedSessionIds.has(appSessionId)) return
 
+    this.options.unregisterBridgeMcpSession?.(appSessionId)
+
     if (this.options.mcpHttpHost) {
       const routingIds = [
         this.artifactRoutingIds.get(appSessionId),
@@ -1110,6 +1146,7 @@ export class AcpSessionCapabilityOwner {
       ...this.committedSessionIds
     ])
     for (const sessionId of ownedSessionIds) {
+      this.options.unregisterBridgeMcpSession?.(sessionId)
       this.releaseSessionCapabilities(sessionId)
       this.releaseCommittedNotebookCapability(sessionId)
       this.releaseCommittedSkillImportCapability(sessionId)

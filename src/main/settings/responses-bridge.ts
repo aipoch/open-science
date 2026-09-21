@@ -137,6 +137,8 @@ export class ResponsesBridge {
   private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
   private readonly scopedHostMessageSessionKeys = new Set<string>()
   private readonly strictHostMessageSessionKeys = new Set<string>()
+  private readonly sessionMcpTools = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly sessionMcpNamespaces = new Map<string, readonly string[]>()
   private readonly deterministicErrors = new DeterministicProviderErrorReplay<{
     message: string
     upstreamStatus: number
@@ -272,6 +274,20 @@ export class ResponsesBridge {
     return this.scopedHostMessageSessionKeys.delete(promptCacheKey)
   }
 
+  registerMcpSession(
+    promptCacheKey: string,
+    namespacedTools: ResponsesBridgeNamespacedTool[],
+    namespaces: readonly string[] = [...new Set(namespacedTools.map(({ namespace }) => namespace))]
+  ): void {
+    this.sessionMcpTools.set(promptCacheKey, namespacedTools)
+    this.sessionMcpNamespaces.set(promptCacheKey, [...new Set(namespaces)])
+  }
+
+  unregisterMcpSession(promptCacheKey: string): boolean {
+    this.sessionMcpNamespaces.delete(promptCacheKey)
+    return this.sessionMcpTools.delete(promptCacheKey)
+  }
+
   async start(): Promise<ResponsesBridgeConnection> {
     return this.host.start()
   }
@@ -286,6 +302,8 @@ export class ResponsesBridge {
     this.hostMessageSessionScopes.clear()
     this.scopedHostMessageSessionKeys.clear()
     this.strictHostMessageSessionKeys.clear()
+    this.sessionMcpNamespaces.clear()
+    this.sessionMcpTools.clear()
     await this.host.close()
   }
 
@@ -423,6 +441,10 @@ export class ResponsesBridge {
       promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
     const hostMessageTools =
       promptCacheKey === undefined ? undefined : this.hostMessageSessionScopes.get(promptCacheKey)
+    const sessionMcpTools =
+      promptCacheKey === undefined ? undefined : this.sessionMcpTools.get(promptCacheKey)
+    const sessionMcpNamespaces =
+      promptCacheKey === undefined ? undefined : this.sessionMcpNamespaces.get(promptCacheKey)
     const hostMessageScoped = hostMessageTools !== undefined
     const hostMessageBoundaryActive = this.strictHostMessageSessionKeys.size > 0
     if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
@@ -465,7 +487,22 @@ export class ResponsesBridge {
           ? hostMessageTools
           : hostMessageBoundaryActive
             ? []
-            : [...(target.namespacedTools ?? []), ...skillTools, ...planTools]
+            : [
+                ...(sessionMcpTools || sessionMcpNamespaces
+                  ? [
+                      ...(target.namespacedTools ?? []).filter(
+                        (tool) =>
+                          !(sessionMcpNamespaces ?? []).includes(tool.namespace) &&
+                          !(sessionMcpTools ?? []).some(
+                            ({ namespace }) => namespace === tool.namespace
+                          )
+                      ),
+                      ...(sessionMcpTools ?? [])
+                    ]
+                  : (target.namespacedTools ?? [])),
+                ...skillTools,
+                ...planTools
+              ]
     // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
     // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
     // can call only the scope-bounded reviewer HTTP MCP functions.

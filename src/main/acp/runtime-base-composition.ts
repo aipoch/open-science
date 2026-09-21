@@ -208,6 +208,8 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     }
   }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
+    unregisterBridgeMcpSession: (sessionId) =>
+      connectionResources.unregisterBridgeMcpSession(sessionId),
     artifacts: options.artifacts,
     notebook: options.notebook,
     skillImport: options.skillImport,

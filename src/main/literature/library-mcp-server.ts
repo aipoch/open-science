@@ -32,11 +32,11 @@ const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MAX_CHARACTERS = 1_200
 const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS = 200
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_LIMIT = 5
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_MAX_CHARACTERS = 5_000
-const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
+export const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
 
 type LiteratureLibraryScope = (typeof LITERATURE_LIBRARY_SCOPES)[number]
 
-const literatureDiscoverySchema = z
+export const literatureDiscoverySchema = z
   .object({
     item: literatureItemInputSchema,
     source: literatureSourceInputSchema

@@ -392,6 +392,12 @@ export type ResolvedAgentBackend = {
       options?: Readonly<{ failClosedUnknownKeys?: boolean }>
     ) => void
     unregisterHostMessageSession?: (promptCacheKey: string) => boolean
+    registerMcpSession?: (
+      promptCacheKey: string,
+      namespacedTools: ResponsesBridgeNamespacedTool[],
+      namespaces?: readonly string[]
+    ) => void
+    unregisterMcpSession?: (promptCacheKey: string) => boolean
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void

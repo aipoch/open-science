@@ -13,14 +13,12 @@ import {
   type ModelReasoningEffort,
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
-import { LITERATURE_CITATION_LOCALES, LITERATURE_CITATION_STYLES } from '../../shared/literature'
 import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
   REQUEST_SKILL_IMPORT_TOOL_NAME,
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
-import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
 import {
   getAgentFramework,
   type AgentFrameworkId,
@@ -30,9 +28,9 @@ import {
 } from '../agent-framework'
 import { CODEX_BRIDGE_MODEL, normalizeResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
-import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
+import { codexBridgeStaticMcpTools } from './codex-bridge-tools'
 import type { AnthropicProviderBridgeTarget } from './anthropic-provider-bridge'
 import {
   normalizeAnthropicBaseUrl,
@@ -129,28 +127,7 @@ const transportTargetId = (
 ): string => JSON.stringify([frameworkId, providerId, model])
 const namespaceFor = (serverName: string): string =>
   `mcp__${serverName.replace(/[^a-zA-Z0-9_]/g, '_')}`
-const NOTEBOOK_TOOLS: ResponsesBridgeNamespacedTool[] = NOTEBOOK_RPC_TOOLS.map((tool) => ({
-  namespace: namespaceFor(NOTEBOOK_MCP_SERVER_NAME),
-  name: tool.name,
-  description:
-    tool.name === 'notebook_execute'
-      ? `${tool.description} For Open-Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
-      : tool.description,
-  parameters: z.toJSONSchema(z.object(tool.inputSchema), {
-    target: 'draft-7'
-  }) as ResponsesBridgeNamespacedTool['parameters']
-}))
-const ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: namespaceFor(ARTIFACT_MCP_SERVER_NAME),
-    name: 'write_artifact_file',
-    description:
-      'Attach a generated image, chart, report, data export, or archive to the current Open-Science response. The file must already exist before using a localPath source.',
-    parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
+const STATIC_APP_MCP_TOOLS = codexBridgeStaticMcpTools()
 const SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
   {
     namespace: namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME),
@@ -159,71 +136,6 @@ const SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
     parameters: z.toJSONSchema(z.object(requestSkillImportToolSchema), {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-const LIBRARY_SCOPE = z.enum(['library', 'project', 'collection', 'items'])
-const LIBRARY_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: namespaceFor('open-science-library'),
-    name: 'search_library',
-    description:
-      "Browse or search the user's Open-Science Literature Library. Use scope project by default; use library only when the user explicitly requests the global Library.",
-    parameters: z.toJSONSchema(
-      z.object({
-        query: z.string().trim().min(1).max(2_000).optional(),
-        scope: LIBRARY_SCOPE.optional(),
-        collectionId: z.string().trim().min(1).max(512).optional(),
-        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(200).optional(),
-        offset: z.number().int().min(0).optional(),
-        limit: z.number().int().min(1).max(20).optional()
-      }),
-      { target: 'draft-7' }
-    ) as ResponsesBridgeNamespacedTool['parameters']
-  },
-  {
-    namespace: namespaceFor('open-science-library'),
-    name: 'read_library_abstract',
-    description:
-      'Read a complete abstract for one Library record or bounded abstracts for up to five records. Use the same scope as the originating search.',
-    parameters: z.toJSONSchema(
-      z.object({
-        itemId: z.string().trim().min(1).max(512).optional(),
-        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(5).optional(),
-        scope: LIBRARY_SCOPE.optional(),
-        collectionId: z.string().trim().min(1).max(512).optional()
-      }),
-      { target: 'draft-7' }
-    ) as ResponsesBridgeNamespacedTool['parameters']
-  },
-  {
-    namespace: namespaceFor('open-science-library'),
-    name: 'read_library_pdf',
-    description:
-      'Retrieve relevant prose passages with page numbers from one PDF attached to a Library record after finding it with search_library.',
-    parameters: z.toJSONSchema(
-      z.object({
-        itemId: z.string().trim().min(1).max(512),
-        attachmentId: z.string().trim().min(1).max(512).optional(),
-        query: z.string().trim().min(1).max(2_000),
-        scope: LIBRARY_SCOPE.optional(),
-        collectionId: z.string().trim().min(1).max(512).optional()
-      }),
-      { target: 'draft-7' }
-    ) as ResponsesBridgeNamespacedTool['parameters']
-  },
-  {
-    namespace: namespaceFor('open-science-library'),
-    name: 'format_references',
-    description:
-      'Format trusted Library records for the requested citation style and locale. Use the returned citation strings verbatim.',
-    parameters: z.toJSONSchema(
-      z.object({
-        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(20),
-        styleId: z.enum(LITERATURE_CITATION_STYLES).default('apa'),
-        locale: z.enum(LITERATURE_CITATION_LOCALES).default('en-US')
-      }),
-      { target: 'draft-7' }
-    ) as ResponsesBridgeNamespacedTool['parameters']
   }
 ]
 class BackendRoutePlanner {
@@ -300,9 +212,7 @@ class BackendRoutePlanner {
       ...(modelRoute === 'codex-bridge'
         ? {
             codexBridgeTools: Object.freeze([
-              ...NOTEBOOK_TOOLS,
-              ...ARTIFACT_TOOLS,
-              ...LIBRARY_TOOLS,
+              ...STATIC_APP_MCP_TOOLS,
               ...(input.conversationSkillImportEnabled ? SKILL_IMPORT_TOOLS : [])
             ]),
             reviewerBridgeTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS
