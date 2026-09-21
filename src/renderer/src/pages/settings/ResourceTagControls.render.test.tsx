@@ -522,6 +522,29 @@ it('keeps draft selections local and preserves current choices when asynchronous
   cleanup()
   expect(setAssignment).not.toHaveBeenCalled()
 })
+it('keeps an overflowing draft tag row from clipping badges under its scrollbar', () => {
+  const tags = Array.from({ length: 7 }, (_, index) => ({
+    id: `tag-${index}`,
+    name: `research-${index}`,
+    iconKey: 'tag' as const,
+    colorKey: 'blue' as const,
+    createdAt: 1,
+    updatedAt: 1
+  }))
+  useTagStore.setState({ tags })
+  const Draft = (): React.JSX.Element => {
+    const [ids, setIds] = useState(tags.map(({ id }) => id))
+    return <TagSelection value={ids} onChange={setIds} />
+  }
+
+  render(<Draft />)
+
+  const tagRow = screen.getByRole('group', { name: 'Tags' }).querySelector('.overflow-x-auto')
+  expect(tagRow).not.toBeNull()
+  expect(tagRow?.className).toContain('[scrollbar-width:none]')
+  expect(tagRow?.className).toContain('[&::-webkit-scrollbar]:hidden')
+  expect(screen.getByRole('button', { name: 'Remove research-6 from this resource' })).toBeTruthy()
+})
 it('removes draft tags only through the inset remove control, without persisting before Save', () => {
   const Draft = (): React.JSX.Element => {
     const [ids, setIds] = useState(['tag-0'])
