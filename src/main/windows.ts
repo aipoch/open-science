@@ -1,4 +1,4 @@
-import { createSourcePreviewViews } from './source-preview-view'
+import { installSourcePreviewWebviews } from './source-preview-webview'
 import {
   app,
   BrowserWindow,
@@ -20,19 +20,11 @@ import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navig
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
 import { createLogger, diagnosticErrorFields } from './logger'
-import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
-import { createSourcePreviewEmbedPolicy } from './source-preview-embed-policy'
-import { registerSourcePreviewWebRequestOwner } from './source-preview-web-request-owner'
 import {
   installPreviewContextMenuBridge,
   type PreviewContextMenuWebContents
 } from './preview-context-menu'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
-import {
-  SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
-  SOURCE_PREVIEW_RELEASE_CHANNEL,
-  parseHttpsSourceUrl
-} from '../shared/source-preview'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
@@ -71,24 +63,6 @@ const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'launch-failed',
   'integrity-failure'
 ])
-const sourcePreviewLoadMonitors = new WeakMap<BrowserWindow, SourcePreviewLoadMonitor>()
-const sourcePreviewEmbedPolicies = new WeakMap<BrowserWindow, SourcePreviewEmbedPolicy>()
-const sourcePreviewNavigationGuards = new WeakMap<BrowserWindow, SourcePreviewNavigationGuard>()
-const sourcePreviewStorageChecks = new WeakMap<
-  WebContents,
-  (requestingUrl: string, originOnly: boolean) => boolean
->()
-
-type SourcePreviewLoadMonitor = ReturnType<typeof createSourcePreviewLoadMonitor>
-type SourcePreviewEmbedPolicy = ReturnType<typeof createSourcePreviewEmbedPolicy>
-type SourcePreviewNavigationGuard = ReturnType<typeof createFrameNavigationGuard>
-
-const clearSourcePreviewState = (window: BrowserWindow): void => {
-  sourcePreviewLoadMonitors.get(window)?.clearAll()
-  sourcePreviewEmbedPolicies.get(window)?.clearAll()
-  sourcePreviewNavigationGuards.get(window)?.clearAll()
-}
-
 const loadRenderer = (window: BrowserWindow): Promise<void> => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     return window.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -141,82 +115,20 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       ALLOWED_RENDERER_PERMISSIONS.has(permission)
     )
   }
-  // Session handlers are shared across windows. Resolve storage access against the requesting
-  // window's live, admitted frames rather than whichever window installed the handler last.
-  const isAllowedStorageAccess = (
-    requestingWebContents: WebContents | null,
-    permission: string,
-    details: { isMainFrame: boolean; requestingUrl?: string },
-    requestingOrigin?: string
-  ): boolean =>
-    permission === 'storage-access' &&
-    !details.isMainFrame &&
-    requestingWebContents !== null &&
-    (sourcePreviewStorageChecks.get(requestingWebContents)?.(
-      details.requestingUrl ?? requestingOrigin ?? '',
-      details.requestingUrl === undefined
-    ) ??
-      false)
-
-  // Only source storage access and trusted-renderer clipboard writes are granted. Camera,
-  // microphone, filesystem, top-level storage delegation and other capabilities remain denied.
+  // Remote guests share the Session, but never the trusted renderer's permissions.
   window.webContents.session.setPermissionRequestHandler(
     (webContents, permission, callback, details) =>
-      callback(
-        isAllowedRendererPermission(webContents, permission, details) ||
-          isAllowedStorageAccess(webContents, permission, details)
-      )
+      callback(isAllowedRendererPermission(webContents, permission, details))
   )
   window.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) =>
-      isAllowedRendererPermission(webContents, permission, details) ||
-      isAllowedStorageAccess(webContents, permission, details, requestingOrigin)
-  )
-  const sourcePreviewLoadMonitor = createSourcePreviewLoadMonitor((state) => {
-    window.webContents.send(SOURCE_PREVIEW_LOAD_STATE_CHANNEL, state)
-  })
-  const sourcePreviewEmbedPolicy = createSourcePreviewEmbedPolicy(window.webContents.id)
-  const unregisterSourcePreviewWebRequestOwner = registerSourcePreviewWebRequestOwner(
-    window.webContents.session,
-    window.webContents.id,
-    sourcePreviewLoadMonitor,
-    sourcePreviewEmbedPolicy
+    (webContents, permission, _requestingOrigin, details) =>
+      isAllowedRendererPermission(webContents, permission, details)
   )
   const unregisterPreviewContextMenuBridge = installPreviewContextMenuBridge(
     window.webContents as unknown as PreviewContextMenuWebContents
   )
-  const storageWebContents = window.webContents
-  window.on('closed', () => {
-    // BrowserWindow.webContents is no longer readable once the native window has closed.
-    sourcePreviewStorageChecks.delete(storageWebContents)
-    clearSourcePreviewState(window)
-    unregisterSourcePreviewWebRequestOwner()
-    unregisterPreviewContextMenuBridge()
-  })
-  sourcePreviewLoadMonitors.set(window, sourcePreviewLoadMonitor)
-  sourcePreviewEmbedPolicies.set(window, sourcePreviewEmbedPolicy)
-  const isAllowedFrameNavigation = createFrameNavigationGuard(
-    window.webContents.mainFrame,
-    (frame, sourceUrl) => {
-      sourcePreviewLoadMonitor.registerRoot(frame, sourceUrl)
-      sourcePreviewEmbedPolicy.registerRoot(frame, sourceUrl)
-    }
-  )
-  sourcePreviewNavigationGuards.set(window, isAllowedFrameNavigation)
-  sourcePreviewStorageChecks.set(window.webContents, (requestingUrl, originOnly) => {
-    const url = parseHttpsSourceUrl(requestingUrl)
-    if (!url) return false
-    try {
-      return window.webContents.mainFrame.framesInSubtree.some(
-        (frame) =>
-          isAllowedFrameNavigation.isSourceFrame(frame) &&
-          (originOnly ? new URL(frame.url).origin === url.origin : frame.url === url.href)
-      )
-    } catch {
-      // A detached frame or destroyed window cannot authorize a pending permission request.
-      return false
-    }
-  })
+  window.on('closed', unregisterPreviewContextMenuBridge)
+  const isAllowedFrameNavigation = createFrameNavigationGuard()
   type FrameNavigationDetails = {
     url: string
     isMainFrame: boolean
@@ -269,26 +181,6 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       enforceFrameNavigationPolicy(details, frame)
     }
   )
-  window.webContents.on(
-    'did-navigate-in-page',
-    (_event, url, _isMainFrame, processId, routingId) => {
-      sourcePreviewLoadMonitor.navigateInPage(
-        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
-        url
-      )
-    }
-  )
-  window.webContents.on(
-    'did-frame-navigate',
-    (_event, url, httpResponseCode, httpStatusText, _isMainFrame, processId, routingId) => {
-      sourcePreviewLoadMonitor.finishNavigation(
-        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
-        url,
-        httpResponseCode,
-        httpStatusText
-      )
-    }
-  )
 
   return window
 }
@@ -323,9 +215,10 @@ const createMainWindow = (
     height: 960,
     minWidth: 1100,
     minHeight: 720,
-    title: 'Open-Science'
+    title: 'Open-Science',
+    webPreferences: { webviewTag: true }
   })
-  createSourcePreviewViews(window)
+  installSourcePreviewWebviews(window)
   if (opts) configureMainWindow(window, opts)
 
   // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main
@@ -496,33 +389,19 @@ const createMainWindow = (
     findOverlay.updateAppearance(appearance)
     mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
-  const onSourcePreviewRelease = (event: IpcMainEvent, value: unknown): void => {
-    if (event.sender !== window.webContents || typeof value !== 'string') return
-    const sourceUrl = parseHttpsSourceUrl(value)
-    if (!sourceUrl) return
-
-    sourcePreviewLoadMonitors.get(window)?.releaseSource(sourceUrl.href)
-    sourcePreviewEmbedPolicies.get(window)?.releaseSource(sourceUrl.href)
-    sourcePreviewNavigationGuards.get(window)?.releaseSource(sourceUrl.href)
-  }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
   ipcMain.on(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
   ipcMain.on(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
   ipcMain.on(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
   ipcMain.on(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
-  ipcMain.on(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
   // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
   // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
   // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
   // pushState navigation) — neither of which remounts the hook — does not falsely disarm the forward.
   window.webContents.on('did-start-navigation', (details) => {
-    sourcePreviewLoadMonitors
-      .get(window)
-      ?.startNavigation(details.frame, details.url, details.isSameDocument)
     if (details.isMainFrame && !details.isSameDocument) {
       mainFrameNavigationGeneration += 1
-      clearSourcePreviewState(window)
       rendererListenerReady = false
       windowFindListenerReady = false
       windowFindOpenPending = false
@@ -533,24 +412,7 @@ const createMainWindow = (
   // error message (all of which can contain local paths or Session-derived data).
   window.webContents.on(
     'did-fail-load',
-    (
-      _event,
-      errorCode,
-      errorDescription,
-      validatedURL,
-      isMainFrame,
-      frameProcessId,
-      frameRoutingId
-    ) => {
-      sourcePreviewLoadMonitors.get(window)?.failNavigation(
-        webFrameMain.fromId(frameProcessId, frameRoutingId) ?? {
-          processId: frameProcessId,
-          routingId: frameRoutingId
-        },
-        validatedURL,
-        errorCode,
-        errorDescription
-      )
+    (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
       if (!isMainFrame) return
       log.error('renderer document failed to load', { errorCode, errorDescription })
       // Chromium reports a superseded navigation as ERR_ABORTED after the replacement navigation may
@@ -584,7 +446,6 @@ const createMainWindow = (
     windowFindOpenPending = false
     clearRendererHangState()
     findOverlay.close()
-    clearSourcePreviewState(window)
 
     if (!RECOVERABLE_RENDERER_EXIT_REASONS.has(details.reason) || window.isDestroyed()) return
 
@@ -622,7 +483,6 @@ const createMainWindow = (
     ipcMain.removeListener(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
     ipcMain.removeListener(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
     ipcMain.removeListener(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
-    ipcMain.removeListener(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
     findOverlay.destroy()
   })
 

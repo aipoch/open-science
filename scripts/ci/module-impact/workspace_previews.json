@@ -14,6 +14,8 @@
     "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
     "src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx",
     "src/renderer/src/pages/workspace/previews/SourceWebPreview.tsx",
+    "src/renderer/src/pages/workspace/previews/SourceWebview.tsx",
+    "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
     "src/renderer/src/pages/workspace/previews/cached-preview-image.test-support.ts",
     "src/renderer/src/pages/workspace/previews/managed-pdf-document.test.ts",
     "src/renderer/src/pages/workspace/previews/managed-pdf-document.ts",
@@ -101,7 +103,6 @@
     "src/renderer/src/pages/workspace/previews/tiff-test-fixtures.ts",
     "src/renderer/src/pages/workspace/previews/tiff-thumbnail-scheduler.test.ts",
     "src/renderer/src/pages/workspace/previews/tiff-thumbnail-scheduler.ts",
-    "src/renderer/src/pages/workspace/previews/use-source-preview-view.ts",
     "src/renderer/src/pages/workspace/previews/useCachedPreviewImage.ts",
     "src/renderer/src/pages/workspace/previews/useManagedPreviewResource.test.tsx",
     "src/renderer/src/pages/workspace/previews/useManagedPreviewResource.ts",
@@ -118,6 +119,7 @@
     "src/renderer/src/pages/workspace/previews/PreviewInitialPosition.ts",
     "src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx",
     "src/renderer/src/pages/workspace/previews/SourceWebPreview.tsx",
+    "src/renderer/src/pages/workspace/previews/SourceWebview.tsx",
     "src/renderer/src/pages/workspace/previews/cached-preview-image.test-support.ts",
     "src/renderer/src/pages/workspace/previews/managed-preview-test-support.ts",
     "src/renderer/src/pages/workspace/previews/office-package.ts",
@@ -136,7 +138,6 @@
     "src/renderer/src/pages/workspace/previews/tiff-preview-worker-protocol.ts",
     "src/renderer/src/pages/workspace/previews/tiff-preview.ts",
     "src/renderer/src/pages/workspace/previews/tiff-test-fixtures.ts",
-    "src/renderer/src/pages/workspace/previews/use-source-preview-view.ts",
     "src/renderer/src/pages/workspace/previews/useCachedPreviewImage.ts",
     "src/renderer/src/pages/workspace/previews/useNearViewport.ts",
     "src/renderer/src/pages/workspace/previews/usePreviewResourceGeneration.ts",
@@ -190,7 +191,8 @@
       "src/renderer/src/pages/workspace/previews/tiff-thumbnail-scheduler.test.ts",
       "src/renderer/src/pages/workspace/previews/useManagedPreviewResource.test.tsx",
       "src/renderer/src/pages/workspace/previews/usePreviewFileContent.test.tsx",
-      "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.test.tsx"
+      "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.test.tsx",
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx"
     ],
     "contract": [],
     "consumer": [

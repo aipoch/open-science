@@ -1,5 +1,4 @@
 import { OFFICE_PREVIEW_RUNTIME_SCHEME } from './office-preview/office-preview-runtime-protocol'
-import { SOURCE_PREVIEW_FRAME_NAME } from '../shared/source-preview'
 
 const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
 const ALLOWED_PREVIEW_PROTOCOLS = new Set([
@@ -14,14 +13,12 @@ type NavigationFrame = {
   readonly parent: NavigationFrame | null
 }
 
-type FrameNavigationGuard = {
-  (url: string, isMainFrame: boolean, currentUrl?: string, frame?: NavigationFrame | null): boolean
-  isSourceFrame: (frame: NavigationFrame) => boolean
-  releaseSource: (sourceUrl: string) => void
-  clearAll: () => void
-}
-
-type SourcePreviewRootListener = (frame: NavigationFrame, sourceUrl: string) => void
+type FrameNavigationGuard = (
+  url: string,
+  isMainFrame: boolean,
+  currentUrl?: string,
+  frame?: NavigationFrame | null
+) => boolean
 
 const getProtocol = (url: string): string | undefined => {
   try {
@@ -69,66 +66,19 @@ const isAllowedSourceDescendantNavigation = (url: string): boolean => {
   }
 }
 
-const createFrameNavigationGuard = (
-  mainFrame: NavigationFrame,
-  onSourcePreviewRoot?: SourcePreviewRootListener
-): FrameNavigationGuard => {
-  const sourceUrlsByRootFrameId = new Map<number, string>()
-
-  const releaseSource = (sourceUrl: string): void => {
-    for (const [frameTreeNodeId, trackedSourceUrl] of sourceUrlsByRootFrameId) {
-      if (trackedSourceUrl === sourceUrl) sourceUrlsByRootFrameId.delete(frameTreeNodeId)
-    }
-  }
-
-  const guard = ((url, isMainFrame, currentUrl = '', frame): boolean => {
+const createFrameNavigationGuard =
+  (): FrameNavigationGuard =>
+  (url, isMainFrame, currentUrl = '') => {
     if (isMainFrame) return isAllowedMainFrameNavigation(url, currentUrl)
-
     const protocol = getProtocol(url)
-    if (frame) {
-      for (let ancestor: NavigationFrame | null = frame; ancestor; ancestor = ancestor.parent) {
-        if (!sourceUrlsByRootFrameId.has(ancestor.frameTreeNodeId)) continue
-        return ancestor.frameTreeNodeId === frame.frameTreeNodeId
-          ? protocol === 'https:'
-          : isAllowedSourceDescendantNavigation(url)
-      }
-    }
-    if (protocol !== undefined && ALLOWED_PREVIEW_PROTOCOLS.has(protocol)) return true
-    if (protocol !== 'https:' || !frame) return false
-
-    // Only the trusted renderer can create this named direct child while it is still blank.
-    // Once admitted, Electron's browser-global frame-tree node ID survives wrapper replacement,
-    // window.name changes, and redirects without giving scriptable names any authority.
-    const isNewSourceRoot =
-      frame.name === SOURCE_PREVIEW_FRAME_NAME &&
-      frame.parent?.frameTreeNodeId === mainFrame.frameTreeNodeId &&
-      (frame.url === '' || frame.url === 'about:blank')
-    if (!isNewSourceRoot) return false
-
-    releaseSource(url)
-    sourceUrlsByRootFrameId.set(frame.frameTreeNodeId, url)
-    onSourcePreviewRoot?.(frame, url)
-    return true
-  }) as FrameNavigationGuard
-  // Permission checks must inspect admission without registering a new frame or navigating it.
-  guard.isSourceFrame = (frame) => {
-    if (getProtocol(frame.url) !== 'https:') return false
-    for (let ancestor: NavigationFrame | null = frame; ancestor; ancestor = ancestor.parent) {
-      if (sourceUrlsByRootFrameId.has(ancestor.frameTreeNodeId)) return true
-    }
-    return false
+    return protocol !== undefined && ALLOWED_PREVIEW_PROTOCOLS.has(protocol)
   }
-  guard.releaseSource = releaseSource
-  guard.clearAll = () => sourceUrlsByRootFrameId.clear()
-  return guard
-}
 
 // Decides whether a window-open request (target="_blank" / window.open) may be handed to the OS. It
 // gates on the protocol allowlist alone, deliberately NOT on the initiating referrer: app links use
 // rel="noreferrer" and the packaged app runs on a file:// origin (which Chromium strips from
 // cross-origin referrers), so the referrer is reliably empty for legitimate main-frame links.
-// Untrusted Source Preview frames lack the sandbox capability to request popups. In-frame
-// navigations remain confined by the source-preview frame registry.
+// Source webview guests have a separate handler that denies all new windows.
 const isAllowedExternalNavigation = (url: string): boolean => isAllowedExternalUrl(url)
 
 export {

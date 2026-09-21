@@ -155,8 +155,7 @@ type PreloadApi = {
     reportState: (sessionId: string, state: unknown) => void
   }
   sourcePreview: {
-    release: (sourceUrl: string) => void
-    onLoadState: (listener: (state: unknown) => void) => () => void
+    onContextMenu: (listener: (state: unknown) => void) => () => void
   }
   uploads: {
     stageLocalFile: (file: File, request: unknown) => Promise<unknown>
@@ -715,9 +714,8 @@ describe('preload bridge — public surface inventory', () => {
       'sideChat.onRelayDelivered',
       'sideChat.send',
       'sideChat.start',
-      'sourcePreview.onLoadState',
-      'sourcePreview.release',
-      'sourcePreview.updateView',
+      'sourcePreview.onContextMenu',
+      'sourcePreview.onNavigationBlocked',
       'specialist.abortPackageUpload',
       'specialist.addMarketplaceSource',
       'specialist.beginPackageUpload',
@@ -1776,33 +1774,14 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     })
   })
 
-  it('exposes source loading as a read-only renderer event', () => {
+  it('exposes guest context menus as read-only events', () => {
     const listener = vi.fn()
-    const state = {
-      navigationId: 1,
-      sourceUrl: 'https://example.com/paper',
-      currentUrl: 'https://example.com/paper',
-      phase: 'loaded'
-    }
-
-    api.sourcePreview.onLoadState(listener)
-
-    expect(onMock).toHaveBeenCalledWith('source-preview:load-state', expect.any(Function))
-    const wrappedListener = onMock.mock.calls.at(-1)?.[1] as
-      ((_event: unknown, payload: unknown) => void) | undefined
-    wrappedListener?.({}, state)
-    expect(listener).toHaveBeenCalledWith(state)
-  })
-
-  it('releases source-preview tracking through a one-way renderer message', () => {
-    const sourcePreview = api.sourcePreview as typeof api.sourcePreview & {
-      release?: (sourceUrl: string) => void
-    }
-
-    expect(sourcePreview.release).toBeTypeOf('function')
-    sourcePreview.release?.('https://example.com/paper')
-
-    expect(sendMock).toHaveBeenCalledWith('source-preview:release', 'https://example.com/paper')
+    const request = { guestId: 12, x: 100, y: 200 }
+    api.sourcePreview.onContextMenu(listener)
+    expect(onMock).toHaveBeenCalledWith('source-preview:context-menu', expect.any(Function))
+    const wrapped = onMock.mock.calls.at(-1)?.[1] as (_event: unknown, payload: unknown) => void
+    wrapped({}, request)
+    expect(listener).toHaveBeenCalledWith(request)
   })
 
   it('resolves native upload paths in preload and sends only metadata to main', async () => {

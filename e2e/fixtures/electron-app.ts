@@ -15,7 +15,12 @@ import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import {
+  _electron as electron,
+  type ElectronApplication,
+  type JSHandle,
+  type Page
+} from 'playwright'
 import {
   RuntimeResourceProfiler,
   type RuntimeProfileResult,
@@ -353,18 +358,12 @@ type ElectronApp = {
   captureResourceTimings: (prefix?: string) => Promise<void>
   sampleResourceProfileNow: () => Promise<void>
   setMainWindowSize: (width: number, height: number) => Promise<void>
+  auditSourceAttachments: () => Promise<JSHandle<boolean[]>>
   pressSourcePreviewShortcut: (
     url: string,
     key: string,
     modifiers?: ShortcutModifier[]
   ) => Promise<void>
-  sourcePreviewViews: () => Promise<
-    Array<{
-      url: string
-      visible: boolean
-      bounds: { x: number; y: number; width: number; height: number }
-    }>
-  >
   setMainWindowZoomFactor: (factor: number) => Promise<void>
   finishResourceProfile: () => Promise<RuntimeProfileResult>
 }
@@ -997,6 +996,17 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   // Trust only the current test's loopback certificate; retain normal verification elsewhere.
+  async auditSourceAttachments(): Promise<JSHandle<boolean[]>> {
+    return this.runningApplication.evaluateHandle(({ BrowserWindow }) => {
+      const decisions: boolean[] = []
+      // Installed after production: observe its real preventDefault decision before guest creation.
+      BrowserWindow.getAllWindows()[0].webContents.on('will-attach-webview', (event) => {
+        decisions.push(event.defaultPrevented)
+      })
+      return decisions
+    })
+  }
+
   async trustSourcePreviewCertificate(certificate: string): Promise<void> {
     await this.runningApplication.evaluate(({ session }, certificate) => {
       session.defaultSession.setCertificateVerifyProc((request, callback) => {
@@ -1033,41 +1043,21 @@ class ElectronAppHarness implements ElectronApp {
     modifiers: ShortcutModifier[] = []
   ): Promise<void> {
     await this.runningApplication.evaluate(
-      ({ BrowserWindow }, { url, key, modifiers }) => {
-        const contents = BrowserWindow.getAllWindows()
-          .flatMap((window) => window.contentView.children)
-          .map((view) => (view as Electron.WebContentsView).webContents)
-          .find((contents) => contents && !contents.isDestroyed() && contents.getURL() === url)
+      ({ webContents }, { url, key, modifiers }) => {
+        const contents = webContents
+          .getAllWebContents()
+          .find(
+            (candidate) =>
+              candidate.getType() === 'webview' &&
+              !candidate.isDestroyed() &&
+              candidate.getURL() === url
+          )
         if (!contents) throw new Error('Source preview was not found.')
         contents.focus()
         contents.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers })
         contents.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers })
       },
       { url, key, modifiers }
-    )
-  }
-
-  async sourcePreviewViews(): Promise<
-    Array<{
-      url: string
-      visible: boolean
-      bounds: { x: number; y: number; width: number; height: number }
-    }>
-  > {
-    return this.runningApplication.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().flatMap((window) =>
-        window.contentView.children.flatMap((view) => {
-          const contents = (view as Electron.WebContentsView).webContents
-          if (
-            !contents ||
-            contents === window.webContents ||
-            contents.isDestroyed() ||
-            !contents.getURL().startsWith('https:')
-          )
-            return []
-          return [{ url: contents.getURL(), visible: view.getVisible(), bounds: view.getBounds() }]
-        })
-      )
     )
   }
 

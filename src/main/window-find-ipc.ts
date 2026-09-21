@@ -1,4 +1,4 @@
-import { getActiveSourceContents } from './source-preview-view'
+import { getActiveSourceContents } from './source-preview-webview'
 import { BrowserWindow, ipcMain, type IpcMainEvent, type WebContents } from 'electron'
 
 import { resolveFindOverlayOwner } from './find-overlay-registry'
@@ -11,7 +11,7 @@ import {
   type WindowFindResult
 } from '../shared/window-controls'
 
-// The main renderer or its focused native source gets searched and emits found-in-page. It needs no
+// The main renderer or its focused source guest gets searched and emits found-in-page. It needs no
 // send(): results are delivered to the OVERLAY that issued the request, not echoed to the main window.
 type FindTargetWebContents = {
   isDestroyed?: () => boolean

@@ -481,7 +481,8 @@
       "src/renderer/src/stores/session-store.archive-order.test.ts",
       "src/renderer/src/stores/session-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

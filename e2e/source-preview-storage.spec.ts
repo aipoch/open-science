@@ -80,18 +80,12 @@ test('retains source cookies, cache and local storage while session storage ends
     const closed = previousPage?.waitForEvent('close')
     await page.evaluate((origin) => {
       const previous = document.querySelector<HTMLElement>('#storage-fixture')
-      if (previous) window.api.sourcePreview!.release(`${origin}/page`, previous.dataset.instanceId)
       previous?.remove()
-      const host = document.createElement('div')
+      const host = document.createElement('webview')
       host.id = 'storage-fixture'
-      host.dataset.instanceId = crypto.randomUUID()
+      host.style.cssText = 'position:fixed;left:20px;top:20px;width:600px;height:500px;z-index:10'
+      host.setAttribute('src', `${origin}/page`)
       document.body.append(host)
-      window.api.sourcePreview!.updateView({
-        instanceId: host.dataset.instanceId,
-        sourceUrl: `${origin}/page`,
-        attempt: 0,
-        bounds: { x: 20, y: 20, width: 600, height: 500 }
-      })
     }, origin)
     await closed
     await expect
@@ -109,7 +103,7 @@ test('retains source cookies, cache and local storage while session storage ends
       .context()
       .pages()
       .find((candidate) => candidate.url() === `${origin}/page`)
-    if (!source) throw new Error('Missing native source page')
+    if (!source) throw new Error('Missing source guest')
     return source
   }
   try {
@@ -137,6 +131,61 @@ test('retains source cookies, cache and local storage while session storage ends
     expect(initial.privileged).toBe('undefined')
     // The app's trusted document cannot read the remote origin's localStorage.
     expect(await page.evaluate(() => localStorage.getItem('source-persistent'))).toBeNull()
+    const remote = sourceFrame(page)
+    expect(
+      await remote.evaluate(() => ({
+        api: typeof (window as unknown as { api?: unknown }).api,
+        require: typeof (window as unknown as { require?: unknown }).require,
+        process: typeof (window as unknown as { process?: unknown }).process
+      }))
+    ).toEqual({ api: 'undefined', require: 'undefined', process: 'undefined' })
+    expect(
+      await remote.evaluate(
+        async () => (await navigator.permissions.query({ name: 'geolocation' })).state
+      )
+    ).toBe('denied')
+    const pagesBeforePopup = page.context().pages().length
+    expect(await remote.evaluate(() => window.open('https://example.com') === null)).toBe(true)
+    expect(page.context().pages()).toHaveLength(pagesBeforePopup)
+    await remote.evaluate(() => {
+      location.href = 'http://127.0.0.1/blocked'
+    })
+    expect(remote.url()).toBe(`${origin}/page`)
+    const guestId = await page
+      .locator('#storage-fixture')
+      .evaluate((element) => (element as Electron.WebviewTag).getWebContentsId())
+    const attachmentDecisions = await app.auditSourceAttachments()
+    let rejectedAttachments = 0
+    for (const [name, value] of [
+      ['preload', 'file:///app/preload.js'],
+      ['partition', 'persist:untrusted'],
+      ['webpreferences', 'sandbox=no,nodeIntegration=yes'],
+      ['blinkfeatures', 'WebUSB'],
+      ['allowpopups', 'true'],
+      ['src', 'file:///private']
+    ]) {
+      await page.evaluate(
+        ({ name, value, origin }) => {
+          const guest = document.createElement('webview')
+          guest.id = 'rejected-guest'
+          guest.setAttribute('src', `${origin}/page`)
+          guest.setAttribute(name, value)
+          document.body.append(guest)
+        },
+        { name, value, origin }
+      )
+      rejectedAttachments++
+      await expect
+        .poll(() => attachmentDecisions.jsonValue())
+        .toEqual(Array(rejectedAttachments).fill(true))
+      await page.locator('#rejected-guest').evaluate((element) => element.remove())
+      expect(
+        await page
+          .locator('#storage-fixture')
+          .evaluate((element) => (element as Electron.WebviewTag).getWebContentsId())
+      ).toBe(guestId)
+    }
+    await attachmentDecisions.dispose()
     const reloadingFrame = sourceFrame(page)
     await Promise.all([
       reloadingFrame.waitForNavigation({ waitUntil: 'load' }),

@@ -86,7 +86,10 @@ import type {
   WslSetupStatus,
   WslSetupConversationBootstrap
 } from './wsl-setup'
-import type { SourcePreviewLoadState, SourcePreviewViewUpdate } from './source-preview'
+import type {
+  SourcePreviewContextMenuRequest,
+  SourcePreviewNavigationBlocked
+} from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
   ArtifactPreviewResult,
@@ -615,9 +618,8 @@ import {
 } from './renderer-contract'
 import { DATABASE_STARTUP_CHANNELS } from './database-startup'
 import {
-  SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
-  SOURCE_PREVIEW_RELEASE_CHANNEL,
-  SOURCE_PREVIEW_UPDATE_VIEW_CHANNEL
+  SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL,
+  SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL
 } from './source-preview'
 
 const WEB = 'web'
@@ -2481,21 +2483,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'side-chat',
     ['side-chat:start', ELECTRON]
   ),
-  'sourcePreview.onLoadState': callable<
-    (listener: (state: SourcePreviewLoadState) => void) => RemoveListener
-  >()('source-preview', [SOURCE_PREVIEW_LOAD_STATE_CHANNEL, ELECTRON_EVENT], {
+  'sourcePreview.onNavigationBlocked': callable<
+    (listener: (request: SourcePreviewNavigationBlocked) => void) => RemoveListener
+  >()('source-preview', [SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL, ELECTRON_EVENT], {
     optionalRoot: true
   }),
-  'sourcePreview.updateView': callable<(request: SourcePreviewViewUpdate) => void>()(
-    'source-preview',
-    [SOURCE_PREVIEW_UPDATE_VIEW_CHANNEL, SEND],
-    { optionalRoot: true }
-  ),
-  'sourcePreview.release': callable<(sourceUrl: string, instanceId?: string) => void>()(
-    'source-preview',
-    [SOURCE_PREVIEW_RELEASE_CHANNEL, SEND],
-    { optionalRoot: true }
-  ),
+  'sourcePreview.onContextMenu': callable<
+    (listener: (request: SourcePreviewContextMenuRequest) => void) => RemoveListener
+  >()('source-preview', [SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL, ELECTRON_EVENT], {
+    optionalRoot: true
+  }),
   'specialist.addMarketplaceSource': callable<
     (request: AddMarketplaceSourceRequest) => Promise<MarketplaceSourceView>
   >()('specialist', ['specialist:marketplace-source-add', ELECTRON]),

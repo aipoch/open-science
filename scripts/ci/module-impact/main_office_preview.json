@@ -40,7 +40,7 @@
       "src/main/reviewer/paged-preview-electron.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/windows.test.ts",
-      "src/main/source-preview-view.test.ts",
+      "src/main/source-preview-webview.test.ts",
       "src/main/window-find-ipc.test.ts",
       "src/main/ipc-surfaces/desktop-utilities.test.ts"
     ]
