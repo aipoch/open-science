@@ -277,7 +277,8 @@ describe('production delegated framework runtime bridge', () => {
           observed = options
           return {
             createSession: async () => ({ sessionId: 'ephemeral-child' }),
-            sendAppContinuation: () => {
+            sendAppContinuation: (request: { permissionPrompts?: 'none' }) => {
+              expect(request.permissionPrompts).toBe('none')
               options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
               return pending
             },
@@ -313,6 +314,7 @@ describe('production delegated framework runtime bridge', () => {
                 revoke: async () => undefined
               })
             }) as never,
+          resolvePermissionPrompts: () => 'none',
           readSession: async () => delegatedSession(frameworkId)
         })
         const selected = await frameworks.forSession(session(frameworkId))

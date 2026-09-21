@@ -1941,6 +1941,21 @@ describe('task CLI', () => {
     })
   })
 
+  it('accepts unattended runs and rejects incompatible prompt controls', () => {
+    expect(parseCliArgs(['run', '--permission-prompts', 'none']).options.permissionPrompts).toBe(
+      'none'
+    )
+    expect(() => parseCliArgs(['run', '--permission-prompts', 'all'])).toThrow(
+      '--permission-prompts must be none'
+    )
+    expect(() => parseCliArgs(['run', '--permission-prompts', 'none', '--plan-first'])).toThrow(
+      '--plan-first cannot be combined'
+    )
+    expect(() => parseCliArgs(['session', 'status', 's1', '--permission-prompts', 'none'])).toThrow(
+      '--permission-prompts requires run'
+    )
+  })
+
   it('keeps capability management surfaces outside the CLI', async () => {
     for (const command of [
       'permission',

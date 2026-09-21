@@ -631,6 +631,8 @@ export class OpenScienceClient {
       permissionProfile?: PermissionProfile
       skillIds?: string[]
       turnIntent?: TurnIntent
+      /** Deny unresolved human interactions without changing the authorization profile. */
+      permissionPrompts?: 'none'
       autoReviewEnabled?: boolean
       specialist?: string
       delegationPolicy?: DelegationPolicy

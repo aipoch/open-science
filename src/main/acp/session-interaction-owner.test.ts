@@ -18,6 +18,20 @@ const createDeferred = <T>(): {
 }
 
 describe('AcpSessionInteractionOwner', () => {
+  it('keeps unattended policy through admission and clears it on release', () => {
+    const owner = new AcpSessionInteractionOwner()
+    const scope = owner.reservePrompt({ sessionId: 's', kind: 'prompt', permissionPrompts: 'none' })
+    expect(owner.permissionPromptsForSession('s')).toBe('none')
+    expect(owner.current('s')).toBeUndefined()
+    owner.activatePrompt(scope)
+    expect(owner.current('s')).toMatchObject({ permissionPrompts: 'none' })
+    owner.release(scope)
+    expect(owner.permissionPromptsForSession('s')).toBeUndefined()
+    const next = owner.reservePrompt({ sessionId: 's', kind: 'prompt' })
+    expect(owner.permissionPromptsForSession('s')).toBeUndefined()
+    owner.release(next)
+  })
+
   it('keeps model-turn observations on the current prompt generation', () => {
     const owner = new AcpSessionInteractionOwner()
     const first = owner.claim({ sessionId: 'session-1', kind: 'prompt' })

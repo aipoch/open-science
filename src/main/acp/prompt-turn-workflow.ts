@@ -280,6 +280,9 @@ class AcpPromptTurnWorkflow {
     cancellation: { cancelled: boolean },
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
+    if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
+      throw new Error('Plan-first requires an available human approver.')
+    }
     let activeSession = this.activeSession(request.sessionId)
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
@@ -798,6 +801,7 @@ class AcpPromptTurnWorkflow {
     return this.options.interactions.reservePrompt({
       sessionId: request.sessionId,
       kind: 'prompt',
+      ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
       promptMessageId: request.provenanceContext?.promptMessageId,
       provenanceContext: request.provenanceContext,
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),

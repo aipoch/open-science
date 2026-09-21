@@ -37,6 +37,7 @@ type RuntimeControl = Readonly<{
   createdSessions: Parameters<AcpDelegateRuntime['createSession']>[0][]
   permissionProfiles: string[]
   prompts: string[]
+  promptPolicies: Array<'none' | undefined>
   responses: AcpPermissionResponse[]
   complete(response?: PromptResponse): void
   fail(error: Error): void
@@ -62,6 +63,7 @@ const makeHarness = (
     dispose?(): Promise<void>
     createSessionError?(executionId: string): Error | undefined
     permissionResponseError?(executionId: string): Error | undefined
+    permissionPrompts?: 'none'
     permissionProfile?(
       input: DelegateExecutionInput
     ): PreparedDelegateExecution['permissionProfile']
@@ -95,6 +97,7 @@ const makeHarness = (
         runtimeHome: scopePaths.runtimeHome?.(input) ?? `/runtime/${input.attemptId}`,
         frameworkId: 'certified-test',
         permissionProfile: scopePaths.permissionProfile?.(input),
+        permissionPrompts: scopePaths.permissionPrompts,
         capability: {
           revoke: async () => {
             cleanup.push(`revoke:${input.attemptId}`)
@@ -118,6 +121,7 @@ const makeHarness = (
       const createdSessions: Parameters<AcpDelegateRuntime['createSession']>[0][] = []
       const permissionProfiles: string[] = []
       const prompts: string[] = []
+      const promptPolicies: Array<'none' | undefined> = []
       const responses: AcpPermissionResponse[] = []
       const providerSessionId = `provider-${scope.executionId}`
       const control: RuntimeControl = {
@@ -126,6 +130,7 @@ const makeHarness = (
         createdSessions,
         permissionProfiles,
         prompts,
+        promptPolicies,
         responses,
         complete: (response = { stopReason: 'end_turn' }) => prompt.resolve(response),
         fail: (error) => prompt.reject(error)
@@ -138,7 +143,8 @@ const makeHarness = (
           if (error) throw error
           return { sessionId: providerSessionId }
         },
-        sendAppContinuation: ({ text }) => {
+        sendAppContinuation: ({ text, permissionPrompts }) => {
+          promptPolicies.push(permissionPrompts)
           prompts.push(text)
           callbacks.onProviderPromptAccepted(providerSessionId)
           return prompt.promise
@@ -637,6 +643,16 @@ describe('ACP delegate execution production adapter', () => {
 
     await expect(delivery).rejects.toThrow('continuation transport failed')
     await expect(running.completion).rejects.toThrow('continuation transport failed')
+  })
+
+  it('propagates unattended execution to an isolated child prompt', async () => {
+    const { execution, controls } = makeHarness(1, { permissionPrompts: 'none' })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(makeInput('unattended'), reservation.slotIds[0])
+    await running.accepted
+    expect(controls.get('unattended')?.promptPolicies).toEqual(['none'])
+    controls.get('unattended')?.complete()
+    await running.completion
   })
 
   it('starts the delegated Session in the parent project with its permission profile', async () => {

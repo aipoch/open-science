@@ -340,7 +340,16 @@ export class OpenScienceClient {
     })
   }
 
-  startRun(request, options) {
+  async startRun(request, options) {
+    if (request.permissionPrompts === 'none') {
+      const bootstrap = await this.health(options)
+      if (!bootstrap.taskCapabilities?.includes('permission-prompts-none')) {
+        throw new OpenScienceApiError(
+          'This Open-Science server does not support unattended permission handling. Update the server before starting this run.',
+          { code: 'unsupported_capability' }
+        )
+      }
+    }
     return this.request('/api/v1/runs', { ...options, method: 'POST', body: request })
   }
 

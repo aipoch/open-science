@@ -71,6 +71,22 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
+  it('denies app preflight approval using the reserved prompt policy without publishing a wait', async () => {
+    const emitPermissionRequest = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest,
+      routing: permissionRouting({ permissionPromptsForSession: () => 'none' })
+    })
+    await expect(
+      context.requestAppApproval({
+        sessionId: 'preflight',
+        title: 'Install environment',
+        rawInput: {}
+      })
+    ).resolves.toBe(false)
+    expect(emitPermissionRequest).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['opencode', 'WebFetch'],
     ['claude-code', 'WebFetch'],

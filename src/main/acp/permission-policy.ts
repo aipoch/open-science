@@ -20,6 +20,7 @@ import {
 } from '../agent-framework/app-mcp-names'
 
 type PermissionPolicyContext = {
+  permissionPrompts?: 'none'
   profile: PermissionProfileId
   projectId?: string
   // Delegated runtimes have a provider-local Session id, while durable grants belong to the parent

@@ -1906,6 +1906,99 @@ describe('ACP runtime migration write-gate', () => {
   })
 })
 
+describe('unattended permission prompt ownership', () => {
+  it('declines app-owned questions without creating a durable user-choice wait', async () => {
+    const process = new FakeAgentProcess()
+    let runtime!: AcpRuntime
+    let sessionId = ''
+    let result: unknown
+    startFakeAgent(process, ['unattended-question'], {
+      onPrompt: async () => {
+        result = await runtime.requestUserInput({
+          sessionId,
+          questions: [
+            { question: 'Choose a method', options: [{ label: 'First' }, { label: 'Second' }] }
+          ]
+        })
+      }
+    })
+    runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    sessionId = (await runtime.createSession({ cwd: '/workspace' })).sessionId
+    await runtime.sendPrompt({ sessionId, text: 'Research', permissionPrompts: 'none' })
+    expect(result).toEqual({ action: 'cancelled' })
+    expect(runtime.getSnapshot().pendingElicitations ?? []).toEqual([])
+  })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic'],
+    ['CodeBuddy', codeBuddyFramework, 'codebuddy-openai'],
+    ['OpenCode', opencodeFramework, 'opencode-openai'],
+    ['Codex Responses', codexFramework, 'codex-responses'],
+    ['Codex Bridge', codexFramework, 'codex-bridge']
+  ] as const)(
+    'denies unresolved %s permissions and releases the per-turn policy',
+    async (_name, framework, modelRoute) => {
+      const process = new FakeAgentProcess()
+      const responses: unknown[] = []
+      const permissionSeen = vi.fn()
+      startPermissionProbeAgent(process, {
+        newSessionId: 'unattended-session',
+        toolCallId: 'unattended-tool',
+        toolTitle: 'Run command',
+        permissionOptions: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+        ],
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        onPermissionResponse: (response) => {
+          responses.push(response)
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: { onPermissionRequest: permissionSeen },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId: `${framework.id}:provider-a`,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
+        })
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Run command',
+        permissionPrompts: 'none'
+      })
+      expect(responses).toEqual([{ outcome: { outcome: 'selected', optionId: 'reject-once' } }])
+      expect(permissionSeen).not.toHaveBeenCalled()
+      expect(runtime.getState().pendingPermissions).toEqual([])
+      expect(runtime.getPermissionPrompts(session.sessionId)).toBeUndefined()
+      const interactive = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Ask for permission'
+      })
+      await vi.waitFor(() => expect(permissionSeen).toHaveBeenCalledOnce())
+      await runtime.respondToPermission({
+        requestId: permissionSeen.mock.calls[0][0].requestId,
+        cancelled: true
+      })
+      await interactive
+    }
+  )
+})
+
 describe('ACP runtime provider prompt acceptance', () => {
   it.each([
     ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],

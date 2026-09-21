@@ -366,6 +366,11 @@ class AcpPromptPreparationOwner {
         specialistPrefix: input.specialistPrefix,
         sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
+          ...(input.request.permissionPrompts === 'none'
+            ? [
+                'This execution is unattended. Existing permission rules still apply. No person is available to approve tools, review a new Plan, or answer questions. If an operation is denied, do not retry it or infer consent; use an already-authorized alternative or report the limitation in your final answer.'
+              ]
+            : []),
           ...(skillPreparation.skillScopeGuidance ? [skillPreparation.skillScopeGuidance] : []),
           ...(computeExecutionTargetReminder ? [computeExecutionTargetReminder] : []),
           ...(input.turnPromptReminders ?? [])

@@ -2137,6 +2137,47 @@ describe('AcpRuntimeCoordinator', () => {
     expect(result).toEqual({ contextReset: false })
   })
 
+  it('retains unattended policy only for continuations of the same originating user prompt', async () => {
+    let fake!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      fake = createFakeRuntime({ frameworkId: 'claude-code', sessionIds: ['session-1'], callbacks })
+      return fake.runtime
+    })
+    const { sessionId } = await coordinator.createSession()
+    await coordinator.sendPrompt({
+      sessionId,
+      text: 'Unattended',
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+    await coordinator.sendAppContinuation({
+      sessionId,
+      text: 'Collect child results',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0]).toMatchObject({
+      permissionPrompts: 'none'
+    })
+    await coordinator.sendAppContinuation({
+      sessionId,
+      text: 'Other branch',
+      provenanceContext: { promptMessageId: 'other' }
+    })
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
+    await coordinator.sendPrompt({
+      sessionId,
+      text: 'Interactive',
+      provenanceContext: { promptMessageId: 'next' }
+    })
+    expect(fake.sendPrompt.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
+    await coordinator.sendAppContinuation({
+      sessionId,
+      text: 'Next continuation',
+      provenanceContext: { promptMessageId: 'next' }
+    })
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
+  })
+
   it('routes app-owned continuations through the dedicated runtime operation', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
