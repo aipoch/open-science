@@ -467,6 +467,197 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each([false, true])(
+    'isolates same-directory OpenCode tool connections across sibling Sessions (concurrent=%s)',
+    async (concurrent) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const index = created.length
+        let toolSession: string | undefined
+        const registered = new Set<string>()
+        const fake = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: [`session-${index}`, `sibling-${index}`],
+          callbacks,
+          // Model OpenCode's directory-scoped MCP registry: the last registration owns all
+          // same-named tools, irrespective of the Session id passed to session/prompt.
+          prompt: async () => ({ notebook: toolSession, artifacts: toolSession, plan: toolSession })
+        })
+        const create = fake.createSession.getMockImplementation()! as AcpRuntime['createSession']
+        fake.createSession.mockImplementation(async (request) => {
+          const response = await create(request)
+          toolSession = response.sessionId
+          registered.add(response.sessionId)
+          return response
+        })
+        const resume = fake.resumeSession.getMockImplementation()! as AcpRuntime['resumeSession']
+        fake.resumeSession.mockImplementation(async (request) => {
+          const response = await resume(request)
+          // OpenCode caches registrations per Session, so resuming the original does not repair
+          // the directory registry that a sibling already overwrote.
+          if (!registered.has(response.sessionId)) toolSession = response.sessionId
+          registered.add(response.sessionId)
+          return response
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const agentTarget = {
+        frameworkId: 'opencode',
+        providerId: 'provider',
+        model: 'model',
+        reasoningEffort: 'default'
+      } as const
+      const request = { agentTarget, cwd: '/same-project', projectId: 'project' }
+      const [original, fork] = concurrent
+        ? await Promise.all([
+            coordinator.createSession(request),
+            coordinator.createSession(request)
+          ])
+        : [await coordinator.createSession(request), await coordinator.createSession(request)]
+      expect(original.sessionId).not.toBe(fork.sessionId)
+      const processCount = created.length
+      for (const session of [original, fork, original]) {
+        await coordinator.resumeSession({ ...request, sessionId: session.sessionId })
+        const response = await coordinator.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'inspect'
+        })
+        expect(response).toEqual({
+          notebook: session.sessionId,
+          artifacts: session.sessionId,
+          plan: session.sessionId
+        })
+      }
+      await coordinator.withActivity(
+        { session: { ...request, sessionId: original.sessionId } },
+        async (runtime) => {
+          expect(
+            await runtime.sendPrompt({ sessionId: original.sessionId, text: 'continue' })
+          ).toEqual({
+            notebook: original.sessionId,
+            artifacts: original.sessionId,
+            plan: original.sessionId
+          })
+        }
+      )
+      await coordinator.withActivity(
+        { session: { sessionId: original.sessionId, cwd: '/same-project' } },
+        async (runtime) => {
+          expect(
+            await runtime.sendPrompt({ sessionId: original.sessionId, text: 'continue' })
+          ).toEqual({
+            notebook: original.sessionId,
+            artifacts: original.sessionId,
+            plan: original.sessionId
+          })
+        }
+      )
+      expect(created).toHaveLength(processCount)
+      expect(created.filter((fake) => fake.createSession.mock.calls.length > 0)).toHaveLength(2)
+    }
+  )
+
+  it('resolves the default backend before concurrent Session allocation', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const index = created.length
+      const fake = createFakeRuntime({
+        frameworkId: 'opencode',
+        sessionIds: [`session-${index}`],
+        callbacks
+      })
+      fake.setStateSilently({ status: 'idle' })
+      fake.captureBackend.mockReturnValue({ framework: { id: 'claude-code' } } as never)
+      fake.connect.mockImplementation(async () => {
+        await Promise.resolve()
+        fake.captureBackend.mockReturnValue({ framework: { id: 'opencode' } } as never)
+        fake.emitState({ status: 'connected' })
+        return fake.runtime.getSnapshot()
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const sessions = await Promise.all([coordinator.createSession(), coordinator.createSession()])
+    expect(created).toHaveLength(2)
+    expect(sessions.map((session) => session.sessionId)).toEqual(['session-0', 'session-1'])
+    for (const session of sessions) {
+      await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/same-project' })
+      await coordinator.withActivity(
+        { session: { sessionId: session.sessionId, cwd: '/same-project' } },
+        async (runtime) => {
+          await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+        }
+      )
+    }
+    expect(created).toHaveLength(2)
+    expect(created[0].sendPrompt.mock.calls[0][0].sessionId).toBe('session-0')
+    expect(created[1].sendPrompt.mock.calls[0][0].sessionId).toBe('session-1')
+  })
+
+  it('retires an isolated OpenCode process after unused background work or failed creation', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks })
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider',
+      model: 'model',
+      reasoningEffort: 'default'
+    } as const
+    const session = { sessionId: 'cold', cwd: '/same-project', agentTarget }
+    const release = createDeferred()
+    const entered = createDeferred()
+    const pending = coordinator.withActivity({ session }, async () => {
+      entered.resolve()
+      await release.promise
+    })
+    await entered.promise
+    await coordinator.withActivity({ session }, async () => undefined)
+    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+    release.resolve()
+    await pending
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+
+    const failed = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks })
+      fake.createSession.mockRejectedValue(new Error('startup failed'))
+      created.push(fake)
+      return fake.runtime
+    })
+    await expect(failed.createSession({ agentTarget })).rejects.toThrow('startup failed')
+    expect(created.at(-1)!.requestRetirement).toHaveBeenCalledOnce()
+  })
+
+  it('isolates cold OpenCode resumes and reuses each Session process', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks })
+      created.push(fake)
+      return fake.runtime
+    })
+    const agentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider',
+      model: 'model',
+      reasoningEffort: 'default'
+    } as const
+    for (const sessionId of ['original', 'fork', 'original']) {
+      await coordinator.resumeSession({ sessionId, cwd: '/same-project', agentTarget })
+    }
+    expect(created).toHaveLength(3) // coordinator default plus two owned processes
+    expect(created[1].resumeSession.mock.calls.map(([request]) => request.sessionId)).toEqual([
+      'original',
+      'original'
+    ])
+    expect(created[2].resumeSession.mock.calls.map(([request]) => request.sessionId)).toEqual([
+      'fork'
+    ])
+  })
+
   it('keeps the existing Codex writer when a live effort update is rejected', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -1354,6 +1545,7 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.captureSessionBackend('missing-session')).toBeUndefined()
     expect(created[0].captureBackend).not.toHaveBeenCalled()
     await coordinator.createSession()
+    created[0].captureBackend.mockClear()
     expect(coordinator.captureSessionBackend('owned-session')).toMatchObject({
       backendId: 'claude-code:owned'
     })

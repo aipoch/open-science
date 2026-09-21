@@ -36,3 +36,31 @@ Useful commands:
 Packaged output is written under `dist/`.
 
 [README](../README.md)
+
+## OpenCode Session tool isolation
+
+The ACP coordinator gives each primary OpenCode Session its own runtime process, including forks
+and Sessions with the same provider, model, and working directory. Resumes and background
+continuations reuse the owning Session's process. Unused isolated runtimes retire after their
+workflow leases finish. Other frameworks retain their existing sharing policy.
+
+This is a tool-identity boundary, not just a performance choice. In OpenCode 1.18.14,
+[`registerMcpServers`](https://github.com/anomalyco/opencode/blob/v1.18.14/packages/opencode/src/acp/service.ts)
+passes a directory and server name to `sdk.mcp.add`, without a Session id. A sibling Session can
+replace the original Session's MCP connection, including its credentials. OpenCode also caches
+registrations per Session, so resuming the original does not reliably restore its connection.
+Notebook, artifact, and Plan tools must not inherit another Session's authority. Changing tool
+names or re-registering tools before each prompt is not a substitute for isolation during concurrent
+turns. Ephemeral reviewers already receive distinct temporary directories.
+
+The coordinator regression tests model that provider behavior. A real-process contract test uses a
+local deterministic model endpoint and a test MCP server; it reproduces the shared-process failure
+and verifies separate processes preserve the original tool identity:
+
+```bash
+OPENCODE_ACP_PATH=/absolute/path/to/opencode npx vitest run src/main/agent-framework/opencode-mcp-isolation.integration.test.ts
+```
+
+Process isolation increases the number of OpenCode processes when multiple Sessions are loaded.
+It does not grant forks permission to read or modify their source Session's Compute Jobs; historical
+record visibility is a separate policy.
