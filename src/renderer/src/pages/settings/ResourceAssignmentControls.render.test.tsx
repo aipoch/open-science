@@ -128,6 +128,21 @@ describe('resource assignment controls', () => {
       expect(update).not.toHaveBeenCalled()
     }
   )
+  it('can retry a failed catalog read without changing any assignment', async () => {
+    useSpecialistStore.setState({ loadError: 'temporary read failure' })
+    render(<ResourceAssignmentControls resource={resource} onSetMain={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    expect(screen.getByRole<HTMLButtonElement>('switch', { name: 'RESEARCH' }).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>('switch', { name: 'RESEARCH' }).disabled).toBe(
+        false
+      )
+    )
+    expect(update).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('switch', { name: 'RESEARCH' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+  })
   it('keeps the prior state and reports a rejected update', async () => {
     update.mockRejectedValue(new Error('revision conflict'))
     render(<ResourceAssignmentControls resource={resource} onSetMain={vi.fn()} />)

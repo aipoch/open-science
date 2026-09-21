@@ -133,7 +133,14 @@ export const ResourceSelectionBar = ({
     : 0
   const warningClass =
     'text-status-warning-foreground hover:bg-status-warning-surface hover:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface dark:hover:text-status-warning-dark-foreground'
-  if (!selected.length && !busy && !selection.error && !selection.completed) return null
+  if (
+    !selected.length &&
+    !busy &&
+    !selection.error &&
+    !selection.completed &&
+    !selection.cleanupTargets.length
+  )
+    return null
   return (
     <div
       ref={bar}
@@ -142,7 +149,44 @@ export const ResourceSelectionBar = ({
       aria-label={t('Selected resources')}
       className="sticky bottom-0 z-30 -mx-5 mt-4 border-t border-border bg-card px-5 py-3 shadow-sm"
     >
-      {selection.error ? (
+      {selection.cleanupTargets.length > 0 ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="amber"
+          className="mb-2"
+          description={t(
+            'Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.',
+            {
+              names: selection.cleanupTargets
+                .map((item) => item.displayName ?? item.name)
+                .join(', ')
+            }
+          )}
+          primaryButton={{
+            label: t('Retry cleanup'),
+            onClick: () => void selection.retryCleanup(),
+            loading: busy,
+            disabled: selection.locked
+          }}
+        />
+      ) : null}
+      {!selection.available ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          tone="amber"
+          className="mb-2"
+          description={t('Could not update resource access. Refresh and try again.')}
+          primaryButton={{
+            label: t('Retry'),
+            onClick: () => void selection.refreshSpecialists(),
+            loading: busy,
+            disabled: selection.locked
+          }}
+        />
+      ) : null}
+      {selection.error && !selection.cleanupTargets.length ? (
         <ErrorNotice
           inline
           role="alert"
@@ -225,27 +269,25 @@ export const ResourceSelectionBar = ({
                     </div>
                   ) : null}
                   <div className="min-h-0 max-h-60 overflow-y-auto overscroll-contain">
-                    {specialists.map((item) =>
-                      item.kind === 'custom' ? (
-                        <button
-                          key={item.id}
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            setOpen(false)
-                            void selection.assign(item.id)
-                          }}
-                          className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
-                        >
-                          <SpecialistAvatar
-                            iconKey={item.iconKey}
-                            colorKey={item.colorKey}
-                            size="sm"
-                          />
-                          <span className="truncate">{item.displayName?.trim() || item.name}</span>
-                        </button>
-                      ) : null
-                    )}
+                    {specialists.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          setOpen(false)
+                          void selection.assign(item.id)
+                        }}
+                        className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        <SpecialistAvatar
+                          iconKey={item.iconKey}
+                          colorKey={item.colorKey}
+                          size="sm"
+                        />
+                        <span className="truncate">{item.displayName?.trim() || item.name}</span>
+                      </button>
+                    ))}
                     {!specialists.length ? (
                       <p className="py-4 text-center text-xs text-muted-foreground">
                         {t('No Specialists match your search.')}

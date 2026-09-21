@@ -166,7 +166,10 @@ useSettingsStore.setState({
 useSpecialistStore.setState({
   items: specialists.map((item) => ({ ...item, kind: 'custom' })),
   isLoaded: true,
-  integrity: { status: 'ok' }
+  integrity: { status: 'ok' },
+  loadError: new URLSearchParams(location.search).has('catalog-load-error')
+    ? 'Temporary read failure'
+    : undefined
 })
 useTagStore.setState({
   ...createInitialTagState(),

@@ -1,3 +1,4 @@
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { openResourceMainSwitch } from './test-utils'
 // @vitest-environment jsdom
 import { act } from 'react'
@@ -1109,3 +1110,59 @@ it('selects Featured Connectors in place and offers access controls instead of d
   expect(container.querySelector('[data-slot="resource-assignment-trigger"]')).not.toBeNull()
   expect(container.querySelector('[data-slot="settings-list-row"] [role="switch"]')).toBeNull()
 })
+
+// A persisted deletion may disappear from the catalog before permission cleanup finishes.
+it.each([false, true])(
+  'retains cleanup recovery after Clear selection, recreated=%s',
+  async (recreated) => {
+    useSpecialistStore.setState({ items: [], integrity: { status: 'ok' }, loadError: undefined })
+    const snapshot = {
+      connectors: seedConnectors,
+      customServers: [],
+      reservedCustomServerIds: ['custom-server-uuid'],
+      ncbi: { hasApiKey: false }
+    }
+    window.api = {
+      specialist: { list: vi.fn().mockResolvedValue({ items: [], integrity: { status: 'ok' } }) },
+      settings: { listConnectors: vi.fn().mockResolvedValue(snapshot) }
+    } as unknown as typeof window.api
+    const remove = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        useSettingsStore.setState({
+          customServers: [],
+          reservedCustomServerIds: ['custom-server-uuid']
+        })
+        throw new Error('cleanup failed after persistence')
+      })
+      .mockResolvedValue(undefined)
+    useSettingsStore.setState({ removeCustomServer: remove })
+    await act(async () => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in Custom' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select My MCP' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion 1' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeTruthy()
+    if (recreated) {
+      vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+        ...snapshot,
+        customServers: seedCustomServers
+      })
+    }
+    if (!recreated) remove.mockRejectedValueOnce(new Error('cleanup still unavailable'))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }))
+    if (!recreated) {
+      await waitFor(() => expect(remove).toHaveBeenCalledTimes(2))
+      await waitFor(() =>
+        expect(
+          screen.getByRole<HTMLButtonElement>('button', { name: 'Retry cleanup' }).disabled
+        ).toBe(false)
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }))
+    }
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull())
+    expect(remove).toHaveBeenCalledTimes(recreated ? 1 : 3)
+  }
+)

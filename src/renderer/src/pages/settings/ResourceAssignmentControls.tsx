@@ -233,6 +233,17 @@ export const ResourceAssignmentControls = ({
             role="alert"
             tone="amber"
             description={t('Could not update resource access. Refresh and try again.')}
+            primaryButton={
+              loadError || integrity.status !== 'ok'
+                ? {
+                    label: t('Retry'),
+                    onClick: () =>
+                      void run(() => useSpecialistStore.getState().load({ force: true })),
+                    loading: busy,
+                    disabled: busy
+                  }
+                : undefined
+            }
           />
         ) : null}
       </PopoverContent>

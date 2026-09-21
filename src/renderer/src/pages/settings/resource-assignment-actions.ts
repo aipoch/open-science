@@ -1,3 +1,4 @@
+import type { SpecialistListItem } from '../../../../shared/specialist'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import {
   assignmentUpdate,
@@ -5,19 +6,23 @@ import {
   type AssignableResource
 } from './resource-assignment'
 
+// Consume this request's snapshot: a concurrent catalog refresh may supersede the store update.
+export const readResourceSpecialists = async (): Promise<SpecialistListItem[]> => {
+  const snapshot = await window.api.specialist.list()
+  if (snapshot.integrity.status !== 'ok') throw new Error('Specialist catalog unavailable')
+  return snapshot.items
+}
+
 // Read a fresh revision before each edit; optimistic concurrency still rejects a racing writer.
 export const setResourceAssignments = async (
   resources: readonly AssignableResource[],
   enabled: boolean,
   specialistId?: string
 ): Promise<void> => {
-  await useSpecialistStore.getState().load({ force: true })
-  const state = useSpecialistStore.getState()
-  if (state.integrity.status !== 'ok' || state.loadError)
-    throw new Error('Specialist catalog unavailable')
+  const items = await readResourceSpecialists()
   if (
     specialistId &&
-    !state.items.some(
+    !items.some(
       (item) =>
         item.kind !== 'reviewer' && canEditResourceAssignments(item) && item.id === specialistId
     )
@@ -25,7 +30,7 @@ export const setResourceAssignments = async (
     throw new Error('Specialist unavailable')
   }
   const failures: unknown[] = []
-  for (const item of state.items) {
+  for (const item of items) {
     if (
       item.kind === 'reviewer' ||
       !canEditResourceAssignments(item) ||

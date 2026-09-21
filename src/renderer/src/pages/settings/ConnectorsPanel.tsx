@@ -170,6 +170,13 @@ export function ConnectorsPanel({
       if (!useSettingsStore.getState().customServers.some((server) => server.id === id))
         throw new Error('Connector unavailable')
       await removeCustomServer(id)
+    },
+    onRetryCleanup: async (id) => {
+      const snapshot = await window.api.settings.listConnectors()
+      // Retry only the removal journal, never a surviving or recreated configuration.
+      if (snapshot.customServers.some((server) => server.id === id)) return false
+      if (snapshot.reservedCustomServerIds?.includes(id)) await removeCustomServer(id)
+      return true
     }
   })
 

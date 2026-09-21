@@ -250,3 +250,34 @@ for (const count of [5, 6, 18]) {
     }
   })
 }
+
+test('recovers Specialist actions after a failed catalog read', async ({ page }) => {
+  await page.goto('/resource-controls.html?specialists=1&catalog-load-error')
+  await page.getByRole('button', { name: 'Manage access for AlphaFold2' }).click()
+  const control = page.getByRole('switch', { name: 'Researcher', exact: true })
+  await expect(control).toBeDisabled()
+  await page.getByRole('dialog').getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(control).toBeEnabled()
+  await control.click()
+  await expect(control).toHaveAttribute('aria-checked', 'false')
+})
+
+test('a transient assignment read failure can be retried without reopening Settings', async ({
+  page
+}) => {
+  await page.goto('/resource-controls.html?specialists=1')
+  await page.getByRole('button', { name: 'Manage access for AlphaFold2' }).click()
+  await page.evaluate(() => {
+    const read = window.api.specialist.list
+    window.api.specialist.list = async () => {
+      window.api.specialist.list = read
+      throw new Error('temporary read failure')
+    }
+  })
+  const control = page.getByRole('switch', { name: 'Researcher', exact: true })
+  await control.click()
+  await expect(page.getByRole('alert').first()).toBeVisible()
+  await expect(control).toBeEnabled()
+  await control.click()
+  await expect(control).toHaveAttribute('aria-checked', 'false')
+})

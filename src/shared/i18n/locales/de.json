@@ -6110,6 +6110,7 @@
     "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Dies ist kein Chat-Completions-Endpunkt. Dienste mit einem anderen API-Format benötigen einen Adapter.",
     "Allow Main Agent to load this resource.": "Dem Hauptagenten erlauben, diese Ressource zu laden.",
     "Specialist associations": "Spezialistenzuordnungen",
-    "Choose which Specialists can use this resource.": "Wählen Sie die Spezialisten aus, die diese Ressource verwenden dürfen."
+    "Choose which Specialists can use this resource.": "Wählen Sie die Spezialisten aus, die diese Ressource verwenden dürfen.",
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "Löschen oder Bereinigen wurde nicht abgeschlossen für: {{names}}. Versuchen Sie die Bereinigung erneut; verbleibende Konfigurationen müssen erneut zum Löschen bestätigt werden."
   }
 }

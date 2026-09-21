@@ -5954,6 +5954,7 @@
     "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "これは Chat Completions エンドポイントではありません。別の API 形式を使用するサービスにはアダプターが必要です。",
     "Allow Main Agent to load this resource.": "メインエージェントがこのリソースを読み込めるようにします。",
     "Specialist associations": "スペシャリストとの関連付け",
-    "Choose which Specialists can use this resource.": "このリソースを使用できるスペシャリストを選択します。"
+    "Choose which Specialists can use this resource.": "このリソースを使用できるスペシャリストを選択します。",
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "次のコネクタの削除またはクリーンアップが完了しませんでした：{{names}}。クリーンアップを再試行してください。残っている設定の削除には再度確認が必要です。"
   }
 }

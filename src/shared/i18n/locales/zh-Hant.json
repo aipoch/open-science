@@ -5954,6 +5954,7 @@
     "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "此端點不是 Chat Completions 端點。使用其他 API 格式的服務需要轉接器。",
     "Allow Main Agent to load this resource.": "允許主智能體載入此資源。",
     "Specialist associations": "專家關聯",
-    "Choose which Specialists can use this resource.": "選擇可以使用此資源的專家。"
+    "Choose which Specialists can use this resource.": "選擇可以使用此資源的專家。",
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "以下連接器的刪除或清理未完成：{{names}}。請重試清理；仍保留的設定需要重新確認刪除。"
   }
 }

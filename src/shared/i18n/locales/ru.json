@@ -6409,6 +6409,7 @@
     "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Это не конечная точка Chat Completions. Службам с другим форматом API требуется адаптер.",
     "Allow Main Agent to load this resource.": "Разрешить главному агенту загружать этот ресурс.",
     "Specialist associations": "Связи со специалистами",
-    "Choose which Specialists can use this resource.": "Выберите специалистов, которые могут использовать этот ресурс."
+    "Choose which Specialists can use this resource.": "Выберите специалистов, которые могут использовать этот ресурс.",
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "Удаление или очистка не завершены для: {{names}}. Повторите очистку; удаление оставшихся настроек необходимо подтвердить заново."
   }
 }

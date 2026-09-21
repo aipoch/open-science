@@ -200,6 +200,97 @@ describe('category resource selection', () => {
       (screen.getByRole('checkbox', { name: 'Select Unused skill' }) as HTMLInputElement).checked
     ).toBe(true)
   })
+  it.each(['missing API', 'failed read', 'degraded catalog'])(
+    'fails closed when checking deletion with %s',
+    async (failure) => {
+      if (failure === 'missing API') window.api = {} as typeof window.api
+      else if (failure === 'failed read')
+        vi.mocked(window.api.specialist.list).mockRejectedValue(new Error('offline'))
+      else
+        vi.mocked(window.api.specialist.list).mockResolvedValue({
+          items: [],
+          integrity: { status: 'degraded', issues: [] }
+        })
+      render(<Harness />)
+      fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion 1' }))
+      await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+      expect(remove).not.toHaveBeenCalled()
+    }
+  )
+  it('uses the checked snapshot even when a later refresh supersedes the store update', async () => {
+    type Snapshot = Awaited<ReturnType<typeof window.api.specialist.list>>
+    let resolveGuard!: (snapshot: Snapshot) => void
+    let resolveLater!: (snapshot: Snapshot) => void
+    vi.mocked(window.api.specialist.list)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveGuard = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveLater = resolve
+          })
+      )
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion 1' }))
+    let later!: Promise<void>
+    act(() => {
+      later = useSpecialistStore.getState().load({ force: true })
+    })
+    const snapshot: Snapshot = {
+      integrity: { status: 'ok' },
+      items: [
+        {
+          kind: 'custom',
+          id: 'expert',
+          name: 'EXPERT',
+          enabled: true,
+          revision: 1,
+          description: '',
+          systemPrompt: '',
+          capabilityMode: 'selected',
+          fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+          selectedCapabilities: { skillIds: ['unused'], connectorIds: [], connectorTools: [] }
+        }
+      ]
+    }
+    await act(async () => {
+      resolveGuard(snapshot)
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Confirm deletion 1' })).toBeNull()
+    )
+    expect(remove).not.toHaveBeenCalled()
+    await act(async () => {
+      resolveLater(snapshot)
+      await later
+    })
+  })
+  it('recovers disabled bulk actions by explicitly retrying a failed catalog load', async () => {
+    useSpecialistStore.setState({ loadError: 'temporary failure' })
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Unused skill' }))
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Delete selected' }).disabled
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>('button', { name: 'Delete selected' }).disabled
+      ).toBe(false)
+    )
+    expect(screen.queryByText('Changes saved.')).toBeNull()
+  })
   it('focuses deletion review and restores the trigger after Escape', () => {
     render(<Harness />)
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
@@ -223,7 +314,7 @@ describe('category resource selection', () => {
     )
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Clear selection' }))
   })
-  it('restores focus to Clear when a catalog failure disables deletion', async () => {
+  it('restores focus to the deletion action after a usage snapshot read fails', async () => {
     vi.mocked(window.api.specialist.list).mockRejectedValue(new Error('catalog unavailable'))
     render(<Harness />)
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
@@ -231,7 +322,7 @@ describe('category resource selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
     fireEvent.click(screen.getByRole('button', { name: /^Confirm deletion \d+$/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete selected' }))
   })
   it('keeps a pending deletion review open when Escape is pressed', async () => {
     let finish!: () => void

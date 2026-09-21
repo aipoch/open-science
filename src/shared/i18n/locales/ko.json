@@ -5952,6 +5952,7 @@
     "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "이 엔드포인트는 Chat Completions용이 아닙니다. 다른 API 형식을 사용하는 서비스에는 어댑터가 필요합니다.",
     "Allow Main Agent to load this resource.": "메인 에이전트가 이 리소스를 불러오도록 허용합니다.",
     "Specialist associations": "스페셜리스트 연결",
-    "Choose which Specialists can use this resource.": "이 리소스를 사용할 수 있는 스페셜리스트를 선택하세요."
+    "Choose which Specialists can use this resource.": "이 리소스를 사용할 수 있는 스페셜리스트를 선택하세요.",
+    "Deletion or cleanup did not finish for: {{names}}. Retry cleanup; any remaining configurations require a new deletion confirmation.": "다음 커넥터의 삭제 또는 정리가 완료되지 않았습니다: {{names}}. 정리를 다시 시도하세요. 남아 있는 설정을 삭제하려면 다시 확인해야 합니다."
   }
 }

@@ -1,16 +1,18 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { bulkResourceActions, type AssignableResource } from './resource-assignment'
-import { setResourceAssignments } from './resource-assignment-actions'
+import { readResourceSpecialists, setResourceAssignments } from './resource-assignment-actions'
 
 export type ResourceSelection = {
-  resources: AssignableResource[]
   selected: AssignableResource[]
   ids: Set<string>
   groups: Set<string>
   busy: boolean
   error: boolean
   completed: boolean
+  cleanupTargets: AssignableResource[]
+  retryCleanup: () => Promise<void>
+  refreshSpecialists: () => Promise<void>
   review: AssignableResource[] | undefined
   locked: boolean
   actions: ReturnType<typeof bulkResourceActions>
@@ -53,11 +55,13 @@ export const useStickyResourceFilters = (): {
 export const useResourceSelection = ({
   resources,
   onSetMain,
-  onDelete
+  onDelete,
+  onRetryCleanup
 }: {
   resources: AssignableResource[]
   onSetMain: (id: string, enabled: boolean) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  onRetryCleanup?: (id: string) => Promise<boolean>
 }): ResourceSelection => {
   const items = useSpecialistStore((state) => state.items)
   const integrity = useSpecialistStore((state) => state.integrity)
@@ -69,11 +73,12 @@ export const useResourceSelection = ({
   const [completed, setCompleted] = useState(false)
   const [review, setReview] = useState<AssignableResource[] | undefined>()
   const pending = useRef(false)
+  const [cleanupTargets, setCleanupTargets] = useState<AssignableResource[]>([])
   const selected = resources.filter((resource) => ids.has(resource.id))
   const actions = bulkResourceActions(selected, items)
   const locked = busy || Boolean(review)
   const available = integrity.status === 'ok' && !loadError
-  const run = async (action: () => Promise<void>): Promise<void> => {
+  const run = async (action: () => Promise<void>, reportCompletion = true): Promise<void> => {
     if (pending.current) return
     pending.current = true
     setBusy(true)
@@ -81,7 +86,7 @@ export const useResourceSelection = ({
     setCompleted(false)
     try {
       await action()
-      setCompleted(true)
+      setCompleted(reportCompletion)
     } catch {
       setError(true)
     } finally {
@@ -139,17 +144,26 @@ export const useResourceSelection = ({
       for (const target of review) {
         try {
           // Earlier removals may await cleanup while another window edits Specialist references.
-          await useSpecialistStore.getState().load({ force: true })
-          const latest = useSpecialistStore.getState()
-          if (latest.integrity.status !== 'ok' || latest.loadError)
-            throw new Error('Specialist catalog unavailable')
+          const latest = await readResourceSpecialists()
           const resource = resources.find((resource) => resource.id === target.id)
-          if (!resource || !bulkResourceActions([resource], latest.items).deletable.length) {
+          if (!resource || !bulkResourceActions([resource], latest).deletable.length) {
             failed = true
             continue
           }
-          await onDelete(resource.id)
-          deleted.add(resource.id)
+          try {
+            await onDelete(resource.id)
+            deleted.add(resource.id)
+            setCleanupTargets((current) => current.filter((item) => item.id !== resource.id))
+          } catch (error) {
+            // Connector removal can persist before cleanup fails. Keep its reviewed identity
+            // even when a catalog refresh removes the row or the user clears selection.
+            if (onRetryCleanup)
+              setCleanupTargets((current) => [
+                ...current.filter((item) => item.id !== resource.id),
+                resource
+              ])
+            throw error
+          }
         } catch {
           failed = true
         }
@@ -158,8 +172,27 @@ export const useResourceSelection = ({
       setReview(undefined)
       if (failed) throw new Error('Some deletions failed')
     })
+  const retryCleanup = (): Promise<void> =>
+    run(async () => {
+      if (!onRetryCleanup) return
+      const remaining: AssignableResource[] = []
+      let failed = false
+      for (const resource of cleanupTargets) {
+        try {
+          // False means the configuration survives: require a new reviewed deletion.
+          if (!(await onRetryCleanup(resource.id))) failed = true
+        } catch {
+          remaining.push(resource)
+          failed = true
+        }
+      }
+      setCleanupTargets(remaining)
+      if (failed) throw new Error('Some cleanup did not finish')
+    })
   return {
-    resources,
+    cleanupTargets,
+    retryCleanup,
+    refreshSpecialists: () => run(() => useSpecialistStore.getState().load({ force: true }), false),
     selected,
     ids,
     groups,
