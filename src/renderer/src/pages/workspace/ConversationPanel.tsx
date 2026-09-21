@@ -1387,7 +1387,6 @@ const ConversationPanel = ({
 
                 {activeSession && specialistUnavailable ? (
                   <ErrorNotice
-                    inline
                     role="status"
                     aria-live="polite"
                     data-testid="specialist-unavailable-notice"
