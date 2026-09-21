@@ -393,13 +393,36 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Check GitHub Actions correctness
+        id: actionlint
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --show-error --silent \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" \
+            | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+      - name: Audit GitHub Actions security with zizmor
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          annotations: true
+          min-confidence: high
+          min-severity: medium
+          version: v1.30.1
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -521,6 +544,7 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
           CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
@@ -540,6 +564,7 @@ jobs:
               failed=1
             fi
           }
+          check actionlint "$ACTIONLINT_OUTCOME"
           check docs "$DOCS_OUTCOME"
           check format "$FORMAT_OUTCOME"
           check lint "$LINT_OUTCOME"
