@@ -2116,13 +2116,12 @@ export const PdfPreviewContent = ({
   >(undefined)
   const hasReadingTabs =
     Boolean(attachmentVersionId || pdfBookmarkSource) && presentation !== 'search'
-  const notesAvailableWidth = readerWidth - (outlineOpen ? outlineWidth : 0)
   const canShowNotesSidebar =
-    presentation !== 'search' && notesAvailableWidth >= NOTES_SIDEBAR_MIN_READER_WIDTH
+    presentation !== 'search' && readerWidth >= NOTES_SIDEBAR_MIN_READER_WIDTH
   const showNotesSidebar = canShowNotesSidebar && notesOpen && readingMode === 'original'
   const maxNotesWidth = Math.min(
     NOTES_SIDEBAR_MAX_WIDTH,
-    Math.max(NOTES_SIDEBAR_MIN_WIDTH, notesAvailableWidth - 752)
+    Math.max(NOTES_SIDEBAR_MIN_WIDTH, readerWidth - 752)
   )
   const effectiveNotesWidth = Math.min(notesWidth, maxNotesWidth)
   const resizeNotes = (width: number): void =>

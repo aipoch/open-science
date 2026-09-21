@@ -473,7 +473,16 @@ describe('PdfPreviewContent', () => {
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
     )
+    expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
+    expect(notebook.hasAttribute('inert')).toBe(false)
+    const toggleWithNavigation = container.querySelector<HTMLButtonElement>(
+      '[role="tablist"] [aria-label="Hide notes sidebar"]'
+    )!
+    expect(toggleWithNavigation.getAttribute('aria-disabled')).toBe('false')
+    await act(async () => toggleWithNavigation.click())
     expect(notebook.hasAttribute('inert')).toBe(true)
+    await act(async () => toggleWithNavigation.click())
+    expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
     await resize(1480)
     expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
     expect(container.querySelectorAll('[data-pdf-notebook-view]')).toHaveLength(1)
