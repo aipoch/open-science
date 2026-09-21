@@ -42,6 +42,7 @@ import {
   syncConnectorSkillDocs,
   syncMaterializedCustomServerSkillDocs
 } from '../connectors/provision'
+import { getBundledConnectorConflicts } from '../connectors/registry'
 import { createLogger } from '../logger'
 import type { SkillDirectoryLayout } from '../skills/materializer'
 import { writeAgentConfigFiles } from './agent-config-files'
@@ -111,7 +112,7 @@ import type { ProviderAccountsModule } from './provider-accounts'
 import type { SettingsRepository } from './repository'
 import type { SkillCatalogModule } from './skill-catalog'
 import type { ConnectorSettingsModule } from './connector-settings'
-import type { StoredCodexInfo, StoredSettings } from './types'
+import type { StoredCodexInfo, StoredConnectors, StoredSettings } from './types'
 
 const execFileAsync = promisify(execFile)
 const log = createLogger('agent-runtime-manager')
@@ -980,7 +981,7 @@ export class AgentRuntimeManager {
       settings,
       configRoot,
       forcedSkillIds,
-      this.connectors.enabledConnectorIds(settings.connectors),
+      settings.connectors,
       options
     )
   }
@@ -989,7 +990,7 @@ export class AgentRuntimeManager {
     settings: StoredSettings,
     configRoot: string,
     forcedSkillIds: ReadonlySet<string>,
-    bundledConnectorIds: string[],
+    connectors: StoredConnectors | undefined,
     options: Readonly<{ directoryLayout?: SkillDirectoryLayout }> = {}
   ): Promise<string[]> {
     await this.skills.materializeSkills(
@@ -998,7 +999,12 @@ export class AgentRuntimeManager {
       forcedSkillIds,
       options
     )
-    await syncConnectorSkillDocs(join(configRoot, 'skills'), bundledConnectorIds)
+    const bundledConnectorIds = this.connectors.enabledConnectorIds(connectors)
+    await syncConnectorSkillDocs(
+      join(configRoot, 'skills'),
+      bundledConnectorIds,
+      getBundledConnectorConflicts(connectors)
+    )
     const customSkillSync = await syncMaterializedCustomServerSkillDocs(
       connectorSkillSourceDir(this.configRoot),
       join(configRoot, 'skills'),
@@ -1038,7 +1044,7 @@ export class AgentRuntimeManager {
           settings,
           claudeProjectConfigRoot,
           forcedSkillIds,
-          this.connectors.enabledConnectorIds(connectors),
+          connectors,
           { directoryLayout: 'agent-facing' }
         )
       }

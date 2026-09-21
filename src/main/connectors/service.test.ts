@@ -5,6 +5,7 @@ import { ParserEngine } from './engine'
 import { CredentialRequestBroker } from './credential-request-broker'
 import { McpClientManager, McpToolCallError } from './mcp-client-manager'
 import type { SpecialistView } from '../../shared/specialist'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 
 const internal = { origin: 'internal' as const }
@@ -13,6 +14,158 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it.each([true, false])(
+    'does not dispatch bundled Zenodo over a historical custom name (enabled=%s)',
+    async (enabled) => {
+      const custom = {
+        id: 'historical',
+        name: 'zenodo',
+        displayName: 'Historical',
+        transport: 'stdio' as const,
+        command: 'old-mcp',
+        enabled
+      }
+      const settings = { enabledIds: [], autoAllowIds: [], customMcpServers: [custom] }
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValue(jsonRes({ hits: { hits: [], total: 0 }, links: {} }))
+      const mcpClientManager = { listTools: vi.fn(), call: vi.fn() }
+      const requestApproval = vi.fn()
+      const svc = new ConnectorService({
+        engine: new ParserEngine({ fetchImpl }),
+        getConnectors: () => settings,
+        resolveApiKey: () => undefined,
+        mcpClientManager,
+        requestApproval
+      })
+      await expect(svc.call('zenodo', 'search_records', { query: 'x' }, internal)).rejects.toThrow(
+        'conflicts with a custom Connector'
+      )
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(mcpClientManager.call).not.toHaveBeenCalled()
+      expect(requestApproval).not.toHaveBeenCalled()
+      settings.customMcpServers = []
+      await expect(
+        svc.call('zenodo', 'search_records', { query: 'x' }, internal)
+      ).resolves.toMatchObject({ records: [] })
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('blocks dispatch before consulting old grants while deletion cleanup is pending', async () => {
+    const state = {
+      enabledIds: [],
+      autoAllowIds: [],
+      askToolIds: ['zenodo/search_records'],
+      pendingCustomServerDeletionIds: ['zenodo']
+    }
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ hits: { hits: [], total: 0 }, links: {} }))
+    const resolve = vi
+      .fn()
+      .mockResolvedValue({ grant: { id: 'old-custom-grant' }, matchedScope: 'global' })
+    const requestApproval = vi.fn().mockResolvedValue('once')
+    const service = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => undefined,
+      getConnectorsFresh: async () => state,
+      resolveApiKey: () => undefined,
+      permissionGrantRegistry: { resolve } as unknown as PermissionGrantRegistry,
+      requestApproval
+    })
+    await expect(
+      service.call('zenodo', 'search_records', { query: 'x' }, internal)
+    ).rejects.toThrow('deletion cleanup is pending')
+    expect(resolve).not.toHaveBeenCalled()
+    expect(requestApproval).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+    // Cleanup removes the old authority before releasing the ID.
+    resolve.mockResolvedValue(undefined)
+    state.pendingCustomServerDeletionIds = []
+    await expect(
+      service.call('zenodo', 'search_records', { query: 'x' }, internal)
+    ).resolves.toMatchObject({ records: [] })
+    expect(requestApproval).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks a bundled name conflict introduced while approval is pending', async () => {
+    const settings = {
+      askToolIds: ['zenodo/search_records'],
+      enabledIds: [],
+      autoAllowIds: [],
+      customMcpServers: [] as {
+        id: string
+        name: string
+        displayName: string
+        transport: 'stdio'
+        command: string
+        enabled: boolean
+      }[]
+    }
+    const fetchImpl = vi.fn()
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined,
+      requestApproval: async () => {
+        settings.customMcpServers.push({
+          id: 'legacy',
+          name: 'zenodo',
+          displayName: 'Legacy',
+          transport: 'stdio',
+          command: 'old-mcp',
+          enabled: true
+        })
+        return 'once'
+      }
+    })
+    await expect(
+      svc.call(
+        'zenodo',
+        'search_records',
+        { query: 'x' },
+        { origin: 'agent', sessionId: 'conflict-test' }
+      )
+    ).rejects.toThrow('conflicts with a custom Connector')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('routes Zenodo without credentials and enforces disablement and tool policy', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonRes({ hits: { hits: [], total: 0 }, links: {} }))
+    const requestCredential = vi.fn()
+    const settings = {
+      enabledIds: [] as string[],
+      autoAllowIds: [] as string[],
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined,
+      requestCredential
+    })
+    await expect(
+      svc.call('zenodo', 'search_records', { query: 'climate' }, internal)
+    ).resolves.toMatchObject({ records: [], total: 0 })
+    expect(requestCredential).not.toHaveBeenCalled()
+    settings.blockedToolIds.push('zenodo/search_records')
+    await expect(
+      svc.call('zenodo', 'search_records', { query: 'climate' }, internal)
+    ).rejects.toThrow('tool blocked by policy')
+    settings.blockedToolIds.length = 0
+    settings.disabledConnectorIds.push('zenodo')
+    await expect(
+      svc.call('zenodo', 'search_records', { query: 'climate' }, internal)
+    ).rejects.toThrow(/disabled/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
     const fetchImpl = vi
       .fn()
@@ -2132,6 +2285,45 @@ describe('ConnectorService specialist capability gate', () => {
     revision: 1,
     ...overrides
   })
+
+  it.each([false, true])(
+    'does not let Specialist policy bypass a custom identity conflict (pending=%s)',
+    async (pending) => {
+      const current = specialist()
+      const fetchImpl = vi.fn()
+      const svc = new ConnectorService({
+        engine: new ParserEngine({ fetchImpl }),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          pendingCustomServerDeletionIds: pending ? ['zenodo'] : [],
+          customMcpServers: pending
+            ? []
+            : [
+                {
+                  id: 'legacy',
+                  name: 'zenodo',
+                  displayName: 'Legacy',
+                  transport: 'stdio',
+                  command: 'old-mcp',
+                  enabled: true
+                }
+              ]
+        }),
+        resolveApiKey: () => undefined,
+        resolveSpecialistProfile: async () => current
+      })
+      await expect(
+        svc.call(
+          'zenodo',
+          'search_records',
+          { query: 'x' },
+          { origin: 'agent', sessionId: 'test', specialistId: current.id }
+        )
+      ).rejects.toThrow('conflicts with a custom Connector')
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
 
   it('uses the fresh durable OpenAlex credential for Specialist calls', async () => {
     const staleConnectors = {

@@ -123,6 +123,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。"
   },
   "renderer": {
+    "Public research records, versions and file metadata from Zenodo.": "Zenodo の公開研究レコード、バージョン、ファイルのメタデータ。",
+    "Search public Zenodo records, one page at a time.": "Zenodo の公開レコードを 1 ページずつ検索します。",
+    "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Zenodo のレコードのメタデータとファイルリンクを取得します。ファイルはダウンロードされません。",
     "The selected data folder changed. Check the location and confirm it again.": "選択したデータフォルダーが変更されました。場所を確認し、もう一度確定してください。",
     "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "プロバイダーは保存されましたが、エージェントが再接続できませんでした。変更を再度保存する必要はありません。",
     "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "プロバイダーは保存されましたが、設定を更新できませんでした。設定を開き直して更新してください。",

@@ -5,6 +5,9 @@ export function connectorDescription(
   connector: { id: string; description: string },
   t: TFunction
 ): string {
+  if (connector.id === 'zenodo') {
+    return t('Public research records, versions and file metadata from Zenodo.')
+  }
   return connector.id === 'literature'
     ? t('Literature and research data via OpenAlex, arXiv, Crossref and DataCite.')
     : connector.description
@@ -12,6 +15,10 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'zenodo/search_records':
+      return t('Search public Zenodo records, one page at a time.')
+    case 'zenodo/get_record':
+      return t('Retrieve Zenodo record metadata and file links. Files are not downloaded.')
     case 'rna/search_sequence':
       return t(
         'Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.'

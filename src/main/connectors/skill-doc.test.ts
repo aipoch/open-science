@@ -61,6 +61,23 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
+  it('publishes discovery, version and file-access contracts in the generated skill', () => {
+    const doc = renderSkillDoc('zenodo')
+    for (const contract of [
+      'name: mcp-zenodo',
+      '### search_records',
+      '### get_record',
+      'next_page',
+      'pagination_limited',
+      '(page - 1) * page_size',
+      'all_versions',
+      'concept_record_id',
+      'No uploads or file downloads',
+      'not sanitized',
+      'empty file list does not establish'
+    ])
+      expect(doc).toContain(contract)
+  })
   it('documents ENA discovery limits and original submitted file locations', () => {
     const md = renderSkillDoc('omics-archives')
     expect(md).toContain('### ena_query_runs')

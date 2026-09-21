@@ -1,6 +1,7 @@
 import { Script } from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import {
+  getBundledConnectorConflicts,
   getConnectorTools,
   getDescriptor,
   validateToolArguments,
@@ -9,6 +10,28 @@ import {
 import { CONNECTOR_CATALOG } from './catalog'
 
 describe('registry + catalog', () => {
+  it('detects historical custom identity and filesystem collisions without mutating names', () => {
+    const servers = [
+      { id: 'zenodo', name: 'legacy' },
+      { id: 'other', name: 'Zenodo' },
+      { id: 'third', name: 'chemistry' }
+    ]
+    const before = structuredClone(servers)
+    expect(getBundledConnectorConflicts({ customMcpServers: servers }).sort()).toEqual([
+      'chemistry',
+      'zenodo'
+    ])
+    expect(getBundledConnectorConflicts()).toEqual([])
+    expect(servers).toEqual(before)
+  })
+  it('keeps pending deletion IDs reserved without requiring a surviving custom configuration', () => {
+    const snapshot = {
+      pendingCustomServerDeletionIds: ['zenodo', 'Chemistry', 'unrelated', 'zenodo']
+    }
+    const before = structuredClone(snapshot)
+    expect(getBundledConnectorConflicts(snapshot).sort()).toEqual(['chemistry', 'zenodo'])
+    expect(snapshot).toEqual(before)
+  })
   it('resolves a tool by connector+method', () => {
     expect(getDescriptor('chemistry', 'pubchem_get_compounds')?.id).toBe('pubchem_get_compounds')
     expect(getDescriptor('chemistry', 'nope')).toBeUndefined()
@@ -187,6 +210,44 @@ describe('bundled tool contracts', () => {
         { timeout: 1000 }
       )
       expect(mcp).toHaveBeenCalledTimes(1)
+    }
+  )
+})
+
+describe('Zenodo input contracts', () => {
+  it.each([
+    {},
+    { query: '' },
+    { query: '\u3000 ' },
+    { query: 'x'.repeat(1001) },
+    { query: 'x', page: 0 },
+    { query: 'x', page: '2' },
+    { query: 'x', page: 1.5 },
+    { query: 'x', page_size: 26 },
+    { query: 'x', page_size: 0 },
+    { query: 'x', all_versions: 'true' },
+    { query: 'x', sort: 'unknown' },
+    { query: 'x', url: 'https://example.com' }
+  ])('rejects invalid search arguments: %j', (args) => {
+    expect(() => validateToolArguments(getDescriptor('zenodo', 'search_records')!, args)).toThrow(
+      /invalid_arguments/
+    )
+  })
+
+  it('counts the query limit in Unicode code points', () => {
+    const descriptor = getDescriptor('zenodo', 'search_records')!
+    expect(() => validateToolArguments(descriptor, { query: '😀'.repeat(1000) })).not.toThrow()
+    expect(() => validateToolArguments(descriptor, { query: '😀'.repeat(1001) })).toThrow(
+      /invalid_arguments/
+    )
+  })
+
+  it.each(['0', '../1', '8435696?download=1', '01', '10.5281/zenodo.8435696', 8435696])(
+    'rejects noncanonical record IDs: %s',
+    (recordId) => {
+      expect(() =>
+        validateToolArguments(getDescriptor('zenodo', 'get_record')!, { record_id: recordId })
+      ).toThrow(/invalid_arguments/)
     }
   )
 })

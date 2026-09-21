@@ -40,14 +40,19 @@ const findCaseFoldedAlias = async (
 // disabled ones. Claude Code discovers skills as `<name>/SKILL.md` directories, not flat files.
 // Custom-server directories (see syncCustomServerSkillDocs below) live in the same skills dir;
 // cleanup here only ever touches names that are known bundled connector ids, so the two sync
-// passes can never delete each other's output.
+// passes can never delete each other's output. Preserved IDs belong to conflicting historical
+// custom configurations and must not be overwritten or removed by the bundled pass.
 export async function syncConnectorSkillDocs(
   skillsDir: string,
-  enabledIds: string[]
+  enabledIds: string[],
+  preservedIds: readonly string[] = []
 ): Promise<void> {
   // A first-run pre-enabled connector may sync before the skills dir has ever been created.
   await mkdir(skillsDir, { recursive: true })
-  const enabled = new Set(enabledIds.filter((id) => ALL_CONNECTOR_IDS.includes(id)))
+  const preserved = new Set(preservedIds.map((id) => id.toLowerCase()))
+  const enabled = new Set(
+    enabledIds.filter((id) => ALL_CONNECTOR_IDS.includes(id) && !preserved.has(id))
+  )
   for (const id of enabled) {
     const dir = join(skillsDir, `mcp-${id}`)
     await mkdir(dir, { recursive: true })
@@ -58,6 +63,7 @@ export async function syncConnectorSkillDocs(
     const m = /^mcp-(.+)$/.exec(entry)
     if (!m || !namesBundledConnector(m[1])) continue // not a bundled-connector dir; leave it alone
     const canonicalId = m[1].toLowerCase()
+    if (preserved.has(canonicalId)) continue
 
     if (!enabled.has(canonicalId)) {
       // Disabled connector — remove its dir in whatever case it appears.

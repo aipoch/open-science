@@ -124,6 +124,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Die Veröffentlichung der Abzweigung muss wiederhergestellt werden (Vorgang {{operationId}}, Session {{sessionId}}). Starten Sie die App neu, um diesen Versuch wiederherzustellen, bevor Sie erneut abzweigen."
   },
   "renderer": {
+    "Public research records, versions and file metadata from Zenodo.": "Öffentliche Forschungsdatensätze, Versionen und Dateimetadaten von Zenodo.",
+    "Search public Zenodo records, one page at a time.": "Öffentliche Zenodo-Datensätze seitenweise durchsuchen.",
+    "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Metadaten und Dateilinks eines Zenodo-Datensatzes abrufen. Dateien werden nicht heruntergeladen.",
     "The selected data folder changed. Check the location and confirm it again.": "Der ausgewählte Datenordner hat sich geändert. Prüfen Sie den Speicherort und bestätigen Sie ihn erneut.",
     "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Anbieter gespeichert, aber der Agent konnte keine neue Verbindung herstellen. Ihre Änderungen müssen nicht erneut gespeichert werden.",
     "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Anbieter gespeichert, aber die Einstellungen konnten nicht aktualisiert werden. Öffnen Sie die Einstellungen erneut, um sie zu aktualisieren.",

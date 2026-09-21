@@ -125,6 +125,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
   },
   "renderer": {
+    "Public research records, versions and file metadata from Zenodo.": "Notices de recherche publiques, versions et métadonnées de fichiers de Zenodo.",
+    "Search public Zenodo records, one page at a time.": "Rechercher les notices publiques de Zenodo, une page à la fois.",
+    "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Récupérer les métadonnées et les liens de fichiers d’une notice Zenodo. Les fichiers ne sont pas téléchargés.",
     "The selected data folder changed. Check the location and confirm it again.": "Le dossier de données sélectionné a changé. Vérifiez son emplacement et confirmez-le à nouveau.",
     "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Le fournisseur a été enregistré, mais l’Agent n’a pas pu se reconnecter. Vous n’avez pas besoin d’enregistrer à nouveau vos modifications.",
     "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Le fournisseur a été enregistré, mais les paramètres n’ont pas pu être actualisés. Rouvrez les paramètres pour les actualiser.",

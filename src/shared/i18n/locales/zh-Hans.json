@@ -123,6 +123,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。"
   },
   "renderer": {
+    "Public research records, versions and file metadata from Zenodo.": "Zenodo 的公开研究记录、版本和文件元数据。",
+    "Search public Zenodo records, one page at a time.": "逐页搜索 Zenodo 的公开记录。",
+    "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "获取 Zenodo 记录元数据和文件链接，不下载文件。",
     "The selected data folder changed. Check the location and confirm it again.": "所选数据文件夹已发生变化。请检查位置并重新确认。",
     "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "供应商已保存，但智能体无法重新连接。无需再次保存更改。",
     "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "供应商已保存，但无法刷新设置。请重新打开设置以刷新。",

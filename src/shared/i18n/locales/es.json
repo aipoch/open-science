@@ -125,6 +125,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar."
   },
   "renderer": {
+    "Public research records, versions and file metadata from Zenodo.": "Registros públicos de investigación, versiones y metadatos de archivos de Zenodo.",
+    "Search public Zenodo records, one page at a time.": "Buscar registros públicos de Zenodo, una página a la vez.",
+    "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Obtener metadatos y enlaces a archivos de un registro de Zenodo. Los archivos no se descargan.",
     "The selected data folder changed. Check the location and confirm it again.": "La carpeta de datos seleccionada ha cambiado. Compruebe la ubicación y confírmela de nuevo.",
     "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Se ha guardado el proveedor, pero el Agente no ha podido volver a conectarse. No es necesario volver a guardar los cambios.",
     "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Se ha guardado el proveedor, pero no se ha podido actualizar la configuración. Vuelva a abrir la configuración para actualizarla.",

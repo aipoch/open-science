@@ -1411,6 +1411,45 @@ describe('AgentRuntimeManager', () => {
     )
   })
 
+  it.each([false, true])(
+    'preserves conflicting custom docs in isolated agent roots (pending=%s)',
+    async (pending) => {
+      const settings = await repository.getSettings()
+      settings.connectors = {
+        enabledIds: [],
+        autoAllowIds: [],
+        pendingCustomServerDeletionIds: pending ? ['zenodo'] : [],
+        customMcpServers: pending
+          ? []
+          : [
+              {
+                id: 'legacy',
+                name: 'zenodo',
+                displayName: 'Legacy',
+                transport: 'stdio',
+                command: 'old-mcp',
+                enabled: false
+              }
+            ]
+      }
+      const connectors = {
+        getConnectors: vi.fn().mockResolvedValue(settings.connectors),
+        enabledConnectorIds: vi.fn().mockReturnValue([]),
+        materializedCustomSkillNames: vi.fn().mockReturnValue([])
+      } as unknown as ConnectorSettingsModule
+      manager = createManager({ connectors })
+      const agentRoot = join(storageRoot, 'isolated-conflict')
+      const target = join(agentRoot, 'skills', 'mcp-zenodo')
+      await mkdir(target, { recursive: true })
+      await writeFile(join(target, 'SKILL.md'), 'historical custom doc')
+      await expect(manager.materializeAgentSkills(settings, agentRoot, new Set())).resolves.toEqual(
+        []
+      )
+      expect(await readFile(join(target, 'SKILL.md'), 'utf8')).toBe('historical custom doc')
+      expect(connectors.enabledConnectorIds).toHaveBeenCalledWith(settings.connectors)
+    }
+  )
+
   it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {
     const customSkillName = 'mcp-xt'
     const sourceDir = join(connectorSkillSourceDir(storageRoot), customSkillName)

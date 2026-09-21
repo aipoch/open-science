@@ -126,6 +126,9 @@
     "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления."
   },
   "renderer": {
+    "Public research records, versions and file metadata from Zenodo.": "Общедоступные исследовательские записи, версии и метаданные файлов Zenodo.",
+    "Search public Zenodo records, one page at a time.": "Поиск общедоступных записей Zenodo по одной странице.",
+    "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Получение метаданных записи Zenodo и ссылок на файлы. Файлы не скачиваются.",
     "The selected data folder changed. Check the location and confirm it again.": "Выбранная папка данных изменилась. Проверьте расположение и подтвердите его ещё раз.",
     "Provider saved, but the Agent could not reconnect. Your changes do not need to be saved again.": "Поставщик сохранён, но Агенту не удалось подключиться повторно. Повторно сохранять изменения не нужно.",
     "Provider saved, but settings could not be refreshed. Reopen settings to refresh.": "Поставщик сохранён, но обновить настройки не удалось. Откройте настройки заново, чтобы обновить их.",

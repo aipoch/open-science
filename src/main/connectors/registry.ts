@@ -23,6 +23,7 @@ import { RESEARCH_RESOURCES_TOOLS } from './descriptors/research-resources'
 import { RNA_TOOLS } from './descriptors/rna'
 import { STRUCTURES_TOOLS } from './descriptors/structures'
 import { VARIANTS_TOOLS } from './descriptors/variants'
+import { ZENODO_TOOLS } from './descriptors/zenodo'
 import { ZINC_TOOLS } from './descriptors/zinc'
 import type { ToolDescriptor } from './types'
 
@@ -50,6 +51,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...RNA_TOOLS,
   ...STRUCTURES_TOOLS,
   ...VARIANTS_TOOLS,
+  ...ZENODO_TOOLS,
   ...ZINC_TOOLS
 ]
 
@@ -107,6 +109,22 @@ export function validateToolArguments(
 }
 
 export const ALL_CONNECTOR_IDS = [...new Set(ALL_TOOLS.map((t) => t.connector))]
+
+// A newly bundled identity must not take over a historical custom route or Skill directory.
+// Disabled configurations and unfinished deletions retain ownership; fold case for APFS/NTFS paths.
+export function getBundledConnectorConflicts(connectors?: {
+  customMcpServers?: readonly { id: string; name: string }[]
+  pendingCustomServerDeletionIds?: readonly string[]
+}): string[] {
+  const customIds = new Set([
+    ...(connectors?.customMcpServers ?? []).flatMap(({ id, name }) => [
+      id.toLowerCase(),
+      name.toLowerCase()
+    ]),
+    ...(connectors?.pendingCustomServerDeletionIds ?? []).map((id) => id.toLowerCase())
+  ])
+  return ALL_CONNECTOR_IDS.filter((id) => customIds.has(id))
+}
 
 export function getConnectorTools(connector: string): ToolDescriptor[] {
   return ALL_TOOLS.filter((t) => t.connector === connector)
