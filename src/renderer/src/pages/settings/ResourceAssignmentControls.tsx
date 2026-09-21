@@ -107,7 +107,7 @@ export const ResourceAssignmentControls = ({
       <PopoverContent
         align="end"
         aria-label={t('Manage access for {{name}}', { name: label })}
-        className="w-80 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
+        className="w-80 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
       >
         <div className="flex min-h-8 items-center gap-2 rounded-lg px-2 py-1.5">
           <span
@@ -161,7 +161,10 @@ export const ResourceAssignmentControls = ({
               />
             </div>
           ) : null}
-          <div className="mt-1 max-h-56 overflow-y-auto overscroll-contain" aria-busy={busy}>
+          <div
+            className="mt-1 max-h-56 overflow-x-hidden overflow-y-auto overscroll-contain"
+            aria-busy={busy}
+          >
             {visible.map((item) => (
               <div key={item.id} className="flex items-center gap-2 pr-2">
                 {/* Navigation and assignment are sibling controls, so opening details never toggles access. */}
