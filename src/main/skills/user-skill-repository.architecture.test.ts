@@ -899,6 +899,8 @@ describe('User Skill repository architecture', () => {
           'src/main/connectors/descriptors/genomes.test.ts',
           'src/main/artifacts/resumed-finalization-ownership.test.ts',
           'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+          'src/main/agent-framework/opencode-mcp-isolation.integration.test.ts',
+          'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
           'src/main/compute/cancellation-runtime.integration.test.ts'
         ]
       },
