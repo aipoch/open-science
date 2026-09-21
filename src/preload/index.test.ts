@@ -815,8 +815,10 @@ describe('preload bridge — public surface inventory', () => {
       'window.announceWindowFindReady',
       'window.clearFind',
       'window.close',
+      'window.closeActionMenu',
       'window.closeFind',
       'window.findInPage',
+      'window.onActionMenuClosed',
       'window.onCloseActivePane',
       'window.onCloseConfirmDismiss',
       'window.onCloseConfirmRequest',
@@ -824,6 +826,7 @@ describe('preload bridge — public surface inventory', () => {
       'window.onHideWindowFind',
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
+      'window.openActionMenu',
       'window.sendCloseConfirmResponse'
     ])
   })

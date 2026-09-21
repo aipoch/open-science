@@ -8,7 +8,8 @@
     "src/preload/index.test.ts",
     "src/preload/index.ts",
     "src/preload/installation-assistant.ts",
-    "src/preload/renderer-api.d.ts"
+    "src/preload/renderer-api.d.ts",
+    "src/preload/action-menu-overlay.ts"
   ],
   "interfacePaths": [
     "src/preload/electron-renderer-contract-adapter.ts",

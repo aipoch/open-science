@@ -71,8 +71,23 @@ const openLocalFile = async (page: Page, name: string): Promise<void> => {
   )
 }
 
+const actionMenuPage = async (page: Page): Promise<Page> => {
+  await expect
+    .poll(() =>
+      page
+        .context()
+        .pages()
+        .some((candidate) => candidate.url().includes('/action-menu-overlay.html'))
+    )
+    .toBe(true)
+  return page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url().includes('/action-menu-overlay.html'))!
+}
+
 const expectContentMenu = async (page: Page, expectedActions: readonly string[]): Promise<void> => {
-  const menu = page.getByTestId('preview-content-context-menu')
+  const menu = (await actionMenuPage(page)).getByTestId('preview-content-context-menu')
   await expect(menu).toBeVisible()
   for (const action of expectedActions)
     await expect(menu.getByText(action, { exact: true })).toBeVisible()
@@ -99,19 +114,20 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   const contentRegion = page.getByTestId('preview-file-content-region')
   await contentRegion.click({ button: 'right', position: { x: 80, y: 80 } })
   await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
-  await page.getByTestId('preview-content-context-menu').getByText('Copy path').click()
+  const menuPage = await actionMenuPage(page)
+  await menuPage.getByTestId('preview-content-context-menu').getByText('Copy path').click()
   await page.getByRole('button', { name: 'More actions' }).click()
-  await expect(page.getByRole('menu').getByText('Copied', { exact: true })).toBeVisible()
-  await page.keyboard.press('Escape')
+  await expect(menuPage.getByRole('menu').getByText('Copied', { exact: true })).toBeVisible()
+  await menuPage.keyboard.press('Escape')
 
   const localTab = page.getByRole('tab').filter({ hasText: TEXT_FILE_NAME })
   await localTab.click({ button: 'right' })
-  const tabMenu = page.getByTestId('preview-tab-context-menu')
+  const tabMenu = menuPage.getByTestId('preview-tab-context-menu')
   await expect(tabMenu.getByText('Close', { exact: true })).toBeVisible()
   await expect(tabMenu.getByText('Copy path', { exact: true })).toBeVisible()
   await expect(tabMenu.getByText('Download', { exact: true })).toBeVisible()
   await expect(tabMenu.getByText('Save as artifact', { exact: true })).toBeVisible()
-  await page.keyboard.press('Escape')
+  await menuPage.keyboard.press('Escape')
 
   const previewResizeHandle = page.getByRole('separator', { name: 'Resize right panel' })
   const previewResizeHandleBounds = await previewResizeHandle.boundingBox()
@@ -136,7 +152,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
       .getByText('Local native context area', { exact: true })
       .click({ button: 'right' })
     await page.waitForTimeout(300)
-    await expect(page.getByTestId('preview-content-context-menu')).toBeHidden()
+    await expect(menuPage.getByTestId('preview-content-context-menu')).toBeHidden()
 
     const localHtmlHeading = localHtmlFrame.getByRole('heading', {
       name: 'Local HTML context menu fixture'
@@ -146,7 +162,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
     expect(localHtmlHeadingBounds).not.toBeNull()
     await localHtmlHeading.click({ button: 'right', position: frameClick })
     await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
-    const menuBounds = await page.getByTestId('preview-content-context-menu').boundingBox()
+    const menuBounds = await menuPage.getByTestId('preview-content-context-menu').boundingBox()
     expect(menuBounds).not.toBeNull()
     expect(
       Math.abs(menuBounds!.x - (localHtmlHeadingBounds!.x + frameClick.x))
@@ -154,7 +170,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
     expect(
       Math.abs(menuBounds!.y - (localHtmlHeadingBounds!.y + frameClick.y))
     ).toBeLessThanOrEqual(1)
-    await page.keyboard.press('Escape')
+    await menuPage.keyboard.press('Escape')
 
     await localHtmlFrame.locator('body').evaluate(() => {
       window.location.hash = 'results'
@@ -164,7 +180,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
       .toBe('#results')
     await localHtmlHeading.click({ button: 'right', position: frameClick })
     await expectContentMenu(page, ['Copy path', 'Download', 'Save as artifact'])
-    await page.keyboard.press('Escape')
+    await menuPage.keyboard.press('Escape')
   } finally {
     await app.setMainWindowZoomFactor(1)
   }
@@ -175,7 +191,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   const pdfPageClick = { x: 200, y: 160 }
   await expect(pdfRegion).toBeVisible()
   await pdfRegion.click({ button: 'right', position: pdfPageClick })
-  const pdfMenu = page.getByTestId('preview-content-context-menu')
+  const pdfMenu = menuPage.getByTestId('preview-content-context-menu')
   await expect(pdfMenu.getByRole('menuitem')).toHaveText([
     'Copy path',
     'Save as artifact',
@@ -187,15 +203,21 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   await expect(page.getByRole('dialog', { name: `Preview ${PDF_FILE_NAME}` })).toBeVisible()
 
   await pdfRegion.click({ button: 'right', position: pdfPageClick })
-  await expect(page.getByTestId('preview-content-context-menu')).not.toContainText(
+  await expect(menuPage.getByTestId('preview-content-context-menu')).not.toContainText(
     'Open full screen preview'
   )
-  await page.getByTestId('preview-content-context-menu').getByText('Close', { exact: true }).click()
+  await menuPage
+    .getByTestId('preview-content-context-menu')
+    .getByText('Close', { exact: true })
+    .click()
   await expect(page.getByRole('dialog', { name: `Preview ${PDF_FILE_NAME}` })).toBeHidden()
   await expect(page.getByRole('tab').filter({ hasText: PDF_FILE_NAME })).toBeVisible()
 
   await pdfRegion.click({ button: 'right', position: pdfPageClick })
-  await page.getByTestId('preview-content-context-menu').getByText('Close', { exact: true }).click()
+  await menuPage
+    .getByTestId('preview-content-context-menu')
+    .getByText('Close', { exact: true })
+    .click()
   await expect(page.getByRole('tab').filter({ hasText: PDF_FILE_NAME })).toBeHidden()
 
   await page
@@ -221,12 +243,12 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
     button: 'right'
   })
   await page.waitForTimeout(300)
-  await expect(page.getByTestId('preview-content-context-menu')).toBeHidden()
+  await expect(menuPage.getByTestId('preview-content-context-menu')).toBeHidden()
   await managedHtmlFrame
     .getByRole('heading', { name: 'HTML context menu fixture' })
     .click({ button: 'right' })
   await expectContentMenu(page, ['Provenance', 'View in context'])
-  await page.keyboard.press('Escape')
+  await menuPage.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Preview generated file context-menu.docx' }).click()
   const officeHost = page.locator('[data-office-preview-state="ready"]')
@@ -241,11 +263,11 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   })
   await officePassthrough.click({ button: 'right' })
   await page.waitForTimeout(300)
-  await expect(page.getByTestId('preview-content-context-menu')).toBeHidden()
+  await expect(menuPage.getByTestId('preview-content-context-menu')).toBeHidden()
   await officePassthrough.evaluate((target) => target.remove())
   await officeFrame.locator('body').click({ button: 'right', position: { x: 40, y: 40 } })
   await expectContentMenu(page, ['Provenance', 'View in context'])
-  await page.keyboard.press('Escape')
+  await menuPage.keyboard.press('Escape')
 
   await page.getByRole('button', { name: 'Preview generated file context-menu.xlsx' }).click()
   const spreadsheetHost = page.locator('[data-office-preview-state="ready"]')
@@ -258,7 +280,9 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
   const spreadsheetClick = { x: 140, y: 90 }
   await spreadsheet.click({ button: 'right', position: spreadsheetClick })
   await expectContentMenu(page, ['Provenance', 'View in context'])
-  const spreadsheetMenuBounds = await page.getByTestId('preview-content-context-menu').boundingBox()
+  const spreadsheetMenuBounds = await menuPage
+    .getByTestId('preview-content-context-menu')
+    .boundingBox()
   expect(spreadsheetMenuBounds).not.toBeNull()
   expect(
     Math.abs(spreadsheetMenuBounds!.x - (spreadsheetBounds!.x + spreadsheetClick.x))

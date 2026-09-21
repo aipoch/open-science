@@ -336,6 +336,14 @@ type ElectronApp = {
   emitUpdateStatus: (status: UpdateStatus) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
+  createLiveMenuBackground: () => Promise<void>
+  readNativeMenuLayers: () => Promise<{
+    ticks: number
+    pageVisible: boolean
+    menuVisible: boolean
+    menuOnTop: boolean
+    focused: string
+  }>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
   readClipboardText: () => Promise<string>
@@ -964,6 +972,52 @@ class ElectronAppHarness implements ElectronApp {
     return this.restart()
   }
 
+  async createLiveMenuBackground(): Promise<void> {
+    await this.runningApplication.evaluate(async ({ app, BrowserWindow, WebContentsView }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      const view = new WebContentsView({
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+      })
+      view.setBounds({ x: 250, y: 100, width: 650, height: 550 })
+      window.contentView.addChildView(view, 0)
+      await view.webContents.loadURL(
+        'data:text/html,<body style="background:skyblue;font-size:40px">Live page <span id="ticks">0</span><script>setInterval(()=>document.querySelector("span").textContent=String(Number(document.querySelector("span").textContent)+1),50)</script>'
+      )
+      app.focus({ steal: true })
+      window.focus()
+      view.webContents.focus()
+      window.on('closed', () => {
+        if (!view.webContents.isDestroyed()) view.webContents.close()
+      })
+    })
+  }
+
+  async readNativeMenuLayers(): Promise<{
+    ticks: number
+    pageVisible: boolean
+    menuVisible: boolean
+    menuOnTop: boolean
+    focused: string
+  }> {
+    return this.runningApplication.evaluate(async ({ BrowserWindow, webContents }) => {
+      const children = BrowserWindow.getAllWindows()[0].contentView
+        .children as Electron.WebContentsView[]
+      const page = children.find((view) => view.webContents?.getURL().startsWith('data:text/html'))!
+      const menu = children.find((view) =>
+        view.webContents?.getURL().includes('/action-menu-overlay.html')
+      )
+      return {
+        ticks: Number(
+          await page.webContents.executeJavaScript('document.querySelector("#ticks").textContent')
+        ),
+        pageVisible: page.getVisible(),
+        menuVisible: menu?.getVisible() ?? false,
+        menuOnTop: !!menu && children.at(-1) === menu,
+        focused: webContents.getFocusedWebContents()?.getURL() ?? ''
+      }
+    })
+  }
+
   async findOverlayIsVisible(): Promise<boolean> {
     return this.runningApplication.evaluate(({ BrowserWindow }) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
@@ -971,7 +1025,12 @@ class ElectronAppHarness implements ElectronApp {
 
       return mainWindow.contentView.children.some((view) => {
         const bounds = view.getBounds()
-        return bounds.width > 0 && bounds.height > 0
+        return (
+          (view as Electron.WebContentsView).webContents?.getURL().includes('/find-overlay/') &&
+          view.getVisible() &&
+          bounds.width > 0 &&
+          bounds.height > 0
+        )
       })
     })
   }

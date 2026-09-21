@@ -8,7 +8,14 @@
     "src/renderer/src/components/action-menu/action-menu-context.ts",
     "src/renderer/src/components/action-menu/action-menu-model.test.ts",
     "src/renderer/src/components/action-menu/action-menu-model.ts",
-    "src/renderer/src/components/action-menu/index.ts"
+    "src/renderer/src/components/action-menu/index.ts",
+    "src/renderer/action-menu-overlay.html",
+    "src/renderer/src/action-menu-overlay.tsx",
+    "src/renderer/src/assets/action-menu-overlay.css",
+    "src/renderer/src/components/action-menu/ActionMenuDropdown.tsx",
+    "src/renderer/src/components/action-menu/NativeActionMenu.test.tsx",
+    "src/renderer/src/components/action-menu/NativeActionMenu.tsx",
+    "src/shared/action-menu-overlay.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/action-menu/action-menu-model.ts",
@@ -18,7 +25,8 @@
   "testFiles": {
     "owner": [
       "src/renderer/src/components/action-menu/ActionMenuProvider.test.tsx",
-      "src/renderer/src/components/action-menu/action-menu-model.test.ts"
+      "src/renderer/src/components/action-menu/action-menu-model.test.ts",
+      "src/renderer/src/components/action-menu/NativeActionMenu.test.tsx"
     ],
     "contract": [],
     "consumer": [

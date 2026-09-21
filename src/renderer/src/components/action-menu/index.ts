@@ -1,3 +1,4 @@
+export { ActionMenuDropdown } from './ActionMenuDropdown'
 export { ActionMenuItems, type ActionMenuLabelRenderer } from './ActionMenuItems'
 export { ActionMenuProvider } from './ActionMenuProvider'
 export { ActionMenuTarget, type ActionMenuTargetProps } from './ActionMenuTarget'

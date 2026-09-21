@@ -1,3 +1,4 @@
+import { createActionMenuOverlay } from './action-menu-overlay'
 import {
   app,
   BrowserWindow,
@@ -578,12 +579,21 @@ const createMainWindow = (
     ipcMain.removeListener(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
     ipcMain.removeListener(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
     ipcMain.removeListener(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
+    actionMenuOverlay.destroy()
     findOverlay.destroy()
   })
 
   // The whole-window find bar lives in its own WebContentsView overlay, so its own query text is never
   // part of the main window's page search. The overlay talks to main via the window-find IPC channels;
   // main opens/closes it here in response to the chord and Escape.
+  const actionMenuOverlay = createActionMenuOverlay(window, {
+    preload: join(__dirname, '../preload/action-menu-overlay.js'),
+    html: join(__dirname, '../renderer/action-menu-overlay.html'),
+    ...(process.env.ELECTRON_RENDERER_URL
+      ? { url: new URL('action-menu-overlay.html', process.env.ELECTRON_RENDERER_URL).href }
+      : {})
+  })
+
   const findOverlay = createFindOverlayManager({
     // The structural dep narrows BrowserWindow to just the find-overlay surface; Electron's
     // contentView.addChildView is typed against the base View (no webContents), so bridge the gap here.

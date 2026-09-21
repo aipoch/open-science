@@ -36,7 +36,7 @@ import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
 import {
-  ActionMenuItems,
+  ActionMenuDropdown,
   ActionMenuProvider,
   ActionMenuTarget,
   useActionMenuTarget
@@ -287,34 +287,28 @@ const SessionActionDropdown = ({
   const { entries, execute, renderLabel } = useActionMenuTarget<SessionActionId>()
 
   return (
-    <DropdownMenu onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
-          aria-label={t('Open actions for {{title}}', { title: session.title })}
-        >
-          <span className="flex size-3.5 items-center justify-center" aria-hidden="true">
-            <MoreVertical className="size-3.5" strokeWidth={2} />
-          </span>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        aria-label={t('Session actions')}
-        className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
-        side="right"
-        align="start"
-        sideOffset={6}
+    <ActionMenuDropdown
+      entries={entries}
+      label={t('Session actions')}
+      dangerClassName={sessionActionDangerClassName}
+      onSelect={(actionId) => void execute(actionId)}
+      onOpenChange={onOpenChange}
+      renderLabel={renderLabel}
+      side="right"
+      align="start"
+      sideOffset={6}
+      contentClassName={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
+    >
+      <button
+        type="button"
+        className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
+        aria-label={t('Open actions for {{title}}', { title: session.title })}
       >
-        <ActionMenuItems
-          entries={entries}
-          onSelect={(actionId) => void execute(actionId)}
-          compact={false}
-          dangerClassName={sessionActionDangerClassName}
-          renderLabel={renderLabel}
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
+        <span className="flex size-3.5 items-center justify-center" aria-hidden="true">
+          <MoreVertical className="size-3.5" strokeWidth={2} />
+        </span>
+      </button>
+    </ActionMenuDropdown>
   )
 }
 

@@ -31,7 +31,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ActionMenuItems, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
+import { ActionMenuDropdown, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
@@ -441,31 +441,26 @@ const PreviewFileHeader = ({
                 </span>
               ) : null}
               {provenanceEntry === 'menu' && managedMenuEntries.length > 0 ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={previewHeaderActionClassName}
-                      aria-label={t('File actions for {{title}}', { title: item.title })}
-                    >
-                      <MoreHorizontal aria-hidden="true" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="z-[70] min-w-36">
-                    <ActionMenuItems
-                      entries={managedMenuEntries}
-                      onSelect={previewActions.execute}
-                      compact={false}
-                      renderLabel={(entry, translatedLabel) =>
-                        entry.action === 'view-in-context' && viewInContextDisabled
-                          ? `${translatedLabel} (${t('Source conversation is archived')})`
-                          : translatedLabel
-                      }
-                    />
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <ActionMenuDropdown
+                  entries={managedMenuEntries}
+                  onSelect={previewActions.execute}
+                  contentClassName="z-[70] min-w-36"
+                  renderLabel={(entry, translatedLabel) =>
+                    entry.action === 'view-in-context' && viewInContextDisabled
+                      ? `${translatedLabel} (${t('Source conversation is archived')})`
+                      : translatedLabel
+                  }
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className={previewHeaderActionClassName}
+                    aria-label={t('File actions for {{title}}', { title: item.title })}
+                  >
+                    <MoreHorizontal aria-hidden="true" />
+                  </Button>
+                </ActionMenuDropdown>
               ) : null}
             </>
           ) : null}

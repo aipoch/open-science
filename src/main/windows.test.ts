@@ -1,3 +1,4 @@
+vi.mock('./action-menu-overlay', () => ({ createActionMenuOverlay: () => ({ destroy: vi.fn() }) }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindowConstructorOptions } from 'electron'
 
