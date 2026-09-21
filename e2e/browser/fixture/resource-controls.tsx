@@ -181,7 +181,7 @@ export const Fixture = (): React.JSX.Element => {
   const [connectorView, setConnectorView] = useState<ConnectorsView>({ kind: 'list' })
   return (
     <TooltipProvider>
-      <main className="mx-auto flex h-svh max-w-[880px] flex-col border-x border-border bg-background text-foreground">
+      <main className="mx-auto flex h-svh max-w-[880px] flex-col border-x border-border bg-card text-foreground">
         <header className="flex h-12 shrink-0 items-center border-b border-border px-5 text-sm font-medium">
           {connectorPage
             ? locale === 'en'

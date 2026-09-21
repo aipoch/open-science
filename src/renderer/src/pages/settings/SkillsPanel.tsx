@@ -461,7 +461,7 @@ const SkillsPanel = ({
       </div>
       <div
         ref={filterRef}
-        className="sticky top-0 z-20 -mx-5 mb-2 space-y-2 border-b border-border/60 px-5 py-3"
+        className="sticky top-0 z-20 -mx-5 mb-2 space-y-2 border-b border-border/60 bg-card px-5 py-3"
       >
         <div data-slot="skills-filter-bar" className="flex flex-wrap items-center gap-2">
           <Select value={filter} onValueChange={(value) => setFilter(value as SourceFilter)}>
@@ -542,7 +542,7 @@ const SkillsPanel = ({
 
           return (
             <div key={group.source} data-slot="skills-source-group" data-source={group.source}>
-              <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 px-5 py-2">
+              <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
                 <button
                   type="button"
                   aria-expanded={expanded}

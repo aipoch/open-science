@@ -83,8 +83,11 @@ for (const kind of ['skills', 'connectors']) {
     )
     expect((await section.boundingBox())!.y).toBeCloseTo(filterBottom, 0)
     const filterContainer = kind === 'skills' ? filter.locator('xpath=..') : filter
-    await expect(filterContainer).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(section).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    const surfaceColor = await page
+      .locator('main')
+      .evaluate((element) => getComputedStyle(element).backgroundColor)
+    await expect(filterContainer).toHaveCSS('background-color', surfaceColor)
+    await expect(section).toHaveCSS('background-color', surfaceColor)
     const headerBounds = (await section.boundingBox())!
     const filterBounds = (await filterContainer.boundingBox())!
     expect(headerBounds.x).toBeCloseTo(filterBounds.x, 0)

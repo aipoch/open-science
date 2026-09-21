@@ -426,7 +426,7 @@ export function ConnectorsPanel({
 
     return (
       <div data-slot="connectors-source-group" data-source={groupKey}>
-        <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 px-5 py-2">
+        <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
           <button
             type="button"
             aria-expanded={expanded}
@@ -640,7 +640,7 @@ export function ConnectorsPanel({
       <div
         ref={filterRef}
         data-slot="connectors-filter-bar"
-        className="sticky top-0 z-20 -mx-5 mb-2 flex flex-wrap items-center gap-2 border-b border-border/60 px-5 py-3"
+        className="sticky top-0 z-20 -mx-5 mb-2 flex flex-wrap items-center gap-2 border-b border-border/60 bg-card px-5 py-3"
         data-testid="connectors-toolbar"
       >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
@@ -743,7 +743,7 @@ export function ConnectorsPanel({
 
         {showCustom ? (
           <div data-slot="connectors-source-group" data-source="custom">
-            <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 px-5 py-2">
+            <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
               <button
                 type="button"
                 aria-expanded={customExpanded}
