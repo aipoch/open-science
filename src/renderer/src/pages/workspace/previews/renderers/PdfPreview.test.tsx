@@ -12,7 +12,11 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
 import * as nearViewport from '../useNearViewport'
 import { PdfOutlineSidebar } from './PdfOutlineSidebar'
-import { requestAnnotationReveal } from '../../annotations/annotation-reveal'
+import {
+  requestAnnotationReveal,
+  requestPdfAnnotationReveal
+} from '../../annotations/annotation-reveal'
+import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../../shared/pdf-annotations'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import { useSessionStore } from '@/stores/session-store'
@@ -777,6 +781,93 @@ describe('PdfPreviewContent', () => {
       })
     )
   })
+
+  it.each([undefined, 'another-project'])(
+    'reveals a project annotation from its document provider with selected project %s',
+    async (selectedProject) => {
+      useSessionStore.setState({
+        selectedSessionId: selectedProject ? 'other-session' : undefined,
+        sessions: selectedProject ? [{ id: 'other-session', projectId: selectedProject }] : []
+      } as never)
+      const annotation: SavedPdfAnnotation = {
+        id: 'note-1',
+        projectId: 'project-1',
+        version: 1,
+        origin: 'user',
+        kind: 'page-note',
+        tagIds: [],
+        note: 'Saved evidence',
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z',
+        target: {
+          source: {
+            kind: 'upload-version',
+            projectId: 'project-1',
+            sessionId: 'creator',
+            sourceFileId: 'upload-1',
+            versionId: 'version-1',
+            name: 'paper.pdf',
+            path: 'upload-version:version-1',
+            checksum: 'a'.repeat(64)
+          },
+          selector: { kind: 'page-note', pageNumber: 1, pageRotation: 0, coordinateVersion: 1 }
+        }
+      }
+      const resolvePdfSource = vi.fn()
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource },
+        pdfAnnotations: {
+          list: vi
+            .fn()
+            .mockResolvedValue({ items: [annotation], total: 1, nativeImport: { nativeRefs: [] } })
+        },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
+      } as unknown as Window['api']
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <PdfAnnotationsProvider
+              projectId="project-1"
+              sourceFileId="upload-1"
+              versionId="version-1"
+            >
+              <PdfPreviewRenderer
+                item={{
+                  id: 'upload-1',
+                  projectId: 'project-1',
+                  sessionId: 'creator',
+                  title: 'paper.pdf',
+                  type: 'file',
+                  source: 'upload',
+                  path: annotation.target.source.path,
+                  name: 'paper.pdf',
+                  format: 'pdf',
+                  managedFileId: 'upload-1',
+                  selectedVersionId: 'version-1'
+                }}
+              />
+            </PdfAnnotationsProvider>
+          </TooltipProvider>
+        )
+      )
+      await vi.waitFor(() =>
+        expect(
+          container.querySelector<HTMLButtonElement>('[aria-label="Annotate selected text"]')
+            ?.disabled
+        ).toBe(false)
+      )
+      let outcome: string | undefined
+      await act(async () => {
+        outcome = await requestPdfAnnotationReveal(annotation, { activatePreview: false })
+      })
+      expect(outcome).toBe('revealed')
+      expect(resolvePdfSource).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().selectedSessionId).toBe(
+        selectedProject ? 'other-session' : undefined
+      )
+    }
+  )
 
   it.each([undefined, 'project-1'])(
     'enables annotations from Literature with project context %s and shows the empty Notes page',
@@ -2831,6 +2922,8 @@ describe('PdfPreviewContent', () => {
       )!
       expect(item).toBeDefined()
       await act(async () => item.click())
+      // Let the closing menu restore focus before beginning the next pointer gesture.
+      await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
       expect(container.textContent).toContain('Drag to annotate an area')
     }
     const expectReset = (): void => {
@@ -2904,6 +2997,9 @@ describe('PdfPreviewContent', () => {
     expectReset()
     await startAnnotation()
     await dragArea()
+    await waitFor(() =>
+      expect(document.querySelector('[data-pdf-region-bookmark-editor] textarea')).not.toBeNull()
+    )
     await act(async () =>
       fireEvent.keyDown(document.querySelector('[data-pdf-region-bookmark-editor] textarea')!, {
         key: 'Escape'

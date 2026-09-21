@@ -1157,7 +1157,7 @@ class LiteratureCatalog {
       ])
       // Search stored annotation text only; PDF bytes/rendering are never needed here.
       const includeNotes = !request.entryKind || request.entryKind === 'note'
-      const quote = Prisma.sql`COALESCE(json_extract(a."selectorJson", '$.selector.exact'), '')`
+      const quote = Prisma.sql`COALESCE(json_extract(a."selectorJson", '$.selector.exact'), json_extract(a."selectorJson", '$.selector.text'), '')`
       const needle = query.toLowerCase()
       const notePredicates = [
         Prisma.sql`(a.note <> '' OR ${quote} <> '')`,

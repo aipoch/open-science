@@ -156,7 +156,42 @@ describe('LiteratureCatalog', () => {
         }
       }
     })
+    for (const [id, text] of [
+      ['region-prefix', 'Regional result follow-up'],
+      ['region-exact', 'Regional result']
+    ])
+      await repository.create({
+        id,
+        literatureVersionId: attachment.versionId,
+        kind: 'area',
+        tagIds: [],
+        note: '',
+        target: {
+          source,
+          selector: {
+            kind: 'region',
+            pageNumber: 1,
+            pageRotation: 0,
+            coordinateVersion: 1,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+            text
+          }
+        }
+      })
     const request = { scope: 'global-search' as const, query: 'evidence', limit: 2 }
+    expect(
+      await catalog.search({ ...request, entryKind: 'note', query: 'regional result' })
+    ).toMatchObject({
+      totalCount: 2,
+      entries: [
+        { annotation: { id: 'region-exact', note: '' } },
+        { annotation: { id: 'region-prefix', note: '' } }
+      ]
+    })
+    expect(
+      await catalog.search({ ...request, entryKind: 'note', query: 'result', countOnly: true })
+    ).toEqual({ entries: [], totalCount: 2 })
+    expect((await catalog.search({ ...request, entryKind: 'note', query: '' })).totalCount).toBe(6)
     const ids: string[] = []
     let offset: number | undefined
     do {
