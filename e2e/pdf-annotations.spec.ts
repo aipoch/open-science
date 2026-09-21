@@ -260,6 +260,40 @@ test('imports external notes, preserves provenance through undo, and persists an
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   const globalSearch = page.getByRole('dialog', { name: 'Global search', exact: true })
+  await page.evaluate(async (versionId) => {
+    const { items } = await window.api.pdfAnnotations.list({ literatureVersionId: versionId })
+    await window.api.pdfAnnotations.create({
+      id: 'search-document-note',
+      literatureVersionId: versionId,
+      kind: 'document-note',
+      note: 'Document-wide search regression',
+      tagIds: [],
+      target: {
+        source: items[0].target.source,
+        selector: { kind: 'document-note', coordinateVersion: 1 }
+      }
+    })
+  }, versionId)
+  await globalSearch
+    .getByRole('combobox', { name: 'Global search' })
+    .fill('Document-wide search regression')
+  const documentNoteResult = globalSearch.getByRole('listbox').getByRole('option')
+  await expect(documentNoteResult).toHaveCount(1)
+  await documentNoteResult.click()
+  await globalSearch.getByRole('button', { name: 'Show annotation source', exact: true }).click()
+  await expect(
+    preview.getByRole('tab', { name: 'Notes & Annotations', exact: true })
+  ).toHaveAttribute('aria-selected', 'true')
+  const documentNoteCard = preview.locator('[data-annotation-id="search-document-note"]')
+  // Focus is applied by the reveal listener immediately before it acknowledges success.
+  await expect(documentNoteCard).toBeFocused()
+  await expect(
+    page.getByText('The exact annotation location could not be found.', { exact: true })
+  ).toHaveCount(0)
+  await documentNoteCard.getByRole('button', { name: 'Delete annotation', exact: true }).click()
+  await preview
+    .getByRole('button', { name: 'Close preview of native-notes.pdf', exact: true })
+    .click()
   await globalSearch.getByRole('combobox', { name: 'Global search' }).fill('External sticky note')
   await globalSearch.locator('[data-category="library"]').click()
   const noteResult = globalSearch.getByRole('listbox').getByRole('option')
