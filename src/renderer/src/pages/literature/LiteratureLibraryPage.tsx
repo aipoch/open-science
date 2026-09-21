@@ -1,3 +1,8 @@
+import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import {
+  createBookmarkPreviewItem,
+  requestPdfAnnotationReveal
+} from '../workspace/annotations/annotation-reveal'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import {
   LiteraturePdfBatchImportDialog,
@@ -1276,6 +1281,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (state) => state.startLiteratureReviewConversation
   )
   const pendingLiteratureItemId = useNavigationStore((state) => state.pendingLiteratureItemId)
+  const pendingLiteratureAnnotation = useNavigationStore(
+    (state) => state.pendingLiteratureAnnotation
+  )
   const consumeLiteratureItem = useNavigationStore((state) => state.consumeLiteratureItem)
   const pendingLiteratureProjectId = useNavigationStore((state) => state.pendingLiteratureProjectId)
   const consumeLiteratureProject = useNavigationStore((state) => state.consumeLiteratureProject)
@@ -1446,9 +1454,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     progress: UploadTransferProgress
     phase: 'uploading' | 'cancelling' | 'saving'
   }>()
+  const [pdfNativeProgress, setPdfNativeProgress] =
+    useState<import('../../../../shared/pdf-annotations').PdfNativeAnnotationImportProgress>()
   const pdfUploadRef = useRef<{ controller: AbortController; transferId: string } | undefined>(
     undefined
   )
+  const pdfNativeImportRef = useRef<string | undefined>(undefined)
   const uploadPageMountedRef = useRef(true)
   const stagePdf = async (
     file: File,
@@ -1475,6 +1486,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setPdfUpload((current) => (current ? { ...current, phase: 'saving' } : current))
   }
   const cancelPdfUpload = (): void => {
+    const operationId = pdfNativeImportRef.current
+    if (operationId) {
+      void window.api.literature.cancelPdfImport({ operationId }).catch(() => undefined)
+      setPdfUpload((current) => (current ? { ...current, phase: 'cancelling' } : current))
+    }
     const controller = pdfUploadRef.current?.controller
     if (!controller || controller.signal.aborted || !pdfUpload || pdfUpload.phase !== 'uploading')
       return
@@ -1485,9 +1501,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       .catch(() => undefined)
   }
   useEffect(() => {
+    const subscribe = window.api.pdfAnnotations?.onImportProgress
+    if (!subscribe) return
+    return subscribe((progress) => {
+      if (progress.operationId === pdfNativeImportRef.current) setPdfNativeProgress(progress)
+    })
+  }, [])
+  useEffect(() => {
     uploadPageMountedRef.current = true
     return () => {
       uploadPageMountedRef.current = false
+      const operationId = pdfNativeImportRef.current
+      if (operationId)
+        void window.api.literature.cancelPdfImport({ operationId }).catch(() => undefined)
       const upload = pdfUploadRef.current
       if (!upload) return
       upload.controller.abort()
@@ -1496,45 +1522,84 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         .catch(() => undefined)
     }
   }, [])
-  const pdfUploadNotice = pdfUpload ? (
-    <div className="shrink-0 space-y-2 border-b border-border px-5 py-3">
-      <p className="truncate text-sm font-medium">{pdfUpload.progress.name}</p>
-      <progress
-        className="h-2 w-full accent-primary"
-        aria-label={t('Upload progress')}
-        max={Math.max(1, pdfUpload.progress.totalBytes)}
-        value={pdfUpload.progress.receivedBytes}
-      />
-      <div className="flex items-center justify-between gap-3">
-        <p role="status" className="text-xs text-muted-foreground">
-          {pdfUpload.phase === 'cancelling'
-            ? t('Cancelling…')
-            : pdfUpload.phase === 'saving'
-              ? t('Saving…')
-              : t('{{received}} / {{total}} bytes uploaded', {
-                  received: pdfUpload.progress.receivedBytes.toLocaleString(),
-                  total: pdfUpload.progress.totalBytes.toLocaleString()
-                })}
-        </p>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={pdfUpload.phase !== 'uploading'}
-          onClick={cancelPdfUpload}
-        >
-          {t('Cancel upload')}
-        </Button>
+  const pdfUploadNotice =
+    pdfUpload || pdfNativeProgress ? (
+      <div className="shrink-0 space-y-2 border-b border-border px-5 py-3">
+        {pdfUpload ? (
+          <>
+            <p className="truncate text-sm font-medium">{pdfUpload.progress.name}</p>
+            <progress
+              className="h-2 w-full accent-primary"
+              aria-label={t('Upload progress')}
+              max={Math.max(1, pdfUpload.progress.totalBytes)}
+              value={pdfUpload.progress.receivedBytes}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <p role="status" className="text-xs text-muted-foreground">
+                {pdfUpload.phase === 'cancelling'
+                  ? t('Cancelling…')
+                  : pdfUpload.phase === 'saving'
+                    ? t('Saving…')
+                    : t('{{received}} / {{total}} bytes uploaded', {
+                        received: pdfUpload.progress.receivedBytes.toLocaleString(),
+                        total: pdfUpload.progress.totalBytes.toLocaleString()
+                      })}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={pdfUpload.phase !== 'uploading' && pdfNativeProgress?.phase !== 'parsing'}
+                onClick={cancelPdfUpload}
+              >
+                {t('Cancel upload')}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t('Keep this window open until the upload finishes or is cancelled.')}
+            </p>
+          </>
+        ) : null}
+        {pdfNativeProgress ? (
+          <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {pdfNativeProgress.phase === 'parsing' || pdfNativeProgress.phase === 'saving' ? (
+              <LoaderCircle
+                className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {pdfNativeProgress.phase === 'completed'
+              ? t('Imported {{count}} native annotations.', {
+                  count: pdfNativeProgress.importedCount
+                })
+              : pdfNativeProgress.phase === 'cancelled'
+                ? t('Native annotation import cancelled.')
+                : pdfNativeProgress.phase === 'failed'
+                  ? t('Native annotation import failed.')
+                  : t('Importing native annotations…')}{' '}
+            {pdfNativeProgress.pageCount > 0
+              ? t('{{processed}} / {{total}} pages', {
+                  processed: pdfNativeProgress.pagesProcessed,
+                  total: pdfNativeProgress.pageCount
+                })
+              : null}
+            {pdfNativeProgress.truncated
+              ? ` · ${t('Native annotation import limit reached. Some annotations were not imported.')}`
+              : null}
+            {pdfNativeProgress.unsupportedCount > 0
+              ? ` · ${t('Unsupported native annotations: {{count}}', {
+                  count: pdfNativeProgress.unsupportedCount
+                })}`
+              : null}
+          </p>
+        ) : null}
       </div>
-      <p className="text-xs text-muted-foreground">
-        {t('Keep this window open until the upload finishes or is cancelled.')}
-      </p>
-    </div>
-  ) : null
+    ) : null
   const [pdfError, setPdfError] = useState<string>()
   const [projectLinkError, setProjectLinkError] = useState<string>()
   const [collectionLinkError, setCollectionLinkError] = useState<string>()
   const [previewItem, setPreviewItem] = useState<PreviewFileItem>()
+  const [annotationToReveal, setAnnotationToReveal] = useState<PdfAnnotation>()
   const [pendingLiteratureReading, setPendingLiteratureReading] =
     useState<PendingLiteratureReading>()
   const [batchReading, setBatchReading] = useState<{
@@ -1698,8 +1763,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             consumeLiteratureItem(itemId)
             return
           }
-          if (item) openSelectedItemDetail(item)
-          else setLinkedItemError(t('This reference is no longer in your Library.'))
+          if (item) {
+            if (pendingLiteratureAnnotation) {
+              const preview = createBookmarkPreviewItem({
+                id: pendingLiteratureAnnotation.id,
+                kind: 'pdf',
+                ...pendingLiteratureAnnotation.target
+              })
+              if (preview) {
+                detailController.close()
+                setPreviewItem(preview)
+                setAnnotationToReveal(pendingLiteratureAnnotation)
+              } else setError(t('PDF annotations are unavailable for this source.'))
+            } else openSelectedItemDetail(item)
+          } else setLinkedItemError(t('This reference is no longer in your Library.'))
           consumeLiteratureItem(itemId)
         },
         () => {
@@ -1723,8 +1800,28 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     detailController,
     openSelectedItemDetail,
     pendingLiteratureItemId,
+    pendingLiteratureAnnotation,
     t
   ])
+
+  useEffect(() => {
+    if (!annotationToReveal || !previewItem) return
+    let active = true
+    void requestPdfAnnotationReveal(annotationToReveal)
+      .then((outcome) => {
+        if (!active) return
+        if (outcome !== 'revealed') setError(t('The exact annotation location could not be found.'))
+        setAnnotationToReveal(undefined)
+      })
+      .catch(() => {
+        if (!active) return
+        setError(t('The exact annotation location could not be found.'))
+        setAnnotationToReveal(undefined)
+      })
+    return () => {
+      active = false
+    }
+  }, [annotationToReveal, previewItem, t])
 
   useEffect(() => {
     if (!pendingLiteratureProjectId) return
@@ -2568,10 +2665,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       staged = await stagePdf(file, transferId)
       await window.api.uploads.claimLocalFile?.({ transferId })
       finishPdfStaging()
+      const operationId = crypto.randomUUID()
+      pdfNativeImportRef.current = operationId
       const receipt = await window.api.literature.importPdf({
         itemId: current.id,
-        attachment: staged
+        attachment: staged,
+        operationId
       })
+      pdfNativeImportRef.current = undefined
       // An attachment receipt may predate metadata edits in a reopened detail. Re-read rather
       // than using metadataRevision as an attachment version or rolling metadata backwards.
       const updated = await detailController.read(current.id).catch(() => undefined)
@@ -2588,6 +2689,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
       pdfUploadRef.current = undefined
+      pdfNativeImportRef.current = undefined
+      setPdfNativeProgress(undefined)
       setPdfUpload(undefined)
       addingPdfRef.current = false
       setIsAddingPdf(false)
@@ -2867,9 +2970,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         staged = await stagePdf(pending.file, transferId)
         await window.api.uploads.claimLocalFile?.({ transferId })
         finishPdfStaging()
+        const operationId = crypto.randomUUID()
+        pdfNativeImportRef.current = operationId
         pending.pdfItem = (
-          await window.api.literature.importPdf({ itemId: pending.id, attachment: staged })
+          await window.api.literature.importPdf({
+            itemId: pending.id,
+            attachment: staged,
+            operationId
+          })
         ).item
+        pdfNativeImportRef.current = undefined
       }
       const created = pending.pdfItem ?? (await detailController.read(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
@@ -2915,6 +3025,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
       void loadEntries(true)
       pdfUploadRef.current = undefined
+      pdfNativeImportRef.current = undefined
+      setPdfNativeProgress(undefined)
       setPdfUpload(undefined)
       creatingItemRef.current = false
       setIsSavingNewItem(false)
@@ -6723,6 +6835,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               <AlertDialog.Description className={dialogDescriptionClassName}>
                 {t(
                   'This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.'
+                )}{' '}
+                {t(
+                  'PDF annotations, notes, and their tag assignments will also be deleted. Global Tags are kept.'
                 )}
               </AlertDialog.Description>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
@@ -6925,6 +7040,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         onReadWithAgent={requestReadWithAgent}
         onClose={() => {
           setPreviewItem(undefined)
+          setAnnotationToReveal(undefined)
           const current = detailController.getSnapshot().item
           if (current)
             void window.api.literature

@@ -1,8 +1,14 @@
+import {
+  LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
+  createLiteratureAttachmentVersionReference,
+  parseLiteratureAttachmentVersionReference
+} from './literature-attachment-reference'
+import { pdfAnnotationSchema } from './pdf-annotations'
 import { literatureFailureSchema } from './literature-failure'
 import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
-import { uploadedAttachmentSchema, type UploadedAttachment } from './uploads'
+import { uploadedAttachmentSchema } from './uploads'
 
 const LITERATURE_ITEM_TYPES = [
   'journalArticle',
@@ -75,7 +81,6 @@ const LITERATURE_METADATA_FIELDS = [
   'url'
 ] as const
 const LITERATURE_METADATA_PROVIDERS = ['crossref', 'pubmed'] as const
-const LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX = 'literature-attachment-version:'
 
 type LiteratureIdentifierScheme = (typeof LITERATURE_IDENTIFIER_SCHEMES)[number]
 
@@ -395,7 +400,7 @@ const literatureCatalogSearchRequestSchema = z
     refreshDuplicates: z.boolean().optional(),
     updatedAfter: z.number().int().nonnegative().optional(),
     searchSort: z.enum(['relevance', 'recent']).optional(),
-    entryKind: z.enum(['paper', 'collection', 'pdf']).optional(),
+    entryKind: z.enum(['paper', 'collection', 'pdf', 'note']).optional(),
     allItemIds: z.boolean().optional(),
     countOnly: z.boolean().optional(),
     itemIds: z.array(nonEmptyTextSchema).max(200).optional(),
@@ -429,6 +434,14 @@ const literatureCatalogSearchRequestSchema = z
     }
   )
 
+export const literatureAnnotationSearchViewSchema = z
+  .object({
+    id: nonEmptyTextSchema,
+    annotation: pdfAnnotationSchema
+  })
+  .strict()
+export type LiteratureAnnotationSearchView = z.infer<typeof literatureAnnotationSearchViewSchema>
+
 const literatureCatalogSearchPageSchema = z
   .object({
     entries: z.array(
@@ -437,7 +450,8 @@ const literatureCatalogSearchPageSchema = z
         literatureInboxCandidateViewSchema,
         literatureCollectionViewSchema,
         literatureProjectCountViewSchema,
-        literatureDuplicateGroupSchema
+        literatureDuplicateGroupSchema,
+        literatureAnnotationSearchViewSchema
       ])
     ),
     itemIds: z.array(nonEmptyTextSchema).optional(),
@@ -677,11 +691,26 @@ const literatureCatalogReceiptSchema = z
 const literaturePdfImportRequestSchema = z
   .object({
     itemId: nonEmptyTextSchema,
-    attachment: uploadedAttachmentSchema
+    attachment: uploadedAttachmentSchema,
+    operationId: nonEmptyTextSchema.optional()
   })
   .strict()
 
-const literaturePdfImportReceiptSchema = z.object({ item: literatureItemViewSchema }).strict()
+const literaturePdfImportReceiptSchema = z
+  .object({
+    item: literatureItemViewSchema,
+    nativeAnnotations: z
+      .object({
+        importedCount: z.number().int().nonnegative(),
+        unsupportedCount: z.number().int().nonnegative(),
+        truncated: z.boolean()
+      })
+      .optional()
+  })
+  .strict()
+const literaturePdfCancelImportRequestSchema = z
+  .object({ operationId: nonEmptyTextSchema })
+  .strict()
 
 const literatureFormatReferencesRequestSchema = z
   .object({
@@ -1066,6 +1095,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literaturePdfImportRequestSchema])),
     validationCodec(literaturePdfImportReceiptSchema)
   ),
+  cancelPdfImport: defineApplicationCommandContract(
+    validationCodec(z.tuple([literaturePdfCancelImportRequestSchema])),
+    validationCodec(z.object({ cancelled: z.boolean() }).strict())
+  ),
   transact: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureCatalogCommandSchema])),
     validationCodec(literatureCatalogReceiptSchema)
@@ -1125,8 +1158,9 @@ type LiteratureCatalogSearchRequest = z.infer<typeof literatureCatalogSearchRequ
 type LiteratureCatalogSearchPage = z.infer<typeof literatureCatalogSearchPageSchema>
 type LiteratureCatalogCommand = z.infer<typeof literatureCatalogCommandSchema>
 type LiteratureCatalogReceipt = z.infer<typeof literatureCatalogReceiptSchema>
-type LiteraturePdfImportRequest = Readonly<{ itemId: string; attachment: UploadedAttachment }>
+type LiteraturePdfImportRequest = z.infer<typeof literaturePdfImportRequestSchema>
 type LiteraturePdfImportReceipt = z.infer<typeof literaturePdfImportReceiptSchema>
+type LiteraturePdfCancelImportRequest = z.infer<typeof literaturePdfCancelImportRequestSchema>
 type LiteratureCitationStyle = string
 type LiteratureCitationLocale = (typeof LITERATURE_CITATION_LOCALES)[number]
 type LiteratureCitationStyleView = z.infer<typeof literatureCitationStyleViewSchema>
@@ -1148,24 +1182,6 @@ type LiteratureMetadataCompletionRequest = z.infer<typeof literatureMetadataComp
 type LiteratureMetadataValue = z.infer<typeof literatureMetadataValueSchema>
 type LiteratureMetadataConflict = z.infer<typeof literatureMetadataConflictSchema>
 type LiteratureMetadataCompletionResult = z.infer<typeof literatureMetadataCompletionResultSchema>
-
-const createLiteratureAttachmentVersionReference = (versionId: string): string => {
-  const normalized = versionId.trim()
-  if (!normalized) throw new Error('Literature Attachment Version id is required.')
-  return `${LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX}${encodeURIComponent(normalized)}`
-}
-
-const parseLiteratureAttachmentVersionReference = (reference: string): string | undefined => {
-  if (!reference.startsWith(LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX)) return undefined
-  const encoded = reference.slice(LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX.length)
-  if (!encoded) return undefined
-  try {
-    const versionId = decodeURIComponent(encoded)
-    return versionId && !versionId.includes('/') ? versionId : undefined
-  } catch {
-    return undefined
-  }
-}
 
 export {
   literatureFullTextCandidateSchema,
@@ -1221,6 +1237,7 @@ export {
   literatureMetadataCompletionRequestSchema,
   literatureMetadataCompletionResultSchema,
   literaturePdfImportReceiptSchema,
+  literaturePdfCancelImportRequestSchema,
   createLiteratureIdentifierUrl,
   createLiteratureAttachmentVersionReference,
   literaturePdfImportRequestSchema,
@@ -1276,6 +1293,7 @@ export type {
   LiteratureRecordImportResult,
   LiteraturePdfImportReceipt,
   LiteraturePdfImportRequest,
+  LiteraturePdfCancelImportRequest,
   LiteratureSourceInput
 }
 

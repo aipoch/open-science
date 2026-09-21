@@ -92,6 +92,11 @@ import {
   type LiteratureCommandOwner
 } from './literature/application-commands'
 import {
+  pdfAnnotationApplicationCommandGroup,
+  registerPdfAnnotationApplicationCommands,
+  type PdfAnnotationCommandOwner
+} from './pdf-annotations/application-commands'
+import {
   bookmarkApplicationCommandGroup,
   registerBookmarkApplicationCommands,
   type BookmarkCommandOwner
@@ -136,6 +141,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
   bookmarks: BookmarkCommandOwner
+  pdfAnnotations: PdfAnnotationCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -294,6 +300,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
       registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)
+    ),
+    defineApplicationCommandModule([pdfAnnotationApplicationCommandGroup], (registrar) =>
+      registerPdfAnnotationApplicationCommands(registrar, dependencies.pdfAnnotations)
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)

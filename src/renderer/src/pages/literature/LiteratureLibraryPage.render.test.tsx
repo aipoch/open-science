@@ -1,3 +1,5 @@
+import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
 // @vitest-environment jsdom
@@ -222,6 +224,7 @@ describe('LiteratureLibraryPage', () => {
       view: 'library',
       activeProjectId: undefined,
       pendingLiteratureItemId: undefined,
+      pendingLiteratureAnnotation: undefined,
       pendingLiteratureProjectId: undefined,
       pendingLiteratureCollectionId: undefined,
       startPdfReadingConversation,
@@ -402,6 +405,7 @@ describe('LiteratureLibraryPage', () => {
           formatDocument: vi.fn(),
           formatReferences,
           importPdf,
+          cancelPdfImport: vi.fn().mockResolvedValue({ cancelled: true }),
           importRecords
         },
         uploads: {
@@ -2028,6 +2032,47 @@ describe('LiteratureLibraryPage', () => {
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
   })
 
+  it('opens the exact tagged PDF version and reveals its annotation after preview mounting', async () => {
+    const annotation: PdfAnnotation = {
+      id: 'tagged-note',
+      version: 1,
+      origin: 'user',
+      kind: 'page-note',
+      note: 'Check this page',
+      tagIds: [],
+      literatureVersionId: 'saved-version',
+      target: {
+        source: {
+          kind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          versionId: 'saved-version',
+          name: 'Saved.pdf',
+          path: 'literature-attachment-version:saved-version',
+          checksum: 'a'.repeat(64)
+        },
+        selector: { kind: 'page-note', pageNumber: 3, pageRotation: 0, coordinateVersion: 1 }
+      },
+      createdAt: '2026-09-20T00:00:00.000Z',
+      updatedAt: '2026-09-20T00:00:00.000Z'
+    }
+    const reveal = vi
+      .spyOn(annotationReveal, 'requestPdfAnnotationReveal')
+      .mockResolvedValue('revealed')
+    get.mockResolvedValue(libraryItem)
+    useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user', annotation)
+    render(<LiteratureLibraryPage />)
+    expect((await screen.findByTestId('literature-pdf-preview')).textContent).toContain(
+      'Saved.pdf · literature-attachment-version:saved-version'
+    )
+    await waitFor(() => expect(reveal).toHaveBeenCalledWith(annotation))
+    expect(useNavigationStore.getState().pendingLiteratureAnnotation).toBeUndefined()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Close PDF' }))
+    expect(screen.queryByTestId('literature-pdf-preview')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    reveal.mockRestore()
+  })
+
   it('offers stored metadata sources from reference details', async () => {
     get.mockResolvedValue(libraryItem)
     useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
@@ -3117,7 +3162,13 @@ describe('LiteratureLibraryPage', () => {
     fireEvent(dropZone, dropEvent)
 
     await waitFor(() =>
-      expect(importPdf).toHaveBeenCalledWith({ itemId: libraryItem.id, attachment: staged })
+      expect(importPdf).toHaveBeenCalledWith(
+        expect.objectContaining({
+          itemId: libraryItem.id,
+          attachment: staged,
+          operationId: expect.any(String)
+        })
+      )
     )
     expect(claimLocalFile).toHaveBeenCalledWith({ transferId: expect.any(String) })
     expect(await screen.findByText('8 B')).not.toBeNull()
@@ -6488,7 +6539,13 @@ describe('LiteratureLibraryPage', () => {
       })
     )
     await waitFor(() =>
-      expect(importPdf).toHaveBeenCalledWith({ itemId: libraryItem.id, attachment: staged })
+      expect(importPdf).toHaveBeenCalledWith(
+        expect.objectContaining({
+          itemId: libraryItem.id,
+          attachment: staged,
+          operationId: expect.any(String)
+        })
+      )
     )
     expect(claimLocalFile).toHaveBeenCalledWith({ transferId: expect.any(String) })
     expect(await screen.findByRole('heading', { name: 'Corrective RAG' })).not.toBeNull()

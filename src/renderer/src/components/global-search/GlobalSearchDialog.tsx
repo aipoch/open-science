@@ -1,5 +1,9 @@
+import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
+import { createBookmarkPreviewItem } from '@/pages/workspace/annotations/annotation-reveal'
 import {
   memo,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -18,6 +22,7 @@ import {
   LoaderCircle,
   Grid2X2,
   MessageCircle,
+  Quote,
   Search,
   SlidersHorizontal,
   Upload,
@@ -65,6 +70,12 @@ import {
   type SearchSession
 } from './search-result'
 import './global-search.css'
+
+const PdfAnnotationPreviewDialog = lazy(() =>
+  import('@/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((module) => ({
+    default: module.PdfAnnotationPreviewDialog
+  }))
+)
 
 type Props = {
   open: boolean
@@ -130,13 +141,23 @@ const SearchResultRow = memo(function SearchResultRow({
   const { t } = useTranslation()
 
   const id = resultId(result)
-  const Icon = result.kind === 'library' && !('item' in result.item) ? Folder : icons[result.kind]
-  const text = resultTitle(result)
-  const hit = result.kind === 'messages' ? findSearchMatches(text, query)[0] : undefined
-  const display =
-    result.kind === 'messages'
-      ? text.slice(Math.max(0, (hit?.start ?? 0) - 55), (hit?.end ?? 0) + 180).replace(/\s+/g, ' ')
-      : text
+  const Icon = result.kind === 'library' && 'itemCount' in result.item ? Folder : icons[result.kind]
+  const annotation =
+    result.kind === 'library' && 'annotation' in result.item ? result.item.annotation : undefined
+  const quote =
+    annotation?.target.selector.kind === 'text'
+      ? annotation.target.selector.exact
+      : annotation?.target.selector.kind === 'region'
+        ? annotation.target.selector.text
+        : undefined
+  const text = annotation?.note || quote || resultTitle(result)
+  const excerpt = (value: string): string => {
+    const hit = findSearchMatches(value, query)[0]
+    return value
+      .slice(Math.max(0, (hit?.start ?? 0) - 55), (hit?.end ?? 0) + 180)
+      .replace(/\s+/g, ' ')
+  }
+  const display = result.kind === 'messages' || annotation ? excerpt(text) : text
   return (
     <div
       id={`${listboxId}-${id}`}
@@ -152,7 +173,9 @@ const SearchResultRow = memo(function SearchResultRow({
       <span
         className="search-result-icon"
         role="img"
-        aria-label={result.kind === 'library' && !('item' in result.item) ? t('Collection') : label}
+        aria-label={
+          result.kind === 'library' && 'itemCount' in result.item ? t('Collection') : label
+        }
         data-file={result.kind === 'uploads' || result.kind === 'generated'}
       >
         {result.kind === 'uploads' || result.kind === 'generated' ? (
@@ -167,18 +190,34 @@ const SearchResultRow = memo(function SearchResultRow({
       <div className="min-w-0 flex-1">
         <div
           className="search-result-title"
-          title={result.kind === 'messages' ? messageTitle(result.item) : text}
+          title={
+            result.kind === 'library' && 'annotation' in result.item
+              ? undefined
+              : result.kind === 'messages'
+                ? messageTitle(result.item)
+                : text
+          }
         >
           <SearchHighlight
-            text={result.kind === 'messages' ? messageTitle(result.item) : text}
+            text={result.kind === 'messages' ? messageTitle(result.item) : display}
             query={query}
           />
         </div>
-        {result.kind === 'messages' && (
+        {annotation?.note && quote ? (
+          <div
+            className="search-result-excerpt flex min-w-0 items-center gap-1.5"
+            aria-label={t('Quoted text')}
+          >
+            <Quote className="size-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              <SearchHighlight text={excerpt(quote)} query={query} />
+            </span>
+          </div>
+        ) : result.kind === 'messages' ? (
           <div className="search-result-excerpt">
             <SearchHighlight text={display} query={query} />
           </div>
-        )}
+        ) : null}
         <div className="search-result-meta">
           <span className="truncate" title={metadata}>
             {metadata}
@@ -238,12 +277,29 @@ export const GlobalSearchDialog = ({
   const [subtype, setSubtype] = useState('all')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [annotationPreview, setAnnotationPreview] = useState<LiteratureAnnotationSearchView>()
+  const annotationPreviewItem = useMemo(
+    () =>
+      annotationPreview
+        ? createBookmarkPreviewItem({
+            id: annotationPreview.id,
+            kind: 'pdf',
+            ...annotationPreview.annotation.target
+          })
+        : undefined,
+    [annotationPreview]
+  )
+  if (!open && annotationPreview) setAnnotationPreview(undefined)
   const updatedAfter = days ? dateReference - days * 86_400_000 : undefined
   const [counts, setCounts] = useState(initialCounts)
   const [selected, setSelected] = useState<SearchResult>()
   const [retained, setRetained] = useState<SearchResult>()
   const [activeId, setActiveId] = useState<string>()
   const [actionError, setActionError] = useState<string>()
+  const onAnnotationError = useCallback(
+    (message: string) => setActionError(message),
+    [setActionError]
+  )
   const actionVersion = useRef(0)
   const allProjects = useProjectStore((state) => state.projects)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
@@ -423,22 +479,28 @@ export const GlobalSearchDialog = ({
     return counts
   }, [sessions])
   const selectedId = selected ? resultId(selected) : undefined
+  const detailResult = retained
+    ? (rows.find((result) => resultId(result) === resultId(retained)) ?? retained)
+    : undefined
   const collapse = useCallback(() => {
     setSelected(undefined)
     inputRef.current?.focus()
   }, [])
-  const select = useCallback((result: SearchResult, fromPointer = false) => {
-    setSelected(result)
-    setRetained(result)
-    setActiveId(resultId(result))
-    setActionError(undefined)
-    if (fromPointer && window.matchMedia?.('(max-width: 740px)').matches)
-      requestAnimationFrame(() =>
-        document
-          .querySelector<HTMLButtonElement>('.search-detail-back')
-          ?.focus({ preventScroll: true })
-      )
-  }, [])
+  const select = useCallback(
+    (result: SearchResult, fromPointer = false) => {
+      setSelected(result)
+      setRetained(result)
+      setActiveId(resultId(result))
+      setActionError(undefined)
+      if (fromPointer && window.matchMedia?.('(max-width: 740px)').matches)
+        requestAnimationFrame(() =>
+          document
+            .querySelector<HTMLButtonElement>('.search-detail-back')
+            ?.focus({ preventScroll: true })
+        )
+    },
+    [setActionError]
+  )
   const resetSelection = (): void => {
     setSelected(undefined)
     setActiveId(undefined)
@@ -472,7 +534,9 @@ export const GlobalSearchDialog = ({
   const openResult = useCallback(
     (result: SearchResult): void => {
       const nav = useNavigationStore.getState()
-      if (result.kind === 'uploads' || result.kind === 'generated') {
+      if (result.kind === 'library' && 'annotation' in result.item) {
+        setAnnotationPreview(result.item)
+      } else if (result.kind === 'uploads' || result.kind === 'generated') {
         const show = (): void => {
           usePreviewWorkbenchStore.getState().openFileDialog(filePreviewItem(result.item))
           close()
@@ -508,7 +572,7 @@ export const GlobalSearchDialog = ({
         } else if (nav.openCollectionLiterature(result.item.id, 'user')) close()
       }
     },
-    [close, sessions, t]
+    [close, sessions, t, setActionError, setAnnotationPreview]
   )
   const canMention = useCallback((file: ProjectFileItem): boolean => {
     const nav = useNavigationStore.getState()
@@ -608,7 +672,7 @@ export const GlobalSearchDialog = ({
         if (actionVersion.current === version) setActionError(t('Could not resolve file version.'))
       }
     },
-    [canMention, close, t]
+    [canMention, close, t, setActionError]
   )
   const loadMore = useCallback(
     (key: SearchCategory) => {
@@ -671,21 +735,32 @@ export const GlobalSearchDialog = ({
         .filter(Boolean)
         .join(' · ')
     if (result.kind === 'library')
-      return 'item' in result.item
+      return 'annotation' in result.item
         ? [
-            result.item.item.creators
-              .map((creator) =>
-                creator.nameMode === 'organization'
-                  ? creator.literalName
-                  : [creator.givenName, creator.familyName].filter(Boolean).join(' ')
-              )
-              .join(', '),
-            result.item.item.issuedYear,
-            result.item.item.containerTitle
-          ]
-            .filter(Boolean)
-            .join(' · ')
-        : t('{{count}} items', { count: result.item.itemCount, defaultValue_one: '{{count}} item' })
+            t('Notes & Annotations'),
+            result.item.annotation.target.source.name,
+            'pageNumber' in result.item.annotation.target.selector
+              ? t('Page {{page}}', { page: result.item.annotation.target.selector.pageNumber })
+              : t('Document')
+          ].join(' · ')
+        : 'item' in result.item
+          ? [
+              result.item.item.creators
+                .map((creator) =>
+                  creator.nameMode === 'organization'
+                    ? creator.literalName
+                    : [creator.givenName, creator.familyName].filter(Boolean).join(' ')
+                )
+                .join(', '),
+              result.item.item.issuedYear,
+              result.item.item.containerTitle
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : t('{{count}} items', {
+              count: result.item.itemCount,
+              defaultValue_one: '{{count}} item'
+            })
     const project = projectNames.get(result.item.projectId) ?? ''
     return result.kind === 'messages'
       ? `${project} · #${result.item.sessionNumber} · ${result.item.role === 'user' ? t('You') : t('Agent')}`
@@ -780,7 +855,7 @@ export const GlobalSearchDialog = ({
     >
       <Dialog.Portal>
         {/* A portaled file preview owns scrolling without replacing the search panel or scrim. */}
-        {!previewOpen ? <Dialog.Overlay className="hidden" /> : null}
+        {!previewOpen && !annotationPreview ? <Dialog.Overlay className="hidden" /> : null}
         <div
           aria-hidden="true"
           data-state={open ? 'open' : 'closed'}
@@ -1078,9 +1153,9 @@ export const GlobalSearchDialog = ({
               className="global-search-detail h-full"
             >
               <div className="global-search-detail-surface">
-                {retained && (
+                {detailResult && (
                   <SearchDetails
-                    result={retained}
+                    result={detailResult}
                     query={query}
                     projects={projects}
                     sessions={sessions}
@@ -1120,6 +1195,16 @@ export const GlobalSearchDialog = ({
             )}
             <span>{restrictToProject ? t('Current project') : t('All projects and Library')}</span>
           </footer>
+          {open && annotationPreview && annotationPreviewItem ? (
+            <Suspense fallback={null}>
+              <PdfAnnotationPreviewDialog
+                annotation={annotationPreview.annotation}
+                item={annotationPreviewItem}
+                onClose={() => setAnnotationPreview(undefined)}
+                onError={onAnnotationError}
+              />
+            </Suspense>
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

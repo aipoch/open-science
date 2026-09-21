@@ -85,7 +85,7 @@ export const SearchDetails = ({
   const initialStatus =
     result.kind === 'sessions' ||
     (result.kind === 'messages' && result.item.contentTruncated) ||
-    (result.kind === 'library' && !('item' in result.item))
+    (result.kind === 'library' && 'itemCount' in result.item)
       ? 'loading'
       : 'idle'
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>(initialStatus)
@@ -119,7 +119,15 @@ export const SearchDetails = ({
       : result.kind === 'library' && 'item' in result.item
         ? literaturePreviewItem(result.item)
         : undefined
-  const isCollection = result.kind === 'library' && !('item' in result.item)
+  const isCollection = result.kind === 'library' && 'itemCount' in result.item
+  const annotation =
+    result.kind === 'library' && 'annotation' in result.item ? result.item.annotation : undefined
+  const quote =
+    annotation?.target.selector.kind === 'text'
+      ? annotation.target.selector.exact
+      : annotation?.target.selector.kind === 'region'
+        ? annotation.target.selector.text
+        : undefined
   const recentSessions =
     result.kind === 'projects'
       ? sessions
@@ -193,7 +201,7 @@ export const SearchDetails = ({
             setFileCountUnavailable(true)
           }
         })
-    } else if (result.kind === 'library' && !('item' in result.item)) {
+    } else if (result.kind === 'library' && 'itemCount' in result.item) {
       void readLiteratureSelectionPage(
         {
           scope: 'library',
@@ -285,7 +293,7 @@ export const SearchDetails = ({
   }, [identity, relatedRequested])
 
   const tabs =
-    result.kind === 'messages'
+    result.kind === 'messages' || annotation
       ? []
       : [
           {
@@ -296,9 +304,11 @@ export const SearchDetails = ({
                 : result.kind === 'sessions'
                   ? t('Recent files')
                   : result.kind === 'library'
-                    ? isCollection
-                      ? t('Recent literature')
-                      : t('Abstract')
+                    ? 'annotation' in result.item
+                      ? t('Notes & Annotations')
+                      : isCollection
+                        ? t('Recent literature')
+                        : t('Abstract')
                     : t('Content preview')
           },
           ...(result.kind === 'projects' ? [{ id: 'files', label: t('Recent files') }] : []),
@@ -325,9 +335,11 @@ export const SearchDetails = ({
         : result.kind === 'sessions'
           ? t('Open session')
           : result.kind === 'library'
-            ? isCollection
-              ? t('Open collection')
-              : t('Open literature')
+            ? 'annotation' in result.item
+              ? t('Show annotation source')
+              : isCollection
+                ? t('Open collection')
+                : t('Open literature')
             : t('Open full screen preview')
   // Match artifact tiles while keeping preview and source navigation owned by the search panel.
   const renderFiles = (): React.JSX.Element => (
@@ -456,7 +468,11 @@ export const SearchDetails = ({
           </dl>
         )
       case 'library':
-        return 'item' in result.item ? (
+        return 'annotation' in result.item ? (
+          <p className="search-detail-abstract">
+            <SearchHighlight text={result.item.annotation.target.source.name} query={query} />
+          </p>
+        ) : 'item' in result.item ? (
           <dl className="search-details-metadata">
             <dt>{t('Title')}</dt>
             <dd>{result.item.item.title}</dd>
@@ -614,6 +630,30 @@ export const SearchDetails = ({
               <p className="search-recent-limit">{t('Only the 10 most recent items are shown')}</p>
             )}
           </>
+        ) : annotation ? (
+          <div className="space-y-5 text-sm leading-relaxed">
+            {annotation.note && (
+              <section aria-label={t('Notes')}>
+                <h4 className="mb-2 text-xs font-medium text-muted-foreground">{t('Notes')}</h4>
+                <p className="whitespace-pre-wrap break-words">
+                  <SearchHighlight text={annotation.note} query={query} />
+                </p>
+              </section>
+            )}
+            {quote && (
+              <section aria-label={t('Quoted text')}>
+                <h4 className="mb-2 text-xs font-medium text-muted-foreground">
+                  {t('Quoted text')}
+                </h4>
+                <blockquote className="whitespace-pre-wrap break-words border-l-2 border-primary/40 pl-3 text-muted-foreground">
+                  <SearchHighlight text={quote} query={query} />
+                </blockquote>
+              </section>
+            )}
+            {!annotation.note && !quote && annotation.kind === 'area' && (
+              <p className="text-muted-foreground">{t('Selected area')}</p>
+            )}
+          </div>
         ) : result.kind === 'library' && 'item' in result.item ? (
           <p className="search-detail-abstract">
             <SearchHighlight

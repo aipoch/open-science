@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useEffect } from 'react'
+import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
+import {
+  usePdfExportRegistration,
+  type PdfExportAction
+} from './pdf-annotations/pdf-export-context'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME } from '../../../../shared/file-save'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+
+const RegisterExport = ({ action }: { action: PdfExportAction }): null => {
+  const register = usePdfExportRegistration()
+  useEffect(() => {
+    register?.(action)
+    return () => register?.(undefined)
+  }, [register, action])
+  return null
+}
 
 describe('ManagedFileDownloadButton', () => {
   let container: HTMLDivElement
@@ -38,6 +52,55 @@ describe('ManagedFileDownloadButton', () => {
 
     return container.querySelector('button')!
   }
+
+  it('adds annotated export only for the viewed PDF without changing historical original downloads', async () => {
+    const execute = vi.fn().mockResolvedValue(undefined)
+    const original = vi.fn().mockResolvedValue({ saved: true })
+    window.api = { saveManagedFile: original } as unknown as Window['api']
+    const action: PdfExportAction = {
+      path: '/paper.pdf',
+      versionId: 'v1',
+      busy: false,
+      saving: false,
+      disabled: false,
+      label: 'Download PDF with annotations',
+      execute,
+      cancel: vi.fn()
+    }
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <PdfExportProvider>
+          <RegisterExport action={action} />
+          <ManagedFileDownloadButton
+            source="upload"
+            path="/paper.pdf"
+            projectId="p1"
+            fileId="f1"
+            versionId="v1"
+            versionNumber={1}
+            latestVersionId="v2"
+            latestVersionNumber={2}
+            suggestedName="paper.pdf"
+          />
+        </PdfExportProvider>
+      )
+    )
+    await act(async () => {
+      container
+        .querySelector('button')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Download version v1',
+      'Download latest version v2',
+      'Download PDF with annotations'
+    ])
+    await act(async () => items[2].click())
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(original).not.toHaveBeenCalled()
+  })
 
   it('offers the viewed and latest versions when downloading from history', async () => {
     const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })

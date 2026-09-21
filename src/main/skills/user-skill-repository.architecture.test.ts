@@ -901,7 +901,9 @@ describe('User Skill repository architecture', () => {
           'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
           'src/main/agent-framework/opencode-mcp-isolation.integration.test.ts',
           'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
-          'src/main/compute/cancellation-runtime.integration.test.ts'
+          'src/main/compute/cancellation-runtime.integration.test.ts',
+          'src/main/pdf-annotations/repository.integration.test.ts',
+          'src/main/pdf-annotations/service.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

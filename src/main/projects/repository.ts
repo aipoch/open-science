@@ -10,6 +10,7 @@ import type {
 import { PROJECT_NAME_MAX_LENGTH } from '../../shared/projects'
 import { projectSessionDefaultsSchema } from '../../shared/session-configuration'
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
+import { deletePdfAnnotations } from '../pdf-annotations/repository'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 import { isSessionPackagePending } from '../storage/session-package-state'
 
@@ -24,6 +25,8 @@ type ProjectClient = Pick<
   | 'projectDeletionIntent'
   | 'projectPreviewState'
   | 'bookmark'
+  | 'pdfAnnotation'
+  | 'tagAssignment'
   | 'visionEvidence'
   | 'memoryEntry'
   | 'memorySettings'
@@ -289,6 +292,7 @@ class ProjectRepository {
       await transaction.projectLiterature.deleteMany({ where: { projectId: id } })
       await transaction.projectPreviewState.deleteMany({ where: { projectId: id } })
       await transaction.bookmark.deleteMany({ where: { projectId: id } })
+      await deletePdfAnnotations(transaction, { projectId: id })
       await transaction.visionEvidence.deleteMany({ where: { projectId: id } })
       const deletedMemory = await transaction.memoryEntry.deleteMany({ where: { projectId: id } })
       const memoryChange =

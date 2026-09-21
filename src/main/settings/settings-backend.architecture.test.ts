@@ -1487,7 +1487,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
       'src/main/agent-framework/opencode-mcp-isolation.integration.test.ts',
       'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
-      'src/main/compute/cancellation-runtime.integration.test.ts'
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts'
     ])
     expect(
       [

@@ -399,8 +399,21 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
-- Transform motion is limited to dialogs, sheets, collapsible content, subtle button feedback, and the tab selection indicators described below, and must respect `motion-reduce`.
+- Transform motion is limited to dialogs, sheets, collapsible content, anchored annotation controls, subtle button feedback, and the tab selection indicators described below, and must respect `motion-reduce`.
+- Annotation controls group navigation, marking, region actions and history with quiet dividers. Their anchored panels enter over 160ms with opacity and a 6px translation away from the trigger, and exit over 100ms without scaling their content. Mark type and color controls use compact square rows under group labels; the disclosure chevron rotates with the open state. The split annotation button applies the current type/color on the left and opens its palette on right-side hover (120ms intent, 180ms leave grace) or click; the disclosure half uses stronger hover shading. Hover opening preserves document focus, while click/keyboard opening retains normal popover focus behavior. Selection actions appear with a 3px offset only on entry; scroll-driven positioning stays immediate. Reduced motion uses a 100ms entry / 75ms exit opacity fade. Hover, selection and focus feedback remains immediate.
 - Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`, and the full-canvas startup logo is capped at 30 drawn frames per second.
+
+### PDF reading and annotations
+
+- Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels.
+- Empty Notes shows a short explanation and a return-to-PDF action; an unavailable source shows a status instead of an empty panel.
+- Literature annotations belong to the exact PDF attachment version and appear in both Library and project previews. Upload/artifact annotations remain conversation-scoped. Both use the shared tag catalog.
+- Active text marking uses the I-beam cursor across the document; area selection uses a crosshair, and comment buttons retain a pointer. Escape dismisses the inner popup or exits the active tool before closing a containing preview dialog.
+- Notes uses shared selects, inputs, tags, and annotation colors. Only the explicit source action navigates to the PDF; clicking the card does not. The source action preserves the draft when returning from the PDF. Filters retain the edited card until Save or Cancel.
+- Search and filters start collapsed. The action toolbar stays on one row at narrow widths by hiding optional labels. Page and mark type lead each card; provenance is secondary, quotes have a line limit, and tags stay within one row with overflow access and removal on hover or keyboard focus.
+- Import progress includes a loading indicator, cancellation, and unsupported-type counts. A durable import receipt prevents deleted native annotations from returning on reopen; preview and export replace only the original objects listed in that receipt, retaining unsupported objects.
+- Reading-position lookup uses ordered page placeholders without scanning every page geometry; memoized page canvases avoid unrelated toolbar renders, and note keystrokes remain local to the editor.
+- Unavailable area actions remain focusable and hoverable with `aria-disabled`, a reason tooltip, and guarded activation. A Library preview without a conversation explains how to enable sending an area to Agent.
 
 ## Component Guidelines
 

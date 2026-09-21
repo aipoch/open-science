@@ -1,5 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import './annotation-controls.css'
+
+import { Fragment, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Pencil, type LucideIcon } from 'lucide-react'
 
@@ -41,6 +43,7 @@ type AnnotationTriggerAction = Readonly<{
   icon: LucideIcon
   showLabel?: boolean
   primary?: boolean
+  separatorBefore?: boolean
   disabled?: boolean
   availableWhenAnnotationBlocked?: boolean
   onActivate: () => void
@@ -52,6 +55,7 @@ const AnnotationTrigger = ({
   hidden,
   label,
   onActivate,
+  onDismiss,
   actions,
   actionMenuLabel
 }: {
@@ -60,20 +64,30 @@ const AnnotationTrigger = ({
   hidden: boolean
   label: string
   onActivate: () => void
+  onDismiss?: () => void
   actions?: readonly AnnotationTriggerAction[]
   actionMenuLabel?: string
 }): React.ReactPortal => {
   const triggerRef = useRef<HTMLElement | null>(null)
+  const triggerSizeRef = useRef({
+    width: FALLBACK_TRIGGER_WIDTH,
+    height: FALLBACK_TRIGGER_HEIGHT
+  })
   const capturedTextRef = useRef(range.toString())
   const [position, setPosition] = useState({ left: 0, top: 0, ready: false, visible: true })
 
   const updatePosition = useCallback((): void => {
     const trigger = triggerRef.current
+    // Keep the measured toolbar geometry when the editor replaces it.
+    // Falling back after it unmounts would move the anchor near viewport edges.
+    if (trigger?.offsetWidth && trigger.offsetHeight) {
+      triggerSizeRef.current = { width: trigger.offsetWidth, height: trigger.offsetHeight }
+    }
     const next = anchorRangeTrigger(range, backward, {
       width: window.innerWidth,
       height: window.innerHeight,
-      triggerWidth: trigger?.offsetWidth || FALLBACK_TRIGGER_WIDTH,
-      triggerHeight: trigger?.offsetHeight || FALLBACK_TRIGGER_HEIGHT
+      triggerWidth: triggerSizeRef.current.width,
+      triggerHeight: triggerSizeRef.current.height
     })
     const visible =
       range.toString() === capturedTextRef.current &&
@@ -108,13 +122,13 @@ const AnnotationTrigger = ({
     <>
       <PopoverAnchor asChild>
         <span
-          className="pointer-events-none fixed z-[100] h-7 w-px"
+          className={cn('pointer-events-none fixed z-[100] w-px', hidden ? 'h-0' : 'h-7')}
           style={{ left: position.left, top: position.top }}
           aria-hidden="true"
         />
       </PopoverAnchor>
       {hidden || !position.visible ? null : actions ? (
-        <TooltipProvider delayDuration={300}>
+        <TooltipProvider delayDuration={800}>
           <div
             ref={(element) => {
               triggerRef.current = element
@@ -122,7 +136,17 @@ const AnnotationTrigger = ({
             role="toolbar"
             aria-label={actionMenuLabel ?? label}
             data-selection-action-menu="true"
-            className="fixed z-[100] flex items-center gap-0.5 rounded-md border border-border bg-popover p-0.5 text-popover-foreground shadow-menu"
+            data-preview-escape-boundary={onDismiss ? true : undefined}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !event.nativeEvent.isComposing && onDismiss) {
+                event.preventDefault()
+                event.stopPropagation()
+                window.getSelection()?.removeAllRanges()
+                onDismiss()
+              }
+            }}
+            data-positioned={position.ready}
+            className="annotation-selection-toolbar pointer-events-auto fixed z-[100] flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-menu"
             style={{
               left: position.left,
               top: position.top,
@@ -141,10 +165,10 @@ const AnnotationTrigger = ({
                   data-annotation-trigger={action.id === 'annotate' ? 'true' : undefined}
                   disabled={action.disabled}
                   className={cn(
-                    'inline-flex h-6 items-center justify-center rounded text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
-                    action.showLabel ? 'gap-1 px-2' : 'w-7',
+                    'annotation-tool-button inline-flex h-8 items-center justify-center rounded-md text-xs font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+                    action.showLabel ? 'gap-2 px-2.5' : 'w-8',
                     action.primary
-                      ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                      ? 'text-foreground hover:bg-muted'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   )}
                   // Keep the PDF.js selection alive and run before its
@@ -160,7 +184,7 @@ const AnnotationTrigger = ({
                     if (event.detail === 0 && !action.disabled) action.onActivate()
                   }}
                 >
-                  <Icon className="size-3.5" aria-hidden="true" />
+                  <Icon className="size-4" aria-hidden="true" />
                   {action.showLabel ? (
                     action.label
                   ) : (
@@ -168,12 +192,20 @@ const AnnotationTrigger = ({
                   )}
                 </button>
               )
-              if (action.showLabel) return button
               return (
-                <Tooltip key={action.id}>
-                  <TooltipTrigger asChild>{button}</TooltipTrigger>
-                  <TooltipContent className="z-[110]">{action.label}</TooltipContent>
-                </Tooltip>
+                <Fragment key={action.id}>
+                  {action.separatorBefore ? (
+                    <span className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+                  ) : null}
+                  {action.showLabel ? (
+                    button
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{button}</TooltipTrigger>
+                      <TooltipContent className="z-[110]">{action.label}</TooltipContent>
+                    </Tooltip>
+                  )}
+                </Fragment>
               )
             })}
           </div>
@@ -185,7 +217,7 @@ const AnnotationTrigger = ({
           }}
           type="button"
           data-annotation-trigger="true"
-          className="fixed z-[100] inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold leading-4 text-primary-foreground shadow-md focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="pointer-events-auto fixed z-[100] inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold leading-4 text-primary-foreground shadow-md focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           style={{
             left: position.left,
             top: position.top,
