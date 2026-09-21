@@ -193,8 +193,56 @@ const publishExclusiveFile = (name, contents) => {
 const replaceJson = (name, value) => {
   const temporaryName = `.receipt-${randomUUID()}.tmp`
   writeExclusiveFile(temporaryName, `${JSON.stringify(value, null, 2)}\n`)
-  renameSync(temporaryName, name)
+  replaceReceipt(temporaryName, name)
   syncDirectory()
+}
+// A Windows reader without FILE_SHARE_DELETE can transiently deny replacement even after
+// our own handles have closed. Keep the old receipt visible until the same durable temporary
+// file can be renamed atomically. Waiting is confined to this disposable worker process.
+const RECEIPT_REPLACEMENT_DELAYS_MS = [25, 50, 100, 200, 400, 800]
+const replacementSnapshot = (name) => {
+  try {
+    const metadata = lstatSync(name)
+    // Identity alone misses in-place writes while a reader blocks the rename.
+    return metadata.isFile() ? fingerprint(metadata) : 'unsafe'
+  } catch (error) {
+    if (error.code === 'ENOENT') return 'absent'
+    throw error
+  }
+}
+const replaceReceipt = (temporaryName, name) => {
+  if (process.platform !== 'win32') {
+    renameSync(temporaryName, name)
+    return
+  }
+  const source = replacementSnapshot(temporaryName)
+  const destination = replacementSnapshot(name)
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(temporaryName, name)
+      return
+    } catch (error) {
+      const delay = RECEIPT_REPLACEMENT_DELAYS_MS[attempt]
+      if (
+        delay === undefined ||
+        !['EPERM', 'EACCES', 'EBUSY'].includes(error.code) ||
+        source === 'absent' ||
+        source === 'unsafe' ||
+        destination === 'unsafe'
+      ) {
+        // Preserve both the previous receipt and the durable unpublished temporary file on
+        // failure, as before. Never delete the destination or weaken its permissions.
+        throw error
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay)
+      if (
+        replacementSnapshot(temporaryName) !== source ||
+        replacementSnapshot(name) !== destination
+      ) {
+        throw new Error('File-evidence receipt changed during atomic replacement.')
+      }
+    }
+  }
 }
 const RECEIPT_REQUIRED_FIELDS = [
   'schemaVersion',

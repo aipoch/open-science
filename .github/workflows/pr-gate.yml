@@ -863,6 +863,8 @@ jobs:
           src/main/delegation/acp-execution.test.ts
           src/main/delegation/production-framework-runtime.test.ts
           src/main/file-save.test.ts
+          src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           src/main/specialist/repository.test.ts
           src/main/notebook/micromamba-cache-powershell.test.ts
           src/main/notebook/micromamba-cache-acl.integration.test.ts

@@ -317,6 +317,13 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
 
+      - name: Verify Windows receipt publication and submission recovery
+        if: ${{ matrix.platform == 'win' && !inputs.skip_verify }}
+        run: >-
+          npx vitest run
+          src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/compute/compute-submission-evidence-recovery.integration.test.ts
+
       # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
       # instead of much later in packaging if the runner image ever loses its Xcode 26 selection.
       - name: Verify Icon Composer build tools
