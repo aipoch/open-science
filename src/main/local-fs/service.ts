@@ -39,6 +39,8 @@ export type GrantedLocalRootsStore = {
   remove: (id: string) => Promise<void>
 }
 
+type PolicyChangeShutdownResult = { reaped: boolean }
+
 // Builds a user-facing machine name from the OS hostname (stripping a trailing ".local" that macOS
 // appends) with a possessive owner prefix when the login name is available — e.g. "roxi's MacBook".
 const buildMachineName = (): string => {
@@ -73,8 +75,18 @@ export class LocalFsService {
   // granted-root operations fail loudly when persistence is not wired.
   constructor(
     private readonly grantedRootsStore?: GrantedLocalRootsStore,
-    private readonly beforeGrantedRootsChange: () => Promise<void> = async () => undefined
+    private readonly beforeGrantedRootsChange: () => Promise<PolicyChangeShutdownResult | void> = async () =>
+      undefined
   ) {}
+
+  private async ensureGrantedRootsChangeAllowed(): Promise<void> {
+    const result = await this.beforeGrantedRootsChange()
+    if (result && !result.reaped) {
+      throw new Error(
+        'Notebook cleanup is incomplete; folder access changes are unavailable until cleanup is verified.'
+      )
+    }
+  }
 
   // Absolute paths for the browser's initial location and "Go to → Home".
   getRoots(): LocalRoots {
@@ -159,7 +171,7 @@ export class LocalFsService {
       throw new Error('Local path must be absolute.')
     }
     if (!(await stat(resolvedPath)).isDirectory()) throw new Error('Grant path is not a directory.')
-    await this.beforeGrantedRootsChange()
+    await this.ensureGrantedRootsChangeAllowed()
     // De-dupe on the resolved path: re-granting an already granted folder updates its access and
     // keeps the existing id (the store upserts by path).
     await store.upsertByPath({
@@ -180,7 +192,7 @@ export class LocalFsService {
     const roots = await store.list()
     if (!roots.some((root) => root.id === request.id))
       throw new Error(`Unknown granted root: ${request.id}`)
-    await this.beforeGrantedRootsChange()
+    await this.ensureGrantedRootsChangeAllowed()
     await store.setAccess(request.id, request.access)
     return store.list()
   }
@@ -188,7 +200,7 @@ export class LocalFsService {
   // Revokes one granted root and returns the updated list.
   async removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]> {
     const store = this.requireGrantedRootsStore()
-    await this.beforeGrantedRootsChange()
+    await this.ensureGrantedRootsChangeAllowed()
     await store.remove(request.id)
     return store.list()
   }

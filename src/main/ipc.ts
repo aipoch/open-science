@@ -616,7 +616,7 @@ const createApplicationModules = async (
   const notebookPolicyLog = createLogger('notebook:policy')
   const shutdownNotebooksBeforePolicyChange = async (
     trigger: 'ca-bundle' | 'granted-roots'
-  ): Promise<void> => {
+  ): Promise<{ reaped: boolean }> => {
     const operation = startDiagnosticOperation(notebookPolicyLog, {
       operation: 'notebook-policy-shutdown',
       fields: { trigger }
@@ -629,6 +629,7 @@ const createApplicationModules = async (
     try {
       const result = await notebookPolicyLifecycle.current.shutdownAll()
       operation.complete({ reaped: result.reaped })
+      return result
     } catch (error) {
       operation.fail(error)
       throw error
@@ -760,7 +761,9 @@ const createApplicationModules = async (
       applyPackageMirror: async () => {
         await notebookNetworkSandbox.updateTrustBundle()
       },
-      beforePackageMirrorCaBundleChange: () => shutdownNotebooksBeforePolicyChange('ca-bundle'),
+      beforePackageMirrorCaBundleChange: async () => {
+        await shutdownNotebooksBeforePolicyChange('ca-bundle')
+      },
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
