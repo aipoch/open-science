@@ -20,5 +20,6 @@
   ],
   "src/main/pdf-annotations/native-import-worker-entry.ts": [
     "src/main/pdf-annotations/native-import.ts"
-  ]
+  ],
+  "src/main/session-diagnostics/worker-entry.ts": ["src/main/ipc.ts"]
 }

@@ -216,6 +216,9 @@ const createDependencies = () => {
   }
   const electron = {
     forkSession: vi.fn(async () => null),
+    inspectSessionDiagnostics: vi.fn(async () => ({ items: [] })),
+    exportSessionDiagnostics: vi.fn(async () => ({ status: 'cancelled' as const })),
+    cancelSessionDiagnostics: vi.fn(async () => undefined),
     exportSessionPackage: vi.fn(async () => ({ saved: false })),
     sessionPackageOperation: vi.fn(async () => null),
     importSessionPackage: vi.fn(async () => null),
@@ -270,6 +273,9 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionExportPackage',
   'sessionImportPackage',
   'sessionPackageOperation',
+  'sessionInspectDiagnostics',
+  'sessionExportDiagnostics',
+  'sessionCancelDiagnostics',
   'sessionFilterPdfContextCandidates',
   'sessionLinkPdfContext',
   'sessionList',
@@ -356,6 +362,9 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:inspect-diagnostics',
+        'sessions:export-diagnostics',
+        'sessions:cancel-diagnostics',
         'sessions:fork',
         'sessions:export-package',
         'sessions:import-package',
@@ -1975,6 +1984,45 @@ describe('Data and content application commands', () => {
 
     await expect(dispatched).resolves.toBe(deps.session)
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(request)
+  })
+
+  it('routes diagnostics without acquiring business write leases or loading sessions', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = { projectId: 'project-1', sessionId: 'session-1', operationId: 'diagnostic-1' }
+    deps.withDataRootWrite.mockRejectedValue(new Error('Business storage unavailable'))
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionInspectDiagnostics,
+        invocation([request], electronCaller)
+      )
+    ).resolves.toEqual({ items: [] })
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionExportDiagnostics,
+        invocation([{ ...request, selectedItems: [] }], electronCaller)
+      )
+    ).resolves.toEqual({ status: 'cancelled' })
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionCancelDiagnostics,
+      invocation([{ operationId: request.operationId }], electronCaller)
+    )
+    expect(deps.withDataRootWrite).not.toHaveBeenCalled()
+    expect(deps.sessions.loadOne).not.toHaveBeenCalled()
+    expect(deps.sessions.saveSession).not.toHaveBeenCalled()
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionInspectDiagnostics,
+        invocation([request])
+      )
+    ).rejects.toThrow('Channel only available from the Electron app')
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionInspectDiagnostics,
+        invocation([{ ...request, sessionId: '../session' }], electronCaller)
+      )
+    ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
   })
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {

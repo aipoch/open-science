@@ -3,7 +3,6 @@ import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-r
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { Notice } from '@/components/notice'
-import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open-Science tokens · slop: pass */
@@ -815,18 +814,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')
-          : skillsView.kind === 'manage'
-            ? t('Manage skills')
-            : skillsView.kind === 'upload'
-              ? t('Upload skills')
-              : skillsView.kind === 'import'
-                ? t('Import from GitHub')
-                : skillsView.kind === 'import-agent-home'
-                  ? t('Import installed skills')
-                  : (() => {
-                      const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                      return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
-                    })()
+          : skillsView.kind === 'upload'
+            ? t('Upload skills')
+            : skillsView.kind === 'import'
+              ? t('Import from GitHub')
+              : skillsView.kind === 'import-agent-home'
+                ? t('Import installed skills')
+                : (() => {
+                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                    return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
+                  })()
       return {
         rootLabelKey: 'Skills',
         rootTo: { panel: 'skills', view: { kind: 'list' } },
@@ -911,24 +908,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         }
       }
       const leaf =
-        connectorsView.kind === 'manage'
-          ? t('Manage connectors')
-          : connectorsView.kind === 'add'
-            ? t('Add connector')
-            : connectorsView.kind === 'import'
-              ? t('Import Connector or MCP configuration')
-              : connectorsView.kind === 'export'
-                ? t('Export {{name}}', {
+        connectorsView.kind === 'add'
+          ? t('Add connector')
+          : connectorsView.kind === 'import'
+            ? t('Import Connector or MCP configuration')
+            : connectorsView.kind === 'export'
+              ? t('Export {{name}}', {
+                  name:
+                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
+                }).trim()
+              : connectorsView.kind === 'edit'
+                ? t('Edit {{name}}', {
                     name:
                       customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
                   }).trim()
-                : connectorsView.kind === 'edit'
-                  ? t('Edit {{name}}', {
-                      name:
-                        customServers.find((s) => s.id === connectorsView.id)?.name ??
-                        t('connector')
-                    }).trim()
-                  : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabelKey: 'Connectors',
         rootTo: { panel: 'connectors', view: { kind: 'list' } },
@@ -1684,10 +1678,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         modelView.kind === 'classification-edit')) ||
                       activePanel === 'memory' ||
                       activePanel === 'tags' ||
-                      (activePanel === 'skills' &&
-                        (skillsView.kind === 'marketplace-batch' ||
-                          skillsView.kind === 'manage')) ||
-                      (activePanel === 'connectors' && connectorsView.kind === 'manage')
+                      (activePanel === 'skills' && skillsView.kind === 'marketplace-batch')
                       ? 'h-full'
                       : 'min-h-full'
                   )}
@@ -1830,9 +1821,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }}
                       />
                     ) : activePanel === 'connectors' ? (
-                      connectorsView.kind === 'manage' ? (
-                        <ConnectorBulkManageView />
-                      ) : connectorsView.kind === 'detail' ? (
+                      connectorsView.kind === 'detail' ? (
                         <div>
                           <ResourceTagSummary
                             reference={{
@@ -1843,6 +1832,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             onOpenTag={navigateTag}
                           />
                           <ConnectorDetailView
+                            onOpenSpecialist={(usage) =>
+                              navigate({
+                                panel: 'specialists',
+                                view:
+                                  usage.kind === 'builtin'
+                                    ? { kind: 'builtin', id: usage.id }
+                                    : { kind: 'edit', id: usage.id }
+                              })
+                            }
                             key={connectorsView.id}
                             id={connectorsView.id}
                             onManagePermissions={() => navigatePanel('permissions')}

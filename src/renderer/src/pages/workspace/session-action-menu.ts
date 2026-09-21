@@ -4,6 +4,7 @@ import {
   GitBranch,
   BookOpen,
   Download,
+  Stethoscope,
   Pencil,
   Pin,
   PinOff,
@@ -27,6 +28,7 @@ export type SessionActionId =
   | 'view-notebook'
   | 'export'
   | 'export-package'
+  | 'export-diagnostics'
   | 'fork'
   | 'archive'
   | 'delete'
@@ -44,6 +46,7 @@ export const SESSION_ACTION_CATALOG = {
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
   export: { labelKey: 'Export conversation…', icon: Download },
   'export-package': { labelKey: 'Export Session package', icon: Package },
+  'export-diagnostics': { labelKey: 'Export diagnostics…', icon: Stethoscope },
   fork: { labelKey: 'Fork', icon: GitBranch },
   archive: { labelKey: 'Archive', icon: Archive },
   delete: { labelKey: 'Delete', icon: Trash2, danger: true }
@@ -56,7 +59,12 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'download-artifacts' },
   { kind: 'action', action: 'check-artifacts' },
   { kind: 'action', action: 'view-notebook' },
-  { kind: 'submenu', labelKey: 'Export', icon: Download, actions: ['export', 'export-package'] },
+  {
+    kind: 'submenu',
+    labelKey: 'Export',
+    icon: Download,
+    actions: ['export', 'export-package', 'export-diagnostics']
+  },
   { kind: 'action', action: 'fork' },
   { kind: 'action', action: 'archive' },
   { kind: 'separator' },
@@ -76,6 +84,7 @@ type SessionActionOptions = {
   onExportSession?: (session: ChatSession) => void
   onForkSession?: (session: ChatSession) => Promise<void>
   onExportPackage?: (session: ChatSession) => Promise<void>
+  onExportDiagnostics?: (session: ChatSession) => void
   packageBusy?: boolean
   onArchiveSession?: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
@@ -144,6 +153,10 @@ export const createSessionActionBindings = (
       Boolean(options.packageBusy) ||
       session.status !== 'idle' ||
       presentedStatus !== 'idle'
+  },
+  'export-diagnostics': {
+    execute: ({ session }) => options.onExportDiagnostics?.(session),
+    hidden: !options.onExportDiagnostics
   },
   fork: {
     execute: ({ session }) => options.onForkSession?.(session),

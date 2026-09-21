@@ -1,3 +1,6 @@
+import { SessionDiagnosticsDialog } from './SessionDiagnosticsDialog'
+import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
+import type { SessionDiagnosticIdentity } from '../../../../shared/session-diagnostics'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -246,6 +249,9 @@ const WorkspacePage = ({
   // disabled as the first defense.
   const [isDownloadingProjectArtifacts, setIsDownloadingProjectArtifacts] = useState(false)
   const [isProjectDownloadOpen, setIsProjectDownloadOpen] = useState(false)
+  const [diagnosticSession, setDiagnosticSession] = useState<SessionDiagnosticIdentity>()
+  const openDiagnostics = (session: ChatSession): void =>
+    setDiagnosticSession({ projectId: session.projectId, sessionId: session.id })
   const [checkSession, setCheckSession] = useState<ChatSession>()
   const [artifactFinalizationRetrySessionId, setArtifactFinalizationRetrySessionId] =
     useState<string>()
@@ -1306,6 +1312,7 @@ const WorkspacePage = ({
                 }
                 onViewNotebook={sessionController.actions.openNotebook}
                 onForkSession={sessionForkAvailable() ? forkSession : undefined}
+                onExportDiagnostics={sessionDiagnosticsAvailable() ? openDiagnostics : undefined}
                 onExportPackage={sessionPackageExportAvailable() ? openPackageExport : undefined}
                 onExportSession={
                   typeof window.api.sessions?.exportConversation === 'function'
@@ -1402,6 +1409,7 @@ const WorkspacePage = ({
                       }
                     : undefined
                 }
+                onExportDiagnostics={sessionDiagnosticsAvailable() ? openDiagnostics : undefined}
                 onExportPackage={
                   sessionPackageExportAvailable()
                     ? async (session) => {
@@ -1554,6 +1562,7 @@ const WorkspacePage = ({
                   }
                 }}
                 sessionTools={{
+                  exportDiagnostics: sessionDiagnosticsAvailable() ? openDiagnostics : undefined,
                   togglePin: isSessionPersistenceReady
                     ? sessionController.actions.togglePin
                     : undefined,
@@ -1622,6 +1631,12 @@ const WorkspacePage = ({
             session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
             onClose={sessionController.actions.closeDownloadArtifacts}
           />
+          {diagnosticSession && (
+            <SessionDiagnosticsDialog
+              identity={diagnosticSession}
+              onClose={() => setDiagnosticSession(undefined)}
+            />
+          )}
           <SessionReproducibilityDialog
             session={checkSession}
             onClose={() => setCheckSession(undefined)}

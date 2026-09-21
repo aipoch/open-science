@@ -1,3 +1,4 @@
+import { openResourceMainSwitch } from './test-utils'
 import {
   marketplaceCatalog,
   marketplaceDetail
@@ -266,37 +267,39 @@ it('navigates to the conflicting Skill detail even when the retained search hide
 })
 
 describe('SkillsPanel (list view)', () => {
-  it('renders skills grouped by source with one toggle each and an Add skill control', () => {
-    act(() => {
-      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
-    })
-
-    expect(document.body.textContent).toContain('Featured')
-    expect(document.body.textContent).toContain('Personal')
-    expect(document.body.textContent).toContain('Alpha')
-    expect(document.body.textContent).toContain('Mine')
-    expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(4)
-    expect(document.body.querySelectorAll('[data-slot="switch"]')).toHaveLength(4)
-    const alphaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Alpha"]')
-    const betaSwitch = document.body.querySelector<HTMLElement>('[aria-label="Toggle Beta"]')
-    expect(alphaSwitch?.getAttribute('data-state')).toBe('checked')
-    expect(alphaSwitch?.className).toContain('data-[state=checked]:bg-primary')
-    // No per-toggle hit-area margins: the row's control column owns right alignment.
-    expect(alphaSwitch?.className).not.toContain('ml-1')
-    expect(alphaSwitch?.className).not.toContain('mr-3')
-    expect(betaSwitch?.getAttribute('data-state')).toBe('unchecked')
+  it('opens details from row whitespace and metadata without duplicating title navigation', () => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
+    const row = document.body.querySelector<HTMLElement>('[data-slot="settings-list-row"]')!
+    act(() => row.querySelector<HTMLElement>('[data-slot="resource-row-content"]')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+    onNavigate.mockClear()
+    act(() => row.querySelector<HTMLElement>('[data-slot="skill-usage-agents-label"]')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+    onNavigate.mockClear()
+    act(() => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'detail', id: 'a' })
+  })
+  it('keeps assignment popup interactions separate from row navigation', async () => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="resource-assignment-trigger"]'
+    )!
+    await act(async () => trigger.click())
+    const popup = document.body.querySelector<HTMLElement>('[role="dialog"]')!
+    act(() => popup.click())
+    await act(async () => popup.querySelector<HTMLButtonElement>('[role="switch"]')!.click())
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+  it('renders independent access groups for each resource and retains Add skill', () => {
+    act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+    expect(document.querySelectorAll('[data-slot="resource-assignment-trigger"]')).toHaveLength(3)
     expect(
-      alphaSwitch?.querySelector<HTMLElement>('[data-slot="switch-thumb"]')?.className
-    ).toContain('data-[state=checked]:translate-x')
-    expect(document.body.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(3)
+      document.querySelectorAll('[data-slot="settings-list-row"] [role="switch"]')
+    ).toHaveLength(0)
+    expect(openResourceMainSwitch('Alpha')?.getAttribute('aria-checked')).toBe('true')
     expect(document.body.textContent).toContain('Add skill')
-    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('Add skill')
-    )
-    expect(addSkill?.getAttribute('data-slot')).toBe('button')
-    expect(addSkill?.getAttribute('data-variant')).toBe('outline')
-    expect(addSkill?.className).toContain('bg-card')
-    expect(alphaSwitch?.className).toContain('motion-reduce:transition-none')
   })
 
   it('shows an inoperable checked toggle with an explanation for application-required Skills', async () => {
@@ -310,13 +313,13 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
 
-    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')
+    const toggle = openResourceMainSwitch('Alpha')
     expect(toggle?.getAttribute('data-state')).toBe('checked')
     expect(toggle?.disabled).toBe(true)
     expect(toggle?.className).toContain('data-disabled:opacity-50')
     expect(toggle?.className).toContain('pointer-events-none')
     expect(document.body.textContent).not.toContain('Application required')
-    expect(document.body.textContent).not.toContain('Always enabled')
+    expect(document.body.textContent).toContain('Always enabled')
 
     await act(async () => {
       const trigger = document.body.querySelector<HTMLElement>(
@@ -353,7 +356,7 @@ describe('SkillsPanel (list view)', () => {
     expect(search?.parentElement?.className).toContain('min-w-48')
     expect(filters?.contains(manage ?? null)).toBe(false)
     expect(filters?.contains(addSkill ?? null)).toBe(false)
-    expect(actions?.contains(manage ?? null)).toBe(true)
+    expect(manage).toBeUndefined()
     expect(actions?.contains(addSkill ?? null)).toBe(true)
     expect(actions?.className).toContain('flex-wrap')
     expect(actions?.compareDocumentPosition(filters!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
@@ -445,7 +448,7 @@ describe('SkillsPanel (list view)', () => {
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(row?.className).toContain('min-h-0')
     expect(row?.querySelector('.line-clamp-2')).not.toBeNull()
-    const toggle = document.body.querySelector<HTMLButtonElement>(
+    const toggle = document.querySelector<HTMLButtonElement>(
       '[aria-label="Toggle conversation Skill imports"]'
     )
     expect(toggle?.getAttribute('data-state')).toBe('checked')
@@ -462,9 +465,7 @@ describe('SkillsPanel (list view)', () => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
     })
 
-    act(() =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')?.click()
-    )
+    act(() => openResourceMainSwitch('Alpha')?.click())
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
 
     const alphaRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -502,15 +503,18 @@ describe('SkillsPanel (list view)', () => {
     expect(
       document.body.querySelector('[aria-label="Actions for Conflicting Skill"]')
     ).not.toBeNull()
-    const toggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Toggle Conflicting Skill"]'
+    const toggle = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Manage access for Conflicting Skill"]'
     )
     expect(toggle?.disabled).toBe(true)
     const title = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.includes('Conflicting Skill')
     )
     expect(title?.disabled).toBe(true)
-    act(() => title?.click())
+    act(() => {
+      title?.click()
+      document.body.querySelector<HTMLElement>('[data-slot="resource-row-content"]')?.click()
+    })
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
@@ -560,28 +564,26 @@ describe('SkillsPanel (list view)', () => {
     })
 
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')?.click()
+      openResourceMainSwitch('Alpha')?.click()
       await Promise.resolve()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not save this setting. The previous value was restored.'
+      'Could not update resource access. Refresh and try again.'
     )
   })
 
-  it('opens bulk management as a dedicated Skills sub-view', () => {
+  it('opens category selection in place without navigating away', () => {
     const onNavigate = vi.fn()
-    act(() => {
-      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
-    })
-
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />))
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Personal"]')
+        ?.click()
     )
-    act(() => manage?.click())
-
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'manage' })
-    expect(document.body.querySelector('[aria-label="Select Mine"]')).toBeNull()
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(document.querySelector('[aria-label="Select Mine"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="Select Alpha"]')).toBeNull()
   })
 
   it('filters the list by the search query', () => {
@@ -652,17 +654,9 @@ describe('SkillsPanel (list view)', () => {
     expect(betaRow?.textContent).not.toContain('Main Agent')
     expect(alphaRow?.textContent).toContain('Used by')
     expect(betaRow?.textContent).toContain('Used by')
-    expect(alphaRow?.querySelector('[aria-label="Toggle Alpha"]')?.getAttribute('data-state')).toBe(
-      'checked'
-    )
-    expect(betaRow?.querySelector('[aria-label="Toggle Beta"]')?.getAttribute('data-state')).toBe(
-      'unchecked'
-    )
     const tagMenu = alphaRow?.querySelector('[aria-label="Manage Tags"]')
-    const toggle = alphaRow?.querySelector('[aria-label="Toggle Alpha"]')
-    expect(tagMenu).not.toBeNull()
-    expect(toggle).not.toBeNull()
-    expect(tagMenu!.compareDocumentPosition(toggle!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    const controls = alphaRow?.querySelector('[data-slot="resource-assignment-trigger"]')
+    expect(tagMenu!.compareDocumentPosition(controls!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
 
     await act(async () => alphaAgents?.focus())
     expect(
@@ -2496,4 +2490,24 @@ it('distinguishes a selected update from an already installed revision', async (
     document.body.querySelector<HTMLInputElement>('[aria-label="Select current"]')?.checked
   ).toBe(false)
   expect(document.body.textContent).toContain('Import selected (1)')
+})
+
+it('selects Featured Skills in their category without exposing deletion or a global Manage action', () => {
+  act(() => root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />))
+  const select = container.querySelector<HTMLButtonElement>(
+    '[aria-label="Select multiple in Featured"]'
+  )
+  expect(select).not.toBeNull()
+  act(() => select!.click())
+  const checkbox = container.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!
+  act(() => checkbox.click())
+  expect(container.querySelector('[data-slot="resource-selection-bar"]')?.textContent).toContain(
+    'Unlink Specialists'
+  )
+  expect(container.querySelector('[aria-label="Delete selected"]')).toBeNull()
+  expect(
+    Array.from(container.querySelectorAll('button')).some(
+      (button) => button.textContent === 'Manage'
+    )
+  ).toBe(false)
 })
