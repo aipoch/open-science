@@ -982,9 +982,9 @@ if (process.argv.includes('--version')) {
   process.stdout.write(`${VERSION}\n`)
 } else {
   assertValidModelLimits()
-  // This opt-in test reconnects the provider when switching runtimes and restarting the app.
-  // Keep its new sessions and message chunks distinct from IDs persisted by an earlier process.
-  const fixtureInstanceId = process.env.OPEN_SCIENCE_E2E_WSL_SETUP === '1' ? `${randomUUID()}-` : ''
+  // OpenCode Sessions can run in separate processes. Keep their Session, message, and tool-call
+  // identities distinct across processes, including after the app restarts.
+  const fixtureInstanceId = `${randomUUID()}-`
   let nextMessageId = 1
   let nextSessionId = 1
   let nextToolCallId = 1
