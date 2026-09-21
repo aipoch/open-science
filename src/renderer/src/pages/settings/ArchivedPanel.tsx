@@ -310,7 +310,7 @@ const ArchivedPanel = ({
               {t('Restore archived work here, or permanently delete it after confirming.')}
             </p>
           </div>
-          <section className="space-y-2">
+          <section className="space-y-2" data-settings-anchor="archived.list">
             <h4 className="text-sm font-medium text-foreground">{t('Projects')}</h4>
             {archivedProjects.length > 0 ? (
               archivedProjects.map((project) => (

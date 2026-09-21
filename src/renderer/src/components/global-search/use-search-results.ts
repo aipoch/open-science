@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { resultId, type SearchCategory, type SearchResult } from './search-result'
-import type { LiteratureCollectionView, LiteratureItemView } from '../../../../shared/literature'
+import type {
+  LiteratureCollectionView,
+  LiteratureItemView,
+  LiteratureAnnotationSearchView
+} from '../../../../shared/literature'
 import type { SearchFileFormat, SearchSort } from '../../../../shared/search-text'
 import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
 import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
@@ -32,7 +36,7 @@ type SearchScope = {
   sort?: SearchSort
   role?: 'user' | 'agent'
   format?: SearchFileFormat
-  entryKind?: 'paper' | 'collection' | 'pdf'
+  entryKind?: 'paper' | 'collection' | 'pdf' | 'note'
 }
 // Displaying a different category does not change the other categories' queries or cursors.
 const categoryScope = (category: RemoteCategory, scope: SearchScope): string =>
@@ -48,10 +52,14 @@ const categoryScope = (category: RemoteCategory, scope: SearchScope): string =>
       : {}),
     ...(category === 'library' ? { entryKind: scope.entryKind } : {})
   })
-const isLibraryEntry = (entry: unknown): entry is LiteratureItemView | LiteratureCollectionView =>
+const isLibraryEntry = (
+  entry: unknown
+): entry is LiteratureItemView | LiteratureCollectionView | LiteratureAnnotationSearchView =>
   typeof entry === 'object' &&
   entry !== null &&
-  ('metadataRevision' in entry || ('itemCount' in entry && 'name' in entry))
+  ('annotation' in entry ||
+    'metadataRevision' in entry ||
+    ('itemCount' in entry && 'name' in entry))
 
 export const hasMoreSearchResults = (category: SearchCategory, page: SearchPage): boolean =>
   isRemoteCategory(category)
@@ -246,6 +254,10 @@ export const useSearchResults = (
     clientId
   )
   useLiteratureChanges(library.refresh)
+  useEffect(() => {
+    if (!open) return undefined
+    return window.api.pdfAnnotations?.onChanged?.(library.refresh)
+  }, [open, library.refresh])
   const loads = useMemo(
     () => ({
       messages: messages.load,

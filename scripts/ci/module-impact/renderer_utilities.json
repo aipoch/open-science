@@ -457,7 +457,10 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
-      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
+      "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx"
     ]
   },
   "capabilityOverlays": [],

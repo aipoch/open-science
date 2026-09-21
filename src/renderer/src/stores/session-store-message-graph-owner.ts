@@ -64,6 +64,85 @@ export const createSessionMessageGraphOwner = <
   set: StoreApi<State>['setState'],
   get: StoreApi<State>['getState']
 ): SessionMessageGraphActions => ({
+  prepareInterruptedTurnContinuation: (sessionId, promptMessageId, update, contextReset) => {
+    let prepared: { runtimeSegmentId?: string } | undefined
+    set((state) => {
+      const before = state.sessions.find((session) => session.id === sessionId)
+      const sessions: ChatSession[] = state.sessions.map((session) => {
+        const prompt = session.messages.find((message) => message.id === promptMessageId)
+        if (
+          session.id !== sessionId ||
+          prompt?.role !== 'user' ||
+          session.resumeRecovery?.promptMessageId !== promptMessageId ||
+          (session.activeRun && session.activeRun.promptMessageId !== promptMessageId)
+        ) {
+          return session
+        }
+
+        const previousSegment = session.conversationGraph?.runtimeSegments
+          .filter((segment) => segment.agentFrameId === session.conversationGraph?.activeFrameId)
+          .at(-1)
+        const now = Math.max(
+          Date.now(),
+          (session.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
+          (previousSegment?.startedAt ?? 0) + 1
+        )
+        const withProvider = {
+          ...session,
+          agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
+          agentBackendId: update?.agentBackendId ?? session.agentBackendId,
+          providerSessionId: update?.providerSessionId ?? session.providerSessionId,
+          providerContinuityToken:
+            update === undefined ? session.providerContinuityToken : update.providerContinuityToken
+        }
+        const isRetryingPreparedContext = contextReset && session.pendingHistoryReplay !== undefined
+        const conversationGraph = contextReset
+          ? synchronizeSessionGraph(
+              withProvider,
+              withProvider.messages,
+              now,
+              withProvider.agentFrameworkId ?? 'claude-code',
+              withProvider.agentBackendId,
+              withProvider.agentModel,
+              !isRetryingPreparedContext
+            )
+          : withProvider.conversationGraph
+        const runtimeSegmentId = conversationGraph?.runtimeSegments
+          .filter((segment) => segment.agentFrameId === conversationGraph.activeFrameId)
+          .at(-1)?.id
+        prepared = runtimeSegmentId ? { runtimeSegmentId } : {}
+        return {
+          ...withProvider,
+          status: 'running',
+          activeRun: { promptMessageId, startedAt: now },
+          activeRunRuntimeSegmentId: runtimeSegmentId,
+          awaitingFirstAgentOutput: true,
+          agentStatus: undefined,
+          error: undefined,
+          errorReportable: undefined,
+          pendingHistoryReplay: contextReset
+            ? (session.pendingHistoryReplay ?? {
+                kind: 'before-message',
+                messageId: promptMessageId
+              })
+            : session.pendingHistoryReplay,
+          compacting: undefined,
+          conversationGraph,
+          updatedAt: now
+        }
+      })
+      // A recovery is a user command, not a runtime projection. Queue its durable
+      // intent in the same store transition so a flush cannot omit the new run or Segment.
+      captureSessionConversationIntents(
+        before,
+        sessions.find((session) => session.id === sessionId),
+        'resume-run'
+      )
+      return { sessions } as Partial<State>
+    })
+    return prepared
+  },
+
   openContextResetRuntimeSegment: (sessionId) => {
     const before = get().sessions.find((session) => session.id === sessionId)
     let runtimeSegmentId: string | undefined

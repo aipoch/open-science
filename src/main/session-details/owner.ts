@@ -85,7 +85,7 @@ export interface SessionDetailsSafeLogger {
 }
 
 export interface SessionDetailsOwner {
-  start(): Promise<void>
+  start(startupSessions?: readonly SessionDetailsSession[]): Promise<void>
   afterSessionSaved(session: PersistedChatSession): void
   edit(request: EditSessionDetailsRequest): Promise<PersistedChatSession>
   shutdown(): Promise<void>
@@ -501,6 +501,7 @@ export const createSessionDetailsOwner = (
     let target: ResolvedSessionDetailsTarget | undefined
     let admittedSession: SessionDetailsSession | undefined
     const saved = await dependencies.sessions.mutateSession(projectId, sessionId, (session) => {
+      if (!acceptCompletions || stopping) return { kind: 'unchanged' }
       if (session.sessionDetailsGeneration?.status !== 'queued') return { kind: 'unchanged' }
       if (!hasValidGenerationAuthority(session)) {
         return { kind: 'write', session: withoutGenerationAuthority(session) }
@@ -669,16 +670,18 @@ export const createSessionDetailsOwner = (
   }
 
   const claimAndAdmit = async (session: SessionDetailsSession): Promise<void> => {
+    if (!acceptCompletions || stopping) return
     if (
       session.branchSource ||
       (session.sessionDetailsGeneration && !hasValidGenerationAuthority(session))
     ) {
-      await dependencies.sessions.mutateSession(session.projectId, session.id, (authority) =>
-        authority.branchSource ||
-        (authority.sessionDetailsGeneration && !hasValidGenerationAuthority(authority))
+      await dependencies.sessions.mutateSession(session.projectId, session.id, (authority) => {
+        if (!acceptCompletions || stopping) return { kind: 'unchanged' }
+        return authority.branchSource ||
+          (authority.sessionDetailsGeneration && !hasValidGenerationAuthority(authority))
           ? { kind: 'write', session: withoutGenerationAuthority(authority) }
           : { kind: 'unchanged' }
-      )
+      })
       return
     }
     if (session.sessionDetailsGeneration?.status === 'queued') {
@@ -694,18 +697,22 @@ export const createSessionDetailsOwner = (
   }
 
   return {
-    async start(): Promise<void> {
+    async start(startupSessions?: readonly SessionDetailsSession[]): Promise<void> {
       if (started || stopping) return
-      const sessions = await dependencies.sessions.listSessions()
+      // Application composition already reconciled this catalog before installing client adapters.
+      // Recovery mutations below still re-read current authority and check generation identity.
+      const sessions = startupSessions ?? (await dependencies.sessions.listSessions())
       for (const session of sessions) {
+        if (!acceptCompletions || stopping) return
         const generation = session.sessionDetailsGeneration
         if (generation?.status === 'running') {
           if (!hasValidGenerationAuthority(session)) {
-            await dependencies.sessions.mutateSession(session.projectId, session.id, (current) =>
-              current.sessionDetailsGeneration && !hasValidGenerationAuthority(current)
+            await dependencies.sessions.mutateSession(session.projectId, session.id, (current) => {
+              if (!acceptCompletions || stopping) return { kind: 'unchanged' }
+              return current.sessionDetailsGeneration && !hasValidGenerationAuthority(current)
                 ? { kind: 'write', session: withoutGenerationAuthority(current) }
                 : { kind: 'unchanged' }
-            )
+            })
             continue
           }
           const recovered = await dependencies.sessions.mutateSession(
@@ -734,6 +741,7 @@ export const createSessionDetailsOwner = (
               }
             }
           )
+          if (!acceptCompletions || stopping) return
           publishTransition(recovered)
           logCompletion(
             session.id,
@@ -745,8 +753,10 @@ export const createSessionDetailsOwner = (
         }
       }
       for (const session of sessions) {
+        if (!acceptCompletions || stopping) return
         await claimAndAdmit(session)
       }
+      if (!acceptCompletions || stopping) return
       started = true
       for (const session of pendingSaves.splice(0)) {
         void claimAndAdmit(session)

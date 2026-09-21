@@ -220,6 +220,7 @@ export type AcpRuntimeCallbacks = {
 
 type AcpRuntimeOptions = {
   classifySkills?: import('../../shared/classification').ClassifySkills
+  classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
   hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string
@@ -1009,6 +1010,11 @@ class AcpRuntime {
       backend,
       ...(aggregate.appliedModel ? { appliedModel: aggregate.appliedModel } : {})
     })
+  }
+
+  getPermissionPrompts(sessionId: string): 'none' | undefined {
+    const interaction = this.sessionInteractions.current(sessionId)
+    return interaction?.kind === 'prompt' ? interaction.permissionPrompts : undefined
   }
 
   callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
@@ -1979,6 +1985,9 @@ class AcpRuntime {
         request: {
           sessionId: permissionRequest.sessionId,
           text: PERMISSION_DENIED_CONTINUATION_TEXT,
+          ...(promptInteraction.permissionPrompts
+            ? { permissionPrompts: promptInteraction.permissionPrompts }
+            : {}),
           ...(promptInteraction.memoryEnabled !== undefined
             ? { memoryEnabled: promptInteraction.memoryEnabled }
             : {}),
@@ -2253,6 +2262,7 @@ class AcpRuntime {
     const request = sanitizeAgentUserChoiceRequest(input)
     if (!request) throw new Error('Invalid user choice request.')
     if (!this.activeSessionFor(request.sessionId)) return { action: 'cancelled' }
+    if (this.getPermissionPrompts(request.sessionId) === 'none') return { action: 'cancelled' }
 
     const pendingChoice = this.elicitationOwner
       .getPendingRequests()
@@ -2707,6 +2717,7 @@ class AcpRuntime {
   }
 
   private parkArtifactPublicationContinuation(input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]
@@ -2719,6 +2730,7 @@ class AcpRuntime {
       request: {
         sessionId: input.sessionId,
         text: artifactPublicationContinuationText(input.files, toolName),
+        permissionPrompts: input.permissionPrompts,
         suppressUserMessage: true,
         ...(input.provenanceContext ? { provenanceContext: input.provenanceContext } : {})
       }

@@ -260,6 +260,27 @@ describe('workspace page component boundaries', () => {
     for (const source of horizontalScrollerSources) expect(source).toContain('scroll-fade-x')
   })
 
+  it('uses the shared auto-hide scrollbar treatment for workspace scroll regions', () => {
+    const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const workspaceScrollSources = [
+      workspaceSidebarPath,
+      resolve(__dirname, '../../components/ui/message-scroller.tsx'),
+      resolve(__dirname, 'PreviewPanel.tsx'),
+      resolve(__dirname, '../../components/ui/scroll-area.tsx')
+    ].map((path) => readFileSync(path, 'utf8'))
+
+    expect(mainCssSource).toContain('.scrollbar-auto-hide')
+    expect(mainCssSource).toContain('.scrollbar-auto-hide:hover')
+    expect(mainCssSource).toContain('.scrollbar-message')
+    expect(mainCssSource).toContain('.scrollbar-auto-hide:not(.scrollbar-message)')
+    expect(mainCssSource).toContain('@media (hover: none), (any-pointer: coarse)')
+    expect(mainCssSource).toContain(
+      ".scrollbar-auto-hide:focus-within > [data-slot='scroll-area-scrollbar']"
+    )
+    expect(mainCssSource).toContain('::-webkit-scrollbar-thumb')
+    for (const source of workspaceScrollSources) expect(source).toContain('scrollbar-auto-hide')
+  })
+
   it('keeps desktop workspace bottom spacing aligned with the tighter top spacing', () => {
     const workspacePanelLayoutSource = readFileSync(workspacePanelLayoutPath, 'utf8')
     const sidebarSource = readFileSync(workspaceSidebarPath, 'utf8')

@@ -274,6 +274,9 @@ export const LiteratureAttachments = ({
             filename:
               dialogRemovalAttachment?.versions[0]?.filename ?? dialogRemovalAttachment?.title ?? ''
           }),
+          t(
+            'PDF annotations, notes, and their tag assignments will also be deleted. Global Tags are kept.'
+          ),
           dialogRemovalAttachment && dialogRemovalAttachment.versions.length > 1
             ? t('All {{count}} versions will be deleted.', {
                 count: dialogRemovalAttachment.versions.length,

@@ -105,6 +105,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     memory: EMPTY_OWNER,
     literature: EMPTY_OWNER,
     bookmarks: EMPTY_OWNER,
+    pdfAnnotations: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -244,6 +245,7 @@ describe('application command composition', () => {
       'bookmarks:resolve-pdf-source',
       'bookmarks:update-note',
       'lifecycle:claim-runtime-writer',
+      'literature:cancel-pdf-import',
       'literature:citation-styles',
       'literature:complete-metadata',
       'literature:export-record',
@@ -267,6 +269,12 @@ describe('application command composition', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-annotations:cancel-import',
+      'pdf-annotations:create',
+      'pdf-annotations:delete',
+      'pdf-annotations:import-native',
+      'pdf-annotations:list',
+      'pdf-annotations:update',
       'pdf-structure:cancel',
       'pdf-structure:clear-cache',
       'pdf-structure:parse',

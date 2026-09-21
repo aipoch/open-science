@@ -89,6 +89,31 @@ describe('sanitizePdfBookmarkTarget', () => {
     })
   })
 
+  it('accepts page and document note locators', () => {
+    expect(
+      sanitizePdfBookmarkTarget({
+        kind: 'pdf',
+        source,
+        selector: { kind: 'page-note', pageNumber: 4, pageRotation: 90, coordinateVersion: 1 }
+      })
+    ).toEqual({
+      kind: 'pdf',
+      source,
+      selector: { kind: 'page-note', pageNumber: 4, pageRotation: 90, coordinateVersion: 1 }
+    })
+    expect(
+      sanitizePdfBookmarkTarget({
+        kind: 'pdf',
+        source,
+        selector: { kind: 'document-note', coordinateVersion: 1 }
+      })
+    ).toEqual({
+      kind: 'pdf',
+      source,
+      selector: { kind: 'document-note', coordinateVersion: 1 }
+    })
+  })
+
   it('rejects region locators carrying send-only image fields', () => {
     expect(
       sanitizePdfBookmarkTarget({
@@ -153,5 +178,12 @@ describe('sanitizePdfBookmarkTarget', () => {
     expect(pdfBookmarkSelectorMatchesPage(selector, 2, 270)).toBe(true)
     expect(pdfBookmarkSelectorMatchesPage(selector, 2, 90)).toBe(false)
     expect(pdfBookmarkSelectorMatchesPage(selector, 1, 270)).toBe(false)
+    expect(
+      pdfBookmarkSelectorMatchesPage(
+        { kind: 'page-note', pageNumber: 2, pageRotation: 0, coordinateVersion: 1 },
+        2,
+        90
+      )
+    ).toBe(true)
   })
 })

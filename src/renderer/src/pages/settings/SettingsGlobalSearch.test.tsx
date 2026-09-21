@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SettingsGlobalSearch } from './SettingsGlobalSearch'
+import { SETTINGS_SEARCH_INDEX, SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsPanelId } from './settings-navigation'
 
 const PANELS: ReadonlyArray<{ id: SettingsPanelId; labelKey: string }> = [
@@ -16,13 +18,19 @@ const PANELS: ReadonlyArray<{ id: SettingsPanelId; labelKey: string }> = [
 let container: HTMLDivElement
 let root: Root
 
+const scrollIntoViewMock = vi.fn()
+
 beforeEach(() => {
+  scrollIntoViewMock.mockClear()
+  // jsdom does not implement scrollIntoView; the highlight path calls it on the jump target.
+  Element.prototype.scrollIntoView = scrollIntoViewMock as never
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
@@ -64,6 +72,16 @@ const options = (): HTMLButtonElement[] =>
 
 const selectedOption = (): HTMLButtonElement | undefined =>
   options().find((option) => option.getAttribute('aria-selected') === 'true')
+
+// Mounts a fake settings content scroller standing in for the freshly navigated panel, so the
+// highlight logic can find its jump target without rendering real panels.
+const mountPanelRoot = (panel: string, html: string): void => {
+  const scroller = document.createElement('div')
+  scroller.dataset.slot = 'settings-content-scroll'
+  scroller.dataset.settingsActivePanel = panel
+  scroller.innerHTML = html
+  document.body.appendChild(scroller)
+}
 
 describe('SettingsGlobalSearch', () => {
   it('matches by label, keywords, and panel name, and reports no matches', () => {
@@ -137,5 +155,123 @@ describe('SettingsGlobalSearch', () => {
     // With the list closed, a second Escape is left for the dialog to handle.
     const second = pressKey('Escape')
     expect(second.defaultPrevented).toBe(false)
+  })
+
+  it('jumps to the anchored setting instead of the first block, ringing and focusing it', () => {
+    mountPanelRoot(
+      'general',
+      `<section data-slot="settings-section">Appearance</section>
+       <section data-slot="settings-section" data-settings-anchor="general.notifications">Notifications</section>`
+    )
+    const onNavigate = vi.fn()
+    renderSearch(onNavigate)
+
+    typeQuery('notifications')
+    pressKey('Enter')
+
+    const target = document.body.querySelector<HTMLElement>(
+      '[data-settings-anchor="general.notifications"]'
+    )!
+    expect(onNavigate).toHaveBeenCalledWith('general')
+    // The ring lands on the anchored section, not the panel's first section.
+    expect(target.classList.contains('settings-search-highlight')).toBe(true)
+    // Non-focusable targets get a temporary tabindex and receive focus.
+    expect(target.getAttribute('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(target)
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'nearest' })
+  })
+
+  it('focuses an anchored control without lending it a tabindex', () => {
+    mountPanelRoot(
+      'tags',
+      `<section data-slot="settings-section">Tags</section>
+       <button type="button" data-settings-anchor="tags.new">New Tag</button>`
+    )
+    renderSearch()
+
+    typeQuery('new tag')
+    pressKey('Enter')
+
+    const target = document.body.querySelector<HTMLElement>('[data-settings-anchor="tags.new"]')!
+    expect(target.classList.contains('settings-search-highlight')).toBe(true)
+    expect(target.hasAttribute('tabindex')).toBe(false)
+    expect(document.activeElement).toBe(target)
+  })
+
+  it('waits for a missing anchor before falling back to the first content block', () => {
+    vi.useFakeTimers()
+    mountPanelRoot('general', `<section data-slot="settings-section">Appearance</section>`)
+    renderSearch()
+
+    typeQuery('notifications')
+    pressKey('Enter')
+
+    // The anchor never renders: no premature ring on the wrong block.
+    expect(document.body.querySelector('.settings-search-highlight')).toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(1500)
+    })
+    const first = document.body.querySelector<HTMLElement>('[data-slot="settings-section"]')!
+    expect(first.classList.contains('settings-search-highlight')).toBe(true)
+    expect(document.activeElement).toBe(first)
+  })
+
+  it('fades and removes the ring after the dwell, restoring tabindex but keeping focus', () => {
+    vi.useFakeTimers()
+    mountPanelRoot(
+      'general',
+      `<section data-slot="settings-section" data-settings-anchor="general.notifications">Notifications</section>`
+    )
+    renderSearch()
+
+    typeQuery('notifications')
+    pressKey('Enter')
+
+    const target = document.body.querySelector<HTMLElement>(
+      '[data-settings-anchor="general.notifications"]'
+    )!
+    act(() => {
+      vi.advanceTimersByTime(1500)
+    })
+    // Mid-dwell the ring is still on; the class's own CSS animation handles the fade-out.
+    expect(target.classList.contains('settings-search-highlight')).toBe(true)
+
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(target.classList.contains('settings-search-highlight')).toBe(false)
+    expect(target.hasAttribute('tabindex')).toBe(false)
+    // Focus stays on the jump target after the visual ring is gone.
+    expect(document.activeElement).toBe(target)
+  })
+
+  it('marks a jump target in the panel sources for every anchored entry', () => {
+    const sources = readdirSync(__dirname, { recursive: true, withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          /\.(ts|tsx)$/.test(entry.name) &&
+          !entry.name.includes('.test.') &&
+          entry.name !== 'SettingsGlobalSearch.tsx'
+      )
+      .map((entry) => readFileSync(join(entry.parentPath, entry.name), 'utf8'))
+
+    const anchored = SETTINGS_SEARCH_INDEX.filter((entry) => !entry.skipAnchor)
+    expect(anchored.length).toBeGreaterThan(0)
+    for (const entry of anchored) {
+      const hits = sources.filter(
+        (source) => source.includes(`"${entry.id}"`) || source.includes(`'${entry.id}'`)
+      )
+      expect(hits.length, `${entry.id} needs a data-settings-anchor in some panel`).toBe(1)
+    }
+  })
+
+  it('defines the jump-target ring with an offset gap and scroll margin in main.css', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    expect(css).toMatch(/\.settings-search-highlight\s*\{[^}]*outline-offset:\s*4px/)
+    expect(css).toMatch(/\.settings-search-highlight\s*\{[^}]*scroll-margin/)
+    expect(css).toMatch(/\.settings-search-highlight\s*\{[^}]*animation:/)
+    expect(css).toMatch(/@keyframes settings-search-highlight-out/)
   })
 })

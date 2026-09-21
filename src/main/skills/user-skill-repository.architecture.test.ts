@@ -613,6 +613,7 @@ describe('User Skill repository architecture', () => {
           'src/main/literature/scale-regressions.test.ts',
           'src/main/literature/session-pdf-source-resolver.test.ts',
           'src/main/local-fs/granted-roots-repository.test.ts',
+          'src/main/local-models/download.test.ts',
           'src/main/local-models/owner.test.ts',
           'src/main/locale/owner.test.ts',
           'src/main/locale/resources.lazy.test.ts',
@@ -893,7 +894,16 @@ describe('User Skill repository architecture', () => {
           'src/main/process-tree.windows.integration.test.ts',
           'src/main/delegation/frame-workspace.test.ts',
           'src/main/acp/agent-process.test.ts',
-          'src/main/settings/classification-settings.test.ts'
+          'src/main/settings/classification-settings.test.ts',
+          'src/main/connectors/descriptors/genomes-blast.test.ts',
+          'src/main/connectors/descriptors/genomes.test.ts',
+          'src/main/artifacts/resumed-finalization-ownership.test.ts',
+          'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+          'src/main/agent-framework/opencode-mcp-isolation.integration.test.ts',
+          'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
+          'src/main/compute/cancellation-runtime.integration.test.ts',
+          'src/main/pdf-annotations/repository.integration.test.ts',
+          'src/main/pdf-annotations/service.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

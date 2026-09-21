@@ -61,7 +61,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

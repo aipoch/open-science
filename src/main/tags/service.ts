@@ -19,7 +19,8 @@ class TagService {
   constructor(
     private readonly repository: TagRepository,
     private readonly resources: TagResourceCatalog,
-    private readonly events: Pick<ApplicationEventPublisher, 'publish'>
+    private readonly events: Pick<ApplicationEventPublisher, 'publish'>,
+    private readonly setPdfAnnotationTag?: (request: SetTagAssignmentRequest) => Promise<void>
   ) {}
 
   private mutate(operation: () => Promise<void>): Promise<TagSnapshot> {
@@ -95,6 +96,11 @@ class TagService {
   }
 
   setAssignment(request: SetTagAssignmentRequest): Promise<TagSnapshot> {
+    if (request.resourceType === 'pdf.annotation') {
+      if (!this.setPdfAnnotationTag)
+        return Promise.reject(new Error('PDF annotations are unavailable.'))
+      return this.setPdfAnnotationTag(request).then(() => this.snapshot())
+    }
     return this.mutate(async () => {
       if (request.assigned && !(await this.resources.exists(request))) {
         throw new Error('Tag resource no longer exists.')

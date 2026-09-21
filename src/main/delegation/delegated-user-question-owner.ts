@@ -102,6 +102,7 @@ class DelegatedUserQuestionOwner {
     if (!sameSession(snapshot.session, caller.session)) {
       throw new DurableDelegatedWorkError('authorization', 'delegated question Session mismatch')
     }
+    if (caller.permissionPrompts === 'none') return { action: 'cancelled' }
     const requestId = explicitRequestId?.trim() || this.options.createId('question')
     const canonicalDigest = createHash('sha256')
       .update(JSON.stringify(request.questions))

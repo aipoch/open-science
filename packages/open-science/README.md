@@ -16,7 +16,8 @@ const run = await client.startRun({
   project: 'systematic-review',
   prompt: 'Summarize the evidence.',
   cwd: '/absolute/path/to/research',
-  permissionProfile: 'auto'
+  permissionProfile: 'auto',
+  permissionPrompts: 'none' // Deny requests that would require a human; keep existing permission rules.
 })
 const result = await client.waitForRun(run.id)
 console.log(result.output)
@@ -67,8 +68,7 @@ positive number.
 
 Aborting or timing out a wait stops only the local observation. The Run may continue on the host;
 call `getRun(run.id)` to check it, or explicitly call `cancelRun(run.id)` to stop it. With
-`returnOnAttention: true`, a returned Run may still have `status: 'running'` and need a permission
-or plan decision before it can finish.
+`returnOnAttention: true`, a returned Run may still have `status: 'running'` and need a Plan decision before it can finish. Ordinary permissions do not populate Run attention.
 
 ```js
 const waitController = new AbortController()

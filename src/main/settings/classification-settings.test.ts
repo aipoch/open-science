@@ -40,6 +40,17 @@ const response = (noul = 0.95): Response =>
       usage: { input_tokens: 20, output_tokens: 1 }
     })
   )
+const readingResponse = (full: number, auto: number): Response =>
+  new Response(
+    JSON.stringify({
+      model: 'jev-latest',
+      answers: {
+        full: { type: 'noul', noul: full },
+        auto: { type: 'noul', noul: auto }
+      },
+      usage: { input_tokens: 20, output_tokens: 2 }
+    })
+  )
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'classification-'))
   initLogger({ logDir: join(dir, 'logs'), mirrorToConsole: false })
@@ -271,6 +282,39 @@ it('sends only text and candidate metadata, maps paths locally, and separates us
       usage: { inputTokens: 20, outputTokens: 1, cacheTokens: 0, turnCount: 1 }
     })
   )
+})
+it('classifies ambiguous linked-PDF requests conservatively', async () => {
+  await configure()
+  fetchMock.mockResolvedValueOnce(readingResponse(0.92, 0.52))
+  expect(await owner.selectReadingRoute({ text: 'What are the main contributions?' })).toBe(
+    'full-document'
+  )
+
+  fetchMock.mockResolvedValueOnce(readingResponse(0.56, 0.86))
+  expect(await owner.selectReadingRoute({ text: 'How does the method work?' })).toBe('auto')
+
+  fetchMock.mockResolvedValueOnce(readingResponse(0.68, 0.66))
+  expect(await owner.selectReadingRoute({ text: 'Is the approach valid?' })).toBeUndefined()
+})
+it('keeps reading-route classification unconfigured and invalid results on the resolver fallback', async () => {
+  expect(
+    await owner.selectReadingRoute({ text: 'What are the main contributions?' })
+  ).toBeUndefined()
+  expect(fetchMock).not.toHaveBeenCalled()
+
+  await configure()
+  fetchMock.mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        model: 'jev-latest',
+        answers: { full: { type: 'noul', noul: 0.95 } },
+        usage: { input_tokens: 20, output_tokens: 1 }
+      })
+    )
+  )
+  expect(
+    await owner.selectReadingRoute({ text: 'What are the main contributions?' })
+  ).toBeUndefined()
 })
 it('uses one selection read and one settings read before and after the request', async () => {
   await configure()
@@ -854,4 +898,67 @@ it('distinguishes skipped and ambiguous selections from confident empty decision
       data: expect.objectContaining({ selectedCount: 0 })
     })
   )
+})
+
+it('supports a loopback custom TypeSafe-compatible endpoint without an API key', async () => {
+  const endpoint = 'http://127.0.0.1:8000/classify'
+  const model = 'local-typed-decisions'
+  const saved = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'custom',
+    name: 'Local adaptor',
+    baseUrl: endpoint,
+    modelId: model
+  })
+  expect(saved.services[0]).toMatchObject({
+    adapter: 'custom',
+    baseUrl: endpoint,
+    modelId: model,
+    configured: true,
+    needsKey: false
+  })
+  const [url, init] = fetchMock.mock.calls[0]!
+  expect(url).toBe(endpoint)
+  expect(init?.headers).toEqual({ 'Content-Type': 'application/json' })
+  expect(JSON.parse(String(init?.body))).toMatchObject({ model })
+
+  const bound = await owner.mutate({
+    revision: 1,
+    kind: 'bind',
+    binding: { serviceId, modelId: model }
+  })
+  expect(bound.capabilitySelection).toEqual({ serviceId, modelId: model })
+})
+
+it('requires a key for a remote custom TypeSafe-compatible endpoint', async () => {
+  await expect(
+    owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter: 'custom',
+      name: 'Remote adaptor',
+      baseUrl: 'https://classifier.example.test/v1/decisions',
+      modelId: 'local-typed-decisions'
+    })
+  ).rejects.toThrow('API key is required')
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('rejects insecure custom endpoints before attempting validation', async () => {
+  await expect(
+    owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter: 'custom',
+      name: 'Insecure adaptor',
+      baseUrl: 'http://classifier.example.test/decisions',
+      modelId: 'local-typed-decisions',
+      apiKey: 'remote-key'
+    })
+  ).rejects.toThrow('endpoint is invalid')
+  expect(fetchMock).not.toHaveBeenCalled()
 })

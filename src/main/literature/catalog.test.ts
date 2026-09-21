@@ -1,3 +1,4 @@
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -87,6 +88,243 @@ describe('LiteratureCatalog', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Research' } })
     return new LiteratureCatalog(async () => client!)
   }
+
+  it('searches PDF notes and quotes under Library with stable mixed pagination and active source scopes', async () => {
+    const catalog = await setup()
+    const item = await catalog.transact({
+      kind: 'create-item',
+      item: { ...candidate().item, title: 'Evidence paper' }
+    })
+    const collection = await catalog.transact({
+      kind: 'create-collection',
+      name: 'Evidence collection'
+    })
+    const checksum = 'a'.repeat(64)
+    await client!.contentBlob.create({
+      data: {
+        id: 'note-blob',
+        checksum,
+        storageKey: 'content/note-blob',
+        sizeBytes: 128n,
+        contentType: 'application/pdf',
+        state: 'available'
+      }
+    })
+    const attachment = await catalog.attachContent({
+      itemId: item.id,
+      contentBlobId: 'note-blob',
+      filename: 'paper.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 128,
+      checksum
+    })
+    const repository = new PdfAnnotationRepository(async () => client!)
+    const source = {
+      kind: 'literature-attachment-version' as const,
+      sourceFileId: attachment.attachmentId,
+      versionId: attachment.versionId,
+      checksum,
+      name: 'paper.pdf',
+      path: `literature-attachment-version:${attachment.versionId}`
+    }
+    for (let index = 0; index < 3; index++)
+      await repository.create({
+        id: `search-note-${index}`,
+        literatureVersionId: attachment.versionId,
+        kind: 'document-note',
+        tagIds: [],
+        note: `Evidence ${index}: 中文 50%_`,
+        target: { source, selector: { kind: 'document-note', coordinateVersion: 1 } }
+      })
+    await repository.create({
+      id: 'search-quote',
+      literatureVersionId: attachment.versionId,
+      kind: 'highlight',
+      tagIds: [],
+      note: '',
+      target: {
+        source,
+        selector: {
+          kind: 'text',
+          exact: 'Quoted finding',
+          pageNumber: 2,
+          pageRotation: 0,
+          coordinateVersion: 1,
+          extractorVersion: 'pdfjs-test',
+          position: { start: 0, end: 14 },
+          quads: [{ x: 0.1, y: 0.1, width: 0.2, height: 0.1 }]
+        }
+      }
+    })
+    for (const [id, text] of [
+      ['region-prefix', 'Regional result follow-up'],
+      ['region-exact', 'Regional result']
+    ])
+      await repository.create({
+        id,
+        literatureVersionId: attachment.versionId,
+        kind: 'area',
+        tagIds: [],
+        note: '',
+        target: {
+          source,
+          selector: {
+            kind: 'region',
+            pageNumber: 1,
+            pageRotation: 0,
+            coordinateVersion: 1,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+            text
+          }
+        }
+      })
+    const request = { scope: 'global-search' as const, query: 'evidence', limit: 2 }
+    expect(
+      await catalog.search({ ...request, entryKind: 'note', query: 'regional result' })
+    ).toMatchObject({
+      totalCount: 2,
+      entries: [
+        { annotation: { id: 'region-exact', note: '' } },
+        { annotation: { id: 'region-prefix', note: '' } }
+      ]
+    })
+    expect(
+      await catalog.search({ ...request, entryKind: 'note', query: 'result', countOnly: true })
+    ).toEqual({ entries: [], totalCount: 2 })
+    expect((await catalog.search({ ...request, entryKind: 'note', query: '' })).totalCount).toBe(6)
+    const ids: string[] = []
+    let offset: number | undefined
+    do {
+      const result = await catalog.search({ ...request, offset })
+      expect(result.totalCount).toBe(5)
+      ids.push(...result.entries.map((entry) => ('id' in entry ? entry.id : '')))
+      offset = result.nextOffset
+    } while (offset !== undefined)
+    expect(new Set(ids).size).toBe(5)
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        item.id,
+        collection.id,
+        'search-note-0',
+        'search-note-1',
+        'search-note-2'
+      ])
+    )
+    expect(await catalog.search({ ...request, countOnly: true })).toEqual({
+      entries: [],
+      totalCount: 5
+    })
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', query: '中文 50%_' })).totalCount
+    ).toBe(3)
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', query: '50X_' })).totalCount
+    ).toBe(0)
+    expect(await catalog.search({ ...request, entryKind: 'note', query: 'finding' })).toMatchObject(
+      {
+        totalCount: 1,
+        entries: [
+          {
+            annotation: {
+              id: 'search-quote',
+              note: '',
+              target: { selector: { exact: 'Quoted finding' } }
+            }
+          }
+        ]
+      }
+    )
+    expect((await catalog.search({ ...request, entryKind: 'paper' })).totalCount).toBe(1)
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', projectId: 'project-1' })).totalCount
+    ).toBe(0)
+    await client!.projectLiterature.create({
+      data: { projectId: 'project-1', itemId: item.id, source: 'user' }
+    })
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', projectId: 'project-1' })).totalCount
+    ).toBe(3)
+    await client!.project.create({ data: { id: 'project-2', name: 'Second project' } })
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', projectId: 'project-2' })).totalCount
+    ).toBe(0)
+    await client!.projectLiterature.create({
+      data: { projectId: 'project-2', itemId: item.id, source: 'user' }
+    })
+    for (const projectId of ['project-1', 'project-2']) {
+      expect(await catalog.search({ ...request, entryKind: 'note', projectId })).toMatchObject({
+        totalCount: 3
+      })
+    }
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', updatedAfter: Date.now() + 60_000 }))
+        .totalCount
+    ).toBe(0)
+    await repository.update({
+      id: 'search-note-0',
+      literatureVersionId: attachment.versionId,
+      note: 'Revised content'
+    })
+    expect((await catalog.search({ ...request, entryKind: 'note' })).totalCount).toBe(2)
+    await client!.literatureItem.update({ where: { id: item.id }, data: { deletedAt: new Date() } })
+    expect((await catalog.search({ ...request, entryKind: 'note' })).totalCount).toBe(0)
+  })
+
+  it('keeps project PDF notes searchable after their creator Session is archived or deleted', async () => {
+    const catalog = await setup()
+    await client!.session.create({
+      data: {
+        id: 'note-session',
+        projectId: 'project-1',
+        number: 1,
+        title: 'Reading',
+        status: 'idle',
+        presentedStatus: 'idle',
+        createdAtMs: 1n,
+        updatedAtMs: 1n
+      }
+    })
+    const repository = new PdfAnnotationRepository(async () => client!)
+    await repository.create({
+      id: 'project-note',
+      projectId: 'project-1',
+      sessionId: 'note-session',
+      kind: 'document-note',
+      note: 'Project evidence',
+      tagIds: [],
+      target: {
+        source: {
+          kind: 'upload-version',
+          projectId: 'project-1',
+          sessionId: 'note-session',
+          sourceFileId: 'file-1',
+          versionId: 'version-1',
+          checksum: 'b'.repeat(64),
+          name: 'project.pdf',
+          path: 'upload-version:version-1'
+        },
+        selector: { kind: 'document-note', coordinateVersion: 1 }
+      }
+    })
+    const request = {
+      scope: 'global-search' as const,
+      entryKind: 'note' as const,
+      query: 'evidence'
+    }
+    expect((await catalog.search(request)).totalCount).toBe(1)
+    expect((await catalog.search({ ...request, projectId: 'project-1' })).totalCount).toBe(1)
+    expect((await catalog.search({ ...request, projectId: 'missing-project' })).totalCount).toBe(0)
+    for (const field of ['archivedAtMs', 'deletedAtMs'] as const) {
+      await client!.session.update({ where: { id: 'note-session' }, data: { [field]: 2n } })
+      expect((await catalog.search(request)).totalCount).toBe(1)
+      await client!.session.update({ where: { id: 'note-session' }, data: { [field]: null } })
+    }
+    await client!.projectDeletionIntent.create({ data: { projectId: 'project-1' } })
+    expect((await catalog.search(request)).totalCount).toBe(0)
+    await client!.projectDeletionIntent.delete({ where: { projectId: 'project-1' } })
+    await client!.project.update({ where: { id: 'project-1' }, data: { deletedAt: new Date() } })
+    expect((await catalog.search(request)).totalCount).toBe(0)
+  })
 
   it('pages global search across collections and literature without duplicates', async () => {
     const catalog = await setup()
@@ -873,6 +1111,7 @@ describe('LiteratureCatalog', () => {
           listSkills: async () => [],
           listConnectors: async () => ({ connectors: [], customServers: [] }),
           listSpecialists: async () => [],
+          listPdfAnnotations: async () => [],
           listLiteratureItems: async () => client!.literatureItem.findMany({ select: { id: true } })
         }),
         { publish }

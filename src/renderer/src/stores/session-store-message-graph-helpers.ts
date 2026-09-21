@@ -117,6 +117,17 @@ export type AppendRoutedUserMessageInput = {
 }
 
 export type SessionMessageGraphActions = {
+  prepareInterruptedTurnContinuation: (
+    sessionId: string,
+    promptMessageId: string,
+    update:
+      | Pick<
+          PersistedChatSession,
+          'agentFrameworkId' | 'agentBackendId' | 'providerSessionId' | 'providerContinuityToken'
+        >
+      | undefined,
+    contextReset: boolean
+  ) => { runtimeSegmentId?: string } | undefined
   appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
   appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined
   appendPendingUserMessage: (

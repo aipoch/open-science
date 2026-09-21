@@ -104,7 +104,9 @@
       "src/main/window-find-ipc.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-package/fork.test.ts"
+      "src/main/session-package/fork.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

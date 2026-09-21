@@ -179,6 +179,7 @@ type TaskAgentResumeSessionRequest = {
 }
 
 type TaskAgentPromptRequest = {
+  permissionPrompts?: 'none'
   sessionId: string
   promptMessageId: string
   provenanceContext: AgentTurnProvenanceContext
@@ -1241,6 +1242,18 @@ class TaskRunner {
     ) {
       throw new TaskRunnerError('invalid_request', 'Skill ids must be non-empty strings.')
     }
+    if (request.permissionPrompts !== undefined && request.permissionPrompts !== 'none') {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Permission prompts must be none when specified.'
+      )
+    }
+    if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Plan-first requires an available human approver.'
+      )
+    }
     if (request.turnIntent !== undefined && request.turnIntent !== 'plan-first') {
       throw new TaskRunnerError('invalid_request', 'Turn intent must be plan-first.')
     }
@@ -1988,6 +2001,7 @@ class TaskRunner {
           promptMessageId,
           provenanceContext,
           text: prompt,
+          ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
           ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
           ...(historyPreamble ? { historyPreamble } : {}),

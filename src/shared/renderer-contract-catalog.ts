@@ -5,6 +5,7 @@ import type {
   ClassificationProbe,
   ClassificationProbeResult
 } from './classification'
+import type { PdfAnnotationsChangedEvent } from './pdf-annotations'
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
   SkillMarketplaceCatalog,
@@ -331,6 +332,19 @@ import type {
   UpdateBookmarkNoteRequest
 } from './bookmarks'
 import type {
+  CreatePdfAnnotationRequest,
+  DeletePdfAnnotationRequest,
+  DeletePdfAnnotationResult,
+  ListPdfAnnotationsRequest,
+  PdfAnnotation,
+  PdfAnnotationListResult,
+  PdfNativeAnnotationCancelRequest,
+  PdfNativeAnnotationImportProgress,
+  PdfNativeAnnotationImportRequest,
+  PdfNativeAnnotationImportResult,
+  UpdatePdfAnnotationRequest
+} from './pdf-annotations'
+import type {
   LiteratureCatalogCommand,
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchPage,
@@ -346,6 +360,7 @@ import type {
   LiteratureItemInput,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
+  LiteraturePdfCancelImportRequest,
   LiteraturePdfImportReceipt,
   LiteraturePdfImportRequest,
   LiteratureRecordImportRequest,
@@ -1337,6 +1352,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.importPdf': callable<
     (request: LiteraturePdfImportRequest) => Promise<LiteraturePdfImportReceipt>
   >()('literature', ['literature:import-pdf', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.cancelPdfImport': callable<
+    (request: LiteraturePdfCancelImportRequest) => Promise<{ cancelled: boolean }>
+  >()('literature', ['literature:cancel-pdf-import', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.importRecords': callable<
     (request: LiteratureRecordImportRequest) => Promise<LiteratureRecordImportResult>
   >()('literature', ['literature:import-records', WEB, undefined, undefined, RUNTIME_VALIDATED]),
@@ -2681,6 +2699,42 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'bookmarks',
     ['bookmarks:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
+  'pdfAnnotations.list': callable<
+    (request: ListPdfAnnotationsRequest) => Promise<PdfAnnotationListResult>
+  >()('pdf-annotations', ['pdf-annotations:list', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.create': callable<
+    (request: CreatePdfAnnotationRequest) => Promise<PdfAnnotation>
+  >()('pdf-annotations', ['pdf-annotations:create', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.update': callable<
+    (request: UpdatePdfAnnotationRequest) => Promise<PdfAnnotation>
+  >()('pdf-annotations', ['pdf-annotations:update', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.delete': callable<
+    (request: DeletePdfAnnotationRequest) => Promise<DeletePdfAnnotationResult>
+  >()('pdf-annotations', ['pdf-annotations:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.importNative': callable<
+    (request: PdfNativeAnnotationImportRequest) => Promise<PdfNativeAnnotationImportResult>
+  >()('pdf-annotations', [
+    'pdf-annotations:import-native',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfAnnotations.cancelImport': callable<
+    (request: PdfNativeAnnotationCancelRequest) => Promise<{ cancelled: boolean }>
+  >()('pdf-annotations', [
+    'pdf-annotations:cancel-import',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfAnnotations.onChanged': callable<
+    (listener: AcpListener<PdfAnnotationsChangedEvent>) => RemoveListener
+  >()('pdf-annotations', ['pdf-annotations:changed', EVENT]),
+  'pdfAnnotations.onImportProgress': callable<
+    (listener: AcpListener<PdfNativeAnnotationImportProgress>) => RemoveListener
+  >()('pdf-annotations', ['pdf-annotations:import-progress', EVENT]),
   'tags.create': callable<(request: CreateTagRequest) => Promise<TagSnapshot>>()('tags', [
     'tags:create',
     WEB,

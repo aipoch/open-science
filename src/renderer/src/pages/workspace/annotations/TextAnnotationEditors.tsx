@@ -1,14 +1,21 @@
-import { Trash2 } from 'lucide-react'
+import { Check, Highlighter, Strikethrough, Trash2, Underline, Waves } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Bookmark as BookmarkIcon, CircleAlert, Loader2, Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { TagSelection } from '../../settings/ResourceTagControls'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { AnnotationValidationError, TextAnnotation } from '../../../../../shared/annotations'
+import {
+  PDF_MARK_COLORS,
+  PDF_MARK_KINDS,
+  type PdfMarkColor,
+  type PdfMarkKind
+} from '../../../../../shared/pdf-bookmarks'
 import { AnnotationTrigger, type AnnotationTriggerAction } from './AnnotationTrigger'
 
 type AnnotationControl = Readonly<{
@@ -21,9 +28,16 @@ const annotationQuote = (annotation: TextAnnotation): string => annotation.quote
 
 type AnnotationEditorVariant = 'workspace' | 'preview'
 
+type BookmarkSaveInput = Readonly<{
+  note: string
+  markKind: PdfMarkKind
+  color: PdfMarkColor
+  tagIds: readonly string[]
+}>
+
 type BookmarkDraftAction = Readonly<{
   available: boolean
-  onSave: (note: string) => Promise<void>
+  onSave: (input: BookmarkSaveInput) => Promise<void>
 }>
 
 const editorPresentation = {
@@ -101,7 +115,7 @@ const AnnotationMarkers = ({
                       setEditingNote(annotation.note ?? '')
                     }}
                   >
-                    <Pencil className="size-3" aria-hidden="true" />
+                    <Pencil className="size-4" aria-hidden="true" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-72 truncate bg-muted text-foreground">
@@ -188,6 +202,139 @@ const AnnotationMarkers = ({
   )
 }
 
+type PdfTextMarkStyle = Readonly<{ kind: Exclude<PdfMarkKind, 'area'>; color: PdfMarkColor }>
+
+const PdfMarkColorControls = ({
+  value,
+  onChange,
+  disabled = false
+}: {
+  value: PdfMarkColor
+  onChange: (color: PdfMarkColor) => void
+  disabled?: boolean
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const markColorLabel = (color: PdfMarkColor): string =>
+    color === 'yellow'
+      ? t('Yellow')
+      : color === 'blue'
+        ? t('Blue')
+        : color === 'green'
+          ? t('Green')
+          : color === 'pink'
+            ? t('Pink')
+            : t('Purple')
+  return (
+    <TooltipProvider delayDuration={800}>
+      <fieldset className="space-y-2">
+        <legend className="text-xs font-medium">{t('Color')}</legend>
+        <div className="flex gap-2" role="group" aria-label={t('Color')}>
+          {PDF_MARK_COLORS.map((color) => (
+            <Tooltip key={color}>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={disabled}
+                  aria-label={markColorLabel(color)}
+                  aria-pressed={value === color}
+                  className={cn(
+                    'annotation-color-button disabled:opacity-50 disabled:pointer-events-none inline-flex size-8 shrink-0 items-center justify-center rounded border border-border/50 text-background ring-offset-2 ring-offset-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    value === color && 'ring-2 ring-foreground'
+                  )}
+                  style={{
+                    backgroundColor: `var(--color-${color === 'yellow' ? 'amber' : color === 'pink' ? 'rose' : color}-300)`
+                  }}
+                  onClick={() => onChange(color)}
+                >
+                  {value === color ? (
+                    <Check
+                      className="size-4 text-neutral-900"
+                      strokeWidth={2.5}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="z-[120]">{markColorLabel(color)}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      </fieldset>
+    </TooltipProvider>
+  )
+}
+
+const PdfTextMarkControls = ({
+  value,
+  onChange
+}: {
+  value: PdfTextMarkStyle
+  onChange: (value: PdfTextMarkStyle) => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const markStyleLabel = (kind: PdfMarkKind): string =>
+    kind === 'highlight'
+      ? t('Highlight')
+      : kind === 'underline'
+        ? t('Underline')
+        : kind === 'squiggly'
+          ? t('Wavy underline')
+          : t('Strikethrough')
+  return (
+    <TooltipProvider delayDuration={800}>
+      <fieldset className="space-y-2">
+        <legend className="text-xs font-medium">{t('Mark style')}</legend>
+        <div className="flex gap-2" role="group" aria-label={t('Mark style')}>
+          {PDF_MARK_KINDS.filter((kind) => kind !== 'area').map((kind) => (
+            <Tooltip key={kind}>
+              <TooltipTrigger
+                asChild
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+              >
+                <button
+                  aria-label={markStyleLabel(kind)}
+                  type="button"
+                  aria-pressed={value.kind === kind}
+                  className={cn(
+                    'annotation-tool-button inline-flex size-8 shrink-0 items-center justify-center rounded border text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    value.kind === kind
+                      ? 'border-primary/30 bg-primary/10 text-primary'
+                      : 'border-border/70 text-popover-foreground hover:bg-muted'
+                  )}
+                  onClick={() => onChange({ ...value, kind })}
+                >
+                  {kind === 'highlight' ? (
+                    <Highlighter className="size-4 shrink-0" aria-hidden="true" />
+                  ) : kind === 'underline' ? (
+                    <Underline className="size-4 shrink-0" aria-hidden="true" />
+                  ) : kind === 'squiggly' ? (
+                    <Waves className="size-4 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <Strikethrough className="size-4 shrink-0" aria-hidden="true" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="z-[120]">{markStyleLabel(kind)}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      </fieldset>
+
+      <PdfMarkColorControls
+        value={value.color}
+        onChange={(color) => onChange({ ...value, color })}
+      />
+    </TooltipProvider>
+  )
+}
+
 const AnnotationDraftEditor = ({
   range,
   backward,
@@ -201,6 +348,7 @@ const AnnotationDraftEditor = ({
   onAdd,
   annotationBlockedByHistoricalVersion = false,
   triggerActions,
+  onDismissSelection,
   bookmark,
   initialDestination = 'agent',
   bookmarkOnly = false
@@ -216,6 +364,7 @@ const AnnotationDraftEditor = ({
   onNoteChange: (note: string) => void
   onAdd: () => void
   annotationBlockedByHistoricalVersion?: boolean
+  onDismissSelection?: () => void
   triggerActions?: readonly AnnotationTriggerAction[]
   bookmark?: BookmarkDraftAction
   initialDestination?: 'agent' | 'bookmark'
@@ -236,6 +385,11 @@ const AnnotationDraftEditor = ({
   const setActiveTab = (active: 'agent' | 'bookmark'): void =>
     setTabState({ active, initial: initialDestination, open })
   const [bookmarkNote, setBookmarkNote] = useState('')
+  const [bookmarkStyle, setBookmarkStyle] = useState<PdfTextMarkStyle>({
+    kind: 'highlight',
+    color: 'yellow'
+  })
+  const [bookmarkTags, setBookmarkTags] = useState<string[]>([])
   const [bookmarkSaving, setBookmarkSaving] = useState(false)
   const [bookmarkError, setBookmarkError] = useState<string>()
   // The blocked state keeps the selection trigger visible while its explanation is open.
@@ -280,6 +434,7 @@ const AnnotationDraftEditor = ({
           }
         }}
         actions={effectiveTriggerActions}
+        onDismiss={onDismissSelection}
         actionMenuLabel={triggerActions ? t('Selection actions') : undefined}
       />
       {blockedOpen ? (
@@ -289,7 +444,7 @@ const AnnotationDraftEditor = ({
           side="bottom"
           sideOffset={6}
           collisionPadding={presentation.collisionPadding}
-          className="z-[110] w-72 border border-destructive/30 bg-popover p-3 text-popover-foreground"
+          className="annotation-popover z-[110] w-72 border border-destructive/30 bg-popover p-3 text-popover-foreground"
           onOpenAutoFocus={(event) => event.preventDefault()}
         >
           <div className="flex items-start gap-2 text-xs leading-5 text-destructive">
@@ -305,8 +460,14 @@ const AnnotationDraftEditor = ({
         <PopoverContent
           align="start"
           side="bottom"
+          sideOffset={0}
           collisionPadding={presentation.collisionPadding}
-          className={presentation.contentClassName}
+          className={cn(
+            presentation.contentClassName,
+            'annotation-popover',
+            bookmark &&
+              'max-w-[calc(100vw-1rem)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto'
+          )}
         >
           {bookmark && !bookmarkOnly ? (
             <div
@@ -350,12 +511,12 @@ const AnnotationDraftEditor = ({
             </div>
           ) : (
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {bookmarkOnly ? t('For me') : t('To Agent')}
+              {bookmarkOnly ? t('Annotate') : t('To Agent')}
             </div>
           )}
           {activeTab === 'bookmark' && bookmark ? (
             <div
-              className="truncate rounded bg-muted/60 px-1.5 py-1 text-[10px] leading-4 text-muted-foreground"
+              className="line-clamp-2 break-words rounded bg-muted/60 px-2 py-1.5 text-xs leading-5 text-muted-foreground"
               title={range.toString()}
             >
               {range.toString()}
@@ -363,6 +524,9 @@ const AnnotationDraftEditor = ({
           ) : null}
           {activeTab === 'bookmark' && bookmark ? (
             <>
+              {bookmarkOnly ? (
+                <PdfTextMarkControls value={bookmarkStyle} onChange={setBookmarkStyle} />
+              ) : null}
               <label className="block text-xs font-medium" htmlFor={`${noteInputId}-bookmark`}>
                 {t('Note (optional)')}
               </label>
@@ -372,14 +536,28 @@ const AnnotationDraftEditor = ({
 
                 autoFocus
                 value={bookmarkNote}
-                maxLength={2_000}
-                placeholder={t('Optional — a note for your future self…')}
+                maxLength={bookmarkOnly ? 20_000 : 2_000}
+                placeholder={
+                  bookmarkOnly ? t('Annotation note') : t('Optional — a note for your future self…')
+                }
                 disabled={!bookmark.available || bookmarkSaving}
                 onChange={(event) => setBookmarkNote(event.target.value)}
               />
+              {bookmarkOnly ? (
+                <>
+                  <div className="text-xs font-medium">{t('Tags')}</div>
+                  <TagSelection
+                    value={bookmarkTags}
+                    onChange={setBookmarkTags}
+                    disabled={!bookmark.available || bookmarkSaving}
+                  />
+                </>
+              ) : null}
               {!bookmark.available ? (
                 <p role="status" className="text-xs text-muted-foreground">
-                  {t('Bookmarks are available after this conversation is saved.')}
+                  {bookmarkOnly
+                    ? t('Annotations are available after this conversation is saved.')
+                    : t('Bookmarks are available after this conversation is saved.')}
                 </p>
               ) : null}
               {bookmarkError ? (
@@ -400,10 +578,19 @@ const AnnotationDraftEditor = ({
                     setBookmarkSaving(true)
                     setBookmarkError(undefined)
                     void bookmark
-                      .onSave(bookmarkNote.trim())
+                      .onSave({
+                        note: bookmarkNote.trim(),
+                        markKind: bookmarkStyle.kind,
+                        color: bookmarkStyle.color,
+                        tagIds: bookmarkTags
+                      })
                       .catch((error: unknown) => {
                         console.error('Failed to save bookmark', error)
-                        setBookmarkError(t('Bookmark could not be saved. Try again.'))
+                        setBookmarkError(
+                          bookmarkOnly
+                            ? t('Annotation could not be saved. Try again.')
+                            : t('Bookmark could not be saved. Try again.')
+                        )
                       })
                       .finally(() => setBookmarkSaving(false))
                   }}
@@ -414,7 +601,7 @@ const AnnotationDraftEditor = ({
                       aria-hidden="true"
                     />
                   ) : null}
-                  {t('Bookmark')}
+                  {bookmarkOnly ? t('Save annotation') : t('Bookmark')}
                 </Button>
               </div>
             </>
@@ -466,5 +653,5 @@ const AnnotationDraftEditor = ({
   )
 }
 
-export { AnnotationDraftEditor, AnnotationMarkers }
-export type { AnnotationControl, BookmarkDraftAction }
+export { AnnotationDraftEditor, AnnotationMarkers, PdfTextMarkControls, PdfMarkColorControls }
+export type { AnnotationControl, BookmarkDraftAction, BookmarkSaveInput, PdfTextMarkStyle }

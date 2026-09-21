@@ -3,12 +3,12 @@ import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-com
 import { lazy, memo, Suspense, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DeferredPresentationOwner } from '@/components/DeferredPresentationOwner'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { ActionToast, ActionToastStack, BottomNoticeStack } from '@/components/ActionToast'
 import { ConnectorAuthToast } from '@/components/ConnectorAuthToast'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { ErrorNotice } from '@/components/error-notice'
-import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
 import { LanguageSaveToast } from '@/components/LanguageControls'
@@ -19,7 +19,6 @@ import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { StorageCleanupToast } from '@/components/StorageCleanupToast'
-import { UpdateDialog } from '@/components/UpdateDialog'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
 import { useApplicationStartup } from '@/hooks/useApplicationStartup'
@@ -73,6 +72,14 @@ const SkillImportApprovalDialog = lazy(() =>
   import('@/pages/settings/SkillImportApprovalDialog').then(({ SkillImportApprovalDialog }) => ({
     default: SkillImportApprovalDialog
   }))
+)
+const GlobalSearchDialog = lazy(() =>
+  import('@/components/global-search/GlobalSearchDialog').then(({ GlobalSearchDialog }) => ({
+    default: GlobalSearchDialog
+  }))
+)
+const UpdateDialog = lazy(() =>
+  import('@/components/UpdateDialog').then(({ UpdateDialog }) => ({ default: UpdateDialog }))
 )
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
@@ -199,6 +206,7 @@ const ApplicationPresentationContent = ({
           title={t('Saved conversations could not be loaded')}
           message={sessions.loadError}
           inline
+          className="max-w-md"
           onRetry={sessions.retryLoad}
         />
       </main>
@@ -372,26 +380,34 @@ const ApplicationPresentationContent = ({
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
         <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
-        <SkillImportApprovalDialog
-          active={activePresentation === 'skillImportApproval'}
-          blockedSessionIds={events.blockedApprovalSessionIds}
-        />
         <ComputeApprovalDialog
           active={activePresentation === 'computeApproval'}
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
       </Suspense>
-      <UpdateDialog active={activePresentation === 'update'} />
+      <DeferredPresentationOwner active={activePresentation === 'skillImportApproval'}>
+        {(active) => (
+          <SkillImportApprovalDialog
+            active={active}
+            blockedSessionIds={events.blockedApprovalSessionIds}
+          />
+        )}
+      </DeferredPresentationOwner>
+      <DeferredPresentationOwner active={activePresentation === 'update'}>
+        {(active) => <UpdateDialog active={active} />}
+      </DeferredPresentationOwner>
       <CloseConfirmModal
         active={activePresentation === 'closeConfirmation'}
         onOpenChange={events.closeConfirmation.setOpen}
       />
       {activePresentation === 'globalSearch' ? (
-        <GlobalSearchDialog
-          open
-          onOpenChange={events.globalSearch.setOpen}
-          isSessionPersistenceReady={sessions.isReady}
-        />
+        <Suspense fallback={null}>
+          <GlobalSearchDialog
+            open
+            onOpenChange={events.globalSearch.setOpen}
+            isSessionPersistenceReady={sessions.isReady}
+          />
+        </Suspense>
       ) : null}
       <DataRootMissingDialog
         open={activePresentation === 'dataRootRecovery'}

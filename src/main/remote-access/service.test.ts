@@ -798,28 +798,33 @@ describe('RemoteAccessService', () => {
       ...deps,
       broadcast: vi.fn()
     })
-    service.attachWebController(webController())
-    await service.setMode('remoteit')
-    await service.webAccess.authorizeHttp(
-      remoteRequest('private-app.r3proxy.com'),
-      remoteResponse(),
-      new URL('https://private-app.r3proxy.com/')
-    )
-    const [pending] = service.snapshot(true).pendingRequests
-    await service.approve({ requestId: pending.id, decision: 'always' })
+    try {
+      service.attachWebController(webController())
+      await service.setMode('remoteit')
+      await service.webAccess.authorizeHttp(
+        remoteRequest('private-app.r3proxy.com'),
+        remoteResponse(),
+        new URL('https://private-app.r3proxy.com/')
+      )
+      const [pending] = service.snapshot(true).pendingRequests
+      await service.approve({ requestId: pending.id, decision: 'always' })
 
-    const persist = repository.save.bind(repository)
-    vi.spyOn(repository, 'save')
-      .mockRejectedValueOnce(new Error('cleanup persistence failed'))
-      .mockImplementation((value) => persist(value))
+      const persist = repository.save.bind(repository)
+      vi.spyOn(repository, 'save')
+        .mockRejectedValueOnce(new Error('cleanup persistence failed'))
+        .mockImplementation((value) => persist(value))
 
-    await expect(service.setMode('remoteit-public')).resolves.toMatchObject({
-      mode: 'remoteit-public',
-      enabled: false,
-      lifecycle: 'error',
-      error: 'cleanup persistence failed'
-    })
-    expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
+      await expect(service.setMode('remoteit-public')).resolves.toMatchObject({
+        mode: 'remoteit-public',
+        enabled: false,
+        lifecycle: 'error',
+        error: 'cleanup persistence failed'
+      })
+      expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
+    } finally {
+      // Error snapshots can retry cleanup in the background; drain it before removing the root.
+      await service.shutdown()
+    }
   })
 
   it('soft-disables access without deleting either provider service', async () => {

@@ -8,6 +8,7 @@ import type {
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import { hasDurableRuntimeSessionAdmission } from '../../shared/runtime-session-admission'
 import { sha256 } from './provenance-canonical'
 import {
   parseArtifactExecutionSnapshot,
@@ -334,6 +335,8 @@ export const validateDurableMessageOwnership = (
   // after the provider turn terminates, while the renderer may not have applied its following stop event
   // yet; an internal disk load can also normalize that still-streaming node to error. Frame, Branch,
   // Runtime Segment, role, and ordered path identity remain the fail-closed ownership boundary.
+  // A resumed execution keeps the user's original Message provenance. Only Main's durable
+  // admission can authorize that cross-Segment relationship after recovery state is consumed.
   if (
     promptIndex < 0 ||
     !promptMessage ||
@@ -341,7 +344,9 @@ export const validateDurableMessageOwnership = (
     promptMessage.status !== 'complete' ||
     promptMessage.agentFrameId !== context.agentFrameId ||
     promptMessage.introducedOnBranchId !== context.messageBranchId ||
-    promptMessage.runtimeSegmentId !== context.runtimeSegmentId
+    !promptMessage.runtimeSegmentId ||
+    (promptMessage.runtimeSegmentId !== context.runtimeSegmentId &&
+      !hasDurableRuntimeSessionAdmission(session, context, promptMessage.runtimeSegmentId))
   ) {
     throw new ArtifactFinalizationProofError(
       'prompt-ownership-mismatch',

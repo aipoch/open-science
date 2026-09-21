@@ -142,7 +142,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],

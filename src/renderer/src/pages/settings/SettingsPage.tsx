@@ -1,4 +1,7 @@
 import { SettingsFormFooter } from './SettingsLayout'
+import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
+import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { Notice } from '@/components/notice'
 import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
@@ -38,6 +41,7 @@ import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
   forwardRef,
   lazy,
+  Suspense,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -383,6 +387,12 @@ const SETTINGS_WRITE_ERROR_COPY: Record<SettingsWriteErrorCode, string> = {
 const EMPTY_USAGE_SESSIONS = [] as const
 const EMPTY_USAGE_PROJECTS = [] as const
 
+const PdfAnnotationPreviewDialog = lazy(() =>
+  import('../workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((module) => ({
+    default: module.PdfAnnotationPreviewDialog
+  }))
+)
+
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
@@ -399,6 +409,49 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   ref
 ): React.JSX.Element {
   const { t } = useTranslation()
+  const [tagAnnotationError, setTagAnnotationError] = useState<string>()
+  const [openingTagAnnotation, setOpeningTagAnnotation] = useState(false)
+  const [tagAnnotationPreview, setTagAnnotationPreview] = useState<{
+    annotation: PdfAnnotation
+    item: PreviewFileItem
+  }>()
+  const tagAnnotationRequest = useRef(0)
+  useEffect(() => {
+    if (!open) {
+      tagAnnotationRequest.current += 1
+      setOpeningTagAnnotation(false)
+      setTagAnnotationError(undefined)
+      setTagAnnotationPreview(undefined)
+    }
+    return () => {
+      tagAnnotationRequest.current += 1
+    }
+  }, [open])
+  const openTaggedPdfAnnotation = async (id: string): Promise<void> => {
+    const sequence = ++tagAnnotationRequest.current
+    const reference = useTagStore.getState().pdfAnnotations?.find((item) => item.id === id)
+    setTagAnnotationError(undefined)
+    setOpeningTagAnnotation(true)
+    try {
+      if (!reference) throw new Error('Missing annotation')
+      const scope =
+        reference.literatureItemId && reference.versionId
+          ? { literatureVersionId: reference.versionId }
+          : { projectId: reference.projectId }
+      const result = await window.api.pdfAnnotations.list({ ...scope, id, limit: 1 })
+      if (sequence !== tagAnnotationRequest.current) return
+      const annotation = result.items.find((item) => item.id === id)
+      if (!annotation) throw new Error('Missing annotation')
+      const item = createBookmarkPreviewItem({ id, kind: 'pdf', ...annotation.target })
+      if (!item) throw new Error('Missing source')
+      setTagAnnotationPreview({ annotation, item })
+    } catch {
+      if (sequence === tagAnnotationRequest.current)
+        setTagAnnotationError(t('PDF annotations are unavailable for this source.'))
+    } finally {
+      if (sequence === tagAnnotationRequest.current) setOpeningTagAnnotation(false)
+    }
+  }
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -1705,48 +1758,69 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }
                       />
                     ) : activePanel === 'tags' ? (
-                      <TagsPanel
-                        view={tagsView}
-                        onNavigate={navigateTags}
-                        onSelectedTagChange={recordSelectedTag}
-                        onOpenResource={(reference) => {
-                          if (reference.resourceType === 'catalog.skill') {
+                      <>
+                        {openingTagAnnotation ? (
+                          <div
+                            role="status"
+                            className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground"
+                          >
+                            <Loader2
+                              className="size-4 animate-spin motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                            {t('Loading annotations…')}
+                          </div>
+                        ) : null}
+                        {tagAnnotationError ? (
+                          <ErrorNotice tone="amber" description={tagAnnotationError} />
+                        ) : null}
+                        <TagsPanel
+                          view={tagsView}
+                          onNavigate={navigateTags}
+                          onSelectedTagChange={recordSelectedTag}
+                          onOpenResource={(reference) => {
+                            if (reference.resourceType === 'catalog.skill') {
+                              navigate({
+                                panel: 'skills',
+                                view: { kind: 'detail', id: reference.resourceId }
+                              })
+                              return
+                            }
+                            if (reference.resourceType === 'catalog.connector') {
+                              navigate({
+                                panel: 'connectors',
+                                view: customServers.some(
+                                  (server) => server.id === reference.resourceId
+                                )
+                                  ? { kind: 'edit', id: reference.resourceId }
+                                  : { kind: 'detail', id: reference.resourceId }
+                              })
+                              return
+                            }
+                            if (reference.resourceType === 'pdf.annotation') {
+                              void openTaggedPdfAnnotation(reference.resourceId)
+                              return
+                            }
+                            if (reference.resourceType === 'literature.item') {
+                              useNavigationStore
+                                .getState()
+                                .openLiteratureItem(reference.resourceId, 'user')
+                              onClose()
+                              return
+                            }
+                            const specialist = specialistItems.find(
+                              (item) => item.id === reference.resourceId
+                            )
                             navigate({
-                              panel: 'skills',
-                              view: { kind: 'detail', id: reference.resourceId }
+                              panel: 'specialists',
+                              view:
+                                specialist?.kind === 'builtin'
+                                  ? { kind: 'builtin', id: reference.resourceId }
+                                  : { kind: 'edit', id: reference.resourceId }
                             })
-                            return
-                          }
-                          if (reference.resourceType === 'catalog.connector') {
-                            navigate({
-                              panel: 'connectors',
-                              view: customServers.some(
-                                (server) => server.id === reference.resourceId
-                              )
-                                ? { kind: 'edit', id: reference.resourceId }
-                                : { kind: 'detail', id: reference.resourceId }
-                            })
-                            return
-                          }
-                          if (reference.resourceType === 'literature.item') {
-                            useNavigationStore
-                              .getState()
-                              .openLiteratureItem(reference.resourceId, 'user')
-                            onClose()
-                            return
-                          }
-                          const specialist = specialistItems.find(
-                            (item) => item.id === reference.resourceId
-                          )
-                          navigate({
-                            panel: 'specialists',
-                            view:
-                              specialist?.kind === 'builtin'
-                                ? { kind: 'builtin', id: reference.resourceId }
-                                : { kind: 'edit', id: reference.resourceId }
-                          })
-                        }}
-                      />
+                          }}
+                        />
+                      </>
                     ) : activePanel === 'memory' ? (
                       <MemoryPanel
                         view={memoryView}
@@ -2175,6 +2249,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      {open && tagAnnotationPreview ? (
+        <Suspense fallback={null}>
+          <PdfAnnotationPreviewDialog
+            {...tagAnnotationPreview}
+            onClose={() => setTagAnnotationPreview(undefined)}
+            onError={setTagAnnotationError}
+          />
+        </Suspense>
+      ) : null}
     </Dialog.Root>
   )
 })

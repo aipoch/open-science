@@ -69,7 +69,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways and g:Profiler.',
     useWhen:
-      'Use when you need to resolve gene symbols/identifiers (mygene.info), fetch UniProt protein records, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, or run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction.',
+      'Use when you need to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, or run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction.',
     sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
@@ -78,10 +78,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'genomes',
     displayName: 'Genomes',
     description:
-      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence and browser tracks — NCBI Datasets, Ensembl REST and the UCSC Genome Browser.',
+      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence, similarity search and browser tracks — NCBI Datasets/BLAST, Ensembl REST and the UCSC Genome Browser.',
     useWhen:
-      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
-    sources: ['NCBI Datasets', 'Ensembl', 'UCSC'],
+      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, identify an unknown nucleotide or protein sequence with an asynchronous NCBI BLAST search, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
+    sources: ['NCBI Datasets', 'NCBI BLAST', 'Ensembl', 'UCSC'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
   },
@@ -224,7 +224,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).',
     useWhen:
-      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies and analyses in MGnify (MGYS, by free text or biome lineage); or proteomics projects and proteins in PRIDE Archive (PXD, by keyword/organism/instrument/disease, or protein↔project). Resolve ENA/INSDC study, experiment or sample accessions to sequencing runs and list archive-generated FASTQ URLs, sizes and MD5 checksums for a run (ENA); resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, MGnify and PRIDE.',
+      'Use when finding or looking up omics datasets across the major archives — functional-genomics / expression experiments in ArrayExpress (BioStudies) or NCBI GEO series (by keyword, organism, assay, or accession, with per-sample metadata); metabolomics studies and data files in MetaboLights (MTBLS); metagenomics studies and analyses in MGnify (MGYS, by free text or biome lineage); or proteomics projects, proteins and paged project file inventories with download locations in PRIDE Archive (PXD/PRD, by keyword/organism/instrument/disease, or protein↔project). Discover ENA sequencing runs by taxonomy, library strategy and title/description keywords, or resolve ENA/INSDC study, experiment or sample accessions to runs. List archive-generated FASTQ URLs or original submitted file locations (including BAM/CRAM), sizes and MD5 checksums for a run; resolve GEO/ArrayExpress/MGnify IDs to linked INSDC accessions first. Sourced from ArrayExpress, GEO, ENA, MetaboLights, MGnify and PRIDE.',
     sources: ['ArrayExpress', 'GEO', 'ENA', 'MetaboLights', 'MGnify', 'PRIDE'],
     termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
     requiresNcbi: true

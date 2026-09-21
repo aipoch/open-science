@@ -1564,19 +1564,6 @@ const ConversationPanel = ({
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
                     >
-                      <div className="mb-2 flex justify-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          data-testid="blocked-composer-side-chat"
-                          disabled={!canOpenSideChat}
-                          title={openSideChatReason}
-                          onClick={() => sideChatController.createDraft?.()}
-                        >
-                          {t('New side chat')}
-                        </Button>
-                      </div>
                       {hasPendingPermission ? (
                         <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
                           <PermissionApprovalControls

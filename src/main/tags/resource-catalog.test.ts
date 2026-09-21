@@ -14,6 +14,7 @@ describe('TagResourceCatalog', () => {
         ]),
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [] }),
       listSpecialists: vi.fn().mockResolvedValue([]),
+      listPdfAnnotations: async () => [],
       listLiteratureItems: vi.fn().mockResolvedValue([])
     })
 

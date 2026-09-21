@@ -61,10 +61,12 @@ type PreviewPanelSurfaceProps = PreviewInteractionPort & {
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
 const PreviewActiveContent = ({
   item,
+  isActive = true,
   restoredPlanResponder,
   ...annotationPort
 }: {
   item: PreviewItem | undefined
+  isActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 } & PreviewAnnotationPort): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -81,7 +83,13 @@ const PreviewActiveContent = ({
     return <SideChatWorkbenchContent item={item} />
 
   if (item.type === 'tool') {
-    return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
+    return (
+      <PreviewToolContent
+        item={item}
+        isActive={isActive}
+        restoredPlanResponder={restoredPlanResponder}
+      />
+    )
   }
 
   if (item.type === 'source') return <SourceWebPreview item={item} />
@@ -761,10 +769,14 @@ const PreviewToolPanel = ({
             ? dialogPanelClassName(
                 'z-[56] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
               )
-            : 'h-full min-h-0 w-full overflow-y-auto'
+            : 'scrollbar-auto-hide h-full min-h-0 w-full overflow-y-auto'
         }
       >
-        <PreviewActiveContent item={item} restoredPlanResponder={restoredPlanResponder} />
+        <PreviewActiveContent
+          item={item}
+          isActive={isActive}
+          restoredPlanResponder={restoredPlanResponder}
+        />
       </section>
     </>
   )

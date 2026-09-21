@@ -81,7 +81,7 @@ describe('TextAnnotationSurface highlight restoration', () => {
       itemType: 'tool-activity' as const,
       sectionId: 'output'
     }
-  ])('retains observers when parent updates preserve the source values ($kind)', async (source) => {
+  ])('pauses streaming observers while preserving the source values ($kind)', async (source) => {
     let mutationCount = 0
     let resizeCount = 0
     const Original = globalThis.MutationObserver
@@ -115,6 +115,15 @@ describe('TextAnnotationSurface highlight restoration', () => {
       )
     }
     expect(container.textContent).toContain('Streaming text 20')
+    expect({ mutationCount, resizeCount }).toEqual({ mutationCount: 0, resizeCount: 0 })
+
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface source={{ ...source }}>
+          <p>Streaming complete</p>
+        </TextAnnotationSurface>
+      )
+    )
     expect({ mutationCount, resizeCount }).toEqual({ mutationCount: 1, resizeCount: 1 })
   })
 
@@ -299,6 +308,84 @@ describe('TextAnnotationSurface highlight restoration', () => {
     expect(reconciled?.startOffset).toBe(7)
   })
 
+  it('clears annotation markers when streaming removes their source annotation', async () => {
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [
+        {
+          left: 10,
+          right: 90,
+          top: 24,
+          bottom: 40,
+          width: 80,
+          height: 16
+        }
+      ]
+    })
+    const active = [annotation('streaming-marker', 'repeat')]
+    const renderWith = async (
+      activeAnnotations: readonly TextAnnotation[],
+      isAnimating: boolean
+    ): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={activeAnnotations}
+            isAnimating={isAnimating}
+          >
+            <p>repeat then repeat</p>
+          </TextAnnotationSurface>
+        )
+      )
+    }
+
+    await renderWith(active, false)
+    expect(container.querySelector('[data-text-annotation-edit]')).not.toBeNull()
+
+    await renderWith([], true)
+    expect(container.querySelector('[data-text-annotation-edit]')).toBeNull()
+  })
+
+  it('hides existing annotation markers while streaming and restores them afterwards', async () => {
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [
+        {
+          left: 10,
+          right: 90,
+          top: 24,
+          bottom: 40,
+          width: 80,
+          height: 16
+        }
+      ]
+    })
+    const active = [annotation('streaming-position', 'repeat')]
+    const renderWith = async (isAnimating: boolean): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={active}
+            isAnimating={isAnimating}
+          >
+            <p>repeat then repeat</p>
+          </TextAnnotationSurface>
+        )
+      )
+    }
+
+    await renderWith(false)
+    expect(container.querySelector('[data-text-annotation-edit]')).not.toBeNull()
+
+    await renderWith(true)
+    expect(container.querySelector('[data-text-annotation-edit]')).toBeNull()
+
+    await renderWith(false)
+    expect(container.querySelector('[data-text-annotation-edit]')).not.toBeNull()
+  })
+
   it('keeps a saved code quote highlighted and revealable after async syntax highlighting', async () => {
     const saved = {
       ...annotation('async-code', 'const answer = 42'),
@@ -471,6 +558,38 @@ describe('TextAnnotationSurface highlight restoration', () => {
     expect(observe).toHaveBeenCalledTimes(2)
     await act(async () => root.render(<div>Unmounted surface</div>))
     expect(disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('does not read marker geometry while streaming', async () => {
+    let notifyResize: (() => void) | undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          notifyResize = () => callback([], this as unknown as ResizeObserver)
+        }
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[annotation('streaming', 'repeat')]}
+          isAnimating
+        >
+          <p>repeat then repeat</p>
+        </TextAnnotationSurface>
+      )
+    )
+    const surface = container.querySelector<HTMLElement>('[data-annotation-surface]')!
+    const measure = vi.spyOn(surface, 'getBoundingClientRect')
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      notifyResize?.()
+    })
+    expect(measure).not.toHaveBeenCalled()
   })
 
   it.each(['Save', 'Cancel', 'Remove annotation'] as const)(

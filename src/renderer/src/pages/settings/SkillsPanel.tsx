@@ -403,13 +403,18 @@ const SkillsPanel = ({
             <Store data-icon="inline-start" aria-hidden="true" />
             {t('Browse Marketplace')}
           </Button>
-          <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
+          <Button
+            type="button"
+            variant="outline"
+            data-settings-anchor="skills.manage"
+            onClick={() => onNavigate({ kind: 'manage' })}
+          >
             <ListChecks data-icon="inline-start" aria-hidden="true" />
             {t('Manage')}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="shrink-0">
+              <Button variant="outline" className="shrink-0" data-settings-anchor="skills.add">
                 <Plus data-icon="inline-start" aria-hidden="true" />
                 {t('Add skill')}
                 <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -781,6 +786,7 @@ const SkillsPanel = ({
         })}
       </div>
       <SettingsSection
+        data-settings-anchor="skills.conversation-imports"
         title={t('Conversation imports')}
         description={t('Choose what conversations can import into Open-Science.')}
         aria-label={t('Conversation imports')}

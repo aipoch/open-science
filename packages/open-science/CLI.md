@@ -460,8 +460,28 @@ open-science run \
   --json
 ```
 
-The default approval profile is `ask`. Unattended workflows must explicitly use
-`--approval-profile auto` or `--approval-profile full` when that access is appropriate.
+The default approval profile is `ask`. For unattended execution, explicitly add
+`--permission-prompts none`. This keeps the selected approval profile and existing grants;
+it denies any remaining request that would require a person. `auto` can still require approval,
+and `full` does not answer questions or approve Plans on the user's behalf.
+
+```bash
+open-science run --project <project-id> --prompt-file ./task.md \
+  --approval-profile auto --permission-prompts none --wait --jsonl
+```
+
+This option applies only to this Run and its delegated work. It is not a saved Session or Project
+preference. Ordinary questions are declined, and generating a Plan that requires approval is
+rejected; combining it with `--plan-first` fails before starting work. The agent can use an already
+authorized alternative or report that it could not finish. A completed Run means the agent finished
+its turn, not that every requested operation succeeded. JSONL events include declined tool results;
+inspect those and the final output when deciding whether the task achieved its goal.
+
+The CLI checks host support before starting an unattended Run. An older daemon without the
+`permission-prompts-none` capability returns `unsupported_capability`; update the host rather than
+silently running a task that might wait for a person. Omitting the option retains existing behavior,
+including Desktop/Web approval for unresolved ordinary permissions. There are no ordinary
+`permission list/show/approve` CLI commands. `--return-on-attention` only covers Plan approval.
 
 ### Execution controls
 

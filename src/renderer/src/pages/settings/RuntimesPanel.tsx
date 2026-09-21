@@ -860,6 +860,7 @@ const RuntimesPanel = ({
   return (
     <div className="p-5" data-testid="runtimes-panel">
       <SettingsSection
+        data-settings-anchor="runtimes.runtimes"
         title={title}
         headingAs={headingAs}
         description={description}

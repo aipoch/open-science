@@ -21,9 +21,12 @@ import type { UploadCommandOwner } from './command-owner'
 import { UploadRepository } from './repository'
 
 // Uploads are data-class: they follow the configurable data root (defaults to the config root).
-const createDefaultUploadRepository = (): UploadRepository =>
+const createDefaultUploadRepository = (
+  onFinalized?: NonNullable<ConstructorParameters<typeof UploadRepository>[1]>['onFinalized']
+): UploadRepository =>
   new UploadRepository(resolveDataRoot(), {
-    getClient: () => getProjectDbClient(resolveConfigRoot())
+    getClient: () => getProjectDbClient(resolveConfigRoot()),
+    onFinalized
   })
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.

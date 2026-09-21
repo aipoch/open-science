@@ -244,6 +244,57 @@ const parentMessageSession = (): PersistedChatSession => {
 }
 
 describe('RuntimeSessionOwner', () => {
+  it('rejects an execution identity already admitted on a different prompt path', async () => {
+    const turn = scope()
+    const durable = session(turn)
+    durable.runtimeSessionAdmissions = [
+      {
+        executionId: turn.executionId,
+        promptMessageId: 'different-prompt',
+        promptRuntimeSegmentId: turn.runtimeSegmentId,
+        rootFrameId: turn.agentFrameId,
+        agentFrameId: turn.agentFrameId,
+        messageBranchId: turn.messageBranchId,
+        runtimeSegmentId: turn.runtimeSegmentId
+      }
+    ]
+    const { owner, sessions } = harness([durable])
+    await expect(owner.begin(turn)).rejects.toThrow('conflicts with its durable admission')
+    expect(sessions.get(turn.sessionId)?.runtimeSessionAdmissions).toEqual(
+      durable.runtimeSessionAdmissions
+    )
+  })
+
+  it('fails closed on conflicting serialized admission identities', () => {
+    const turn = scope()
+    const admission = {
+      executionId: turn.executionId,
+      promptMessageId: turn.promptMessageId,
+      promptRuntimeSegmentId: turn.runtimeSegmentId,
+      rootFrameId: turn.agentFrameId,
+      agentFrameId: turn.agentFrameId,
+      messageBranchId: turn.messageBranchId,
+      runtimeSegmentId: turn.runtimeSegmentId
+    }
+    const restored = normalizeSessionFile(
+      JSON.parse(
+        JSON.stringify({
+          ...session(turn),
+          runtimeTranscriptOwner: 'main',
+          runtimeSessionAdmissions: [
+            admission,
+            { ...admission, runtimeSegmentId: 'conflicting-segment' },
+            { ...admission, executionId: 'valid-history' },
+            { ...admission, executionId: '', runtimeSegmentId: 'malformed' }
+          ]
+        })
+      )
+    )!
+    expect(restored.runtimeSessionAdmissions).toEqual([
+      { ...admission, executionId: 'valid-history' }
+    ])
+  })
+
   it('durably admits a fenced parent message without adding a user message', async () => {
     const turn = { ...scope(), runtimeSegmentId: 'delegated-message-message-1' }
     const durable = parentMessageSession()
@@ -312,6 +363,117 @@ describe('RuntimeSessionOwner', () => {
     )
     expect(sessions.get(turn.sessionId)!.activeRun).toBeUndefined()
     expect(sessions.get(turn.sessionId)!.conversationGraph!.runtimeSegments).toHaveLength(1)
+  })
+
+  describe('application turn admission', () => {
+    const applicationPrompt = {
+      text: 'Background result ready.',
+      attribution: {
+        kind: 'application' as const,
+        feature: 'background-results' as const,
+        purpose: 'agent-result-delivery' as const,
+        deliveryKey: 'delivery-1',
+        deliveryIds: ['local-run:run-1']
+      }
+    }
+    const idle = (): PersistedChatSession => ({
+      ...session(),
+      status: 'idle',
+      activeRun: undefined
+    })
+    const applicationScope = (): RuntimeSessionTurnScope => ({
+      ...scope(),
+      promptMessageId: 'application-prompt'
+    })
+
+    it.each(['background-results', 'reviewer'] as const)(
+      'atomically admits %s prompts and completes their durable reply',
+      async (feature) => {
+        const { owner, sessions, mutateSession } = harness([
+          { ...idle(), error: 'Previous failure' }
+        ])
+        const turn = applicationScope()
+        const prompt =
+          feature === 'background-results'
+            ? applicationPrompt
+            : {
+                text: 'Correct the reviewed finding.',
+                attribution: {
+                  kind: 'application' as const,
+                  feature: 'reviewer' as const,
+                  purpose: 'correction' as const,
+                  causeReviewId: 'review-1'
+                }
+              }
+        const saved = await owner.begin(turn, { applicationPrompt: prompt })
+        expect(mutateSession).toHaveBeenCalledOnce()
+        expect(saved.activeRun?.promptMessageId).toBe(turn.promptMessageId)
+        expect(saved.messages.find(({ id }) => id === turn.promptMessageId)).toMatchObject({
+          content: prompt.text,
+          attribution: prompt.attribution
+        })
+        expect(saved).not.toHaveProperty('applicationPrompt')
+        expect(saved.error).toBeUndefined()
+        owner.accept({ ...messageEvent(turn, 'reply', 'Result received.'), timestamp: 20 })
+        owner.accept(stopEvent(turn, 21))
+        await owner.flush(turn.sessionId, turn.promptMessageId)
+        expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+        expect(sessions.get(turn.sessionId)?.messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: 'agent',
+              status: 'complete',
+              responseToMessageId: turn.promptMessageId
+            })
+          ])
+        )
+      }
+    )
+
+    it('leaves no partial prompt when the single admission write fails, and permits retry', async () => {
+      const { owner, sessions, mutateSession } = harness([idle()])
+      const turn = applicationScope()
+      mutateSession.mockRejectedValueOnce(new Error('disk unavailable'))
+      await expect(owner.begin(turn, { applicationPrompt })).rejects.toThrow('disk unavailable')
+      expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+      expect(
+        sessions.get(turn.sessionId)?.messages.some(({ id }) => id === turn.promptMessageId)
+      ).toBe(false)
+      await owner.begin(turn, { applicationPrompt })
+      await owner.begin(turn, { applicationPrompt })
+      expect(
+        sessions.get(turn.sessionId)?.messages.filter(({ id }) => id === turn.promptMessageId)
+      ).toHaveLength(1)
+    })
+
+    it.each(['archived', 'busy', 'branch', 'segment', 'identity'] as const)(
+      'rejects %s changes without overwriting the Session',
+      async (change) => {
+        const durable = idle()
+        const turn = applicationScope()
+        if (change === 'archived') durable.archivedAt = 2
+        if (change === 'busy') durable.activeRun = { promptMessageId: 'other', startedAt: 2 }
+        if (change === 'branch') turn.messageBranchId = 'other-branch'
+        if (change === 'segment') turn.runtimeSegmentId = 'other-segment'
+        if (change === 'identity') turn.promptMessageId = scope().promptMessageId
+        const { owner, mutateSession } = harness([durable])
+        await expect(owner.begin(turn, { applicationPrompt })).rejects.toThrow()
+        expect(mutateSession).not.toHaveBeenCalled()
+      }
+    )
+
+    it('rechecks the path under the persistence lane after a concurrent branch switch', async () => {
+      const { owner, sessions, mutateSession } = harness([idle()])
+      const original = mutateSession.getMockImplementation()!
+      mutateSession.mockImplementationOnce(async (turn, mutate) => {
+        sessions.get(turn.sessionId)!.conversationGraph!.activeFrameId = 'other-frame'
+        return original(turn, mutate)
+      })
+      await expect(owner.begin(applicationScope(), { applicationPrompt })).rejects.toThrow(
+        'path changed'
+      )
+      expect(sessions.get(scope().sessionId)?.activeRun).toBeUndefined()
+    })
   })
 
   it('rejects a turn whose exact durable prompt path is missing', async () => {
@@ -855,9 +1017,41 @@ describe('RuntimeSessionOwner', () => {
       await owner.flush(turn.sessionId, turn.promptMessageId)
       expect(sessions.get(turn.sessionId)?.messages.at(-1)?.content).toBe('recovered')
       expect(
+        sessions
+          .get(turn.sessionId)
+          ?.conversationGraph?.messages.find((message) => message.content === 'recovered')
+          ?.runtimeSegmentId
+      ).toBe(failure.contextReset ? 'segment-replacement' : turn.runtimeSegmentId)
+      expect(
         sessions.get(turn.sessionId)?.messages.some(({ content }) => content.includes('stale'))
       ).toBe(false)
       expect(sessions.get(turn.sessionId)?.resumeRecovery).toBeUndefined()
+      const durable = sessions.get(turn.sessionId)!
+      const restoredAdmission = normalizeSessionFile(
+        JSON.parse(
+          JSON.stringify({
+            ...durable,
+            runtimeTranscriptOwner: 'main'
+          })
+        )
+      )!
+      expect(restoredAdmission.runtimeSessionAdmissions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            executionId: turn.executionId,
+            runtimeSegmentId: turn.runtimeSegmentId
+          }),
+          {
+            executionId: 'retry-execution',
+            promptMessageId: turn.promptMessageId,
+            promptRuntimeSegmentId: turn.runtimeSegmentId,
+            rootFrameId: turn.agentFrameId,
+            agentFrameId: turn.agentFrameId,
+            messageBranchId: turn.messageBranchId,
+            runtimeSegmentId: failure.contextReset ? 'segment-replacement' : turn.runtimeSegmentId
+          }
+        ])
+      )
       await expect(
         owner.publish({
           appSessionId: turn.sessionId,
@@ -980,6 +1174,87 @@ describe('RuntimeSessionOwner', () => {
       'Continuing with the chosen dataset.'
     )
   })
+
+  it.each([false, true])(
+    'continues a resumed Segment after recovery was consumed; restored=%s',
+    async (restored) => {
+      const original = scope()
+      const resumed = {
+        ...original,
+        runtimeSegmentId: 'segment-resumed',
+        executionId: 'execution-resumed'
+      }
+      const initial = session(original)
+      initial.runtimeTranscriptOwner = 'main'
+      initial.resumeRecovery = {
+        kind: 'resume-required',
+        cause: 'connection-lost',
+        promptMessageId: original.promptMessageId
+      }
+      initial.conversationGraph!.runtimeSegments.push({
+        id: resumed.runtimeSegmentId,
+        agentFrameId: resumed.agentFrameId,
+        frameworkId: 'codex',
+        startedAt: 9
+      })
+      initial.activeRun = { promptMessageId: original.promptMessageId, startedAt: 10 }
+      const first = harness([initial])
+      await first.owner.begin(resumed)
+      expect(first.sessions.get(original.sessionId)?.resumeRecovery).toBeUndefined()
+      first.owner.accept(questionEvent(resumed, 'pending', 11))
+      first.owner.accept(stopEvent(resumed, 12))
+      await first.owner.flush(original.sessionId, original.promptMessageId)
+      first.owner.accept(questionEvent(resumed, 'answered', 13))
+      await first.owner.flush(original.sessionId, original.promptMessageId)
+      const durable = first.sessions.get(original.sessionId)!
+      // The production persistence coordinator stamps the settled run before its next admission.
+      durable.runtimeTranscriptLastRun = {
+        promptMessageId: original.promptMessageId,
+        startedAt: 10
+      }
+      for (const field of [
+        'rootFrameId',
+        'agentFrameId',
+        'messageBranchId',
+        'runtimeSegmentId',
+        'promptMessageId',
+        'promptRuntimeSegmentId'
+      ] as const) {
+        const invalid = structuredClone(durable)
+        invalid.runtimeSessionAdmissions![0][field] = 'unrelated'
+        await expect(
+          harness([invalid]).owner.begin({ ...resumed, executionId: 'rejected-choice' })
+        ).rejects.toThrow('no durable recovery Segment binding')
+      }
+      await expect(
+        harness([{ ...durable, runtimeTranscriptOwner: undefined }]).owner.begin({
+          ...resumed,
+          executionId: 'untrusted-choice'
+        })
+      ).rejects.toThrow('no durable recovery Segment binding')
+      const active = restored
+        ? harness([normalizeSessionFile(JSON.parse(JSON.stringify(durable)))!])
+        : first
+      const continued = await active.owner.begin({
+        ...resumed,
+        executionId: 'execution-after-choice'
+      })
+      expect(continued.activeRun?.startedAt).toBeGreaterThan(10)
+      expect(continued.runtimeSessionAdmissions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            executionId: 'execution-after-choice',
+            promptRuntimeSegmentId: original.runtimeSegmentId,
+            runtimeSegmentId: resumed.runtimeSegmentId
+          })
+        ])
+      )
+      expect(
+        continued.conversationGraph!.messages.find(({ id }) => id === original.promptMessageId)
+          ?.runtimeSegmentId
+      ).toBe(original.runtimeSegmentId)
+    }
+  )
 
   it('admits the answer after the question is recorded as answered', async () => {
     const turn = scope()

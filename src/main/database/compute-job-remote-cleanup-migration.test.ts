@@ -84,10 +84,11 @@ describe('Compute Job remote cleanup migration', () => {
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
         '0041_bookmarks',
-        '0042_classification_usage'
+        '0042_classification_usage',
+        '0043_pdf_annotations'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0042_classification_usage'
+      to: '0043_pdf_annotations'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

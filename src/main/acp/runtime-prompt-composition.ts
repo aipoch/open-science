@@ -27,6 +27,7 @@ type AcpRuntimePromptHost = Readonly<{
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
   requestArtifactPublicationContinuation?: (input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]
@@ -159,6 +160,7 @@ const composeAcpRuntimePromptOwners = (
 
   const promptPreparation = new AcpPromptPreparationOwner({
     classifySkills: options.classifySkills,
+    classifyReadingRoute: options.classifyReadingRoute,
     recordClassificationUsage: async (record) => {
       await options.auxiliaryUsage?.record({
         ...record,
@@ -406,7 +408,8 @@ const composeAcpRuntimePromptOwners = (
             executionId,
             reviewOwner,
             planDeliveryCommandId,
-            delegatedMessageId
+            delegatedMessageId,
+            applicationPrompt
           ) => {
             const provenance = request.provenanceContext
             if (
@@ -442,7 +445,8 @@ const composeAcpRuntimePromptOwners = (
                 ...(backend.session.model ? { agentModel: backend.session.model } : {}),
                 reviewOwner,
                 ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
-                ...(delegatedMessageId ? { delegatedMessageId } : {})
+                ...(delegatedMessageId ? { delegatedMessageId } : {}),
+                ...(applicationPrompt ? { applicationPrompt } : {})
               }
             )
           }

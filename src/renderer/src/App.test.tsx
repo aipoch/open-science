@@ -873,7 +873,7 @@ describe('App startup routing', () => {
 
     expect(mocks.presentationProps.computeApproval?.active).toBe(true)
     expect(mocks.presentationProps.connectorApproval?.active).toBe(false)
-    expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
+    expect(mocks.presentationProps.skillImportApproval).toBeUndefined()
     expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
     expect(
       container.querySelector('[data-testid="home-page"]')?.closest('[aria-hidden="true"]')
@@ -895,6 +895,14 @@ describe('App startup routing', () => {
 
     expect(mocks.presentationProps.computeApproval?.active).toBe(false)
     expect(mocks.presentationProps.connectorApproval?.active).toBe(true)
+    expect(mocks.presentationProps.skillImportApproval).toBeUndefined()
+
+    mocks.settings.pendingApprovals = []
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.skillImportApproval?.active).toBe(true))
+
+    mocks.skillImport.pending = []
+    await act(async () => root.render(<App />))
     expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
   })
 
@@ -961,6 +969,21 @@ describe('App startup routing', () => {
 
     dialog.remove()
     expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
+
+  it('loads the update owner on first activation and retains it for its close lifecycle', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    expect(document.querySelector('[data-testid="update-dialog"]')).toBeNull()
+
+    mocks.update.isDialogOpen = true
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.update?.active).toBe(true))
+
+    mocks.update.isDialogOpen = false
+    await act(async () => root.render(<App />))
+    expect(mocks.presentationProps.update?.active).toBe(false)
+    expect(document.querySelector('[data-testid="update-dialog"]')).not.toBeNull()
   })
 
   it('closes the update dialog before underlying surfaces', async () => {

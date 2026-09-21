@@ -1,7 +1,11 @@
 import type { Project } from '../../../../shared/projects'
 import type { ProjectFileItem } from '../../../../shared/project-files'
 import type { MessageSearchItem } from '../../../../shared/message-search'
-import type { LiteratureCollectionView, LiteratureItemView } from '../../../../shared/literature'
+import type {
+  LiteratureCollectionView,
+  LiteratureItemView,
+  LiteratureAnnotationSearchView
+} from '../../../../shared/literature'
 import type { SearchableSession } from './global-search-catalog'
 import {
   createPreviewFileItem,
@@ -15,7 +19,10 @@ export type SearchResult =
   | { kind: 'sessions'; item: SearchSession }
   | { kind: 'projects'; item: Project }
   | { kind: 'uploads' | 'generated'; item: ProjectFileItem }
-  | { kind: 'library'; item: LiteratureItemView | LiteratureCollectionView }
+  | {
+      kind: 'library'
+      item: LiteratureItemView | LiteratureCollectionView | LiteratureAnnotationSearchView
+    }
 export type SearchCategory = SearchResult['kind']
 export const SEARCH_CATEGORIES = [
   'messages',
@@ -40,7 +47,9 @@ export const fileFormatLabel = (item: ProjectFileItem): string =>
 export const resultId = (result: SearchResult): string =>
   result.kind === 'messages'
     ? `messages:${result.item.projectId}:${result.item.sessionId}:${result.item.messageId}`
-    : `${result.kind}:${result.item.id}`
+    : result.kind === 'library' && 'annotation' in result.item
+      ? `library:note:${result.item.id}`
+      : `${result.kind}:${result.item.id}`
 export const resultTitle = (result: SearchResult): string => {
   switch (result.kind) {
     case 'messages':
@@ -53,7 +62,14 @@ export const resultTitle = (result: SearchResult): string => {
     case 'generated':
       return result.item.name
     case 'library':
-      return 'item' in result.item ? result.item.item.title : result.item.name
+      return 'annotation' in result.item
+        ? result.item.annotation.note ||
+            (result.item.annotation.target.selector.kind === 'text'
+              ? result.item.annotation.target.selector.exact
+              : result.item.annotation.target.source.name)
+        : 'item' in result.item
+          ? result.item.item.title
+          : result.item.name
   }
 }
 export const filePreviewItem = (file: ProjectFileItem): ReturnType<typeof createPreviewFileItem> =>

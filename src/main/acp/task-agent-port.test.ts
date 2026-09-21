@@ -318,11 +318,18 @@ describe('ACP Task Agent port', () => {
         sessionId: 'session-1',
         promptMessageId: 'prompt-1',
         provenanceContext: taskProvenanceContext('prompt-1'),
-        text: 'Research this.'
+        text: 'Research this.',
+        permissionPrompts: 'none'
       },
       { onPromptAdmitted, onProviderPromptAccepted }
     )
 
+    expect(sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionPrompts: 'none' }),
+      expect.any(Function),
+      onPromptAdmitted,
+      'task'
+    )
     expect(onPromptAdmitted).toHaveBeenCalledOnce()
     expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
   })

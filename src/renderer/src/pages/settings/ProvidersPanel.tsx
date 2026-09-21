@@ -498,6 +498,7 @@ const ProvidersPanel = ({
           scenario model selectors below. The Model field needs at least one provider; the effort
           control is always visible. */}
       <SettingsSection
+        data-settings-anchor="model.main"
         title={t('Main model')}
         aria-label={t('Main model')}
         description={
@@ -584,7 +585,7 @@ const ProvidersPanel = ({
         ) : null}
         {/* The add action lives with the list: a dashed ghost row appended after the last provider,
             matching the Available-group placeholder treatment. */}
-        <SettingsListAddAction onClick={onCreateProvider}>
+        <SettingsListAddAction data-settings-anchor="model.add-provider" onClick={onCreateProvider}>
           {t('Add provider')}
         </SettingsListAddAction>
       </SettingsSection>

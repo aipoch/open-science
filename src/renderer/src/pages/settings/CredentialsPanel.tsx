@@ -53,6 +53,7 @@ type CredentialsPanelProps = {
 
 const statusLabel = (configured: boolean): React.JSX.Element | null =>
   configured ? <Check className="size-4 text-primary" aria-hidden="true" /> : null
+
 const isLocalOnlyActionError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('only available in the local desktop app')
 
@@ -495,7 +496,17 @@ export function CredentialsPanel({
             const checking = desktopOnly && desktopCredentialAvailability === 'checking'
             const unavailable = desktopOnly && desktopCredentialAvailability === 'unavailable'
             return (
-              <div key={id} className="flex items-center gap-3 px-4 py-3">
+              <div
+                key={id}
+                data-settings-anchor={
+                  id === 'github'
+                    ? 'credentials.github'
+                    : id === 'literature'
+                      ? 'credentials.literature'
+                      : undefined
+                }
+                className="flex items-center gap-3 px-4 py-3"
+              >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/40">
                   <Icon className="size-4" aria-hidden="true" />
                 </span>
@@ -533,7 +544,11 @@ export function CredentialsPanel({
             'Device-wide credentials that can be shared by the Custom Connectors you choose.'
           )}
           action={
-            <Button type="button" onClick={() => onNavigate({ kind: 'create' })}>
+            <Button
+              type="button"
+              data-settings-anchor="credentials.new"
+              onClick={() => onNavigate({ kind: 'create' })}
+            >
               {t('New credential')}
             </Button>
           }

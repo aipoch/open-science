@@ -91,6 +91,12 @@ test('keeps source icons inside table cells after expanding a message table', as
   await expect(table.locator('[data-session-link-favicon]')).toHaveCount(2)
   await expect(table.locator('[data-session-link-favicon][data-state="local"]')).toHaveCount(1)
   await table.hover()
+  await page.evaluate(() => navigator.clipboard.writeText('before-table-copy'))
+  await page.getByTitle('Copy table', { exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Markdown', exact: true }).click()
+  await expect.poll(() => app.readClipboardText()).toContain('| PMID | Journal |')
+
+  await table.hover()
   await page.getByTitle('View fullscreen', { exact: true }).click()
 
   const fullscreen = page.locator('[data-streamdown="table-fullscreen"]')

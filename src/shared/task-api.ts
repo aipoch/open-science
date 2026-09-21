@@ -80,6 +80,8 @@ export type StartTaskRunRequest = {
   sessionId?: string
   cwd?: string
   permissionProfile?: PermissionProfileId
+  /** Per-execution: deny unresolved human interactions instead of waiting. */
+  permissionPrompts?: 'none'
   skillIds?: string[]
   turnIntent?: 'plan-first'
   autoReviewEnabled?: boolean

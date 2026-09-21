@@ -6,7 +6,7 @@ import {
   type AcpMessageImage
 } from './acp'
 import { createArtifactVersionLocator, parseArtifactVersionLocator } from './artifact-provenance'
-import { parseLiteratureAttachmentVersionReference } from './literature'
+import { parseLiteratureAttachmentVersionReference } from './literature-attachment-reference'
 import { createUploadVersionReference, parseUploadVersionReference } from './uploads'
 
 export const ANNOTATION_LIMITS = Object.freeze({

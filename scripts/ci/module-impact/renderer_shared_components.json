@@ -105,7 +105,9 @@
     "src/renderer/src/components/use-notice-countdown.ts",
     "src/renderer/src/components/use-settings-undo-portal.test.tsx",
     "src/renderer/src/components/use-settings-undo-portal.tsx",
-    "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+    "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+    "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
+    "src/renderer/src/components/DeferredPresentationOwner.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ActionToast.tsx",
@@ -204,7 +206,8 @@
       "src/renderer/src/components/open-science-logo-motion.test.ts",
       "src/renderer/src/components/session-package-import-menu-model.test.ts",
       "src/renderer/src/components/use-settings-undo-portal.test.tsx",
-      "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx"
+      "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
+      "src/renderer/src/components/DeferredPresentationOwner.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -457,7 +460,12 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
-      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewTextAnnotationSurface.test.tsx",
+      "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSubagentMessageRow.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": [],

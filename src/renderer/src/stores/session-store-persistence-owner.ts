@@ -539,6 +539,9 @@ const withTransientSessionState = (
   const hydrated = hydrateSession(session)
   return {
     ...hydrated,
+    // Save receipts can rebuild the Session to attach durable upload identities. Preserve
+    // the same Plan until its full activity projection arrives, just as runtime echoes do.
+    activePlanProjection: retainRuntimePlanProjection(source, session),
     ...(hydrated.artifacts
       ? { artifacts: retainArtifactPublication(hydrated.artifacts, source) }
       : {}),
@@ -611,7 +614,7 @@ const projectDurablePlanAuthority = (
     runtimeContext: durable.runtimeContext,
     activePlanProjection: matchesPersistedPlanProjection(current.activePlanProjection, durable)
       ? current.activePlanProjection
-      : undefined,
+      : retainRuntimePlanProjection(current, durable),
     updatedAt: Math.max(current.updatedAt, durable.updatedAt)
   }
 }

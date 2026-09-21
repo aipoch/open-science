@@ -277,7 +277,8 @@ describe('production delegated framework runtime bridge', () => {
           observed = options
           return {
             createSession: async () => ({ sessionId: 'ephemeral-child' }),
-            sendAppContinuation: () => {
+            sendAppContinuation: (request: { permissionPrompts?: 'none' }) => {
+              expect(request.permissionPrompts).toBe('none')
               options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
               return pending
             },
@@ -306,12 +307,15 @@ describe('production delegated framework runtime bridge', () => {
           } as never,
           notebookRpcServer: () =>
             ({
-              issueDelegatedNotebookConnection: async () => ({
-                endpoint: 'http://127.0.0.1:1',
-                token: 'test',
-                release: () => undefined,
-                revoke: async () => undefined
-              })
+              issueDelegatedNotebookConnection: async (scope: { permissionPrompts?: 'none' }) => {
+                expect(scope.permissionPrompts).toBe('none')
+                return {
+                  endpoint: 'http://127.0.0.1:1',
+                  token: 'test',
+                  release: () => undefined,
+                  revoke: async () => undefined
+                }
+              }
             }) as never,
           readSession: async () => delegatedSession(frameworkId)
         })
@@ -322,6 +326,7 @@ describe('production delegated framework runtime bridge', () => {
             session: { projectId: 'project-1', sessionId: `session-${frameworkId}` },
             frameId: 'child-frame',
             attemptId: 'bound-attempt',
+            permissionPrompts: 'none',
             runtimeSegmentId: 'child-segment',
             executionModel: {
               frameworkId,

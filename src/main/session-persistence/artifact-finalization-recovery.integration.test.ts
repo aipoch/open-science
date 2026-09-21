@@ -115,6 +115,73 @@ describe('artifact finalization startup recovery', () => {
     await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(recovery)
   })
 
+  it('retains all legacy cross-Segment files when no durable admission proves ownership', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, versions } = await prepareRecovery(compatibility, 6, SESSION_ID, true)
+    const session = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    // v0.30 attached the complete run to an answer on the original Segment. Even a prepared
+    // marker and a complete attachment must not manufacture the missing execution admission.
+    session.messages[1].artifactIds = versions.map((version) => version.versionId)
+    session.conversationGraph!.messages[1].artifactIds = [...session.messages[1].artifactIds]
+    session.artifacts = versions.map((version) => ({
+      id: version.versionId,
+      kind: 'managed-file' as const,
+      path: version.path,
+      fileUrl: version.fileUrl,
+      name: version.name,
+      mimeType: version.mimeType,
+      size: version.size,
+      mtimeMs: version.mtimeMs,
+      sha256: version.checksum
+    }))
+    await sessions.saveSession(session)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    const handlers = createArtifactHandlers(compatibility, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts: (request) => coordinator.retryArtifactFinalization(request)
+    })
+    const request: ReconcilePendingArtifactsRequest = {
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: 'message-1',
+      pendingPaths: [],
+      artifactVersionIds: versions.map((version) => version.versionId)
+    }
+    const restored = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    for (let retry = 0; retry < 2; retry += 1) {
+      // Exercise the same handler as the user's Retry Artifact publication button, not only
+      // repository classification. Legacy ownership must not fall through to compatibility publish.
+      await expect(handlers.reconcilePendingArtifacts(request)).rejects.toMatchObject({
+        code: ARTIFACT_FINALIZATION_INVALID_PROOF,
+        message: 'Native Artifact finalization proof is invalid.'
+      })
+      const result = await provenance.reconcileSession(PROJECT_ID, SESSION_ID, restored)
+      expect(result.recoveredVersionIds).toEqual([])
+      expect(result.unresolvedNativeFinalizationRunIds).toEqual([RUN_ID])
+      expect(result.invalidProofNativeFinalizationRunIds).toEqual([RUN_ID])
+    }
+    const records = await client.artifactVersion.findMany()
+    expect(records).toHaveLength(6)
+    for (const record of records) {
+      expect(record).toMatchObject({ state: 'pending', messageId: null, managedVisibleAt: null })
+      const bytes = await readFile(join(storageRoot, record.contentStorageKey))
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(record.checksum)
+    }
+    expect(
+      await compatibility.listPendingRunFiles({
+        projectId: PROJECT_ID,
+        sessionId: STORAGE_SESSION_ID,
+        runId: RUN_ID
+      })
+    ).toHaveLength(6)
+  })
+
   const prepareAttachedRecovery = async (
     outputCount = 1,
     earlierMessage = true
@@ -1782,7 +1849,8 @@ describe('artifact finalization startup recovery', () => {
   const prepareRecovery = async (
     compatibility: ArtifactRepository,
     outputCount = 1,
-    graphSessionId = SESSION_ID
+    graphSessionId = SESSION_ID,
+    legacyResumed = false
   ): Promise<{
     versions: Awaited<ReturnType<ArtifactProvenanceRepository['createVersion']>>[]
     provenance: ArtifactProvenanceRepository
@@ -1826,11 +1894,20 @@ describe('artifact finalization startup recovery', () => {
       createdAt: 1,
       updatedAt: 2
     })
+    if (legacyResumed) {
+      conversationGraph.runtimeSegments[0].endedAt = 2
+      conversationGraph.runtimeSegments.push({
+        id: 'legacy-resumed-segment',
+        agentFrameId: conversationGraph.rootFrameId,
+        frameworkId: 'codex',
+        startedAt: 2
+      })
+    }
     const context = {
       rootFrameId: conversationGraph.rootFrameId,
       agentFrameId: conversationGraph.activeFrameId,
       messageBranchId: conversationGraph.branches[0].id,
-      runtimeSegmentId: conversationGraph.runtimeSegments[0].id,
+      runtimeSegmentId: conversationGraph.runtimeSegments.at(-1)!.id,
       promptMessageId: prompt.id
     }
     const versions: Awaited<ReturnType<ArtifactProvenanceRepository['createVersion']>>[] = []

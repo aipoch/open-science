@@ -245,6 +245,7 @@ const GeneralPanel = (): React.JSX.Element => {
       <AppVersionSection />
 
       <SettingsSection
+        data-settings-anchor="general.appearance"
         title={t('Appearance')}
         description={t(
           'Choose how the app looks and reads. System follows your device; the other choices stay fixed. Your selection is remembered on this device.'
@@ -267,6 +268,7 @@ const GeneralPanel = (): React.JSX.Element => {
         </SettingsRow>
 
         <SettingsRow
+          data-settings-anchor="general.language"
           label={t('Language')}
           description={t(
             'Follow the system setting, or pick a language. System is detected once at startup, so a change to your device language takes effect the next time the app opens.'
@@ -320,6 +322,7 @@ const GeneralPanel = (): React.JSX.Element => {
       ) : null}
 
       <SettingsSection
+        data-settings-anchor="general.notifications"
         title={t('Notifications')}
         description={t(
           "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app."
@@ -422,6 +425,7 @@ const GeneralPanel = (): React.JSX.Element => {
       {!isMac ? <AppIconSection /> : null}
 
       <SettingsSection
+        data-settings-anchor="general.diagnostics"
         title={t('Diagnostics')}
         description={t(
           "View this device's runtime log — it records what the app is doing so problems can be diagnosed."
@@ -528,6 +532,7 @@ const GeneralPanel = (): React.JSX.Element => {
       </SettingsSection>
 
       <SettingsSection
+        data-settings-anchor="general.cli"
         title={t('Command line tool')}
         description={
           <Trans

@@ -67,6 +67,7 @@ type AppPermissionRequest = Readonly<{
   rawInput: unknown
   options: ReadonlyArray<AcpPermissionRequest['options'][number]>
   signal?: AbortSignal
+  permissionPrompts?: 'none'
 }>
 
 type DurablePermissionWaitCandidate = Readonly<{
@@ -948,6 +949,7 @@ class AcpPermissionBroker {
     title: string
     rawInput: unknown
     signal?: AbortSignal
+    permissionPrompts?: 'none'
   }): Promise<boolean> {
     const requestId = randomUUID()
     const approveOptionId = `${requestId}:approve`
@@ -976,8 +978,15 @@ class AcpPermissionBroker {
       options: input.options.map((option) => ({ ...option }))
     }
 
-    const response = this.enqueuePermissionRequest({ requestId, request, appOwned: true }).then(
-      (result) => (result.outcome.outcome === 'selected' ? result.outcome.optionId : undefined)
+    const response = this.enqueuePermissionRequest({
+      requestId,
+      request,
+      appOwned: true,
+      ...(input.permissionPrompts
+        ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
+        : {})
+    }).then((result) =>
+      result.outcome.outcome === 'selected' ? result.outcome.optionId : undefined
     )
     const abort = (): void => {
       void this.respond({ requestId, cancelled: true }).catch(() => undefined)
@@ -1233,6 +1242,23 @@ class AcpPermissionBroker {
   private enqueuePermissionRequest(
     pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string }
   ): Promise<RequestPermissionResponse> {
+    if (pending.policyContext?.permissionPrompts === 'none') {
+      const reject = pending.request.options.find((option) => option.kind === 'reject_once')
+      try {
+        this.onPermissionSettled?.(
+          pending.requestId,
+          reject ? 'rejected' : 'cancelled',
+          pending.request
+        )
+      } catch {
+        // Notification projection failures must never change the permission decision.
+      }
+      return Promise.resolve({
+        outcome: reject
+          ? { outcome: 'selected', optionId: reject.optionId }
+          : { outcome: 'cancelled' }
+      })
+    }
     let resolveResponse!: (response: RequestPermissionResponse) => void
     let rejectResponse!: (error: unknown) => void
     const response = new Promise<RequestPermissionResponse>((resolve, reject) => {

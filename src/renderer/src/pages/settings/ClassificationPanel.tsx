@@ -45,7 +45,11 @@ import type {
   ClassificationServiceView
 } from '../../../../shared/classification'
 
-import { CLASSIFICATION_MODELS } from '../../../../shared/classification'
+import { classificationModelsForService } from '../../../../shared/classification'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../../../shared/provider-base-url'
 
 export type ClassificationView =
   | { kind: 'classification' }
@@ -277,12 +281,16 @@ export const ClassificationPanel = ({
                                   kindKey="official:openrouter"
                                   className="size-3"
                                 />
+                              ) : service.adapter === 'custom' ? (
+                                <PlugZap className="size-3" aria-hidden="true" />
                               ) : (
                                 <TypeSafeIcon />
                               )}
                               {service.adapter === 'openrouter'
                                 ? t('OpenRouter')
-                                : t('TypeSafe AI')}
+                                : service.adapter === 'custom'
+                                  ? t('Custom HTTP service')
+                                  : t('TypeSafe AI')}
                             </span>
                             {probe[service.id] !== undefined && (
                               <span
@@ -398,7 +406,7 @@ const ClassificationBindingRow = ({
         <SelectContent>
           <SelectItem value="default">{t('Use default method')}</SelectItem>
           {snapshot.services.flatMap((service) =>
-            CLASSIFICATION_MODELS[service.adapter].map((model) => (
+            classificationModelsForService(service).map((model) => (
               <SelectItem
                 key={`${service.id}:${model.id}`}
                 disabled={!service.configured}
@@ -437,11 +445,19 @@ const ClassificationEditor = ({
   const [id] = useState(() => service?.id ?? crypto.randomUUID())
   const [adapter, setAdapter] = useState<ClassificationAdapter>(service?.adapter ?? 'typesafe')
   const [name, setName] = useState(service?.name ?? 'TypeSafe AI')
+  const [baseUrl, setBaseUrl] = useState(service?.baseUrl ?? '')
+  const [modelId, setModelId] = useState(service?.modelId ?? '')
   const [providerId, setProviderId] = useState(service?.providerId)
-  const needsNewKey = !service || Boolean(service.providerId)
   const [key, setKey] = useState('')
   const [keyVisible, setKeyVisible] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const customEndpointError =
+    adapter === 'custom' ? getCustomProviderBaseUrlError(baseUrl) : undefined
+  const customKeyRequired = adapter === 'custom' && customProviderRequiresKey(baseUrl)
+  const hasReusableKey =
+    service?.adapter === adapter && !service.providerId && Boolean(service.maskedKey)
+  const needsNewKey = !providerId && !hasReusableKey
+  const keyRequired = needsNewKey && (adapter !== 'custom' || customKeyRequired)
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
@@ -454,6 +470,8 @@ const ClassificationEditor = ({
           id,
           adapter,
           name,
+          baseUrl: adapter === 'custom' ? baseUrl.trim() : undefined,
+          modelId: adapter === 'custom' ? modelId.trim() : undefined,
           providerId,
           apiKey: providerId ? undefined : key.trim() || undefined
         })
@@ -474,8 +492,14 @@ const ClassificationEditor = ({
             onValueChange={(value: ClassificationAdapter) => {
               onDraftChange()
               setAdapter(value)
-              setName(value === 'openrouter' ? 'OpenRouter' : 'TypeSafe AI')
+              setName(
+                value === 'openrouter' ? 'OpenRouter' : value === 'custom' ? '' : 'TypeSafe AI'
+              )
               setProviderId(value === 'openrouter' ? availableProviders[0]?.id : undefined)
+              if (value !== 'custom') {
+                setBaseUrl('')
+                setModelId('')
+              }
               setKey('')
             }}
           >
@@ -495,6 +519,12 @@ const ClassificationEditor = ({
                   {t('OpenRouter')}
                 </span>
               </SelectItem>
+              <SelectItem value="custom">
+                <span className="inline-flex items-center gap-2">
+                  <ProviderKindIcon kindKey="custom" className="size-4" />
+                  {t('Custom HTTP service')}
+                </span>
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -511,6 +541,63 @@ const ClassificationEditor = ({
             onChange={(event) => setName(event.target.value)}
           />
         </div>
+        {adapter === 'custom' && (
+          <>
+            <InlineNotice role="status" level="info">
+              <>
+                <p>
+                  {t(
+                    'Custom services use the TypeSafe classification request and response format.'
+                  )}
+                </p>
+                <p className="mt-1">
+                  {t(
+                    'This is not a Chat Completions endpoint. Services using another API format need an adaptor.'
+                  )}
+                </p>
+              </>
+            </InlineNotice>
+            <div className="space-y-1.5">
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor="classifier-endpoint"
+              >
+                {t('Endpoint URL')}
+              </label>
+              <Input
+                id="classifier-endpoint"
+                type="url"
+                required
+                value={baseUrl}
+                disabled={busy}
+                placeholder="http://localhost:8000/classify"
+                aria-invalid={Boolean(customEndpointError) || undefined}
+                onChange={(event) => setBaseUrl(event.target.value)}
+              />
+              {customEndpointError && baseUrl.trim() ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {t('Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.')}
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-1.5">
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor="classifier-model"
+              >
+                {t('Model')}
+              </label>
+              <Input
+                id="classifier-model"
+                required
+                value={modelId}
+                disabled={busy}
+                placeholder={t('Model ID exposed by the endpoint')}
+                onChange={(event) => setModelId(event.target.value)}
+              />
+            </div>
+          </>
+        )}
         {adapter === 'openrouter' && (availableProviders.length > 0 || providerId) && (
           <div className="space-y-1.5">
             <label
@@ -559,16 +646,18 @@ const ClassificationEditor = ({
               <label className="text-xs font-medium text-muted-foreground" htmlFor="classifier-key">
                 {t('API key')}
               </label>
-              <ExternalTextLink
-                href={
-                  adapter === 'openrouter'
-                    ? 'https://openrouter.ai/workspaces/default/keys'
-                    : 'https://console.typesafe.ai'
-                }
-                className="text-xs"
-              >
-                {t('Get an API key')}
-              </ExternalTextLink>
+              {adapter !== 'custom' && (
+                <ExternalTextLink
+                  href={
+                    adapter === 'openrouter'
+                      ? 'https://openrouter.ai/workspaces/default/keys'
+                      : 'https://console.typesafe.ai'
+                  }
+                  className="text-xs"
+                >
+                  {t('Get an API key')}
+                </ExternalTextLink>
+              )}
             </div>
             <div className="relative">
               <Input
@@ -579,7 +668,7 @@ const ClassificationEditor = ({
                 placeholder={
                   !needsNewKey ? t('Leave blank to keep the saved key') : t('Paste API key')
                 }
-                required={needsNewKey}
+                required={keyRequired}
                 maxLength={8192}
                 value={key}
                 disabled={busy}
@@ -658,9 +747,11 @@ const ClassificationEditor = ({
             disabled={
               busy ||
               !name.trim() ||
+              (adapter === 'custom' &&
+                (!baseUrl.trim() || Boolean(customEndpointError) || !modelId.trim())) ||
               (providerId
                 ? !availableProviders.some((provider) => provider.id === providerId)
-                : needsNewKey && !key.trim())
+                : keyRequired && !key.trim())
             }
             aria-busy={busy}
           >

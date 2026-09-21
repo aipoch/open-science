@@ -464,6 +464,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       ) : null}
 
       <SettingsSection
+        data-settings-anchor="storage.location"
         title={t('Data location')}
         description={t(
           'Where Open-Science stores your projects, artifacts, and other app data on this device.'
@@ -701,6 +702,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
 
       {storageStatus !== null ? (
         <SettingsSection
+          data-settings-anchor="storage.application"
           title={t('Disk usage')}
           description={scanTime ? t('Last scanned {{time}}', { time: scanTime }) : undefined}
           aria-label={t('Disk usage')}

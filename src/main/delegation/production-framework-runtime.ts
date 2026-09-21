@@ -125,6 +125,7 @@ const createProductionDelegatedFrameworkRuntime = (
       const prepareScope = async (
         input: DelegateExecutionInput
       ): Promise<PreparedProductionFrameworkScope> => {
+        const permissionPrompts = input.permissionPrompts
         if (!input.workspaceCwd) throw new Error('Delegated Attempt has no prepared Frame cwd.')
         if (!input.executionModel) {
           throw new Error('Delegated Attempt has no admitted model snapshot.')
@@ -260,6 +261,7 @@ const createProductionDelegatedFrameworkRuntime = (
             }
           }
           const capability = await options.notebookRpcServer().issueDelegatedNotebookConnection({
+            permissionPrompts,
             projectId: input.session.projectId,
             sessionId: input.session.sessionId,
             rootFrameId: graph.rootFrameId,
@@ -297,6 +299,7 @@ const createProductionDelegatedFrameworkRuntime = (
             frameworkId,
             runtimeConstructionIsProcessFree:
               frameworkId === 'claude-code' || frameworkId === 'opencode',
+            permissionPrompts,
             permissionProfile:
               options.resolvePermissionProfile?.(input.session.sessionId) ??
               durable.permissionProfile ??

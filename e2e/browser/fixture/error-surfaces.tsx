@@ -50,6 +50,18 @@ export function Fixture(): React.JSX.Element {
       <h1 className="text-xl font-semibold">
         Error surfaces — production components / fixture data
       </h1>
+      {query.has('inline-catalog') ? (
+        <section data-testid="inline-catalog-host">
+          <SessionCatalogRecoveryAlert
+            inline
+            recovery={{
+              kind: 'damaged-authority',
+              affectedFiles: [{ projectId: 'research', fileName: 'conversation.json' }]
+            }}
+            onRetry={() => setRetry(retry + 1)}
+          />
+        </section>
+      ) : null}
       <section className="space-y-2">
         <h2 className="text-sm font-semibold">1 · Control-local inline</h2>
         <label className="block text-sm">

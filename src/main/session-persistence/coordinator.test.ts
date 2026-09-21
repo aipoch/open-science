@@ -2609,6 +2609,57 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
   })
 
+  it('rejects renderer-forged runtime admission witnesses before Main adoption', async () => {
+    let durable = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = structuredClone(session)
+        return durable
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await coordinator.saveSession(
+      createSession({
+        runtimeTranscriptOwner: 'main',
+        runtimeSessionAdmissions: [
+          {
+            executionId: 'forged',
+            promptMessageId: 'prompt',
+            promptRuntimeSegmentId: 'old',
+            rootFrameId: 'root',
+            agentFrameId: 'root',
+            messageBranchId: 'branch',
+            runtimeSegmentId: 'new'
+          }
+        ]
+      })
+    )
+    expect(durable.runtimeSessionAdmissions).toBeUndefined()
+    const trusted = [
+      {
+        executionId: 'trusted',
+        promptMessageId: 'prompt',
+        promptRuntimeSegmentId: 'old',
+        rootFrameId: 'root',
+        agentFrameId: 'root',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'new'
+      }
+    ]
+    durable = { ...durable, runtimeTranscriptOwner: 'main', runtimeSessionAdmissions: trusted }
+    await coordinator.saveSession({ ...durable, runtimeSessionAdmissions: [] })
+    expect(durable.runtimeSessionAdmissions).toEqual(trusted)
+    await coordinator.saveSession({
+      ...durable,
+      runtimeSessionAdmissions: [{ ...trusted[0], executionId: 'forged' }]
+    })
+    expect(durable.runtimeSessionAdmissions).toEqual(trusted)
+  })
+
   it('lets only Task-owned saves advance the Task Run commit witness', async () => {
     let durable = createSession({ taskRunCommitId: 'committed-run' })
     const repository = createSessionRepository({

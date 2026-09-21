@@ -292,7 +292,11 @@
       "src/main/storage/migration-target-race.test.ts",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

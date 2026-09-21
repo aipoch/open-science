@@ -299,9 +299,11 @@ const PlanPreviewToolContent = ({
 
 export const PreviewToolContent = ({
   item,
+  isActive = true,
   restoredPlanResponder
 }: {
   item: PreviewToolItem
+  isActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
@@ -320,7 +322,7 @@ export const PreviewToolContent = ({
   }
 
   if (item.toolKind === 'subagents') {
-    return <SubagentPreview item={item} />
+    return <SubagentPreview key={item.sessionId} item={item} isActive={isActive} />
   }
 
   if (item.toolKind === 'plan') {

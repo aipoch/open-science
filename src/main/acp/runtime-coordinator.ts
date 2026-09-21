@@ -150,6 +150,8 @@ class AcpRuntimeCoordinator {
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
   private readonly runtimeTargets = new WeakMap<AcpRuntime, AcpSessionAgentTarget>()
+  private readonly runtimeActivityCounts = new WeakMap<AcpRuntime, number>()
+  private readonly isolatedRuntimes = new WeakSet<AcpRuntime>()
   private readonly targetedRuntimes = new Map<string, AcpRuntime>()
   private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
   private readonly applicationEvents: AcpRuntimeEvent[] = []
@@ -558,7 +560,7 @@ class AcpRuntimeCoordinator {
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
-    const runtime = this.runtimeForTarget(request.agentTarget)
+    const runtime = await this.runtimeForTarget(request.agentTarget, undefined, request.cwd)
     const pending = { runtime, projectId: request.projectId }
     this.pendingSessionCreations.add(pending)
     let response: AcpCreateSessionResponse
@@ -571,7 +573,7 @@ class AcpRuntimeCoordinator {
     } finally {
       this.pendingSessionCreations.delete(pending)
     }
-    this.sessionRuntimes.set(response.sessionId, runtime)
+    this.bindSessionRuntime(response.sessionId, runtime)
     this.lastRuntime = runtime
     return response
   }
@@ -626,11 +628,13 @@ class AcpRuntimeCoordinator {
     const targetedRuntime = reuseCodexSession
       ? owner
       : target
-        ? this.runtimeForTarget(target)
+        ? await this.runtimeForTarget(target, request.sessionId, request.cwd)
         : undefined
     const runtime =
       targetedRuntime ??
-      (owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime())
+      (owner && !this.retiredRuntimes.has(owner)
+        ? owner
+        : await this.runtimeForTarget(undefined, request.sessionId, request.cwd))
     const transfersOwnership = runtime !== owner
 
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
@@ -695,7 +699,7 @@ class AcpRuntimeCoordinator {
       this.sessionRuntimes.delete(request.sessionId)
       this.sessionConnectionStatuses.delete(request.sessionId)
     }
-    this.sessionRuntimes.set(response.sessionId, runtime)
+    this.bindSessionRuntime(response.sessionId, runtime)
     // The incoming runtime's attached snapshot is deliberately ignored while adoption is pending.
     // Commit its current connection status together with ownership so a stale status from the
     // draining owner cannot classify later prompt failures as disconnects.
@@ -721,11 +725,23 @@ class AcpRuntimeCoordinator {
 
   async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
-    const runtime = this.runtimeForSession(request.sessionId)
-    const response = await runtime.resetSessionContext(request)
-    this.sessionRuntimes.set(response.sessionId, runtime)
-    this.lastRuntime = runtime
-    return response
+    const owner = this.findRuntimeForSession(request.sessionId)
+    const runtime =
+      owner && !this.retiredRuntimes.has(owner)
+        ? owner
+        : await this.runtimeForTarget(request.agentTarget, request.sessionId, request.cwd)
+    // A cold reset has no attached Session yet. Keep background workflow completion from
+    // retiring its generation before reset commits ownership, and release failed allocations.
+    this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
+    try {
+      const response = await runtime.resetSessionContext(request)
+      this.bindSessionRuntime(response.sessionId, runtime)
+      this.lastRuntime = runtime
+      return response
+    } finally {
+      this.runtimeActivityCounts.set(runtime, this.runtimeActivityCounts.get(runtime)! - 1)
+      await this.retireUnusedTargetedRuntime(runtime)
+    }
   }
 
   async waitForPromptOwnershipRelease(sessionId: string): Promise<void> {
@@ -1176,6 +1192,13 @@ class AcpRuntimeCoordinator {
     delegatedMessageId?: string
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
+    const origin =
+      operation === 'sendAppContinuation' && request.provenanceContext?.promptMessageId
+        ? this.getLatestUserPrompt(request.sessionId, request.provenanceContext.promptMessageId)
+        : undefined
+    if (origin?.permissionPrompts) {
+      request = { ...request, permissionPrompts: origin.permissionPrompts }
+    }
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
     if (!pinnedRuntime && owner && this.retiredRuntimes.has(owner)) {
       return Promise.reject(new Error('ACP session must resume before sending a prompt'))
@@ -1455,6 +1478,13 @@ class AcpRuntimeCoordinator {
     return this.getState()
   }
 
+  getPermissionPrompts(sessionId: string): 'none' | undefined {
+    return (
+      this.activePromptRequests.get(sessionId)?.request.permissionPrompts ??
+      this.findRuntimeForSession(sessionId)?.getPermissionPrompts(sessionId)
+    )
+  }
+
   async requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {
     return this.runtimeForSession(input.sessionId).requestUserInput(input)
   }
@@ -1591,13 +1621,23 @@ class AcpRuntimeCoordinator {
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
     this.assertPromptAdmissionOpen()
-    const runtime = this.runtimeForTarget(options.session?.agentTarget)
+    const runtime = await this.runtimeForTarget(
+      options.session?.agentTarget,
+      options.session?.sessionId,
+      options.session?.cwd
+    )
     const scopedRuntime = this.createScopedActivityRuntime(runtime, options)
 
-    return runtime.withActivity(options, () => {
-      this.assertPromptAdmissionOpen()
-      return work(scopedRuntime)
-    })
+    this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
+    try {
+      return await runtime.withActivity(options, () => {
+        this.assertPromptAdmissionOpen()
+        return work(scopedRuntime)
+      })
+    } finally {
+      this.runtimeActivityCounts.set(runtime, this.runtimeActivityCounts.get(runtime)! - 1)
+      if (this.isolatedRuntimes.has(runtime)) await this.retireUnusedTargetedRuntime(runtime)
+    }
   }
 
   async buildReviewerSession(
@@ -1643,7 +1683,7 @@ class AcpRuntimeCoordinator {
           ...(session.agentTarget ? { agentTarget: session.agentTarget } : {})
         }
         resumeInFlight = runtime.resumeSession(resumeRequest).then(async (response) => {
-          this.sessionRuntimes.set(response.sessionId, runtime)
+          this.bindSessionRuntime(response.sessionId, runtime)
           this.lastRuntime = runtime
           await this.sessionResumeObserver?.(resumeRequest, response)
           return Boolean(response.contextReset)
@@ -1842,19 +1882,64 @@ class AcpRuntimeCoordinator {
     return undefined
   }
 
-  private runtimeForTarget(target: AcpSessionAgentTarget | undefined): AcpRuntime {
-    if (!target) return this.getActiveRuntime()
-    const key = JSON.stringify([
-      target.frameworkId,
-      target.providerId,
-      target.model ?? null,
-      target.reasoningEffort
+  private targetRuntimeKey(
+    target: AcpSessionAgentTarget | undefined,
+    sessionScope?: string
+  ): string {
+    return JSON.stringify([
+      target?.frameworkId ?? null,
+      target?.providerId ?? null,
+      target?.model ?? null,
+      target?.reasoningEffort ?? null,
+      sessionScope ?? null
     ])
+  }
+
+  private bindSessionRuntime(sessionId: string, runtime: AcpRuntime): void {
+    this.sessionRuntimes.set(sessionId, runtime)
+    if (!this.isolatedRuntimes.has(runtime)) return
+    // Creation starts before the provider assigns an id. Replace its provisional scope so future
+    // resumes and background continuations select this same process, never a sibling's process.
+    const previousKey = this.runtimeTargetKeys.get(runtime)
+    if (previousKey && this.targetedRuntimes.get(previousKey) === runtime) {
+      this.targetedRuntimes.delete(previousKey)
+    }
+    const key = this.targetRuntimeKey(this.runtimeTargets.get(runtime), sessionId)
+    this.runtimeTargetKeys.set(runtime, key)
+    this.targetedRuntimes.set(key, runtime)
+  }
+
+  private async runtimeForTarget(
+    target: AcpSessionAgentTarget | undefined,
+    sessionId?: string,
+    cwd?: string
+  ): Promise<AcpRuntime> {
+    if (!target && sessionId) {
+      const owner = this.findRuntimeForSession(sessionId)
+      if (owner && !this.retiredRuntimes.has(owner)) return owner
+      const scoped = this.targetedRuntimes.get(this.targetRuntimeKey(undefined, sessionId))
+      if (scoped && this.runtimes.has(scoped) && !this.retiredRuntimes.has(scoped)) return scoped
+    }
+    const active = target ? undefined : this.getActiveRuntime()
+    // Resolve the default framework before allocating a Session: the initial backend can still
+    // be the placeholder Claude configuration until the first connection completes.
+    if (active && active.getSnapshot().status !== 'connected') await active.connect({ cwd })
+    if (active && active !== this.activeRuntime)
+      return this.runtimeForTarget(target, sessionId, cwd)
+    const isolate = (target?.frameworkId ?? active?.captureBackend().framework?.id) === 'opencode'
+    if (!target && !isolate) return active!
+    // OpenCode 1.18.14 registers ACP MCP servers by directory/name, not Session. Two Sessions
+    // sharing a process and cwd overwrite each other's tool credentials. A process must therefore
+    // belong to one primary Session, even when provider, model, and working directory are identical.
+    const key = this.targetRuntimeKey(target, isolate ? (sessionId ?? randomUUID()) : undefined)
     const existing = this.targetedRuntimes.get(key)
     if (existing && this.runtimes.has(existing) && !this.retiredRuntimes.has(existing)) {
       return existing
     }
-    const runtime = this.addRuntime(target)
+    const runtime = active ?? this.addRuntime(target)
+    // Consume the resolved default process exactly once, including concurrent first Sessions.
+    if (active && isolate) this.activeRuntime = undefined
+    if (isolate) this.isolatedRuntimes.add(runtime)
     this.runtimeTargetKeys.set(runtime, key)
     this.targetedRuntimes.set(key, runtime)
     return runtime
@@ -1944,8 +2029,9 @@ class AcpRuntimeCoordinator {
   private async retireUnusedTargetedRuntime(runtime: AcpRuntime | undefined): Promise<void> {
     if (
       !runtime ||
-      !this.runtimeTargets.has(runtime) ||
+      (!this.runtimeTargets.has(runtime) && !this.isolatedRuntimes.has(runtime)) ||
       this.retiredRuntimes.has(runtime) ||
+      (this.runtimeActivityCounts.get(runtime) ?? 0) > 0 ||
       Array.from(this.sessionRuntimes.values()).includes(runtime) ||
       Array.from(this.pendingSessionCreations).some((pending) => pending.runtime === runtime) ||
       Array.from(this.pendingSessionAdoptions.values()).some(

@@ -76,6 +76,7 @@
       "src/main/artifacts/artifact-provenance-graph.test.ts",
       "src/main/artifacts/artifact-reproducibility-execution.test.ts",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
+      "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
       "src/main/artifacts/artifact-save.integration.test.ts",
@@ -624,7 +625,14 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx"
+      "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
+      "src/renderer/src/components/streamdown/install-streamdown.lazy-table.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts"
     ]
   },
   "capabilityOverlays": [],

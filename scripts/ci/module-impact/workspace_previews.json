@@ -60,6 +60,8 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdbPreview.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfFiguresView.render.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfFiguresView.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfOutlineSidebar.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx",
@@ -111,7 +113,9 @@
     "src/renderer/src/pages/workspace/previews/usePreviewFileContent.ts",
     "src/renderer/src/pages/workspace/previews/usePreviewResourceGeneration.ts",
     "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.test.tsx",
-    "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.ts"
+    "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -171,6 +175,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/MoleculePreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/OfficePreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfFiguresView.render.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfThumbnail.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.test.tsx",
@@ -192,7 +197,8 @@
       "src/renderer/src/pages/workspace/previews/useManagedPreviewResource.test.tsx",
       "src/renderer/src/pages/workspace/previews/usePreviewFileContent.test.tsx",
       "src/renderer/src/pages/workspace/previews/useUnavailablePreviewProbe.test.tsx",
-      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx"
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-search-text-cache.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -257,7 +263,8 @@
       "src/renderer/src/pages/workspace/useManagedVersionWorkflow.test.tsx",
       "src/renderer/src/reviewer-paged-preview/main.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
     ]
   },
   "capabilityOverlays": [],
