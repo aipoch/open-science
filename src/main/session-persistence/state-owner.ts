@@ -79,12 +79,14 @@ type AppendUserMessageToInteractionCommand = Readonly<{
 type SessionStateRepository = {
   loadSessionWithDiagnostics(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    options?: { preserveRuntimeState?: boolean }
   ): Promise<
     | { status: 'found'; session: PersistedChatSession }
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
+  hasLiveRuntimeSession?(projectId: string, sessionId: string): boolean
   saveSession(
     session: PersistedChatSession,
     expectedRevision?: number
@@ -674,9 +676,12 @@ class SessionPersistenceStateOwner {
   // Restore reads synthesize restart recovery until a runtime attaches. Commit that
   // evidence before attachment makes subsequent reads preserve the old runtime state.
   async prepareRuntimeResume(scope: { projectId: string; sessionId: string }): Promise<void> {
+    const preserveRuntimeState =
+      this.options.repository.hasLiveRuntimeSession?.(scope.projectId, scope.sessionId) ?? false
     const restored = await this.options.repository.loadSessionWithDiagnostics(
       scope.projectId,
-      scope.sessionId
+      scope.sessionId,
+      { preserveRuntimeState }
     )
     if (restored.status !== 'found') throw new Error('Session could not be loaded for Resume.')
     if (restored.session.resumeRecovery?.cause !== 'app-restart') return

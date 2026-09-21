@@ -14,12 +14,12 @@ const roots: string[] = []
 const scope = { projectId: 'project-1', sessionId: 'session-1' }
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-const harness = async (liveSession = false) => {
+const harness = async (liveSession = false, activePrompt = false) => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-resume-recovery-'))
   roots.push(root)
   initDataRoot(root)
   const repository = new SessionRepository(root, {
-    hasActiveRuntimePrompt: () => false,
+    hasActiveRuntimePrompt: () => activePrompt,
     hasLiveRuntimeSession: () => liveSession
   })
   const initial = await repository.saveSession(
@@ -121,6 +121,52 @@ describe('durable restart recovery before runtime attachment', () => {
     await h.owner.prepareRuntimeResume(scope)
     expect(save).not.toHaveBeenCalled()
     expect(await h.raw()).toEqual(before)
+  })
+
+  it('recovers a stale active prompt when the provider session is no longer live', async () => {
+    const h = await harness(false, true)
+
+    await h.owner.prepareRuntimeResume(scope)
+
+    const recovered = await h.raw()
+    expect(recovered).toMatchObject({
+      status: 'found',
+      session: {
+        status: 'error',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        }
+      }
+    })
+    if (recovered.status !== 'found') throw new Error('Missing recovered fixture')
+    expect(recovered.session.activeRun).toBeUndefined()
+
+    const branch = recovered.session.conversationGraph!.branches[0]
+    const nextMessage = {
+      id: 'prompt-2',
+      role: 'user' as const,
+      content: 'Continue the research.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 4,
+      updatedAt: 4
+    }
+    await expect(
+      h.owner.saveSession(h.initial, {
+        conversationCommands: [
+          {
+            id: 'append-after-restart',
+            kind: 'append-user',
+            timestamp: 4,
+            branchId: branch.id,
+            parentMessageId: branch.headMessageId,
+            message: nextMessage
+          }
+        ]
+      })
+    ).resolves.toMatchObject({ messages: expect.arrayContaining([nextMessage]) })
   })
 
   it('preserves the original durable run when recovery persistence fails and permits retry', async () => {

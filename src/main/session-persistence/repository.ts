@@ -801,6 +801,10 @@ class SessionRepository {
     ).session
   }
 
+  hasLiveRuntimeSession(projectId: string, sessionId: string): boolean {
+    return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+  }
+
   // Terminal mutations must distinguish absence from a transient/non-ENOENT read failure. Treating
   // both as undefined could unlink the JSON before Upload cleanup has observed its final authority.
   async loadSessionWithDiagnostics(
@@ -2020,8 +2024,8 @@ class SessionRepository {
     const decoded = decodeSessionFile(JSON.parse(contents) as unknown, {
       preserveLegacyUploadPaths: true,
       preserveRuntimeState:
-        preserveRuntimeState === true
-          ? true
+        preserveRuntimeState !== undefined
+          ? preserveRuntimeState
           : (sessionId) =>
               this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
               this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
