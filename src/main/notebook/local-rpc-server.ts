@@ -397,6 +397,7 @@ type NotebookRpcSessionBinding = {
   executionCwd?: string
   isControl?: true
   delegatedNotebook?: {
+    permissionPrompts?: 'none'
     attemptId: string
     workspaceCwd: string
     provenanceContext: NotebookRunProvenanceContext
@@ -422,6 +423,7 @@ type ActiveArtifactTurnBinding = Readonly<{
 }>
 
 type DelegatedNotebookConnectionRequest = Readonly<{
+  permissionPrompts?: 'none'
   projectId: string
   sessionId: string
   rootFrameId: string
@@ -1317,6 +1319,7 @@ class NotebookLocalRpcServer {
     const connection = await this.ensureStarted()
     const token = randomUUID()
     const delegatedNotebook: NonNullable<NotebookRpcSessionBinding['delegatedNotebook']> = {
+      permissionPrompts: scope.permissionPrompts,
       attemptId: scope.attemptId,
       workspaceCwd: scope.workspaceCwd,
       provenanceContext: {
@@ -2121,6 +2124,7 @@ class NotebookLocalRpcServer {
                   frame_id: sessionBinding.agentFrameId,
                   caller_role: sessionBinding.delegatedWorkRole,
                   attempt_id: sessionBinding.delegatedWorkAttemptId,
+                  permissionPrompts: sessionBinding.delegatedNotebook?.permissionPrompts,
                   origin_message_id:
                     sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
                     sessionBinding.activeControlInvocation?.originatingUserMessageId,
@@ -2554,6 +2558,7 @@ class NotebookLocalRpcServer {
             frameId,
             attemptId,
             role: 'delegate',
+            permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
             originMessageId,
             toolInvocationId
           },

@@ -95,6 +95,15 @@ describe('durable delegated work', () => {
         }
       ]
     }
+    const beforeQuestion = await records.snapshot()
+    await expect(
+      work.requestUserInput(
+        { ...delegatedCaller, permissionPrompts: 'none' },
+        questionRequest,
+        'question-request'
+      )
+    ).resolves.toEqual({ action: 'cancelled' })
+    expect(await records.snapshot()).toEqual(beforeQuestion)
     await expect(
       work.requestUserInput(delegatedCaller, questionRequest, 'question-request')
     ).resolves.toEqual({ action: 'pending' })

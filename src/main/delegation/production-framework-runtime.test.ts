@@ -307,12 +307,15 @@ describe('production delegated framework runtime bridge', () => {
           } as never,
           notebookRpcServer: () =>
             ({
-              issueDelegatedNotebookConnection: async () => ({
-                endpoint: 'http://127.0.0.1:1',
-                token: 'test',
-                release: () => undefined,
-                revoke: async () => undefined
-              })
+              issueDelegatedNotebookConnection: async (scope: { permissionPrompts?: 'none' }) => {
+                expect(scope.permissionPrompts).toBe('none')
+                return {
+                  endpoint: 'http://127.0.0.1:1',
+                  token: 'test',
+                  release: () => undefined,
+                  revoke: async () => undefined
+                }
+              }
             }) as never,
           resolvePermissionPrompts: () => 'none',
           readSession: async () => delegatedSession(frameworkId)

@@ -262,6 +262,7 @@ const createProductionDelegatedFrameworkRuntime = (
             }
           }
           const capability = await options.notebookRpcServer().issueDelegatedNotebookConnection({
+            permissionPrompts,
             projectId: input.session.projectId,
             sessionId: input.session.sessionId,
             rootFrameId: graph.rootFrameId,
