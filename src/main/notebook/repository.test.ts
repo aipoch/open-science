@@ -12,6 +12,7 @@ import {
 } from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
 import { getNotebookInputRoot } from './input-staging'
+import { digestNotebookHelperSource } from './helper-evidence'
 
 let storageRoot: string | undefined
 
@@ -45,6 +46,54 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('preserves valid history with more than 32 loaded helper modules', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const helperModules = Array.from({ length: 33 }, (_, index) => {
+      const source = `def reader_${index}():\n    return 1`
+      return {
+        helperId: `helper-${index}`,
+        skillIdentity: 'skill://readers',
+        packageOrigin: 'test',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: [`reader_${index}`],
+        source,
+        sourceDigest: digestNotebookHelperSource(source)
+      }
+    })
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({
+        status: 'completed',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      })
+    })
+    const filePath = join(document.notebookSessionRoot, 'run.json')
+    const before = await readFile(filePath, 'utf8')
+    const reopened = new NotebookRunRepository(root)
+    expect(await reopened.readSessionRuns(projectId, sessionId)).toEqual([
+      expect.objectContaining({
+        runId: 'run-1',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      })
+    ])
+    expect(await readFile(filePath, 'utf8')).toBe(before)
+  })
+
   it('resolves a provisional root Frame without reading it as a child Frame lane', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

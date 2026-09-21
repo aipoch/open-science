@@ -49,6 +49,17 @@ import {
 const SIDECAR_FILE = 'dependency-analysis.json'
 const MAX_NAMES_PER_RUN = 512
 const MAX_STATIC_STRING_LENGTH = 4_096
+const helperReplayWithinBudget = (
+  modules: readonly { source: string; exports: readonly string[] }[]
+): boolean =>
+  modules.length <= 32 &&
+  modules.reduce((bytes, module) => bytes + Buffer.byteLength(module.source, 'utf8'), 0) <=
+    512 * 1024 &&
+  modules.every(
+    (module) =>
+      module.exports.length <= MAX_NAMES_PER_RUN &&
+      module.exports.every((name) => name.length <= MAX_STATIC_STRING_LENGTH)
+  )
 const MAX_STATIC_COLLECTION_VALUES = 128
 const MAX_STATIC_COLLECTION_VALUES_PER_CONTEXT = 1_024
 const MAX_INCREMENTAL_PROJECTIONS = 32
@@ -1866,11 +1877,33 @@ class NotebookDependencyAnalyzer {
           .slice(0, priorRunIndex < 0 ? sessionRuns.length : priorRunIndex)
           .filter(
             (previous) =>
-              previous.status === 'completed' && previous.kernelEpochId === run.kernelEpochId
+              previous.kernelKind === language &&
+              (previous.environment ?? '') === (run.environment ?? '') &&
+              previous.kernelEpochId === run.kernelEpochId &&
+              (previous.status === 'completed' || previous.kernelDispatched !== false)
           )
-          .flatMap((previous) => (previous.helperModules ?? []).map(helperEvidenceKey))
+          .flatMap((previous) => {
+            const cached = sidecar.runs[previous.runId]
+            return (previous.helperModules ?? [])
+              .filter((module) => {
+                if (previous.status === 'completed') return true
+                // Sticky metadata does not prove a fresh load after a dispatched failure.
+                // Retry only bindings whose analyzed source remained available and unmodified.
+                const retained = cached?.fileContext?.pythonHelperModules ?? []
+                return !(
+                  cachedAnalysisIsReusable(cached, checksumFor(previous)) &&
+                  cached?.facts.state === 'available' &&
+                  retained.some(
+                    (candidate) => helperContextKey(candidate) === helperContextKey(module)
+                  )
+                )
+              })
+              .map(helperEvidenceKey)
+          })
       )
-      const helperEvidenceIncomplete = run.helperEvidenceStatus?.state === 'incomplete'
+      let helperEvidenceIncomplete =
+        run.helperEvidenceStatus?.state === 'incomplete' ||
+        !helperReplayWithinBudget(run.helperModules ?? [])
       const projectedHelperModules = helperEvidenceIncomplete
         ? []
         : (priorContext?.pythonHelperModules ?? [])
@@ -1892,6 +1925,7 @@ class NotebookDependencyAnalyzer {
             (candidate) => helperContextKey(candidate) === helperContextKey(module)
           ) === index
       )
+      helperEvidenceIncomplete ||= !helperReplayWithinBudget(helperModules)
       const contextWithoutHelpers = priorContext
         ? { ...priorContext }
         : { staticStrings: [], staticCollections: [], localFileWrappers: [] }
@@ -1900,7 +1934,9 @@ class NotebookDependencyAnalyzer {
         helperModules.length > 0 || helperEvidenceIncomplete
           ? {
               ...contextWithoutHelpers,
-              ...(helperModules.length ? { pythonHelperModules: helperModules } : {})
+              ...(helperModules.length && !helperEvidenceIncomplete
+                ? { pythonHelperModules: helperModules }
+                : {})
             }
           : contextWithoutHelpers
       const analysis = externalFacts
@@ -1953,12 +1989,15 @@ class NotebookDependencyAnalyzer {
                 staticStrings: [],
                 staticCollections: [],
                 localFileWrappers: []
-              }),
-              ...(persistedHelperModules.length
-                ? { pythonHelperModules: persistedHelperModules }
-                : {})
+              })
             }
           : undefined
+      if (fileContext) {
+        // The visitor returns its input helper context. Replace it even when filtering
+        // removed every export, so later retries cannot revive those stale bindings.
+        delete fileContext.pythonHelperModules
+        if (persistedHelperModules.length) fileContext.pythonHelperModules = persistedHelperModules
+      }
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),
         facts: persistedFacts,

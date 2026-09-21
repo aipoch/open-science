@@ -7099,6 +7099,8 @@ const analyzePythonFileAccessTree = (
       helperFunctions.set(name, { function: fn, module, topLevel: true })
     }
   }
+  const isHelperName = (name: string): boolean =>
+    helperScopes.at(-1)?.has(name) === true || helperFunctions.has(name)
   const activeHelperFunctions = new Set<PyNode>()
   let helperScopeDepth = 0
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
@@ -7114,7 +7116,7 @@ const analyzePythonFileAccessTree = (
   const activeStaticLoops: Array<{ names: Set<string>; invalidated: boolean }> = []
   const invalidateStaticValue = (name: string | undefined, taintIdentity = true): void => {
     if (!name) return
-    if (helperFunctions.has(name)) shadowedHelperNames.add(name)
+    if (isHelperName(name)) shadowedHelperNames.add(name)
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
       for (const { target, source } of possibleAliases) {
@@ -7609,8 +7611,8 @@ const analyzePythonFileAccessTree = (
     const scope = new Map<string, HelperFunction>()
     const ambiguousNestedNames = new Set<string>()
     if (preserveCallerScope) {
-      for (const candidate of helperScopes.at(-1)?.values() ?? [])
-        scope.set(candidate.function.name!, candidate)
+      // The enclosing scope already contains module functions and lexical overrides.
+      for (const [name, candidate] of helperScopes.at(-1) ?? []) scope.set(name, candidate)
     }
     const directNestedFunctions = new Set(
       (Array.isArray(helper.function.body) ? helper.function.body : [])
@@ -7622,13 +7624,61 @@ const analyzePythonFileAccessTree = (
         )
         .map((statement) => statement as PyNode)
     )
+    const collectBindings = (node: PyNode): string[] => {
+      if (
+        node.type === 'FunctionDef' ||
+        node.type === 'AsyncFunctionDef' ||
+        node.type === 'ClassDef'
+      )
+        return node.name ? [node.name] : []
+      if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del'))
+        return node.id ? [node.id] : []
+      if (node.type === 'Import')
+        return ((node.names as PyAlias[] | undefined) ?? []).map(
+          (alias) => alias.asname || alias.name.split('.')[0] || alias.name
+        )
+      if (node.type === 'ImportFrom')
+        return ((node.names as PyAlias[] | undefined) ?? []).flatMap((alias) =>
+          alias.name === '*' ? [] : [alias.asname || alias.name]
+        )
+      return pyChildren(node).flatMap(collectBindings)
+    }
+    const finalModuleBindings = new Map<string, PyNode | undefined>()
     for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
+      const names = collectBindings(statement)
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
         statement.name &&
         !statement.decorator_list?.length
-      )
-        scope.set(statement.name, { function: statement, module: helper.module, topLevel: true })
+      ) {
+        finalModuleBindings.set(statement.name, statement)
+        continue
+      }
+      for (const name of names) finalModuleBindings.set(name, undefined)
+    }
+    const finalNestedBindings = new Map<string, PyNode | undefined>()
+    for (const statement of Array.isArray(helper.function.body) ? helper.function.body : []) {
+      const names = collectBindings(statement)
+      if (
+        (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+        statement.name &&
+        !statement.decorator_list?.length
+      ) {
+        finalNestedBindings.set(statement.name, statement)
+        continue
+      }
+      for (const name of names) finalNestedBindings.set(name, undefined)
+    }
+    if (!preserveCallerScope) {
+      for (const statement of Array.isArray(helper.module.body) ? helper.module.body : []) {
+        if (
+          (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
+          statement.name &&
+          !statement.decorator_list?.length &&
+          finalModuleBindings.get(statement.name) === statement
+        )
+          scope.set(statement.name, { function: statement, module: helper.module, topLevel: true })
+      }
     }
     for (const nested of walkPy(helper.function)) {
       if (
@@ -7636,7 +7686,7 @@ const analyzePythonFileAccessTree = (
         nested.name &&
         !nested.decorator_list?.length
       )
-        if (directNestedFunctions.has(nested))
+        if (directNestedFunctions.has(nested) && finalNestedBindings.get(nested.name) === nested)
           scope.set(nested.name, { function: nested, module: helper.module, topLevel: false })
         else ambiguousNestedNames.add(nested.name)
     }
@@ -8663,7 +8713,10 @@ const analyzePythonFileAccessTree = (
       node.type === 'ClassDef'
     ) {
       if (node.name) {
-        if (helperScopeDepth === 0 && helperFunctions.has(node.name))
+        if (
+          isHelperName(node.name) &&
+          (helperScopeDepth === 0 || helperScopes.at(-1)?.get(node.name)?.function !== node)
+        )
           shadowedHelperNames.add(node.name)
         importedNames.delete(node.name)
         scientificObjectTypes.delete(node.name)
@@ -8760,7 +8813,7 @@ const analyzePythonFileAccessTree = (
       const body = Array.isArray(node.body) ? node.body : node.body ? [node.body] : []
       for (const targetName of targetNames) {
         shadowedStaticCalls.add(targetName)
-        if (helperFunctions.has(targetName)) shadowedHelperNames.add(targetName)
+        if (isHelperName(targetName)) shadowedHelperNames.add(targetName)
       }
       for (const targetName of targetNames) inMemoryInputs.delete(targetName)
       for (const targetName of targetNames) fileConnections.delete(targetName)
@@ -8844,7 +8897,7 @@ const analyzePythonFileAccessTree = (
         }
       } else {
         for (const targetName of targetNames) {
-          if (helperFunctions.has(targetName)) shadowedHelperNames.add(targetName)
+          if (isHelperName(targetName)) shadowedHelperNames.add(targetName)
           bindings.delete(targetName)
           collections.delete(targetName)
           fileConnections.delete(targetName)
@@ -8918,7 +8971,7 @@ const analyzePythonFileAccessTree = (
         }
         const localName = alias.asname || alias.name.split('.')[0] || alias.name
         importedNames.set(localName, alias.asname ? alias.name : localName)
-        if (helperFunctions.has(localName)) shadowedHelperNames.add(localName)
+        if (isHelperName(localName)) shadowedHelperNames.add(localName)
         archiveNames.delete(localName)
         inMemoryInputs.delete(localName)
         fileConnections.delete(localName)
@@ -8935,7 +8988,7 @@ const analyzePythonFileAccessTree = (
         if (alias.name !== '*') {
           const localName = alias.asname || alias.name
           importedNames.set(localName, `${node.module ?? ''}.${alias.name}`)
-          if (helperFunctions.has(localName)) shadowedHelperNames.add(localName)
+          if (isHelperName(localName)) shadowedHelperNames.add(localName)
           archiveNames.delete(localName)
           inMemoryInputs.delete(localName)
           fileConnections.delete(localName)
@@ -8989,7 +9042,7 @@ const analyzePythonFileAccessTree = (
       pyChildren(node).forEach((child) => visit(child))
       for (const target of targets) {
         if (target.type !== 'Name' || !target.id) continue
-        if (helperFunctions.has(target.id)) shadowedHelperNames.add(target.id)
+        if (isHelperName(target.id)) shadowedHelperNames.add(target.id)
         if (conditionalDepth > 0) {
           // A skipped rebind leaves the old object alive through this name.
           for (const values of [collections, partialMappingKeys, partialCollectionRows]) {
