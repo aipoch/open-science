@@ -374,7 +374,8 @@
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
-      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

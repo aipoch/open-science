@@ -325,7 +325,9 @@
       "src/main/storage/migration-target-race.test.ts",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/main/acp/runtime-plan-composition.test.ts",
-      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/compute/cancellation.real-ssh.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

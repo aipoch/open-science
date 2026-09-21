@@ -234,7 +234,8 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     executionId: string,
     reviewOwner: 'task' | 'renderer',
     planDeliveryCommandId?: string,
-    delegatedMessageId?: string
+    delegatedMessageId?: string,
+    applicationPrompt?: { text: string; attribution: MessageAttribution }
   ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
@@ -398,7 +399,10 @@ class AcpPromptTurnWorkflow {
           interaction.turnToken,
           mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
           mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined,
-          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined
+          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined,
+          mode.kind === 'application'
+            ? { text: admittedRequest.text ?? '', attribution: mode.attribution }
+            : undefined
         )
       }
       this.options.registry.select(admittedRequest.sessionId)

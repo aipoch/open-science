@@ -963,7 +963,7 @@ describe('JobPoller', () => {
         }
         // This fake models the SSH boundary semantically: signal operations mutate remote process
         // state, while the ownership probe returns the configured remote observation.
-        if (/^kill [0-9]/.test(command) || command.includes('kill -TERM')) {
+        if (command.includes('kill_job_pid 1234')) {
           signals.push(1234)
           return {
             exitCode: 0,

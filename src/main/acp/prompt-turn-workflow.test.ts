@@ -855,6 +855,30 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(reconnect.contextUsage.reconcileUsed).not.toHaveBeenCalled()
   })
 
+  it('passes application text and trusted attribution to durable admission before provider dispatch', async () => {
+    const begin = vi.fn(async () => undefined)
+    const harness = createHarness({ beginRuntimeSessionTurn: begin })
+    const attribution = {
+      kind: 'application' as const,
+      feature: 'background-results' as const,
+      purpose: 'agent-result-delivery' as const,
+      deliveryKey: 'delivery-1',
+      deliveryIds: ['compute-job:job-1']
+    }
+    await harness.workflow.run(request(), { kind: 'application', attribution })
+    expect(begin).toHaveBeenCalledWith(
+      request(),
+      expect.any(String),
+      'renderer',
+      undefined,
+      undefined,
+      { text: request().text, attribution }
+    )
+    expect(begin.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.executor.mock.invocationCallOrder[0]
+    )
+  })
+
   it('rejects a parent continuation before provider dispatch when durable admission fails', async () => {
     const begin = vi.fn(async () => {
       throw new Error('durable command unavailable')
@@ -871,7 +895,8 @@ describe('AcpPromptTurnWorkflow', () => {
       expect.any(String),
       'renderer',
       undefined,
-      'message-1'
+      'message-1',
+      undefined
     )
     expect(harness.executor).not.toHaveBeenCalled()
     expect(harness.owner.current('s1')).toBeUndefined()

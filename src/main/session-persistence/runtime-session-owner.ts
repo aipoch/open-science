@@ -1,7 +1,16 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { AcpPermissionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { ArtifactFile } from '../../shared/artifacts'
-import { resolveActiveConversationActivities } from '../../shared/conversation-graph'
-import type { PersistedActiveRun, PersistedChatSession } from '../../shared/session-persistence'
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
+import {
+  materializeSessionConversationGraph,
+  type MessageAttribution,
+  type PersistedActiveRun,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { hasDurableRuntimeSessionAdmission } from '../../shared/runtime-session-admission'
 import {
@@ -41,6 +50,8 @@ export type RuntimeSessionAdmission = {
   planDeliveryCommandId?: string
   // Main-only identity of the fenced reliable message; never serialized as provider binding.
   delegatedMessageId?: string
+  // Main-owned application turns create their prompt and execution authority in one commit.
+  applicationPrompt?: { text: string; attribution: MessageAttribution }
 }
 
 export type RuntimeSessionArtifactPublicationReceipt = {
@@ -193,6 +204,66 @@ const assertScopeMatchesSession = (
   ) {
     throw new Error('Runtime Session turn has no durable prompt path.')
   }
+}
+
+// Application callers supply intent, not a prepared Session snapshot. The runtime owns both
+// the durable prompt and its active run, so no caller or renderer can omit half of admission.
+const admitApplicationPrompt = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope,
+  admission: RuntimeSessionAdmission,
+  now: number
+): PersistedChatSession => {
+  const application = admission.applicationPrompt
+  if (!application) return session
+  if (application.attribution.kind !== 'application')
+    throw new Error('Runtime application prompt requires application attribution.')
+  if (session.archivedAt !== undefined)
+    throw new Error('Cannot admit an application prompt to an archived Session.')
+  if (session.activeRun && session.activeRun.promptMessageId !== scope.promptMessageId)
+    throw new Error('Session already has an active run.')
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === scope.agentFrameId)
+  if (
+    graph?.activeFrameId !== scope.agentFrameId ||
+    frame?.activeBranchId !== scope.messageBranchId ||
+    graph.runtimeSegments.filter(({ agentFrameId }) => agentFrameId === scope.agentFrameId).at(-1)
+      ?.id !== scope.runtimeSegmentId
+  )
+    throw new Error('Application prompt conversation path changed before admission.')
+  const existing = graph.messages.find(({ id }) => id === scope.promptMessageId)
+  if (
+    existing &&
+    (existing.role !== 'user' ||
+      existing.content !== application.text ||
+      !isDeepStrictEqual(existing.attribution, application.attribution))
+  )
+    throw new Error('Application prompt conflicts with its durable message.')
+  const startedAt = Math.max(now, session.updatedAt + 1)
+  const next = materializeSessionConversationGraph({
+    ...session,
+    status: 'running',
+    error: undefined,
+    messages: existing
+      ? resolveActiveConversationMessages(graph)
+      : [
+          ...resolveActiveConversationMessages(graph),
+          {
+            id: scope.promptMessageId,
+            role: 'user',
+            content: application.text,
+            status: 'complete',
+            eventIds: [],
+            attribution: application.attribution,
+            createdAt: startedAt,
+            updatedAt: startedAt
+          }
+        ],
+    activeRun: session.activeRun ?? { promptMessageId: scope.promptMessageId, startedAt },
+    updatedAt: startedAt
+  })
+  delete next.resumeRecovery
+  return next
 }
 
 // A restored provider context starts a new Runtime Segment without rewriting the original
@@ -403,7 +474,10 @@ export class RuntimeSessionOwner {
       previousTurn.scope.agentFrameId === scope.agentFrameId &&
       previousTurn.scope.messageBranchId === scope.messageBranchId &&
       previousTurn.scope.runtimeSegmentId === scope.runtimeSegmentId
-    if (!sameExecution) loaded = admitDelegatedMessage(loaded, scope, admission, this.now())
+    if (!sameExecution) {
+      loaded = admitApplicationPrompt(loaded, scope, admission, this.now())
+      loaded = admitDelegatedMessage(loaded, scope, admission, this.now())
+    }
     const continuationRun = continuationRunFor(
       loaded,
       scope,
@@ -450,6 +524,7 @@ export class RuntimeSessionOwner {
     // The coordinator stamps Main's runtime ownership in this identity mutation. Await it before
     // provider dispatch so a renderer save can never become the first durable writer for the turn.
     const session = await this.dependencies.mutateSession(scope, (latest) => {
+      latest = admitApplicationPrompt(latest, scope, admission, this.now())
       latest = admitDelegatedMessage(latest, scope, admission, this.now())
       // Re-derive against the durable record Main is about to write: only a still-parked turn may
       // be continued, and its re-armed run has to be newer than the run it replaces.
@@ -469,10 +544,12 @@ export class RuntimeSessionOwner {
         reviewOwner = 'renderer',
         planDeliveryCommandId: _planDeliveryCommandId,
         delegatedMessageId: _delegatedMessageId,
+        applicationPrompt: _applicationPrompt,
         ...runtimeBinding
       } = admission
       void _planDeliveryCommandId
       void _delegatedMessageId
+      void _applicationPrompt
       const durableAdmission = {
         executionId: scope.executionId,
         promptMessageId: scope.promptMessageId,
