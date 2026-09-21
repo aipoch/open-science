@@ -863,6 +863,69 @@ def read_inputs():
     )
   })
 
+  it.each([
+    'if True:\n    read_inputs = replacement',
+    'if enabled:\n    def read_inputs():\n        return open("new.csv")',
+    'try:\n    read_inputs = replacement\nexcept Exception:\n    pass',
+    'try:\n    pass\nfinally:\n    read_inputs = replacement',
+    'while enabled:\n    read_inputs = replacement\n    break',
+    'with manager() as resource:\n    read_inputs = replacement',
+    'with manager() as read_inputs:\n    pass',
+    'match value:\n    case 1:\n        read_inputs = replacement',
+    'for item in items:\n    read_inputs = replacement',
+    'if enabled:\n    read_inputs, other = replacement, None',
+    'if enabled:\n    import custom_reader as read_inputs',
+    'if enabled:\n    from custom_reader import reader as read_inputs',
+    'if enabled:\n    del read_inputs',
+    '@decorate\ndef read_inputs():\n    return open("new.csv")'
+  ])('does not replay an export that may be rebound in module control flow: %s', async (rebind) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs():\n    return open("old.csv")\ndef replacement():\n    return open("new.csv")\n${rebind}`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    'def unrelated():\n    read_inputs = None',
+    'if enabled:\n    unrelated = None',
+    'if enabled:\n    read_inputs = None\ndef read_inputs():\n    return open("old.csv")'
+  ])(
+    'preserves a proven final export after unrelated or overwritten bindings: %s',
+    async (suffix) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `def read_inputs():\n    return open("old.csv")\n${suffix}`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({
+        reads: ['old.csv'],
+        readState: 'complete'
+      })
+    }
+  )
+
   it('drops helper evidence after a cross-cell export rebind', async () => {
     const context = await fileContext(
       'python',

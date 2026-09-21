@@ -7043,6 +7043,22 @@ const analyzePythonFileAccessTree = (
   for (const { module, exports } of helperModules) {
     const topLevelFunctions = new Map<string, PyNode>()
     const finalBindings = new Map<string, 'function' | 'other'>()
+    const collectReboundNames = (node: PyNode): string[] => {
+      // Definition bodies have their own namespace; control-flow blocks do not.
+      if (['FunctionDef', 'AsyncFunctionDef', 'ClassDef'].includes(node.type))
+        return node.name ? [node.name] : []
+      if (node.type === 'Name' && (node.ctx === 'Store' || node.ctx === 'Del'))
+        return node.id ? [node.id] : []
+      if (node.type === 'Import')
+        return ((node.names as PyAlias[] | undefined) ?? []).map(
+          (alias) => alias.asname || alias.name.split('.')[0] || alias.name
+        )
+      if (node.type === 'ImportFrom')
+        return ((node.names as PyAlias[] | undefined) ?? []).flatMap((alias) =>
+          alias.name === '*' ? [...exports] : [alias.asname || alias.name]
+        )
+      return pyChildren(node).flatMap(collectReboundNames)
+    }
     for (const statement of Array.isArray(module.body) ? module.body : []) {
       if (
         (statement.type === 'FunctionDef' || statement.type === 'AsyncFunctionDef') &&
@@ -7051,31 +7067,9 @@ const analyzePythonFileAccessTree = (
       ) {
         topLevelFunctions.set(statement.name, statement)
         finalBindings.set(statement.name, 'function')
+        continue
       }
-      const reboundNames = (() => {
-        if (statement.type === 'Assign')
-          return (statement.targets ?? []).flatMap((target) =>
-            target.type === 'Name' && target.id ? [target.id] : []
-          )
-        if (['AnnAssign', 'AugAssign'].includes(statement.type))
-          return statement.target?.type === 'Name' && statement.target.id
-            ? [statement.target.id]
-            : []
-        if (statement.type === 'For')
-          return statement.target?.type === 'Name' && statement.target.id
-            ? [statement.target.id]
-            : []
-        if (statement.type === 'Import')
-          return ((statement.names as PyAlias[] | undefined) ?? []).map(
-            (alias) => alias.asname || alias.name.split('.')[0] || alias.name
-          )
-        if (statement.type === 'ImportFrom')
-          return ((statement.names as PyAlias[] | undefined) ?? [])
-            .filter((alias) => alias.name !== '*')
-            .map((alias) => alias.asname || alias.name)
-        if (statement.type === 'ClassDef') return statement.name ? [statement.name] : []
-        return []
-      })()
+      const reboundNames = collectReboundNames(statement)
       for (const name of reboundNames) finalBindings.set(name, 'other')
     }
     for (const name of exports) {
