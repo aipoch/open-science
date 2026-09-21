@@ -119,7 +119,13 @@ const buildArtifactVersionRoCrateMetadata = (
 ): RoCrateMetadataDocument => {
   const { descriptor, evidence } = source
   const profile = options.profile ?? 'lightweight'
-  const packagedDataPaths = options.packagedDataPaths ?? new Map<string, string>()
+  // ZIP entry names are filesystem paths; JSON-LD identifiers are URI references.
+  const packagedDataPaths = new Map(
+    [...(options.packagedDataPaths ?? [])].map(([versionId, path]) => [
+      versionId,
+      path.split('/').map(encodeURIComponent).join('/')
+    ])
+  )
   const omittedDataReasons = options.omittedDataReasons ?? new Map<string, string>()
   const payloadId =
     packagedDataPaths.get(evidence.version_id) ?? versionEntityId(evidence.version_id)
@@ -544,12 +550,14 @@ const buildArtifactVersionCompleteRoCrateArchive = async (
       return
     }
     const path = `data/${outputFilename(filename)}`
-    const existingChecksum = pathChecksums.get(path)
+    // Reject collisions on case-insensitive and Unicode-normalizing filesystems too.
+    const portablePath = path.normalize('NFD').toLowerCase()
+    const existingChecksum = pathChecksums.get(portablePath)
     if (existingChecksum && existingChecksum !== checksum) {
       throw new Error(`RO-Crate archive path conflicts: ${path}`)
     }
     dataEntries.set(path, bytes)
-    pathChecksums.set(path, checksum)
+    pathChecksums.set(portablePath, checksum)
     archivedChecksums.set(checksum, path)
     packagedDataPaths.set(versionId, path)
   }

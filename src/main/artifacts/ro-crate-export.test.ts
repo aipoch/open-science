@@ -546,6 +546,61 @@ describe('Artifact Version RO-Crate export', () => {
     ).rejects.toThrow('RO-Crate archive path conflicts: data/report.csv')
   })
 
+  it.each(['report #1%.csv', '结果 数据.csv'])(
+    'encodes URI references for %s without renaming ZIP entries',
+    async (filename) => {
+      const fixture = completeSource()
+      fixture.source.evidence.filename = filename
+      fixture.source.evidence.inputs[0]!.filename = `input ${filename}`
+      fixture.source.evidence.inputs.push({
+        ...fixture.source.evidence.inputs[0]!,
+        ordinal: 2,
+        input_file_version_id: 'input-version-2'
+      })
+      const files = unzipSync(
+        await buildArtifactVersionCompleteRoCrateArchive(fixture.source, {
+          readVersionContent: async () => fixture.payload,
+          readInputContent: async () => fixture.input
+        })
+      )
+      const metadata = JSON.parse(
+        strFromU8(files['ro-crate-metadata.json']!)
+      ) as RoCrateMetadataDocument
+      const payloadId = `data/${encodeURIComponent(filename)}`
+      const inputId = `data/${encodeURIComponent(`input ${filename}`)}`
+      expect(Buffer.from(files[`data/${filename}`]!)).toEqual(fixture.payload)
+      expect(Buffer.from(files[`data/input ${filename}`]!)).toEqual(fixture.input)
+      expect(entity(metadata, './')).toMatchObject({
+        mainEntity: { '@id': payloadId },
+        hasPart: expect.arrayContaining([{ '@id': payloadId }, { '@id': inputId }])
+      })
+      expect(entity(metadata, payloadId).name).toBe(filename)
+      expect(entity(metadata, inputId).name).toBe(`input ${filename}`)
+      expect(entity(metadata, '#create-action/run-1')).toMatchObject({
+        object: [{ '@id': inputId }],
+        result: [{ '@id': payloadId }]
+      })
+      expect(entity(metadata, '#review/review-1').object).toEqual([{ '@id': payloadId }])
+      expect(entity(metadata, '#review-check/check-1').itemReviewed).toEqual({ '@id': payloadId })
+      expect(Object.keys(files).filter((path) => path.startsWith('data/'))).toHaveLength(2)
+    }
+  )
+
+  it.each([
+    ['report.csv', 'REPORT.csv'],
+    ['résumé.csv', 're\u0301sume\u0301.csv']
+  ])('rejects portable path collisions between %s and %s', async (payloadName, inputName) => {
+    const fixture = completeSource()
+    fixture.source.evidence.filename = payloadName
+    fixture.source.evidence.inputs[0]!.filename = inputName
+    await expect(
+      buildArtifactVersionCompleteRoCrateArchive(fixture.source, {
+        readVersionContent: async () => fixture.payload,
+        readInputContent: async () => fixture.input
+      })
+    ).rejects.toThrow('RO-Crate archive path conflicts:')
+  })
+
   it('serializes stable metadata JSON', () => {
     const document = buildArtifactVersionRoCrateMetadata(source())
     const serialized = serializeRoCrateMetadata(document)
