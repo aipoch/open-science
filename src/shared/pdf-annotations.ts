@@ -177,7 +177,8 @@ const hasMatchingScope = (value: z.infer<typeof createSchema>): boolean =>
       value.target.source.versionId === value.literatureVersionId &&
       value.target.source.projectId === undefined &&
       value.target.source.sessionId === undefined
-    : value.target.source.projectId === value.projectId)
+    : value.target.source.kind !== 'literature-attachment-version' &&
+      value.target.source.projectId === value.projectId)
 export const createPdfAnnotationRequestSchema = createSchema
   .refine(hasMatchingScope)
   .refine(hasMatchingKind, {

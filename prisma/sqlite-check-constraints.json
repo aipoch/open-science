@@ -868,7 +868,7 @@
     {
       "tableName": "pdf_annotations",
       "name": "PdfAnnotation_scope_check",
-      "expression": "(\"projectId\" IS NOT NULL) OR (\"projectId\" IS NULL AND \"sessionId\" IS NULL AND \"sourceKind\" = 'literature-attachment-version' AND \"sourceSessionId\" IS NULL)"
+      "expression": "(\"projectId\" IS NOT NULL AND \"sourceKind\" <> 'literature-attachment-version') OR (\"projectId\" IS NULL AND \"sessionId\" IS NULL AND \"sourceKind\" = 'literature-attachment-version' AND \"sourceSessionId\" IS NULL)"
     },
     {
       "tableName": "pdf_annotation_imports",

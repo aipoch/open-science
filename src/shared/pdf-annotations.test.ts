@@ -151,3 +151,23 @@ it('requires one complete scope and binds global Literature writes to the exact 
   ])
     expect(listPdfAnnotationsRequestSchema.safeParse(scope).success).toBe(false)
 })
+
+it.each([undefined, 'session-1'])(
+  'rejects a project-owned Library source (session: %s)',
+  (sessionId) => {
+    expect(
+      createPdfAnnotationRequestSchema.safeParse({
+        ...annotationRequest,
+        sessionId,
+        target: {
+          ...annotationRequest.target,
+          source: {
+            ...annotationRequest.target.source,
+            kind: 'literature-attachment-version',
+            sessionId: undefined
+          }
+        }
+      }).success
+    ).toBe(false)
+  }
+)

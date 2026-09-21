@@ -1565,7 +1565,6 @@ const createApplicationModules = async (
     literature: literatureAttachmentAuthority,
     repository: pdfAnnotationRepository,
     sessions: sessionRepository,
-    resolvePdfSource: (request) => bookmarkService.resolvePdfSource(request),
     runWithSessionAuthority: (projectId, sessionId, operation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
     resolveSessionPdfVersion: (request) =>

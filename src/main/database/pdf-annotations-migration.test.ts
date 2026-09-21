@@ -80,8 +80,13 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
       client.pdfAnnotation.create({ data: { ...row, id: 'invalid-half-scope', sessionId: 's1' } })
     ).rejects.toThrow()
     await expect(
-      client.pdfAnnotation.create({ data: { ...row, id: 'project-note', projectId: 'p1' } })
+      client.pdfAnnotation.create({
+        data: { ...row, id: 'project-note', projectId: 'p1', sourceKind: 'upload-version' }
+      })
     ).resolves.toMatchObject({ sessionId: null })
+    await expect(
+      client.pdfAnnotation.create({ data: { ...row, id: 'invalid-mixed-scope', projectId: 'p1' } })
+    ).rejects.toThrow()
     await client.pdfAnnotationImport.create({
       data: {
         id: 'receipt-1',

@@ -244,6 +244,18 @@ describe('LiteratureCatalog', () => {
     expect(
       (await catalog.search({ ...request, entryKind: 'note', projectId: 'project-1' })).totalCount
     ).toBe(3)
+    await client!.project.create({ data: { id: 'project-2', name: 'Second project' } })
+    expect(
+      (await catalog.search({ ...request, entryKind: 'note', projectId: 'project-2' })).totalCount
+    ).toBe(0)
+    await client!.projectLiterature.create({
+      data: { projectId: 'project-2', itemId: item.id, source: 'user' }
+    })
+    for (const projectId of ['project-1', 'project-2']) {
+      expect(await catalog.search({ ...request, entryKind: 'note', projectId })).toMatchObject({
+        totalCount: 3
+      })
+    }
     expect(
       (await catalog.search({ ...request, entryKind: 'note', updatedAfter: Date.now() + 60_000 }))
         .totalCount

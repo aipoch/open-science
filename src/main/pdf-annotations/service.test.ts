@@ -21,13 +21,14 @@ const request: CreatePdfAnnotationRequest = {
   note: 'Read again',
   target: {
     source: {
-      kind: 'literature-attachment-version',
+      kind: 'upload-version',
       projectId: 'project-1',
-      sourceFileId: 'file-1',
+      sessionId: 'session-1',
+      sourceFileId: 'upload-1',
       versionId: 'version-1',
       checksum: 'a'.repeat(64),
       name: 'paper.pdf',
-      path: 'literature-attachment-version:version-1'
+      path: 'upload-version:project-1/session-1/upload-1/version-1'
     },
     selector: { kind: 'document-note', coordinateVersion: 1 }
   }
@@ -84,7 +85,6 @@ const fixture = (): { options: PdfAnnotationServiceOptions; service: PdfAnnotati
       })
     }),
     onNativeImportProgress: vi.fn(),
-    resolvePdfSource: vi.fn().mockResolvedValue({ ok: true, source: request.target.source }),
     runWithSessionAuthority: vi.fn(
       async (_project: string, _session: string, operation: () => Promise<unknown>) => operation()
     )
@@ -100,9 +100,9 @@ describe('PdfAnnotationService', () => {
     await service.create(request)
     expect(options.repository.create).toHaveBeenCalledWith(request)
     expect(options.runWithSessionAuthority).toHaveBeenCalledOnce()
-    vi.mocked(options.resolvePdfSource).mockResolvedValue({
-      ok: true,
-      source: { ...request.target.source, projectId: 'project-1', checksum: 'b'.repeat(64) }
+    vi.mocked(options.resolveSessionPdfVersion).mockResolvedValue({
+      ...(await options.resolveSessionPdfVersion(importRequest))!,
+      checksum: 'b'.repeat(64)
     })
     await expect(service.create(request)).rejects.toThrow('source is not available')
     expect(options.repository.create).toHaveBeenCalledTimes(1)
@@ -163,7 +163,14 @@ describe('PdfAnnotationService', () => {
 
 it('resolves and saves library annotations without inventing a Project or Session', async () => {
   const { options, service } = fixture()
-  const source = { ...request.target.source, projectId: undefined }
+  const source = {
+    ...request.target.source,
+    kind: 'literature-attachment-version' as const,
+    projectId: undefined,
+    sessionId: undefined,
+    sourceFileId: 'file-1',
+    path: 'literature-attachment-version:version-1'
+  }
   const global = {
     ...request,
     projectId: undefined,
@@ -213,6 +220,7 @@ const parsed = {
       selector: {
         kind: 'region',
         pageNumber: 1,
+        pageRotation: 0,
         coordinateVersion: 1,
         rect: { x: 0, y: 0, width: 0.1, height: 0.1 }
       }
@@ -372,3 +380,26 @@ it('restores native project annotations by verified file version without the cre
     ).rejects.toThrow('source is not available')
   }
 })
+
+it.each([undefined, 'session-1'])(
+  'rejects project-owned Library notes before retry recovery (session: %s)',
+  async (sessionId) => {
+    const { options, service } = fixture()
+    await expect(
+      service.create({
+        ...request,
+        sessionId,
+        target: {
+          ...request.target,
+          source: {
+            ...request.target.source,
+            kind: 'literature-attachment-version',
+            sessionId: undefined
+          }
+        }
+      })
+    ).rejects.toThrow('source is not available')
+    expect(options.repository.recoverCreate).not.toHaveBeenCalled()
+    expect(options.repository.create).not.toHaveBeenCalled()
+  }
+)

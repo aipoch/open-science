@@ -23,7 +23,7 @@ const pdfAnnotationsMigration = {
       "updatedAt" DATETIME NOT NULL,
       CONSTRAINT "pdf_annotations_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
       CONSTRAINT "PdfAnnotation_identity_check" CHECK (length(trim("id")) > 0 AND length(trim("projectId")) > 0 AND length(trim("sourceFileId")) > 0 AND length(trim("versionId")) > 0 AND length(trim("name")) > 0 AND length(trim("path")) > 0 AND length(trim("sessionId")) > 0),
-      CONSTRAINT "PdfAnnotation_scope_check" CHECK (("projectId" IS NOT NULL) OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = 'literature-attachment-version' AND "sourceSessionId" IS NULL)),
+      CONSTRAINT "PdfAnnotation_scope_check" CHECK (("projectId" IS NOT NULL AND "sourceKind" <> 'literature-attachment-version') OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = 'literature-attachment-version' AND "sourceSessionId" IS NULL)),
       CONSTRAINT "PdfAnnotation_source_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version', 'literature-attachment-version') AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*'),
       CONSTRAINT "PdfAnnotation_kind_check" CHECK ("kind" IN ('highlight', 'underline', 'squiggly', 'strikethrough', 'area', 'page-note', 'document-note') AND ("color" IS NULL OR "color" IN ('yellow', 'blue', 'green', 'pink', 'purple'))),
       CONSTRAINT "PdfAnnotation_origin_check" CHECK ("origin" IN ('user', 'imported') AND ("origin" = 'imported' OR "externalSubtype" IS NULL) AND ("externalSubtype" IS NULL OR (length(trim("externalSubtype")) > 0 AND length("externalSubtype") <= 64))),
@@ -150,7 +150,7 @@ const pdfAnnotationsMigration = {
             {
               name: 'PdfAnnotation_scope_check',
               expression:
-                '("projectId" IS NOT NULL) OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = \'literature-attachment-version\' AND "sourceSessionId" IS NULL)'
+                '("projectId" IS NOT NULL AND "sourceKind" <> \'literature-attachment-version\') OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = \'literature-attachment-version\' AND "sourceSessionId" IS NULL)'
             }
           ]
         },

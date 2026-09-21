@@ -6,12 +6,12 @@ import type { PdfAnnotationScope, PdfAnnotationSource } from '../../shared/pdf-a
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import type { SetTagAssignmentRequest } from '../../shared/tags'
-import { updatePdfAnnotationRequestSchema } from '../../shared/pdf-annotations'
+import {
+  createPdfAnnotationRequestSchema,
+  updatePdfAnnotationRequestSchema
+} from '../../shared/pdf-annotations'
 import type { PdfAnnotationRepository } from './repository'
-import type {
-  BookmarkPdfSourceResult,
-  ResolvePdfBookmarkSourceRequest
-} from '../../shared/bookmarks'
+import type { BookmarkPdfSourceResult } from '../../shared/bookmarks'
 import type { SessionAuthority } from '../bookmarks/service'
 import type { ResolvedSessionPdfVersion } from '../literature/session-pdf-source-resolver'
 import {
@@ -47,7 +47,6 @@ type Options = Readonly<{
   >
   literature: Pick<LiteratureAttachmentAuthority, 'resolveVersion' | 'openContent'>
   sessions: SessionAuthority
-  resolvePdfSource: (request: ResolvePdfBookmarkSourceRequest) => Promise<BookmarkPdfSourceResult>
   runWithSessionAuthority: <T>(
     projectId: string,
     sessionId: string,
@@ -189,6 +188,8 @@ class PdfAnnotationService {
   }
 
   create(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation> {
+    if (!createPdfAnnotationRequestSchema.safeParse(request).success)
+      return Promise.reject(new Error('PDF annotation source is not available.'))
     return this.withScope(request, async () => {
       const recovered = await this.options.repository.recoverCreate(request)
       if (recovered) return recovered
@@ -197,15 +198,7 @@ class PdfAnnotationService {
         throw new Error('PDF annotation source is not available.')
       const resolved = request.literatureVersionId
         ? { ok: true as const, source: await this.librarySource(request.literatureVersionId) }
-        : source.kind !== 'literature-attachment-version'
-          ? await this.resolveDocumentSource(source)
-          : await this.options.resolvePdfSource({
-              projectId: request.projectId!,
-              sessionId: request.sessionId!,
-              sourceKind: source.kind,
-              sourceFileId: source.sourceFileId,
-              versionId: source.versionId
-            })
+        : await this.resolveDocumentSource(source)
       if (
         !resolved.ok ||
         !isDeepStrictEqual(
