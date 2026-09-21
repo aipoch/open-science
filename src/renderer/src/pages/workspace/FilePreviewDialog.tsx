@@ -141,6 +141,9 @@ const FilePreviewDialog = ({
         <RemoveScroll
           ref={setContentRef}
           enabled={open}
+          // The application body already hides overflow; only lock scroll events here.
+          // Toggling the scrollbar stylesheet invalidates styles throughout the app.
+          removeScrollBar={false}
           allowPinchZoom
           noIsolation={hasNestedFullscreen}
           forwardProps
@@ -170,7 +173,7 @@ const FilePreviewDialog = ({
               if (!open && event.target === event.currentTarget) releaseBackgroundIsolation()
             }}
             className={dialogPanelClassName(
-              'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0 [contain:layout_style]'
+              'z-[60] flex h-[90vh] w-[90vw] max-w-none overflow-hidden overscroll-contain p-0'
             )}
           >
             <Dialog.Title className="sr-only">
@@ -187,7 +190,7 @@ const FilePreviewDialog = ({
                 // its tooltip, and the first Escape dies on that control instead of closing the
                 // dialog. Focus the dialog shell (tabIndex -1 via the outer FocusScope) instead.
                 event.preventDefault()
-                contentElementRef.current?.focus({ preventScroll: true })
+                contentElementRef.current?.focus()
               }}
               onUnmountAutoFocus={(event) => {
                 releaseBackgroundIsolation()

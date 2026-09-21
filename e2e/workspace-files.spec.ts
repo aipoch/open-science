@@ -299,6 +299,52 @@ test('loads managed image previews from Project files', async ({ app }) => {
     .toBeGreaterThan(0)
 })
 
+test.describe('Preview scroll isolation', () => {
+  test.use({ windowMode: 'normal' })
+
+  test('scrolls the preview without mutating the application scrollbar styles', async ({ app }) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
+    await app.setMainWindowSize(1280, 900)
+    await createProject(page)
+    await page.locator('input[type="file"][multiple]').setInputFiles({
+      name: 'scroll.pdf',
+      mimeType: 'application/pdf',
+      buffer: createTwoPagePdf()
+    })
+    await sendPrompt(page, 'Use the attached PDF.', 'Deterministic reply:')
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    const trigger = page.getByRole('button', { name: 'Preview uploaded file scroll.pdf' })
+    const body = page.locator('body')
+    await expect(body).toHaveCSS('overflow-y', 'hidden')
+
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await trigger.click()
+      const preview = page.getByRole('dialog', { name: 'Preview scroll.pdf' })
+      await expect(preview).toBeVisible()
+      await expect(body).not.toHaveAttribute('data-scroll-locked')
+      await expect(page.locator('#root')).toHaveAttribute('inert', '')
+      const scroller = preview.getByRole('region', { name: 'scroll.pdf scrollable preview' })
+      await expect
+        .poll(() => scroller.evaluate((node) => node.scrollHeight - node.clientHeight))
+        .toBeGreaterThan(100)
+      const before = await scroller.evaluate((node) => node.scrollTop)
+      await scroller.hover({ position: { x: 100, y: 100 } })
+      await page.mouse.wheel(0, 250)
+      await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(before)
+      await page.keyboard.press('Tab')
+      expect(await preview.evaluate((node) => node.contains(document.activeElement))).toBe(true)
+      await preview.getByRole('button', { name: 'Close preview of scroll.pdf' }).click()
+      await expect(preview).toBeHidden()
+      await expect(page.locator('#root')).not.toHaveAttribute('inert')
+      await expect(trigger).toBeFocused()
+      await expect(body).toHaveCSS('overflow-y', 'hidden')
+      await expect(body).not.toHaveAttribute('data-scroll-locked')
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+    }
+  })
+})
+
 test.describe('Workspace dividers', () => {
   test.beforeEach(async ({ app }) => {
     await app.completeOnboarding()
