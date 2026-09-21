@@ -4,6 +4,7 @@
     "src/main/settings/backend-selection-owner.ts",
     "src/main/settings/backend-route-planner.ts",
     "src/main/settings/codex-bridge-tools.ts",
+    "src/main/settings/codex-bridge-tools.test.ts",
     "src/main/settings/network-proxy-runtime.ts",
     "src/main/settings/environment-check.ts",
     "src/main/settings/system-proxy.ts",
