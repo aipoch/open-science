@@ -56,14 +56,21 @@ const button = (name: string): HTMLButtonElement =>
   [...document.querySelectorAll('button')].find((item) => item.textContent === name)!
 it('exports only selected available items, opts into historical logs and reports partial success', async () => {
   await render()
-  const checkboxes = [...document.querySelectorAll<HTMLInputElement>('input')]
-  expect(checkboxes.map((item) => item.checked)).toEqual([true, true, true, false, false])
+  const checkboxes = [...document.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')]
+  expect(checkboxes.map((item) => item.getAttribute('aria-checked') === 'true')).toEqual([
+    true,
+    true,
+    true,
+    false,
+    false
+  ])
   expect(checkboxes[4].disabled).toBe(true)
-  expect(checkboxes[1].closest('label')?.textContent).toContain('Session database records')
-  expect(checkboxes[2].closest('label')?.textContent).toContain(
+  expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe('Export diagnostics')
+  expect(checkboxes[1].textContent).toContain('Session database records')
+  expect(checkboxes[2].textContent).toContain(
     'Current application log metadata, including activity outside this session.'
   )
-  expect(checkboxes[3].closest('label')?.textContent).toContain(
+  expect(checkboxes[3].textContent).toContain(
     'Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.'
   )
   await act(async () => fireEvent.click(checkboxes[2]))

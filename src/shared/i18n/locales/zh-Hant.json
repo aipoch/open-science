@@ -6056,6 +6056,7 @@
     "All notes": "全部筆記",
     "Current page": "目前頁面",
     "No annotations on this page.": "此頁尚無註解。",
+    "Export diagnostics": "匯出診斷封存檔",
     "Export diagnostics…": "匯出診斷封存檔…",
     "Preparing diagnostics…": "正在準備診斷資訊…",
     "{{size}} bytes": "{{size}} 位元組",

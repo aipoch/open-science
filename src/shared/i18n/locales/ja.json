@@ -6056,6 +6056,7 @@
     "All notes": "すべてのノート",
     "Current page": "現在のページ",
     "No annotations on this page.": "このページにはまだ注釈がありません。",
+    "Export diagnostics": "診断情報をエクスポート",
     "Export diagnostics…": "診断情報をエクスポート…",
     "Preparing diagnostics…": "診断情報を準備中…",
     "{{size}} bytes": "{{size}} バイト",

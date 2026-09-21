@@ -6214,6 +6214,7 @@
     "All notes": "Alle Notizen",
     "Current page": "Aktuelle Seite",
     "No annotations on this page.": "Auf dieser Seite sind noch keine Anmerkungen vorhanden.",
+    "Export diagnostics": "Diagnoseinformationen exportieren",
     "Export diagnostics…": "Diagnoseinformationen exportieren…",
     "Preparing diagnostics…": "Diagnoseinformationen werden vorbereitet…",
     "{{size}} bytes": "{{size}} Bytes",

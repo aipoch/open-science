@@ -6054,6 +6054,7 @@
     "All notes": "모든 노트",
     "Current page": "현재 페이지",
     "No annotations on this page.": "이 페이지에는 아직 주석이 없습니다.",
+    "Export diagnostics": "진단 정보 내보내기",
     "Export diagnostics…": "진단 정보 내보내기…",
     "Preparing diagnostics…": "진단 정보 준비 중…",
     "{{size}} bytes": "{{size}} 바이트",

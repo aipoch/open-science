@@ -6056,6 +6056,7 @@
     "All notes": "全部笔记",
     "Current page": "当前页",
     "No annotations on this page.": "此页暂无批注。",
+    "Export diagnostics": "导出诊断包",
     "Export diagnostics…": "导出诊断包…",
     "Preparing diagnostics…": "正在准备诊断信息…",
     "{{size}} bytes": "{{size}} 字节",
