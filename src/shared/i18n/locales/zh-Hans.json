@@ -5951,6 +5951,9 @@
     "Endpoint URL": "端点 URL",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "请输入有效且安全的 HTTP 端点。远程端点必须使用 HTTPS。",
     "Model ID exposed by the endpoint": "端点提供的模型 ID",
-    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "此端点不是 Chat Completions 端点。使用其他 API 格式的服务需要适配器。"
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "此端点不是 Chat Completions 端点。使用其他 API 格式的服务需要适配器。",
+    "Allow Main Agent to load this resource.": "允许主智能体加载此资源。",
+    "Specialist associations": "专家关联",
+    "Choose which Specialists can use this resource.": "选择可以使用此资源的专家。"
   }
 }

@@ -6107,6 +6107,9 @@
     "Endpoint URL": "Endpunkt-URL",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Geben Sie einen gültigen sicheren HTTP-Endpunkt ein. Entfernte Endpunkte müssen HTTPS verwenden.",
     "Model ID exposed by the endpoint": "Vom Endpunkt bereitgestellte Modell-ID",
-    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Dies ist kein Chat-Completions-Endpunkt. Dienste mit einem anderen API-Format benötigen einen Adapter."
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Dies ist kein Chat-Completions-Endpunkt. Dienste mit einem anderen API-Format benötigen einen Adapter.",
+    "Allow Main Agent to load this resource.": "Dem Hauptagenten erlauben, diese Ressource zu laden.",
+    "Specialist associations": "Spezialistenzuordnungen",
+    "Choose which Specialists can use this resource.": "Wählen Sie die Spezialisten aus, die diese Ressource verwenden dürfen."
   }
 }

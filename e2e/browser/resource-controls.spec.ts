@@ -18,6 +18,9 @@ for (const kind of ['skills', 'connectors']) {
     await trigger.click()
     await expect(page.getByRole('tooltip')).toHaveCount(0)
     const popup = page.getByRole('dialog')
+    await expect(popup.getByText(name, { exact: true })).toHaveCount(0)
+    await expect(popup.getByText('Allow Main Agent to load this resource.')).toBeVisible()
+    await expect(popup.getByText('Specialist associations', { exact: true })).toBeVisible()
     await popup.getByRole('searchbox', { name: 'Search Specialists' }).fill('Researcher')
     await expect(popup.getByRole('switch')).toHaveCount(2)
     await expect(popup.getByRole('switch', { name: 'Researcher', exact: true })).toBeChecked()
@@ -110,6 +113,9 @@ for (const kind of ['skills', 'connectors']) {
       exact: true
     })
     await search.fill('not-in-catalog')
+    await expect(
+      page.getByRole('button', { name: /Select multiple in|Finish selection in/ })
+    ).toHaveCount(0)
     await expect(page.getByRole('region', { name: 'Selected resources' })).toContainText(
       '1 hidden by filters'
     )

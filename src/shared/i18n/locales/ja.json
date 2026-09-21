@@ -5951,6 +5951,9 @@
     "Endpoint URL": "エンドポイント URL",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "有効で安全な HTTP エンドポイントを入力してください。リモートエンドポイントには HTTPS が必要です。",
     "Model ID exposed by the endpoint": "エンドポイントが公開するモデル ID",
-    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "これは Chat Completions エンドポイントではありません。別の API 形式を使用するサービスにはアダプターが必要です。"
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "これは Chat Completions エンドポイントではありません。別の API 形式を使用するサービスにはアダプターが必要です。",
+    "Allow Main Agent to load this resource.": "メインエージェントがこのリソースを読み込めるようにします。",
+    "Specialist associations": "スペシャリストとの関連付け",
+    "Choose which Specialists can use this resource.": "このリソースを使用できるスペシャリストを選択します。"
   }
 }

@@ -22,7 +22,7 @@ export const ResourceCategorySelection = ({
   group: string
   label: string
   ids: string[]
-}): React.JSX.Element => {
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const active = selection.groups.has(group)
   const checkbox = useRef<HTMLInputElement>(null)
@@ -30,6 +30,7 @@ export const ResourceCategorySelection = ({
   useLayoutEffect(() => {
     if (checkbox.current) checkbox.current.indeterminate = count > 0 && count < ids.length
   }, [count, ids.length, active])
+  if (ids.length === 0) return null
   return (
     <div className="flex shrink-0 items-center gap-2">
       {active ? (
@@ -40,7 +41,7 @@ export const ResourceCategorySelection = ({
             className="size-3.5 accent-primary"
             aria-label={t('Select all in {{name}}', { name: label })}
             checked={ids.length > 0 && count === ids.length}
-            disabled={selection.locked || ids.length === 0}
+            disabled={selection.locked}
             onChange={() => selection.toggleIds(ids)}
           />
           {t('Select all')}
@@ -49,7 +50,7 @@ export const ResourceCategorySelection = ({
       <Button
         variant={active ? 'secondary' : 'ghost'}
         size="sm"
-        disabled={selection.locked || (!active && ids.length === 0)}
+        disabled={selection.locked}
         aria-label={
           active
             ? t('Finish selection in {{name}}', { name: label })

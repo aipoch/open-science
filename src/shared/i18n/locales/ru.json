@@ -6406,6 +6406,9 @@
     "Endpoint URL": "URL конечной точки",
     "Enter a valid secure HTTP endpoint. Remote endpoints must use HTTPS.": "Введите корректную защищённую HTTP-конечную точку. Для удалённых конечных точек требуется HTTPS.",
     "Model ID exposed by the endpoint": "Идентификатор модели, предоставляемый конечной точкой",
-    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Это не конечная точка Chat Completions. Службам с другим форматом API требуется адаптер."
+    "This is not a Chat Completions endpoint. Services using another API format need an adaptor.": "Это не конечная точка Chat Completions. Службам с другим форматом API требуется адаптер.",
+    "Allow Main Agent to load this resource.": "Разрешить главному агенту загружать этот ресурс.",
+    "Specialist associations": "Связи со специалистами",
+    "Choose which Specialists can use this resource.": "Выберите специалистов, которые могут использовать этот ресурс."
   }
 }

@@ -106,100 +106,117 @@ export const ResourceAssignmentControls = ({
       </TooltipProvider>
       <PopoverContent
         align="end"
-        className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+        aria-label={t('Manage access for {{name}}', { name: label })}
+        className="w-80 max-h-[var(--radix-popover-content-available-height)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-lg"
       >
-        <p className="mb-2 truncate text-sm font-medium">{label}</p>
-        {showSearch ? (
-          <SettingsSearchInput
-            aria-label={t('Search Specialists')}
-            placeholder={t('Search Specialists')}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        ) : null}
-        <div className="mt-2 max-h-64 overflow-y-auto overscroll-contain" aria-busy={busy}>
-          <div className="flex items-center gap-2 rounded-lg pr-1 pl-3 py-3">
-            <Bot className="size-5 shrink-0 text-foreground/80" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm">{t('Main Agent')}</p>
-              {resource.mainRequired ? (
-                <p className="text-xs text-muted-foreground">{t('Always enabled')}</p>
-              ) : mainBlocked ? (
-                <p className="text-xs text-muted-foreground">
-                  {t('Sign in or configure credentials first.')}
-                </p>
-              ) : null}
-            </div>
+        <div className="flex items-center gap-2 rounded-lg pr-1 pl-3 py-3">
+          <Bot className="size-5 shrink-0 text-foreground/80" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm">{t('Main Agent')}</p>
             {resource.mainRequired ? (
-              <RequiredSkillToggle label={t('Main Agent')} />
+              <p className="text-xs text-muted-foreground">{t('Always enabled')}</p>
+            ) : mainBlocked ? (
+              <p className="text-xs text-muted-foreground">
+                {t('Sign in or configure credentials first.')}
+              </p>
             ) : (
-              <SettingsToggle
-                aria-label={t('Main Agent')}
-                enabled={resource.mainEnabled}
-                disabled={busy || resource.mainRequired || mainBlocked}
-                onToggle={() => void run(() => onSetMain(!resource.mainEnabled))}
-              />
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t('Allow Main Agent to load this resource.')}
+              </p>
             )}
           </div>
-          {visible.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 rounded-lg px-1 py-1">
-              {/* Navigation and assignment are sibling controls, so opening details never toggles access. */}
-              <button
-                type="button"
-                disabled={!onOpenSpecialist}
-                aria-label={t('Open {{name}} in Specialist Settings', {
-                  name: item.displayName?.trim() || item.name
-                })}
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
-                onClick={() => {
-                  setOpen(false)
-                  onOpenSpecialist?.({
-                    id: item.id,
-                    name: item.displayName?.trim() || item.name,
-                    kind: item.kind,
-                    ...(item.iconKey ? { iconKey: item.iconKey } : {}),
-                    ...(item.colorKey ? { colorKey: item.colorKey } : {})
-                  })
-                }}
-              >
-                <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{item.displayName?.trim() || item.name}</p>
-                  {!canEditResourceAssignments(item) ? (
-                    <p className="text-xs text-muted-foreground">{t('Read-only')}</p>
-                  ) : !item.enabled ? (
-                    <p className="text-xs text-muted-foreground">{t('Disabled')}</p>
-                  ) : null}
-                </div>
-                {onOpenSpecialist ? (
-                  <ChevronRight
-                    className="size-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                ) : null}
-              </button>
-              <SettingsToggle
-                aria-label={item.displayName?.trim() || item.name}
-                enabled={isResourceAssigned(item, resource)}
-                disabled={
-                  busy ||
-                  !canEditResourceAssignments(item) ||
-                  integrity.status !== 'ok' ||
-                  Boolean(loadError)
-                }
-                onToggle={() =>
-                  void run(() =>
-                    setResourceAssignments([resource], !isResourceAssigned(item, resource), item.id)
-                  )
-                }
-              />
-            </div>
-          ))}
-          {visible.length === 0 && term ? (
-            <p className="py-4 text-center text-xs text-muted-foreground">
-              {t('No Specialists match your search.')}
+          {resource.mainRequired ? (
+            <RequiredSkillToggle label={t('Main Agent')} />
+          ) : (
+            <SettingsToggle
+              aria-label={t('Main Agent')}
+              enabled={resource.mainEnabled}
+              disabled={busy || resource.mainRequired || mainBlocked}
+              onToggle={() => void run(() => onSetMain(!resource.mainEnabled))}
+            />
+          )}
+        </div>
+        {/* Association switches do not change whether a Specialist itself is enabled. */}
+        <div className="mt-2 border-t border-border pt-3">
+          <div className="mb-3 px-3">
+            <p className="text-sm font-medium">{t('Specialist associations')}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t('Choose which Specialists can use this resource.')}
             </p>
+          </div>
+          {showSearch ? (
+            <SettingsSearchInput
+              aria-label={t('Search Specialists')}
+              placeholder={t('Search Specialists')}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           ) : null}
+          <div className="mt-2 max-h-56 overflow-y-auto overscroll-contain" aria-busy={busy}>
+            {visible.map((item) => (
+              <div key={item.id} className="flex items-center gap-2 rounded-lg px-1 py-1">
+                {/* Navigation and assignment are sibling controls, so opening details never toggles access. */}
+                <button
+                  type="button"
+                  disabled={!onOpenSpecialist}
+                  aria-label={t('Open {{name}} in Specialist Settings', {
+                    name: item.displayName?.trim() || item.name
+                  })}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+                  onClick={() => {
+                    setOpen(false)
+                    onOpenSpecialist?.({
+                      id: item.id,
+                      name: item.displayName?.trim() || item.name,
+                      kind: item.kind,
+                      ...(item.iconKey ? { iconKey: item.iconKey } : {}),
+                      ...(item.colorKey ? { colorKey: item.colorKey } : {})
+                    })
+                  }}
+                >
+                  <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">{item.displayName?.trim() || item.name}</p>
+                    {!canEditResourceAssignments(item) ? (
+                      <p className="text-xs text-muted-foreground">{t('Read-only')}</p>
+                    ) : !item.enabled ? (
+                      <p className="text-xs text-muted-foreground">{t('Disabled')}</p>
+                    ) : null}
+                  </div>
+                  {onOpenSpecialist ? (
+                    <ChevronRight
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </button>
+                <SettingsToggle
+                  aria-label={item.displayName?.trim() || item.name}
+                  enabled={isResourceAssigned(item, resource)}
+                  disabled={
+                    busy ||
+                    !canEditResourceAssignments(item) ||
+                    integrity.status !== 'ok' ||
+                    Boolean(loadError)
+                  }
+                  onToggle={() =>
+                    void run(() =>
+                      setResourceAssignments(
+                        [resource],
+                        !isResourceAssigned(item, resource),
+                        item.id
+                      )
+                    )
+                  }
+                />
+              </div>
+            ))}
+            {visible.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                {term ? t('No Specialists match your search.') : t('No Specialists installed yet.')}
+              </p>
+            ) : null}
+          </div>
         </div>
         {(error && !onErrorChange) || loadError || integrity.status !== 'ok' ? (
           <ErrorNotice

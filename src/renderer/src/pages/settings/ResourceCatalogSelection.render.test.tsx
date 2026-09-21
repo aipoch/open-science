@@ -37,7 +37,7 @@ const seed = [
   }
 ]
 const remove = vi.fn().mockResolvedValue(undefined)
-const Harness = (): React.JSX.Element => {
+const Harness = ({ hideResources = false }: { hideResources?: boolean }): React.JSX.Element => {
   const [resources, setResources] = useState(seed)
   const selection = useResourceSelection({
     resources,
@@ -56,10 +56,14 @@ const Harness = (): React.JSX.Element => {
             selection={selection}
             group={group}
             label={group}
-            ids={resources.filter((item) => item.group === group).map((item) => item.id)}
+            ids={
+              hideResources
+                ? []
+                : resources.filter((item) => item.group === group).map((item) => item.id)
+            }
           />
           {resources
-            .filter((item) => item.group === group)
+            .filter((item) => !hideResources && item.group === group)
             .map((resource) => (
               <ResourceSelectionCheckbox
                 key={resource.id}
@@ -88,6 +92,21 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('category resource selection', () => {
+  it('hides category selection for empty lists while preserving hidden selections', () => {
+    const view = render(<Harness hideResources />)
+    expect(screen.queryAllByRole('button', { name: /Select multiple in/ })).toHaveLength(0)
+    view.rerender(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in personal' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Personal skill' }))
+    view.rerender(<Harness hideResources />)
+    expect(
+      screen.queryAllByRole('button', { name: /Select multiple in|Finish selection in/ })
+    ).toHaveLength(0)
+    expect(screen.queryAllByRole('checkbox', { name: /Select all in/ })).toHaveLength(0)
+    expect(screen.getByRole('region', { name: 'Selected resources' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.queryByRole('region', { name: 'Selected resources' })).toBeNull()
+  })
   it('selects one category independently, exposes only applicable actions and preserves required skills', async () => {
     render(<Harness />)
     fireEvent.click(screen.getByRole('button', { name: 'Select multiple in featured' }))
