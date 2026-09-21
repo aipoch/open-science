@@ -128,3 +128,138 @@ for (const entry of ['list', 'history', 'search'] as const) {
     expect(errors).toEqual([])
   })
 }
+
+for (const direction of ['forward', 'backward'] as const) {
+  for (const zoomed of [false, true]) {
+    test(`PDF selection crosses annotations ${direction} at ${zoomed ? 'increased' : 'default'} zoom`, async ({
+      page
+    }) => {
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.goto('/modal-library-close.html?preview=1')
+      // Mock only the native annotation boundary; render real PDF.js text and app overlays.
+      await page.evaluate(() => {
+        const source = {
+          kind: 'literature-attachment-version' as const,
+          sourceFileId: 'attachment-1',
+          versionId: 'version-2',
+          name: 'paper.pdf',
+          path: 'literature-attachment-version:version-2',
+          checksum: 'a'.repeat(64)
+        }
+        const annotation = {
+          id: 'selection-note',
+          literatureVersionId: 'version-2',
+          version: 1,
+          origin: 'user' as const,
+          target: {
+            source,
+            selector: {
+              kind: 'text' as const,
+              pageNumber: 1,
+              exact: 'A stable dialog',
+              position: { start: 28, end: 43 },
+              quads: [{ x: 50 / 612, y: 82 / 792, width: 85 / 612, height: 12 / 792 }],
+              extractorVersion: 'fixture',
+              pageRotation: 0,
+              coordinateVersion: 1 as const
+            }
+          },
+          kind: 'highlight' as const,
+          color: 'yellow' as const,
+          tagIds: [],
+          note: 'Saved selection note',
+          createdAt: '2026-09-21T00:00:00.000Z',
+          updatedAt: '2026-09-21T00:00:00.000Z'
+        }
+        window.api.pdfAnnotations = {
+          list: async () => ({ source, items: [annotation], total: 1 }),
+          onChanged: () => () => {}
+        } as typeof window.api.pdfAnnotations
+      })
+      await page.getByRole('button', { name: 'All references', exact: true }).click()
+      await page.getByRole('button', { name: 'Preview paper.pdf', exact: true }).click()
+      const marker = page.locator('[data-pdf-annotation-marker]')
+      const highlight = page.locator('[data-pdf-bookmark-highlight="selection-note"]')
+      await expect(marker).toBeVisible()
+      if (zoomed) await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+      const lines = page.locator('.pdf-text-layer span')
+      await expect(lines).toHaveCount(3)
+      for (const target of ['[data-pdf-annotation-marker]', '[data-pdf-bookmark-highlight]']) {
+        const gesture = await page.evaluate(
+          ({ direction, target }) => {
+            const spans = [...document.querySelectorAll('.pdf-text-layer span')]
+            const start = spans[direction === 'forward' ? 0 : 2].firstChild!
+            const end = spans[1].firstChild!
+            const overlay = document.querySelector(target)!.getBoundingClientRect()
+            const character = (node: Node, offset: number): DOMRect => {
+              const range = document.createRange()
+              range.setStart(node, offset)
+              range.setEnd(node, offset + 1)
+              return range.getBoundingClientRect()
+            }
+            // End on an actual glyph underneath the overlay, away from caret rounding boundaries.
+            let offset = 0
+            for (; offset < end.textContent!.length; offset++) {
+              const rect = character(end, offset)
+              if (rect.left > overlay.left + 2 && rect.right < overlay.right - 2) break
+            }
+            if (offset === end.textContent!.length)
+              throw new Error('No glyph underneath annotation')
+            const first = character(start, 3)
+            const last = character(end, offset)
+            const range = document.createRange()
+            range.setStart(
+              direction === 'forward' ? start : end,
+              direction === 'forward' ? 3 : offset
+            )
+            range.setEnd(
+              direction === 'forward' ? end : start,
+              direction === 'forward' ? offset : 3
+            )
+            return {
+              from: { x: first.left + first.width * 0.1, y: first.top + first.height / 2 },
+              to: { x: last.left + last.width * 0.1, y: last.top + last.height / 2 },
+              expected: range.toString(),
+              anchor: start.textContent,
+              focus: end.textContent
+            }
+          },
+          { direction, target }
+        )
+        await page.mouse.move(gesture.from.x, gesture.from.y)
+        await page.mouse.down()
+        await page.mouse.move(gesture.to.x, gesture.to.y, { steps: 8 })
+        const selection = (): Promise<unknown> =>
+          page.evaluate(() => ({
+            // Selection includes visual line breaks; Range.toString() only joins text nodes.
+            quote: getSelection()?.toString().replaceAll('\n', ''),
+            anchor: getSelection()?.anchorNode?.textContent,
+            focus: getSelection()?.focusNode?.textContent
+          }))
+        await expect
+          .poll(selection)
+          .toEqual({ quote: gesture.expected, anchor: gesture.anchor, focus: gesture.focus })
+        await page.mouse.up()
+        await expect
+          .poll(selection)
+          .toEqual({ quote: gesture.expected, anchor: gesture.anchor, focus: gesture.focus })
+        // Releasing over a mark must not activate it as a click.
+        await expect(highlight).toHaveAttribute('aria-pressed', 'false')
+        await expect(
+          page.getByRole('dialog', { name: 'Annotation note', exact: true })
+        ).toHaveCount(0)
+        await page.keyboard.press('Escape')
+      }
+      // Pointer and keyboard access must recover immediately after the drag.
+      await marker.click()
+      const note = page.getByRole('dialog', { name: 'Annotation note', exact: true })
+      await expect(note).toContainText('Saved selection note')
+      await page.keyboard.press('Escape')
+      await highlight.click()
+      await expect(highlight).toHaveAttribute('aria-pressed', 'true')
+      await marker.focus()
+      await page.keyboard.press('Enter')
+      await expect(note).toContainText('Saved selection note')
+    })
+  }
+}

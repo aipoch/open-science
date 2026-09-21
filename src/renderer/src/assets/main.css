@@ -166,6 +166,15 @@
   top: 0;
 }
 
+/* Annotation controls sit after the text layer in DOM order. Hitting them during native
+   selection moves the endpoint past the page text, reversing backward drags. Let an active
+   text drag pass through overlays across this viewer; :active ends on release, so ordinary
+   annotation clicks and keyboard access remain available without another gesture state. */
+[data-pdf-cursor-mode]:has(.pdf-text-layer:active)
+  :is([data-pdf-bookmark-highlight], [data-pdf-evidence-highlight], [data-pdf-annotation-marker]) {
+  pointer-events: none;
+}
+
 /* Full-document find uses the browser Highlight API over PDF.js' text mapping. */
 ::highlight(pdf-search-results) {
   background-color: color-mix(in oklab, var(--primary) 17%, transparent);
