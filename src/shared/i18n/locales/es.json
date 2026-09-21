@@ -122,7 +122,8 @@
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "No se pudo completar la operación del paquete de sesión. Compruebe el paquete y el espacio disponible en disco, y vuelva a intentarlo.",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "El paquete original no está disponible. Puede que se haya movido, eliminado o que ya no se pueda leer. Seleccione otro paquete.",
     "Could not fork this Session: {{reason}}": "No se pudo bifurcar esta sesión: {{reason}}",
-    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar."
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Es necesario recuperar la publicación de la bifurcación (operación {{operationId}}, sesión {{sessionId}}). Reinicie la aplicación para recuperar este intento antes de volver a bifurcar.",
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Este paquete de sesión requiere una versión más reciente de Open Science. Actualice Open Science y vuelva a importarlo."
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "La carpeta de datos seleccionada ha cambiado. Compruebe la ubicación y confírmela de nuevo.",

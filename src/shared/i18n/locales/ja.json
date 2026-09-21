@@ -120,7 +120,8 @@
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "セッションパッケージの操作を完了できませんでした。パッケージとディスクの空き容量を確認してから、再試行してください。",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "元のパッケージを利用できません。移動、削除されたか、読み取れなくなった可能性があります。別のパッケージを選択してください。",
     "Could not fork this Session: {{reason}}": "このセッションを複製できませんでした：{{reason}}",
-    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。"
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "複製の公開処理を復旧する必要があります（操作 {{operationId}}、セッション {{sessionId}}）。再度複製する前にアプリを再起動してこの操作を復旧してください。",
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "選択したデータフォルダーが変更されました。場所を確認し、もう一度確定してください。",

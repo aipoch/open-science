@@ -380,3 +380,25 @@ for (const width of [1280, 414]) {
     await expect(help).toBeVisible()
   })
 }
+
+for (const locale of ['en', 'zh-Hans']) {
+  for (const width of [1280, 320]) {
+    test(`future package requires an update in ${locale} at ${width}px`, async ({
+      page
+    }, testInfo) => {
+      await page.setViewportSize({ width, height: 800 })
+      await page.goto(`/session-package.html?import=update-required&locale=${locale}`)
+      const dialog = page.getByRole('dialog')
+      const message =
+        locale === 'en'
+          ? 'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+          : '此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。'
+      await expect(dialog.getByRole('alert')).toHaveText(message)
+      await expect(dialog.getByRole('button', { name: /^(Import|导入)$/ })).toHaveCount(0)
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      await dialog.screenshot({ path: testInfo.outputPath('update-required.png') })
+    })
+  }
+}

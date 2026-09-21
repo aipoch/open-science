@@ -122,7 +122,8 @@
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "L’opération sur le paquet de session n’a pas pu être terminée. Vérifiez le paquet et l’espace disque disponible, puis réessayez.",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Le paquet d’origine est indisponible. Il a peut-être été déplacé, supprimé ou est devenu illisible. Choisissez un autre paquet.",
     "Could not fork this Session: {{reason}}": "Impossible de dupliquer cette session : {{reason}}",
-    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau."
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "La publication de la copie doit être rétablie (opération {{operationId}}, session {{sessionId}}). Redémarrez l’application pour récupérer cette opération avant de dupliquer à nouveau.",
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer."
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "Le dossier de données sélectionné a changé. Vérifiez son emplacement et confirmez-le à nouveau.",

@@ -120,7 +120,8 @@
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "无法完成会话包操作，请检查包文件和可用磁盘空间后重试。",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "原包文件不可用，可能已移动、删除或无法读取。请选择其他包文件。",
     "Could not fork this Session: {{reason}}": "无法创建此会话的副本：{{reason}}",
-    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。"
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "副本发布需要恢复（操作 {{operationId}}，会话 {{sessionId}}）。请重启应用恢复此次操作，然后再创建副本。",
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。"
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "所选数据文件夹已发生变化。请检查位置并重新确认。",

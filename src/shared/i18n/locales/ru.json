@@ -123,7 +123,8 @@
     "Could not complete the Session package operation. Check the package and available disk space, then try again.": "Не удалось завершить операцию с пакетом сеанса. Проверьте пакет и свободное место на диске, затем повторите попытку.",
     "The original package is unavailable. It may have been moved, deleted, or become unreadable. Choose another package.": "Исходный пакет недоступен. Возможно, он перемещён, удалён или больше не читается. Выберите другой пакет.",
     "Could not fork this Session: {{reason}}": "Не удалось создать ответвление этой сессии: {{reason}}",
-    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления."
+    "Fork publication needs recovery (operation {{operationId}}, Session {{sessionId}}). Restart the app to recover this attempt before forking again.": "Необходимо восстановить публикацию ответвления (операция {{operationId}}, сессия {{sessionId}}). Перезапустите приложение для восстановления этой попытки перед созданием нового ответвления.",
+    "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Для этого пакета сессии требуется более новая версия Open Science. Обновите Open Science и повторите импорт."
   },
   "renderer": {
     "The selected data folder changed. Check the location and confirm it again.": "Выбранная папка данных изменилась. Проверьте расположение и подтвердите его ещё раз.",
