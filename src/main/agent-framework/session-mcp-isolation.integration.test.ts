@@ -128,7 +128,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
         if (invoke) sent.add(`${turn}:${name}`)
         const callId = `call_${turn ?? 'background'}_${sent.size}`
         if (engine === 'claude-code') {
-          const event = (type: string, value: unknown) =>
+          const event = (type: string, value: unknown): string =>
             `event: ${type}\ndata: ${JSON.stringify(value)}\n\n`
           return (
             event('message_start', {
@@ -332,9 +332,16 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
                 ]
               }
         )
-      const expectedCalls = (owner: string, turn: string) =>
+      const expectedCalls = (
+        owner: string,
+        turn: string
+      ): Array<{ owner: string; turn: string; tool: string }> =>
         probeTools.map((probe) => ({ owner, turn, tool: probe.name }))
-      const prompt = async (session: acp.ActiveSession, owner: string, turn: string) => {
+      const prompt = async (
+        session: acp.ActiveSession,
+        owner: string,
+        turn: string
+      ): Promise<void> => {
         session.prompt(
           `Call each of the three test tools once with this turn: ISOLATION_TURN:${turn}`
         )

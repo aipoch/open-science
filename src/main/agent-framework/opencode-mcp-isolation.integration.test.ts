@@ -92,7 +92,7 @@ it.runIf(opencodePath)(
             ]
           }
         : { role: 'assistant', content: 'done' }
-      const chunk = (value: unknown, reason: string | null) =>
+      const chunk = (value: unknown, reason: string | null): string =>
         JSON.stringify({
           id: 'probe',
           object: 'chat.completion.chunk',
@@ -164,7 +164,7 @@ it.runIf(opencodePath)(
       connections.push({ stop, finished })
       return connected
     }
-    const session = (ctx: acp.ClientContext, owner: string) =>
+    const session = (ctx: acp.ClientContext, owner: string): Promise<acp.ActiveSession> =>
       ctx
         .buildSession({
           cwd: workspace,
@@ -178,7 +178,7 @@ it.runIf(opencodePath)(
           ]
         })
         .start()
-    const prompt = async (current: acp.ActiveSession, turn: string) => {
+    const prompt = async (current: acp.ActiveSession, turn: string): Promise<void> => {
       current.prompt(`Call the identity tool once: ISOLATION_TURN:${turn}`)
       for (;;) {
         const update = await current.nextUpdate()
