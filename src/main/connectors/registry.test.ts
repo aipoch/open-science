@@ -72,6 +72,37 @@ describe('registry + catalog', () => {
     expect(descriptor.required).toBeUndefined()
     expect(() => validateToolArguments(descriptor, {})).toThrow(/doi.*required/i)
   })
+
+  it('validates the UniProt mapping schemas without importing the registry from descriptor tests', () => {
+    const submit = getDescriptor('genes', 'submit_uniprot_id_mapping')!
+    const status = getDescriptor('genes', 'get_uniprot_id_mapping_status')!
+    const results = getDescriptor('genes', 'get_uniprot_id_mapping_results')!
+    expect(() =>
+      validateToolArguments(submit, {
+        from_db: 'UniProtKB_AC-ID',
+        to_db: 'GeneID',
+        ids: ['P04637']
+      })
+    ).not.toThrow()
+    expect(() =>
+      validateToolArguments(submit, {
+        from_db: 'UniProtKB_AC-ID',
+        to_db: 'GeneID',
+        ids: ['P04637,P00533']
+      })
+    ).toThrow(/invalid_arguments/)
+    expect(() => validateToolArguments(status, { job_id: '../job' })).toThrow(/invalid_arguments/)
+    expect(() => validateToolArguments(results, { job_id: 'job', page_size: 501 })).toThrow(
+      /invalid_arguments/
+    )
+    expect(() =>
+      validateToolArguments(submit, {
+        from_db: 'UniProtKB_AC-ID',
+        to_db: 'GeneID',
+        ids: Array.from({ length: 100_000 }, (_, i) => `id${i}`)
+      })
+    ).not.toThrow()
+  })
 })
 
 describe('PRIDE project file input contract', () => {
