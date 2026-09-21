@@ -94,7 +94,7 @@ const registerAcpIpcHandlerSet = (
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMainHandle('acp:send-prompt', (_event, request: AcpPromptRequest) => {
     // Continuation controls are main-process-owned. Renderer input must never suppress a visible
-    // user message or impersonate the handoff path.
+    // user message, impersonate the handoff path, or disable human interaction.
     const {
       attribution: _untrustedAttribution,
       referencedSessions: untrustedSessionReferences,
@@ -111,6 +111,7 @@ const registerAcpIpcHandlerSet = (
       turnIntent: request.turnIntent === 'plan-first' ? 'plan-first' : undefined,
       ...(referencedSessions.length > 0 ? { referencedSessions } : {}),
       ...(parts.length > 0 ? { parts } : {}),
+      permissionPrompts: undefined,
       continuation: undefined,
       suppressUserMessage: undefined
     }

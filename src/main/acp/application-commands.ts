@@ -375,6 +375,7 @@ const registerAcpCommands = (
           dependencies.workflows.sendPrompt({
             ...invocation.args[0],
             turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
+            permissionPrompts: undefined,
             continuation: undefined,
             suppressUserMessage: undefined
           })

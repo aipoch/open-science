@@ -268,6 +268,27 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    createElectronCallerContext(7),
+    createWebCallerContext('local-web'),
+    createWebCallerContext('remote-web', { location: 'remote' })
+  ])('discards task-only permission policy from interactive prompts: %j', async (caller) => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      sessionId: 'session-1',
+      text: 'Plan this',
+      permissionPrompts: 'none' as const,
+      turnIntent: 'plan-first' as const
+    }
+    await router.dispatcher.invoke(acpCommands.sendPrompt, invocation([request], caller))
+    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionPrompts: undefined, turnIntent: 'plan-first' })
+    )
+    expect(request.permissionPrompts).toBe('none')
+  })
+
   it('discards renderer-supplied internal prompt controls before entering the workflow', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()

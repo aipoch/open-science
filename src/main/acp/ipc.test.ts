@@ -1517,6 +1517,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
         {
           sessionId: 'session-1',
           text: 'Plot the curve',
+          permissionPrompts: 'none',
           suppressUserMessage: true,
           continuation: {
             kind: 'specialist-handoff',
@@ -1532,6 +1533,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     expect(trackPrompt).toHaveBeenCalledWith({
       sessionId: 'session-1',
       text: 'Plot the curve',
+      permissionPrompts: undefined,
       continuation: undefined,
       suppressUserMessage: undefined,
       turnIntent: undefined,
@@ -1541,6 +1543,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
       expect.objectContaining({
         sessionId: 'session-1',
         text: 'Plot the curve',
+        permissionPrompts: undefined,
         continuation: undefined,
         suppressUserMessage: undefined
       }),
