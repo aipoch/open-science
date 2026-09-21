@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import { PDFDocument, PDFDict, PDFName, PDFHexString } from 'pdf-lib'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -193,7 +194,10 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('button', { name: 'Close', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
   await page.getByRole('button', { name: 'Model settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', {
+    name: 'Settings',
+    exact: true
+  })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Tags', exact: true })
@@ -202,9 +206,12 @@ test('imports external notes, preserves provenance through undo, and persists an
     .locator('[data-slot="tag-resource-row"]')
     .filter({ hasText: 'native-notes.pdf' })
   await taggedPdf.click()
-  const preview = page.locator('[data-slot="file-preview-dialog"]')
+  const settingsPage = await getSettingsPage(page)
+  let preview = settingsPage.locator('[data-slot="file-preview-dialog"]')
   await expect(preview).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(0)
+  await expect(settingsPage.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(
+    0
+  )
   await expect(preview.locator('[data-pdf-bookmark-revealed="true"]')).toBeVisible()
   const pdfScroller = preview.getByRole('region', {
     name: 'native-notes.pdf scrollable preview',
@@ -215,26 +222,27 @@ test('imports external notes, preserves provenance through undo, and persists an
     .toBeGreaterThan(100)
   const scrollBefore = await pdfScroller.evaluate((node) => node.scrollTop)
   await pdfScroller.hover({ position: { x: 100, y: 100 } })
-  await page.mouse.wheel(0, scrollBefore > 100 ? -250 : 250)
+  await settingsPage.mouse.wheel(0, scrollBefore > 100 ? -250 : 250)
   await expect.poll(() => pdfScroller.evaluate((node) => node.scrollTop)).not.toBe(scrollBefore)
   await preview.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
-  await app.setMainWindowSize(660, 900)
-  await app.setMainWindowZoomFactor(2)
-  await page.screenshot({ path: testInfo.outputPath('notes-tabs-narrow.png') })
+  await app.setSettingsWindowSize(660, 900)
+  await app.setSettingsWindowZoomFactor(2)
+  await settingsPage.screenshot({ path: testInfo.outputPath('notes-tabs-narrow.png') })
   const extraTags = Array.from({ length: 6 }, (_, index) => `Research topic ${index + 1}`)
   await page.evaluate(async (names) => {
     for (const name of names)
       await window.api.tags.create({ name, iconKey: 'tag', colorKey: 'blue' })
   }, extraTags)
   await preview.getByRole('button', { name: 'Add note', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Add page note', exact: true }).click()
+  await settingsPage.getByRole('menuitem', { name: 'Add page note', exact: true }).click()
   const saveNote = preview.getByRole('button', { name: 'Save', exact: true })
   const saveBeforeTags = await saveNote.boundingBox()
   await preview.getByRole('button', { name: 'Add or remove Tags', exact: true }).click()
-  await page.getByRole('option', { name: 'Favorites', exact: true }).click()
-  for (const name of extraTags) await page.getByRole('option', { name, exact: true }).click()
+  await settingsPage.getByRole('option', { name: 'Favorites', exact: true }).click()
+  for (const name of extraTags)
+    await settingsPage.getByRole('option', { name, exact: true }).click()
   expect(await saveNote.boundingBox()).toEqual(saveBeforeTags)
-  await page.keyboard.press('Escape')
+  await settingsPage.keyboard.press('Escape')
   const removeTag = preview
     .getByRole('group', { name: 'Tags', exact: true })
     .getByRole('button', { name: 'Remove Favorites from this resource', exact: true })
@@ -251,14 +259,14 @@ test('imports external notes, preserves provenance through undo, and persists an
     )
   })
   expect(inset).toBe(true)
-  await page.screenshot({ path: testInfo.outputPath('tag-inset-remove.png') })
+  await settingsPage.screenshot({ path: testInfo.outputPath('tag-inset-remove.png') })
   const selectedTags = removeTag.locator('../..')
   expect(await selectedTags.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true)
   const saveAfterTags = await saveNote.boundingBox()
   expect(saveAfterTags).toEqual(saveBeforeTags)
-  await app.setMainWindowZoomFactor(1)
-  await app.setMainWindowSize(1280, 960)
-  await page.screenshot({ path: testInfo.outputPath('tag-editor-wide.png') })
+  await app.setSettingsWindowZoomFactor(1)
+  await app.setSettingsWindowSize(1280, 960)
+  await settingsPage.screenshot({ path: testInfo.outputPath('tag-editor-wide.png') })
   await removeTag.locator('..').hover()
   await removeTag.click()
   await expect(removeTag).toHaveCount(0)
@@ -269,6 +277,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   await expect(taggedPdf).toBeVisible()
   await expect(taggedPdf).toBeFocused()
   await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
+  preview = page.locator('[data-slot="file-preview-dialog"]')
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   const globalSearch = page.getByRole('dialog', { name: 'Global search', exact: true })
   await page.evaluate(async (versionId) => {

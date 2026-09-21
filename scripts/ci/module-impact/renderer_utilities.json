@@ -458,7 +458,13 @@
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/windows.test.ts"
     ]
   },
   "capabilityOverlays": [],

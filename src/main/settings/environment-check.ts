@@ -1,3 +1,4 @@
+import { probeAvx2 } from './platform-probes'
 import { arch as hostArchitecture } from 'node:os'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -12,8 +13,8 @@ import type {
 import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
 import { netFetchStandard } from '../skills/net-fetch'
-import { getManagedPlatform } from './managed-claude'
-import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
+import { getManagedPlatformAsync } from './managed-claude'
+import { resolveOpencodePlatformAsync } from './managed-opencode'
 import { resolveManagedCodexPlatform } from './managed-codex'
 
 const REGISTRY_URLS: Record<ManagedClaudeRegistry, string> = {
@@ -140,24 +141,24 @@ const runEnvironmentCheck = async ({
   const resolveManagedPlatform =
     deps.resolveManagedPlatform ??
     (() => {
-      if (agentFrameworkId === 'opencode') return resolveOpencodePlatform()
+      if (agentFrameworkId === 'opencode') return resolveOpencodePlatformAsync()
       if (agentFrameworkId === 'codex') return resolveManagedCodexPlatform()
-      return getManagedPlatform()
+      return getManagedPlatformAsync()
     })
   const findPython = deps.findPython ?? findPythonCommand
   const probeRegistry = deps.probeRegistry ?? probeRegistryReachability
-  const detectAvx2Cap = deps.detectAvx2 ?? detectAvx2
+  const detectAvx2Cap = deps.detectAvx2 ?? probeAvx2
   const now = deps.now ?? Date.now
 
   // opencode ships a `-baseline` build for a non-AVX2 x64 host, so such a machine is still fully
   // auto-installable — reflect the true capability with an informational note rather than a warning.
   const opencodeBaselineNote =
-    agentFrameworkId === 'opencode' && architecture === 'x64' && !detectAvx2Cap()
+    agentFrameworkId === 'opencode' && architecture === 'x64' && !(await detectAvx2Cap())
 
   const [systemCheck, storageCheck, python] = await Promise.all([
-    Promise.resolve().then<EnvironmentCheckItem>(() => {
+    Promise.resolve().then<EnvironmentCheckItem>(async () => {
       try {
-        resolveManagedPlatform()
+        await resolveManagedPlatform()
         return {
           id: 'system',
           label: 'System compatibility',

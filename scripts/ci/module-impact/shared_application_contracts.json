@@ -126,7 +126,8 @@
     "src/shared/classification.ts",
     "src/shared/runtime-writer.ts",
     "src/shared/pdf-annotations.ts",
-    "src/shared/pdf-annotations.test.ts"
+    "src/shared/pdf-annotations.test.ts",
+    "src/shared/settings-window.ts"
   ],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",

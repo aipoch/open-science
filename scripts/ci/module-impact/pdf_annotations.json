@@ -617,7 +617,9 @@
       "src/renderer/src/components/NotificationRecovery.test.tsx",
       "src/renderer/src/app-shell-presentation-owner.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
-      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/windows.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

@@ -948,7 +948,9 @@ describe('Artifact Provenance repository architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
       'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
       'src/main/pdf-annotations/repository.integration.test.ts',
-      'src/main/pdf-annotations/service.test.ts'
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/settings-window-ipc.test.ts',
+      'src/main/windows.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

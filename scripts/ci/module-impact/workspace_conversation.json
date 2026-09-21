@@ -225,7 +225,13 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/windows.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -119,7 +119,12 @@
     "src/main/settings/workflows/local-shell.ts",
     "src/main/settings/workflows/runtime.ts",
     "src/main/settings/workflows/skills.ts",
-    "src/main/settings/device-credentials-codec.ts"
+    "src/main/settings/device-credentials-codec.ts",
+    "src/main/settings/archive-task-core.ts",
+    "src/main/settings/archive-task-worker.ts",
+    "src/main/settings/archive-tasks.test.ts",
+    "src/main/settings/archive-tasks.ts",
+    "src/main/settings/platform-probes.ts"
   ],
   "interfacePaths": [
     "src/main/settings/agent-runtime-manager.ts",
@@ -234,7 +239,8 @@
       "src/main/settings/transport-validation.test.ts",
       "src/main/settings/workflows.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/settings/workflows/local-shell.test.ts"
+      "src/main/settings/workflows/local-shell.test.ts",
+      "src/main/settings/archive-tasks.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -701,7 +707,19 @@
       "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/pdf-annotations/repository.integration.test.ts",
-      "src/main/pdf-annotations/service.test.ts"
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/notebook/skill-loading-guidance.test.ts",
+      "src/main/skills/export.test.ts",
+      "src/main/skills/host-skills-service.test.ts",
+      "src/main/skills/marketplace-installation.test.ts",
+      "src/main/skills/marketplace-service.test.ts",
+      "src/main/skills/materializer-integrity.regression.test.ts",
+      "src/main/skills/skill-archive-sniffer.test.ts",
+      "src/main/skills/specialist-package-adapter.test.ts",
+      "src/main/skills/user-skill-catalog-observer.test.ts",
+      "src/main/skills/user-skill-integrity.regression.test.ts",
+      "src/main/skills/user-skill-repository.atomic.test.ts",
+      "src/main/skills/user-skill-repository.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

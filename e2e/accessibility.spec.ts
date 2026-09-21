@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import type { AxeResults } from 'axe-core'
 import { readFile } from 'node:fs/promises'
@@ -159,13 +160,13 @@ test('reports accessibility violations in core dialog and workspace surfaces', a
   await scanAccessibility(page, 'Workspace')
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'General', exact: true })
     .click()
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
-  await scanAccessibility(page, 'Settings')
+  await scanAccessibility(await getSettingsPage(page), 'Settings')
 })
 
 test('reports accessibility violations in permission and file preview states', async ({ app }) => {
@@ -284,22 +285,23 @@ test('reports accessibility violations across representative state combinations'
 
   await app.configureFileBrowserFixture()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Compute', exact: true })
     .click()
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
-  await setViewport(page, 767)
-  await scanAccessibility(page, 'Compute settings (narrow, dark)')
+  const settingsPage = await getSettingsPage(page)
+  await setViewport(settingsPage, 767)
+  await scanAccessibility(settingsPage, 'Compute settings (narrow, dark)')
   await settings.getByRole('button', { name: 'Browse files on Accessibility fixture' }).click()
-  const goTo = page.getByRole('button', { name: 'Go to', exact: true })
+  const goTo = settingsPage.getByRole('button', { name: 'Go to', exact: true })
   await goTo.press('Enter')
-  const locations = page.getByRole('menu', { name: 'Go to', exact: true })
+  const locations = settingsPage.getByRole('menu', { name: 'Go to', exact: true })
   await expect(locations).toBeVisible()
-  await waitForFiniteAnimations(page)
-  await scanAccessibility(page, 'Go-to locations (open)')
-  const fileBrowser = page.getByRole('dialog', { name: 'Remote file browser' })
+  await waitForFiniteAnimations(settingsPage)
+  await scanAccessibility(settingsPage, 'Go-to locations (open)')
+  const fileBrowser = settingsPage.getByRole('dialog', { name: 'Remote file browser' })
   const removeBookmark = locations.getByRole('menuitem', {
     name: 'Remove bookmark /scratch/fixture/pinned',
     exact: true
@@ -315,12 +317,12 @@ test('reports accessibility violations across representative state combinations'
   await expect(locations).toBeHidden()
   await expect(goTo).toBeFocused()
   await goTo.press('Enter')
-  await page.keyboard.press('Escape')
-  await expectKeyboardOutcome(page, 'Go-to Escape focus return', async () => {
+  await settingsPage.keyboard.press('Escape')
+  await expectKeyboardOutcome(settingsPage, 'Go-to Escape focus return', async () => {
     await expect(locations).toBeHidden()
     await expect(goTo).toBeFocused()
   })
-  await page.keyboard.press('Escape')
+  await settingsPage.keyboard.press('Escape')
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 
@@ -400,7 +402,7 @@ test('supports the core project journey with keyboard input only', async ({ app 
       })
     }
     await page.keyboard.press('Enter')
-    const settings = page.getByRole('dialog', { name: 'Settings' })
+    const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
     if (
       !(await expectKeyboardOutcome(page, 'Open settings with Enter', async () => {
         await expect(settings).toBeVisible()
@@ -410,15 +412,15 @@ test('supports the core project journey with keyboard input only', async ({ app 
     const compute = settings
       .getByRole('navigation', { name: 'Settings' })
       .getByRole('button', { name: 'Compute', exact: true })
-    if (!(await focusWithTab(page, compute))) return
-    await page.keyboard.press('Enter')
+    if (!(await focusWithTab(await getSettingsPage(page), compute))) return
+    await (await getSettingsPage(page)).keyboard.press('Enter')
     if (
       !(await expectKeyboardOutcome(page, 'Open Compute settings with Enter', async () => {
         await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
       }))
     )
       return
-    await page.keyboard.press('Escape')
+    await (await getSettingsPage(page)).keyboard.press('Escape')
     if (
       !(await expectKeyboardOutcome(page, 'Close settings with Escape', async () => {
         await expect(settings).toBeHidden()

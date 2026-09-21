@@ -12,6 +12,7 @@ import {
   type WebFrameMain
 } from 'electron'
 import { join } from 'path'
+import { markSettingsWebContents } from './settings-window-policy'
 import { is } from '@electron-toolkit/utils'
 import iconPng from '../../resources/icon.png?asset'
 import iconWindows from '../../resources/icon-light.ico?asset'
@@ -62,6 +63,9 @@ const E2E_WINDOW_MODE_ENV = 'OPEN_SCIENCE_E2E_WINDOW_MODE'
 const RENDERER_RECOVERY_WINDOW_MS = 60_000
 const MAX_AUTOMATIC_RENDERER_RECOVERIES = 2
 const CHROMIUM_ERR_ABORTED = -3
+const trustedAppContents = new WeakSet<WebContents>()
+export const isTrustedAppContents = (contents: WebContents): boolean =>
+  trustedAppContents.has(contents)
 const ALLOWED_RENDERER_PERMISSIONS = new Set(['clipboard-sanitized-write'])
 const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'abnormal-exit',
@@ -108,6 +112,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     }
   })
 
+  trustedAppContents.add(window.webContents)
   window.on('ready-to-show', () => {
     if (e2eWindowMode === 'hidden') return
     window.show()
@@ -126,10 +131,14 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     permission: string,
     details: { isMainFrame: boolean; requestingUrl?: string }
   ): boolean => {
-    const rendererUrl = window.webContents.getURL()
+    const rendererUrl =
+      requestingWebContents && trustedAppContents.has(requestingWebContents)
+        ? requestingWebContents.getURL()
+        : ''
     return (
       rendererUrl !== '' &&
-      requestingWebContents === window.webContents &&
+      requestingWebContents !== null &&
+      trustedAppContents.has(requestingWebContents) &&
       details.isMainFrame &&
       details.requestingUrl === rendererUrl &&
       ALLOWED_RENDERER_PERMISSIONS.has(permission)
@@ -697,6 +706,62 @@ const createMainWindow = (
   }
 
   observeRendererLoad(true)
+  return window
+}
+
+export const createSettingsWindow = (): BrowserWindow => {
+  const window = createAppWindow({
+    width: 1100,
+    height: 800,
+    // Settings owns the same nested file/annotation surfaces as the workspace. Preserve their
+    // existing desktop viewport minimum when moving them into this independent native window.
+    minWidth: 1100,
+    minHeight: 560,
+    title: 'Open-Science'
+  })
+  markSettingsWebContents(window.webContents)
+  let ready = false
+  let responsive = true
+  const onReady = (event: IpcMainEvent): void => {
+    if (event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame)
+      ready = true
+  }
+  const onGone = (event: IpcMainEvent): void => {
+    if (event.sender === window.webContents) ready = false
+  }
+  ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onReady)
+  ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onGone)
+  window.once('closed', () => {
+    ipcMain.removeListener(CLOSE_ACTIVE_PANE_READY_CHANNEL, onReady)
+    ipcMain.removeListener(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onGone)
+  })
+  window.webContents.on('did-start-navigation', (_event, _url, _inPlace, mainFrame) => {
+    if (mainFrame) ready = false
+  })
+  window.webContents.on('render-process-gone', () => {
+    ready = false
+  })
+  window.on('unresponsive', () => {
+    responsive = false
+  })
+  window.on('responsive', () => {
+    responsive = true
+  })
+  window.webContents.on('before-input-event', (event, input) => {
+    if (!isCloseWindowChord(input, process.platform)) return
+    event.preventDefault()
+    if (ready && responsive) window.webContents.send(CLOSE_ACTIVE_PANE_CHANNEL)
+    else window.close()
+  })
+
+  const loading =
+    is.dev && process.env['ELECTRON_RENDERER_URL']
+      ? window.loadURL(new URL('settings.html', process.env['ELECTRON_RENDERER_URL']).href)
+      : window.loadFile(join(__dirname, '../renderer/settings.html'))
+  void loading.catch((error: unknown) => {
+    log.error('settings renderer load failed', diagnosticErrorFields(error))
+    if (!window.isDestroyed()) window.destroy()
+  })
   return window
 }
 

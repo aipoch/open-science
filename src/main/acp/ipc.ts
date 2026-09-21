@@ -58,6 +58,7 @@ const registerAcpIpcHandlerSet = (
   sessionAdmission: AcpIpcSessionAdmission,
   resolveMemoryEnabled?: AcpSessionMemoryPreferenceResolver
 ): void => {
+  ipcMainHandle('acp:get-prompt-in-flight', () => runtime.getSnapshot().promptInFlight)
   ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
   ipcMainHandle('acp:connect', (_event, request: AcpConnectRequest) =>
     stateCommand(runtime.connect(request))

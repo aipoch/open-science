@@ -29,9 +29,8 @@ import { createLogger } from '../../logger'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
 import type { SettingsRepository } from '../../settings/repository'
-import { validateSpecialistZip } from './zip-adapter'
+import { validateSpecialistArchive, zipSpecialistFiles } from '../../settings/archive-tasks'
 import { compareSemver } from './semver'
-import { buildDeterministicSpecialistZip } from './contribution-template'
 import {
   specialistContentModifiedSinceImport,
   specialistLegacyPayloadContentHash
@@ -489,7 +488,7 @@ export class SpecialistPackageService {
     // renderer's prior capability so another window can finish its own confirmation flow.
     this.clearCandidates(ownerId)
     const catalog = await this.validationCatalog()
-    const result = validateSpecialistZip(archiveBytes, catalog)
+    const result = await validateSpecialistArchive(archiveBytes, catalog)
     const token = this.token()
     const diagnostics = [...result.preview.diagnostics]
     let overwrite: SpecialistPackageCandidatePreview['overwrite']
@@ -814,12 +813,12 @@ export class SpecialistPackageService {
             : file.bytes
       }
     }
-    const archiveBytes = buildDeterministicSpecialistZip(files)
+    const archiveBytes = await zipSpecialistFiles(files)
     const validationCatalog = {
       ...catalog,
       skills: catalog.skills.filter((skill) => !request.includedSkillIds.includes(skill.id))
     }
-    const validation = validateSpecialistZip(archiveBytes, validationCatalog)
+    const validation = await validateSpecialistArchive(archiveBytes, validationCatalog)
     if (!validation.preview.installable) {
       throw new Error('Specialist export has blocking validation errors.')
     }
@@ -937,7 +936,7 @@ export class SpecialistPackageService {
     let specialist: Extract<SpecialistPackageInstallResult, { status: 'installed' }>['specialist']
     try {
       const catalog = await this.validationCatalog()
-      const liveValidation = validateSpecialistZip(candidate.archiveBytes, catalog)
+      const liveValidation = await validateSpecialistArchive(candidate.archiveBytes, catalog)
       if (catalog.protectedSpecialistIds.includes(candidate.plan.specialistId)) {
         return { status: 'failed', code: 'protected-target' }
       }

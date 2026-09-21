@@ -34,6 +34,7 @@ export type SettingsNavigationActions = {
 }
 
 type SettingsNavigationSliceOptions = {
+  openNative?: (route?: SettingsRoute) => boolean
   getState: () => SettingsNavigationState
   setState: (patch: Partial<SettingsNavigationState>) => void
 }
@@ -47,16 +48,20 @@ export const createInitialSettingsNavigationState = (): SettingsNavigationState 
 // route construction, mutual exclusion, and repeated-intent identity stay behind this module's seam.
 export const createSettingsNavigationSlice = ({
   getState,
+  openNative,
   setState
 }: SettingsNavigationSliceOptions): SettingsNavigationActions => {
-  const openTo = (route: SettingsRoute): void =>
+  const openTo = (route: SettingsRoute, requestId = ++settingsNavigationRequestId): void => {
+    if (openNative?.(route)) return
     setState({
       isSettingsOpen: true,
-      pendingSettingsIntent: { requestId: ++settingsNavigationRequestId, route }
+      pendingSettingsIntent: { requestId, route }
     })
-
+  }
   return {
-    openSettings: () => setState({ isSettingsOpen: true }),
+    openSettings: () => {
+      if (!openNative?.()) setState({ isSettingsOpen: true })
+    },
 
     openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
     openSettingsToOpenAlex: () =>
@@ -81,21 +86,18 @@ export const createSettingsNavigationSlice = ({
 
     openSettingsToComputeAuthentication: (providerId, errorCode) => {
       const requestId = ++settingsNavigationRequestId
-      setState({
-        isSettingsOpen: true,
-        pendingSettingsIntent: {
-          requestId,
-          route: {
-            panel: 'compute',
-            view: {
-              kind: 'detail',
-              providerId,
-              authenticationFocus: errorCode,
-              authenticationRequestId: requestId
-            }
+      openTo(
+        {
+          panel: 'compute',
+          view: {
+            kind: 'detail',
+            providerId,
+            authenticationFocus: errorCode,
+            authenticationRequestId: requestId
           }
-        }
-      })
+        },
+        requestId
+      )
     },
 
     consumePendingSettingsIntent: (requestId) => {

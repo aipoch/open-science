@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 
-import { zipSync, type Zippable } from 'fflate'
+import type { Zippable } from 'fflate'
+import { zipSettingsFiles } from '../settings/archive-tasks'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
@@ -105,7 +106,7 @@ export const buildSkillExportArchive = async (
   skill: BundledSkill
 ): Promise<SkillExportArchive> => ({
   fileName: skillExportFileName(skill.displayName, basename(skill.sourceDir) || skill.id),
-  archiveBytes: zipSync(await collectFiles(skill.sourceDir, skill.name), { level: 6 })
+  archiveBytes: await zipSettingsFiles(await collectFiles(skill.sourceDir, skill.name))
 })
 
 export const saveSkillExport = async (

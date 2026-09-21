@@ -50,6 +50,17 @@ const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
 // These functions exist on the real Electron preload API but the current AST generator does not
 // recognize their implementation shape or channel constants. T1b must make each omission explicit.
 const GENERATED_SOURCE_OMISSIONS = [
+  'acp.getPromptInFlight',
+  'acp.onPromptInFlightChanged',
+  'compute.onHostsChanged',
+  'window.openSettings',
+  'window.settingsReady',
+  'window.updateSettingsContext',
+  'window.navigateWorkspace',
+  'window.workspaceNavigated',
+  'window.onSettingsOpened',
+  'window.onSettingsCatalogChanged',
+  'window.onWorkspaceNavigation',
   'backgroundResultDelivery.getProjectActivity',
   'backgroundResultDelivery.getSessionActivity',
   'backgroundResultDelivery.onChanged',

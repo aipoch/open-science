@@ -1,3 +1,5 @@
+import { useSettingsSnapshotSync } from './useSettingsSnapshotSync'
+import { useSettingsWorkspaceBridge } from './useSettingsWorkspaceBridge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { OpenSessionFromNotificationRequest } from '../../../shared/notifications'
@@ -73,6 +75,8 @@ type ApplicationEventProjection = Readonly<{
   }>
   settings: Readonly<{
     close: () => void
+    retryOpen: () => void
+    dismissError: () => void
     openRuntimes: () => void
     openSession: (sessionId: string) => void
   }>
@@ -328,13 +332,8 @@ const useApplicationEventBindings = ({
     () => window.api.settings.onSkillImportApprovalSettled(dismissSkillImport),
     [dismissSkillImport]
   )
-  useEffect(
-    () =>
-      window.api.settings.onChanged?.((snapshot) => {
-        useSettingsStore.getState().acceptCommittedSnapshot(snapshot)
-      }),
-    []
-  )
+  useSettingsSnapshotSync()
+  useSettingsWorkspaceBridge()
   useEffect(() => {
     void window.api.settings.replayPendingSkillImportApprovals()
   }, [])
@@ -490,6 +489,8 @@ const useApplicationEventBindings = ({
     closeConfirmation: { setOpen: setCloseConfirmationOpen },
     settings: {
       close: closeSettings,
+      retryOpen: openSettings,
+      dismissError: () => useSettingsStore.setState({ loadError: undefined }),
       openRuntimes: () => openSettingsToPanel('runtimes'),
       openSession: openPermissionSession
     }

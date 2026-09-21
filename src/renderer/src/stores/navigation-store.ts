@@ -128,7 +128,11 @@ type NavigationStore = {
   // Opens a project's New Conversation draft (no Specialist binding) carrying a `/customize` prefill.
   // The intent does not send, create a session, or imply mutation approval; WorkspacePage consumes the
   // prefill once and clears it.
-  startCustomizeConversation: (projectId: string, goal?: CustomizeGoal) => void
+  startCustomizeConversation: (
+    projectId: string,
+    goal?: CustomizeGoal,
+    afterNavigate?: () => void
+  ) => void
   startLiteratureReviewConversation: (
     projectId: string,
     scope: LiteratureScopeReference,
@@ -150,11 +154,12 @@ type NavigationStore = {
   startWslSupportConversation: (
     projectId: string,
     doc: ComposerDoc,
-    setupSessionToken: string
+    setupSessionToken: string,
+    afterNavigate?: () => void
   ) => boolean
   consumeWslSupportPrefill: () => void
   requestProjectCreation: () => void
-  requestWslSetupProjectCreation: () => void
+  requestWslSetupProjectCreation: (afterNavigate?: () => void) => void
   consumeProjectCreation: () => void
   consumeWslSetupProjectCreation: () => void
   requestArtifactMention: (file: ProjectFileItem) => void
@@ -389,7 +394,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   // so the fresh draft has no Specialist binding, records the target as the last-opened project, and
   // stamps a pending prefill intent that WorkspacePage consumes once. The intent never sends or creates
   // a session; it is a navigation/prefill intent only.
-  startCustomizeConversation: (projectId, goal = 'specialist') => {
+  startCustomizeConversation: (projectId, goal = 'specialist', afterNavigate) => {
     if (!isActiveProject(projectId)) return
     requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       useSessionStore.getState().clearSelection()
@@ -411,6 +416,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         }
       })
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
+      afterNavigate?.()
     })
   },
 
@@ -487,7 +493,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   consumeLiteratureReviewPrefill: () => set({ pendingLiteratureReviewPrefill: undefined }),
 
-  startWslSupportConversation: (projectId, doc, setupSessionToken) => {
+  startWslSupportConversation: (projectId, doc, setupSessionToken, afterNavigate) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       useSessionStore.getState().clearSelection()
@@ -510,6 +516,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         }
       })
       usePreviewWorkbenchStore.getState().activateProject(projectId, undefined, true)
+      afterNavigate?.()
     })
   },
 
@@ -524,12 +531,15 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     )
   },
 
-  requestWslSetupProjectCreation: () => {
-    set((state) => ({
-      ...navigationState(state, 'user', { view: 'home' }),
-      pendingProjectCreation: true,
-      pendingWslSetupAfterProjectCreation: true
-    }))
+  requestWslSetupProjectCreation: (afterNavigate) => {
+    requestPreviewLeaveForNavigation({ view: 'home' }, () => {
+      set((state) => ({
+        ...navigationState(state, 'user', { view: 'home' }),
+        pendingProjectCreation: true,
+        pendingWslSetupAfterProjectCreation: true
+      }))
+      afterNavigate?.()
+    })
   },
 
   consumeProjectCreation: () => set({ pendingProjectCreation: false }),

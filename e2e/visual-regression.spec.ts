@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
@@ -207,7 +208,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await expectStableScreenshot(page, 'workspace-empty.png', 0.003)
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'General', exact: true })
@@ -224,7 +225,10 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
   // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.
-  await expectStableScreenshot(page, 'settings-general.png', 0.004)
+  await settings.locator('[data-slot="settings-navigation-scroll"]').evaluate((element) => {
+    element.scrollTop = 0
+  })
+  await expectStableScreenshot(await getSettingsPage(page), 'settings-general.png', 0.004)
 })
 
 test('keeps home actions and content inside compact viewports', async ({ app }) => {
@@ -339,14 +343,14 @@ test('keeps representative conversation, project, and recovery states visually s
 
   await setVisualState(page, { theme: 'Dark', width: 1280 })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Compute', exact: true })
     .click()
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
-  await setViewport(page, 767)
-  await expectStableScreenshot(page, 'compute-narrow-dark.png')
+  await setViewport(await getSettingsPage(page), 767)
+  await expectStableScreenshot(await getSettingsPage(page), 'compute-narrow-dark.png')
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 

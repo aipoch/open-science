@@ -2421,7 +2421,8 @@ describe('SpecialistsPanel Chat with agent', () => {
 
     expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith(
       'active-project',
-      'specialist'
+      'specialist',
+      expect.any(Function)
     )
   })
 
@@ -2439,9 +2440,12 @@ describe('SpecialistsPanel Chat with agent', () => {
 
     expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith(
       'climate-models',
-      'specialist'
+      'specialist',
+      expect.any(Function)
     )
-    expect(closeSettingsSpy).toHaveBeenCalled()
+    expect(closeSettingsSpy).not.toHaveBeenCalled()
+    await act(async () => navigationMock.startCustomizeConversation.mock.calls[0][2]())
+    expect(closeSettingsSpy).toHaveBeenCalledOnce()
   })
 
   it('stays within navigation/prefill intent: no Specialist binding or create-form navigation', async () => {

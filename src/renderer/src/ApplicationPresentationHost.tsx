@@ -315,6 +315,16 @@ const ApplicationPresentationContent = ({
                   onDismiss={events.lifecycle.dismissNotice}
                   onView={events.lifecycle.viewNotice}
                 />
+                {startup.settings.loadError ? (
+                  <ActionToast
+                    title={t('Settings could not be loaded')}
+                    level="error"
+                    actionLabel={t('Retry')}
+                    dismissLabel={t('Close')}
+                    onAction={events.settings.retryOpen}
+                    onDismiss={events.settings.dismissError}
+                  />
+                ) : null}
                 <ConnectorAuthToast />
                 <StorageCleanupToast />
                 {events.notification.unavailableToken !== undefined ? (
@@ -361,19 +371,21 @@ const ApplicationPresentationContent = ({
         active={activePresentation === 'webEventRecovery'}
         phase={events.webEventConnectionPhase}
       />
-      <Suspense fallback={null}>
-        <SettingsPage
-          ref={settingsPageRef}
-          undoHostRef={undoPortal.settingsHostRef}
-          open={activePresentation === 'settings'}
-          onClose={events.settings.close}
-          onOpenSession={events.settings.openSession}
-          canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-          hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-          catalogRecovery={sessions.catalogRecovery}
-          onRetryCatalogRecovery={sessions.retryLoad}
-        />
-      </Suspense>
+      {!window.api.window?.openSettings ? (
+        <Suspense fallback={null}>
+          <SettingsPage
+            ref={settingsPageRef}
+            undoHostRef={undoPortal.settingsHostRef}
+            open={activePresentation === 'settings'}
+            onClose={events.settings.close}
+            onOpenSession={events.settings.openSession}
+            canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+            hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+            catalogRecovery={sessions.catalogRecovery}
+            onRetryCatalogRecovery={sessions.retryLoad}
+          />
+        </Suspense>
+      ) : null}
       <Suspense fallback={null}>
         <ConnectorApprovalDialog
           active={activePresentation === 'connectorApproval'}

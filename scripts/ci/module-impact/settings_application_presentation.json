@@ -133,7 +133,8 @@
     "src/renderer/src/pages/settings/validation-message.test.ts",
     "src/renderer/src/pages/settings/validation-message.ts",
     "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
-    "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
+    "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
+    "src/renderer/src/pages/settings/SettingsWindowApp.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -423,7 +424,13 @@
       "src/renderer/src/pages/workspace/WorkspaceSubagentMessageRow.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/windows.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -1150,6 +1150,7 @@ const WorkspaceSidebarView = ({
                   sidebarInteractiveTransitionClassName
                 )}
                 aria-label={t('Settings')}
+                data-settings-trigger="workspace"
               >
                 <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>

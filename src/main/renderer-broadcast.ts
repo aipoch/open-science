@@ -1,4 +1,6 @@
 import { BrowserWindow } from 'electron'
+import { isSettingsWebContents, settingsReceivesEvent } from './settings-window-policy'
+import { SETTINGS_WINDOW_CHANNELS } from '../shared/settings-window'
 
 import { createLogger, errorLogFields } from './logger'
 
@@ -26,7 +28,26 @@ const projectToElectron = <Channel extends ApplicationEventChannel>(
 ): void => {
   for (const window of BrowserWindow.getAllWindows()) {
     try {
-      if (!window.isDestroyed()) window.webContents.send(channel, payload)
+      if (window.isDestroyed()) continue
+      if (isSettingsWebContents(window.webContents)) {
+        if (channel === 'acp:state') {
+          window.webContents.send(
+            'acp:prompt-in-flight-changed',
+            (payload as ApplicationEventMap['acp:state']).promptInFlight
+          )
+          continue
+        }
+        if (
+          channel === 'session:created' ||
+          channel === 'session:updated' ||
+          channel === 'session:deleted'
+        ) {
+          window.webContents.send(SETTINGS_WINDOW_CHANNELS.catalogChanged)
+          continue
+        }
+        if (!settingsReceivesEvent(channel)) continue
+      }
+      window.webContents.send(channel, payload)
     } catch (error) {
       // Destruction can race the liveness check. One failed window must not starve its peers.
       log.warn('Could not deliver application event to renderer', {

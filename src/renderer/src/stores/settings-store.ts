@@ -411,6 +411,23 @@ const createSettingsStoreState = (
     writeCoordinator
   }),
   ...createSettingsNavigationSlice({
+    openNative: (route) => {
+      if (!window.api?.window?.openSettings || window.location.pathname.endsWith('/settings.html'))
+        return false
+      set({ loadError: undefined })
+      void import('./navigation-store')
+        .then(({ useNavigationStore }) =>
+          window.api.window.openSettings!({
+            route,
+            activeProjectId: useNavigationStore.getState().activeProjectId
+          })
+        )
+        .catch((error: unknown) => {
+          console.warn('Could not open Settings window', error)
+          set({ loadError: 'Settings could not be loaded' })
+        })
+      return true
+    },
     getState: get,
     setState: (patch) => set(patch)
   }),

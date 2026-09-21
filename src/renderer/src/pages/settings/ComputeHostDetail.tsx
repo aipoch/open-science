@@ -82,6 +82,7 @@ export function ComputeHostDetail({
         : t(error.key, error.params)
   const hosts = useComputeStore((state) => state.hosts)
   const isLoaded = useComputeStore((state) => state.isLoaded)
+  const loadError = useComputeStore((state) => state.loadError)
   const loadHosts = useComputeStore((state) => state.loadHosts)
   const probeHost = useComputeStore((state) => state.probeHost)
   const probingIds = useComputeStore((state) => state.probingIds)
@@ -247,6 +248,18 @@ export function ComputeHostDetail({
         setPasswordCapability({ available: false, reason: 'secure_storage_unavailable' })
       )
   }, [host?.authentication?.mode])
+
+  if (loadError) {
+    return (
+      <div className="p-5">
+        <ErrorNotice
+          role="alert"
+          description={t("Couldn't load hosts.")}
+          primaryButton={{ label: t('Retry'), onClick: () => void loadHosts() }}
+        />
+      </div>
+    )
+  }
 
   if (!host) {
     return (

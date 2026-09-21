@@ -20,5 +20,7 @@
   ],
   "src/main/pdf-annotations/native-import-worker-entry.ts": [
     "src/main/pdf-annotations/native-import.ts"
-  ]
+  ],
+  "src/main/settings/archive-task-worker.ts": ["src/main/settings/archive-tasks.ts"],
+  "src/renderer/src/settings.tsx": ["src/main/windows.ts"]
 }

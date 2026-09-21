@@ -1,4 +1,5 @@
-import { expect, type Page } from '@playwright/test'
+import { getSettingsPage } from './fixtures/settings-window'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
@@ -23,6 +24,13 @@ const closeWorkspacePreviews = async (page: Page): Promise<void> => {
     const close = page.getByRole('button', { name, exact: true })
     if (await close.isVisible().catch(() => false)) await close.click({ force: true })
   }
+}
+
+const expandSubagentSettings = async (settings: Locator): Promise<void> => {
+  const toggle = settings.getByRole('button', { name: /^(Expand|Collapse) Subagent settings$/ })
+  await expect(toggle).toBeVisible()
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click()
+  await expect(settings.getByRole('combobox', { name: 'Subagent model Model' })).toBeVisible()
 }
 
 test('routes a Settings UI fixed model through production Delegation and Usage', async ({
@@ -51,20 +59,22 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
   page = await app.configureFakeAgent()
 
   await page.getByRole('button', { name: 'Model settings' }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
   // The Subagent selector now lives inside the collapsed Scenario models accordion row.
-  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
+  await expandSubagentSettings(settings)
   const model = settings.getByRole('combobox', { name: 'Subagent model Model' })
   const effort = settings.getByRole('combobox', { name: 'Subagent model Reasoning effort' })
   await expect(model).toContainText('Same as main model')
   await expect(effort).toBeDisabled()
 
   await model.click()
-  await page
+  await (
+    await getSettingsPage(page)
+  )
     .getByRole('option', {
       name: `${SUBAGENT_MODEL} · ${SUBAGENT_PROVIDER_NAME}`
     })
@@ -72,7 +82,7 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
   await expect(model).toContainText(SUBAGENT_MODEL)
   await expect(effort).toContainText('Default')
   await effort.click()
-  await page.getByRole('option', { name: 'High', exact: true }).click()
+  await (await getSettingsPage(page)).getByRole('option', { name: 'High', exact: true }).click()
   await expect(effort).toContainText('High')
   await settings.getByRole('button', { name: 'Close settings' }).click()
 
@@ -153,13 +163,18 @@ test('routes a Settings UI fixed model through production Delegation and Usage',
   )
   await closeWorkspacePreviews(page)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
-  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
+  await expandSubagentSettings(settings)
   await settings.getByRole('combobox', { name: 'Subagent model Model' }).click()
-  await page.getByRole('option', { name: 'Same as main model', exact: true }).click()
+  await (
+    await getSettingsPage(page)
+  )
+    .getByRole('option', { name: 'Same as main model', exact: true })
+    .click()
   await expect(settings.getByRole('combobox', { name: 'Subagent model Model' })).toContainText(
     'Same as main model'
   )
@@ -273,17 +288,20 @@ test('fails closed, restores the fixed model, and routes Specialist but not Acti
     { id: providerId, model: SUBAGENT_MODEL }
   )
   await createProject(page, 'Subagent unavailable release gate')
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-
   await closeWorkspacePreviews(page)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
-  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
+  await expandSubagentSettings(settings)
   await settings.getByRole('combobox', { name: 'Subagent model Model' }).click()
-  await page.getByRole('option', { name: `${SUBAGENT_MODEL} · ${SUBAGENT_PROVIDER_NAME}` }).click()
+  await (
+    await getSettingsPage(page)
+  )
+    .getByRole('option', { name: `${SUBAGENT_MODEL} · ${SUBAGENT_PROVIDER_NAME}` })
+    .click()
   await settings.getByRole('button', { name: 'Close settings' }).click()
   const recordsBeforeUnavailable = await page.evaluate(async () =>
     (await window.api.sessions.loadAll()).sessions.reduce(
@@ -301,11 +319,12 @@ test('fails closed, restores the fixed model, and routes Specialist but not Acti
       reasoningEffort: 'high'
     })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+
   await settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Model', exact: true })
     .click()
-  await settings.getByRole('button', { name: 'Expand Subagent settings', exact: true }).click()
+  await expandSubagentSettings(settings)
   await expect(settings.getByRole('combobox', { name: 'Subagent model Model' })).toContainText(
     'Unavailable'
   )

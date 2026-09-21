@@ -255,7 +255,13 @@
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
       "src/renderer/src/components/streamdown/install-streamdown.lazy-table.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
+      "src/main/ipc-surfaces/desktop-utilities.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/windows.test.ts"
     ]
   },
   "capabilityOverlays": [],

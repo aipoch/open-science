@@ -1,3 +1,10 @@
+import {
+  SETTINGS_WINDOW_CHANNELS,
+  type SettingsWindowOpenRequest,
+  type SettingsWindowState,
+  type SettingsWindowContext,
+  type SettingsWorkspaceNavigation
+} from './settings-window'
 import type {
   ClassificationSnapshot,
   ClassificationMutation,
@@ -899,6 +906,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.getPlanProjection': callable<
     (projectId: string, sessionId: string) => Promise<ActivePlanProjection | null>
   >()('acp', ['acp:get-plan-projection']),
+  'acp.getPromptInFlight': callable<() => Promise<boolean>>()(
+    'acp',
+    ['acp:get-prompt-in-flight', ELECTRON],
+    { optionalMember: true }
+  ),
+  'acp.onPromptInFlightChanged': callable<(listener: (busy: boolean) => void) => RemoveListener>()(
+    'acp',
+    ['acp:prompt-in-flight-changed', ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
   'acp.getState': callable<() => Promise<AcpStateSnapshot>>()('acp', ['acp:get-state']),
   'acp.onAgentRuntimeUpdate': callable<
     (listener: AcpListener<AcpAgentRuntimeUpdate>) => RemoveListener
@@ -1076,6 +1093,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'cli.getStatus': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:get-status']),
   'cli.install': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:install', LOCAL]),
   'cli.uninstall': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:uninstall', LOCAL]),
+  'compute.onHostsChanged': callable<(listener: () => void) => RemoveListener>()(
+    'compute',
+    ['compute:hosts-changed', ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
   'compute.bookmarksGet': callable<(providerId: string) => Promise<string[]>>()('compute', [
     'compute:bookmarks:get'
   ]),
@@ -2903,6 +2925,44 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'window.clearFind': callable<() => void>()('window', ['window:clear-find-in-page', SEND], {
     optionalMember: true
   }),
+  'window.openSettings': callable<(request?: SettingsWindowOpenRequest) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.open, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.settingsReady': callable<() => Promise<SettingsWindowState>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.ready, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onSettingsOpened': callable<
+    (listener: (state: SettingsWindowState) => void) => RemoveListener
+  >()('window', [SETTINGS_WINDOW_CHANNELS.opened, ELECTRON_EVENT], { optionalMember: true }),
+  'window.updateSettingsContext': callable<(context: SettingsWindowContext) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.context, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.navigateWorkspace': callable<(request: SettingsWorkspaceNavigation) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.navigate, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onWorkspaceNavigation': callable<
+    (
+      listener: (request: SettingsWorkspaceNavigation & { navigationToken: number }) => void
+    ) => RemoveListener
+  >()('window', [SETTINGS_WINDOW_CHANNELS.navigation, ELECTRON_EVENT], { optionalMember: true }),
+  'window.workspaceNavigated': callable<(navigationToken: number) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.navigated, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onSettingsCatalogChanged': callable<(listener: () => void) => RemoveListener>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.catalogChanged, ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
   'window.close': callable<() => Promise<void>>()('window', ['window:close', MAPPED_NATIVE]),
   'window.closeFind': callable<() => void>()('window', ['window:find-close', SEND], {
     optionalMember: true

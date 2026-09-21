@@ -722,6 +722,7 @@ const HomePage = ({
               <button
                 type="button"
                 aria-label={t('Model settings')}
+                data-settings-trigger="home"
                 onClick={openSettings}
                 className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
               >

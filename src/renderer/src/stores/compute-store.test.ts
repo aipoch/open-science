@@ -749,3 +749,57 @@ describe('compute store - approval replay', () => {
     expect(useComputeStore.getState().pendingApprovals).toEqual([second])
   })
 })
+
+it('rereads after cross-window invalidation during a list and never resurrects removed hosts', async () => {
+  const old = deferred<ComputeHost[]>()
+  const fresh = createHost({ providerId: 'ssh:fresh' })
+  const list = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue([fresh])
+  setComputeApi({ list })
+  const read = useComputeStore.getState().loadHosts()
+  useComputeStore.getState().invalidateHosts()
+  useComputeStore.getState().invalidateHosts()
+  old.resolve([createHost({ providerId: 'ssh:deleted' })])
+  await read
+  await vi.waitFor(() => expect(useComputeStore.getState().hosts).toEqual([fresh]))
+  expect(list).toHaveBeenCalledTimes(2)
+})
+
+it('waits for the replacement catalog before completing a creation whose first read was invalidated', async () => {
+  const old = deferred<ComputeHost[]>()
+  const fresh = deferred<ComputeHost[]>()
+  const created = createHost()
+  const list = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+  setComputeApi({ list, create: vi.fn().mockResolvedValue(created) })
+  const read = useComputeStore.getState().loadHosts()
+  let creationFinished = false
+  const creation = useComputeStore
+    .getState()
+    .createHost({ sshAlias: 'biowulf' })
+    .then(() => {
+      creationFinished = true
+    })
+  useComputeStore.getState().invalidateHosts()
+  old.resolve([])
+  await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+  const completedBeforeFreshCatalog = creationFinished
+  fresh.resolve([created])
+  await Promise.all([read, creation])
+  expect(completedBeforeFreshCatalog).toBe(false)
+  expect(useComputeStore.getState().hosts).toEqual([created])
+})
+
+it('keeps a committed creation successful and recovers a failed authoritative read on retry', async () => {
+  const created = createHost()
+  const list = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('temporary read failure'))
+    .mockResolvedValue([created])
+  setComputeApi({ list, create: vi.fn().mockResolvedValue(created) })
+  const creation = useComputeStore.getState().createHost({ sshAlias: 'biowulf' })
+  useComputeStore.getState().invalidateHosts()
+  await expect(creation).resolves.toBe(created)
+  expect(useComputeStore.getState().loadError).toBe('temporary read failure')
+  await useComputeStore.getState().loadHosts()
+  expect(useComputeStore.getState().loadError).toBeUndefined()
+  expect(useComputeStore.getState().hosts).toEqual([created])
+})
