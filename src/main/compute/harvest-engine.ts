@@ -30,6 +30,7 @@ import {
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJobRepository } from './job-repository'
 import {
+  isConnectionStdoutTruncated,
   classifyConnectionFailure,
   ComputeConnectionError,
   type ComputeConnectionBrokerAcquirer,
@@ -170,7 +171,7 @@ export const enumerateRemoteFiles = async (
 
   // Check if output was truncated (exceeds 4MB cap). A huge directory listing would lose trailing
   // files silently — they'd neither be downloaded nor appear in left_on_remote.
-  if (result.truncated) {
+  if (isConnectionStdoutTruncated(result)) {
     throw new Error(
       'Remote file listing exceeded 4MB size cap and was truncated. ' +
         'The workdir may contain millions of files. Consider cleaning up the remote directory.'

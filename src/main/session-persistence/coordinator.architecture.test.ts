@@ -1657,7 +1657,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
       'src/main/session-details/startup-catalog.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
-      'src/main/artifacts/resumed-finalization-ownership.test.ts'
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/compute/cancellation-runtime.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

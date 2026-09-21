@@ -1275,7 +1275,11 @@ describe('ACP permission broker with durable grants', () => {
 
       for (const request of requests) {
         await expect(
-          broker.requestPermission(request, { ...context, projectId: request.sessionId })
+          broker.requestPermission(request, {
+            ...context,
+            permissionPrompts: 'none',
+            projectId: request.sessionId
+          })
         ).resolves.toEqual({
           outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
         })

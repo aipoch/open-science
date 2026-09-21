@@ -7,6 +7,8 @@ type AuthenticatedDelegateCaller = Readonly<{
   parentSpecialistId?: string
   originMessageId: string
   toolInvocationId: string
+  /** Main-owned execution policy, never read from agent request input. */
+  permissionPrompts?: 'none'
   attemptId?: string
 }>
 

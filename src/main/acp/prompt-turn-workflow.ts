@@ -112,6 +112,7 @@ type AcpPromptTurnEnvironment = Readonly<{
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
   requestArtifactPublicationContinuation?: (input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]
@@ -234,7 +235,8 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     executionId: string,
     reviewOwner: 'task' | 'renderer',
     planDeliveryCommandId?: string,
-    delegatedMessageId?: string
+    delegatedMessageId?: string,
+    applicationPrompt?: { text: string; attribution: MessageAttribution }
   ) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
@@ -280,6 +282,9 @@ class AcpPromptTurnWorkflow {
     cancellation: { cancelled: boolean },
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
+    if (request.permissionPrompts === 'none' && request.turnIntent === 'plan-first') {
+      throw new Error('Plan-first requires an available human approver.')
+    }
     let activeSession = this.activeSession(request.sessionId)
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
@@ -398,7 +403,10 @@ class AcpPromptTurnWorkflow {
           interaction.turnToken,
           mode.kind === 'user' ? (mode.runtimeReviewOwner ?? 'renderer') : 'renderer',
           mode.kind === 'app-continuation' ? mode.planDelivery?.commandId : undefined,
-          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined
+          mode.kind === 'app-continuation' ? mode.delegatedMessageId : undefined,
+          mode.kind === 'application'
+            ? { text: admittedRequest.text ?? '', attribution: mode.attribution }
+            : undefined
         )
       }
       this.options.registry.select(admittedRequest.sessionId)
@@ -773,6 +781,7 @@ class AcpPromptTurnWorkflow {
     ) {
       this.safeCallback('artifact publication continuation callback failed', () =>
         env.requestArtifactPublicationContinuation?.({
+          permissionPrompts: request.permissionPrompts,
           sessionId,
           provenanceContext: request.provenanceContext,
           files: unpublishedFiles
@@ -798,6 +807,7 @@ class AcpPromptTurnWorkflow {
     return this.options.interactions.reservePrompt({
       sessionId: request.sessionId,
       kind: 'prompt',
+      ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
       promptMessageId: request.provenanceContext?.promptMessageId,
       provenanceContext: request.provenanceContext,
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),

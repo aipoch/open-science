@@ -266,6 +266,54 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
 }
 describe('TaskRunner', () => {
   it.each([
+    ['invalid', undefined],
+    ['none', 'plan-first']
+  ])(
+    'rejects invalid unattended configuration before creating a Session: %s',
+    async (permissionPrompts, turnIntent) => {
+      const createSession = vi.fn()
+      const runner = createRunner({ agent: { createSession } })
+      await expect(
+        runner.startRun({
+          project: project.id,
+          prompt: 'test',
+          permissionPrompts,
+          turnIntent
+        } as never)
+      ).rejects.toMatchObject({ code: 'invalid_request' })
+      expect(createSession).not.toHaveBeenCalled()
+    }
+  )
+
+  it('passes unattended policy to the prompt without persisting it as a Session preference', async () => {
+    const saved: PersistedChatSession[] = []
+    const prompt = vi.fn(async (_request, observer) => {
+      await observer?.onPromptAdmitted?.()
+    })
+    const runner = createRunner({
+      agent: { prompt },
+      sessions: {
+        save: async (session) => {
+          saved.push(session)
+          return session
+        }
+      }
+    })
+    const run = await runner.startRun({
+      project: project.id,
+      prompt: 'test',
+      permissionPrompts: 'none'
+    })
+    await runner.waitForRun(run.id)
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionPrompts: 'none' }),
+      expect.any(Object)
+    )
+    expect(saved.length).toBeGreaterThan(0)
+    expect(saved.every((session) => !('permissionPrompts' in session))).toBe(true)
+  })
+
+  it.each([
     { concurrent: false, cancel: false, tool: false },
     { concurrent: true, cancel: false, tool: false },
     { concurrent: true, cancel: false, tool: false, resume: true },

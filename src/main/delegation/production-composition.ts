@@ -79,6 +79,7 @@ type ProductionDelegatedWorkOptions = Readonly<{
     deliver(delivery: ParentMessageDelivery): Promise<DelegateMessageAcceptanceEvidence>
   }>
   onAgentRuntimeUpdate?(update: AcpAgentRuntimeUpdate): void
+  resolvePermissionPrompts?(sessionId: string): 'none' | undefined
   resolveExecutionModel(session: PersistedChatSession): Promise<DelegatedExecutionModelAdmission>
   settlementContinuations?: Readonly<{
     dispatch(request: DelegationSettlementDispatch): Promise<void> | void
@@ -377,6 +378,10 @@ const createProductionDelegatedWorkComposition = (
       return (await options.sessions.readSession(session))?.delegationPolicy !== 'deny'
     },
     async delegate(caller, request, delegateOptions) {
+      caller = {
+        ...caller,
+        permissionPrompts: options.resolvePermissionPrompts?.(caller.session.sessionId)
+      }
       try {
         const policySession = await options.sessions.readSession(caller.session)
         if (policySession?.delegationPolicy === 'deny') {
@@ -452,6 +457,13 @@ const createProductionDelegatedWorkComposition = (
       return (await workFor(caller.session)).work.stopChildren(caller, frameIds)
     },
     async sendMessage(caller, targetFrameId, message, messageOptions) {
+      caller = {
+        ...caller,
+        permissionPrompts:
+          caller.role === 'main'
+            ? options.resolvePermissionPrompts?.(caller.session.sessionId)
+            : caller.permissionPrompts
+      }
       return (await workFor(caller.session)).work.sendMessage(
         caller,
         targetFrameId,

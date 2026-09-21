@@ -365,6 +365,117 @@ describe('RuntimeSessionOwner', () => {
     expect(sessions.get(turn.sessionId)!.conversationGraph!.runtimeSegments).toHaveLength(1)
   })
 
+  describe('application turn admission', () => {
+    const applicationPrompt = {
+      text: 'Background result ready.',
+      attribution: {
+        kind: 'application' as const,
+        feature: 'background-results' as const,
+        purpose: 'agent-result-delivery' as const,
+        deliveryKey: 'delivery-1',
+        deliveryIds: ['local-run:run-1']
+      }
+    }
+    const idle = (): PersistedChatSession => ({
+      ...session(),
+      status: 'idle',
+      activeRun: undefined
+    })
+    const applicationScope = (): RuntimeSessionTurnScope => ({
+      ...scope(),
+      promptMessageId: 'application-prompt'
+    })
+
+    it.each(['background-results', 'reviewer'] as const)(
+      'atomically admits %s prompts and completes their durable reply',
+      async (feature) => {
+        const { owner, sessions, mutateSession } = harness([
+          { ...idle(), error: 'Previous failure' }
+        ])
+        const turn = applicationScope()
+        const prompt =
+          feature === 'background-results'
+            ? applicationPrompt
+            : {
+                text: 'Correct the reviewed finding.',
+                attribution: {
+                  kind: 'application' as const,
+                  feature: 'reviewer' as const,
+                  purpose: 'correction' as const,
+                  causeReviewId: 'review-1'
+                }
+              }
+        const saved = await owner.begin(turn, { applicationPrompt: prompt })
+        expect(mutateSession).toHaveBeenCalledOnce()
+        expect(saved.activeRun?.promptMessageId).toBe(turn.promptMessageId)
+        expect(saved.messages.find(({ id }) => id === turn.promptMessageId)).toMatchObject({
+          content: prompt.text,
+          attribution: prompt.attribution
+        })
+        expect(saved).not.toHaveProperty('applicationPrompt')
+        expect(saved.error).toBeUndefined()
+        owner.accept({ ...messageEvent(turn, 'reply', 'Result received.'), timestamp: 20 })
+        owner.accept(stopEvent(turn, 21))
+        await owner.flush(turn.sessionId, turn.promptMessageId)
+        expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+        expect(sessions.get(turn.sessionId)?.messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              role: 'agent',
+              status: 'complete',
+              responseToMessageId: turn.promptMessageId
+            })
+          ])
+        )
+      }
+    )
+
+    it('leaves no partial prompt when the single admission write fails, and permits retry', async () => {
+      const { owner, sessions, mutateSession } = harness([idle()])
+      const turn = applicationScope()
+      mutateSession.mockRejectedValueOnce(new Error('disk unavailable'))
+      await expect(owner.begin(turn, { applicationPrompt })).rejects.toThrow('disk unavailable')
+      expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+      expect(
+        sessions.get(turn.sessionId)?.messages.some(({ id }) => id === turn.promptMessageId)
+      ).toBe(false)
+      await owner.begin(turn, { applicationPrompt })
+      await owner.begin(turn, { applicationPrompt })
+      expect(
+        sessions.get(turn.sessionId)?.messages.filter(({ id }) => id === turn.promptMessageId)
+      ).toHaveLength(1)
+    })
+
+    it.each(['archived', 'busy', 'branch', 'segment', 'identity'] as const)(
+      'rejects %s changes without overwriting the Session',
+      async (change) => {
+        const durable = idle()
+        const turn = applicationScope()
+        if (change === 'archived') durable.archivedAt = 2
+        if (change === 'busy') durable.activeRun = { promptMessageId: 'other', startedAt: 2 }
+        if (change === 'branch') turn.messageBranchId = 'other-branch'
+        if (change === 'segment') turn.runtimeSegmentId = 'other-segment'
+        if (change === 'identity') turn.promptMessageId = scope().promptMessageId
+        const { owner, mutateSession } = harness([durable])
+        await expect(owner.begin(turn, { applicationPrompt })).rejects.toThrow()
+        expect(mutateSession).not.toHaveBeenCalled()
+      }
+    )
+
+    it('rechecks the path under the persistence lane after a concurrent branch switch', async () => {
+      const { owner, sessions, mutateSession } = harness([idle()])
+      const original = mutateSession.getMockImplementation()!
+      mutateSession.mockImplementationOnce(async (turn, mutate) => {
+        sessions.get(turn.sessionId)!.conversationGraph!.activeFrameId = 'other-frame'
+        return original(turn, mutate)
+      })
+      await expect(owner.begin(applicationScope(), { applicationPrompt })).rejects.toThrow(
+        'path changed'
+      )
+      expect(sessions.get(scope().sessionId)?.activeRun).toBeUndefined()
+    })
+  })
+
   it('rejects a turn whose exact durable prompt path is missing', async () => {
     const turn = scope()
     const malformed = session(turn)

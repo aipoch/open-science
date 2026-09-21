@@ -2738,6 +2738,7 @@ const createApplicationModules = async (
     current?: ReturnType<typeof createProductionDelegatedWorkComposition>
   } = {}
   const delegatedWork = createProductionDelegatedWorkComposition({
+    resolvePermissionPrompts: (sessionId) => runtimeRef.current?.getPermissionPrompts(sessionId),
     dataRoot: resolveDataRoot(),
     resolveExecutionModel: async (session) => {
       if (!session.agentFrameworkId) {

@@ -1192,6 +1192,13 @@ class AcpRuntimeCoordinator {
     delegatedMessageId?: string
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
+    const origin =
+      operation === 'sendAppContinuation' && request.provenanceContext?.promptMessageId
+        ? this.getLatestUserPrompt(request.sessionId, request.provenanceContext.promptMessageId)
+        : undefined
+    if (origin?.permissionPrompts) {
+      request = { ...request, permissionPrompts: origin.permissionPrompts }
+    }
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
     if (!pinnedRuntime && owner && this.retiredRuntimes.has(owner)) {
       return Promise.reject(new Error('ACP session must resume before sending a prompt'))
@@ -1469,6 +1476,13 @@ class AcpRuntimeCoordinator {
       this.getActiveRuntime()
     await runtime.respondToElicitation(response)
     return this.getState()
+  }
+
+  getPermissionPrompts(sessionId: string): 'none' | undefined {
+    return (
+      this.activePromptRequests.get(sessionId)?.request.permissionPrompts ??
+      this.findRuntimeForSession(sessionId)?.getPermissionPrompts(sessionId)
+    )
   }
 
   async requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {

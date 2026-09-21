@@ -155,7 +155,8 @@ const createDurableDelegatedWork = (
     slotId: string,
     task = child.task,
     continuation = false,
-    executionBackendClaim?: DelegateExecutionBackendClaim
+    executionBackendClaim?: DelegateExecutionBackendClaim,
+    permissionPrompts?: 'none'
   ): Readonly<{
     completion: Promise<void>
     established: Promise<void>
@@ -233,6 +234,7 @@ const createDurableDelegatedWork = (
           throw new Error('delegate execution was cancelled before launch establishment')
         }
         const executionInput: DelegateExecutionInput = {
+          permissionPrompts,
           session,
           frameId: child.frameId,
           attemptId: attempt.id,
@@ -501,7 +503,9 @@ const createDurableDelegatedWork = (
             reservation,
             reservation.slotIds[0],
             command.text.trim(),
-            true
+            true,
+            undefined,
+            caller.permissionPrompts
           ),
         abort
       }
@@ -873,7 +877,8 @@ const createDurableDelegatedWork = (
         reservation.slotIds[index],
         child.task,
         false,
-        claims[index]
+        claims[index],
+        caller.permissionPrompts
       )
     )
     const completions = launches.map(({ completion }) => completion)

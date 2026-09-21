@@ -4,6 +4,7 @@ import type { ComputeJob, JobSummary } from '../../shared/compute'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import {
+  isConnectionStdoutTruncated,
   classifyConnectionFailure,
   ComputeConnectionError,
   redactConnectionOutputs,
@@ -668,7 +669,7 @@ export class JobPoller {
       parts.push(
         `echo "${nonce}JOB_START:${job.job_id}"`,
         `workdir=$(cd -- ${quoteRemotePath(handle.workdir)} 2>/dev/null && pwd -P || true)`,
-        `process_owned_by_workdir ${handle.pid} "$workdir" && kill -0 ${handle.pid} 2>/dev/null && echo "${nonce}alive:1" || echo "${nonce}alive:0"`,
+        `process_owned_by_workdir ${handle.pid} "$workdir"; case $? in 0) echo "${nonce}alive:1" ;; 1|3) echo "${nonce}alive:0" ;; *) echo "${nonce}alive:unknown" ;; esac`,
         `if [ -f ${quoteRemotePath(handle.exit_code_path)} ]; then POLL_EXIT_CODE=$(cat ${quoteRemotePath(handle.exit_code_path)}); else POLL_EXIT_CODE=; fi; printf '${nonce}exit:%s\\n' "$POLL_EXIT_CODE"`,
         `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stdout_path)} 2>/dev/null || true`,
         `printf '\n%s\n' '${nonce}STDOUT_END:${job.job_id}'`,
@@ -707,7 +708,7 @@ export class JobPoller {
       return
     }
 
-    if (runResult.truncated) {
+    if (isConnectionStdoutTruncated(runResult)) {
       await this._recordPollError(batched, 'poll_protocol_incomplete', signal, false)
       return
     }

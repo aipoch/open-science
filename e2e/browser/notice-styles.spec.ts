@@ -130,6 +130,10 @@ for (const dark of [false, true]) {
   }) => {
     await page.setViewportSize({ width: 1000, height: 1100 })
     await page.goto(`/notice-styles.html?locale=zh-Hans${dark ? '&dark' : ''}`)
+    // Exercise local guidance before the floating recovery card can cover the gallery below.
+    const network = page.getByTestId('notebook-network-protection-banner')
+    await network.getByRole('button').click()
+    await expect(page.getByTestId('actions')).toHaveText('1')
     await page.getByRole('button', { name: 'Notebook environment error', exact: true }).click()
     const surfaces = page.locator('[data-notice-level]:not([data-notice-inline])')
     const styles = await surfaces.evaluateAll((nodes) =>
@@ -164,9 +168,6 @@ for (const dark of [false, true]) {
         )
       ).size
     ).toBe(3)
-    const network = page.getByTestId('notebook-network-protection-banner')
-    await network.getByRole('button').click()
-    await expect(page.getByTestId('actions')).toHaveText('1')
     await page.getByTestId('env-status-banner').getByRole('button').click()
     await expect(page.getByTestId('actions')).toHaveText('2')
   })
@@ -375,6 +376,22 @@ for (const width of [320, 768]) {
     await page.getByTestId('inline-dismiss').getByRole('button').click()
     await page.getByTestId('inline-retry').getByRole('button').click()
     await expect(page.getByTestId('actions')).toHaveText('2')
+    for (const id of ['inline-retry', 'inline-content']) {
+      const surface = page.getByTestId(id)
+      const summary = (await surface.locator('[role]').boundingBox())!
+      const action = (await surface.getByRole('button').boundingBox())!
+      expect(action.y).toBeGreaterThanOrEqual(summary.y + summary.height)
+      const bounds = (await surface.boundingBox())!
+      expect(summary.x + summary.width).toBeCloseTo(bounds.x + bounds.width, 0)
+      expect(await surface.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    }
+    if (width >= 640) {
+      const titleOnly = page.getByTestId('title-only')
+      const title = (await titleOnly.getByRole('heading').boundingBox())!
+      const action = (await titleOnly.getByRole('button').boundingBox())!
+      expect(action.y).toBeLessThan(title.y + title.height)
+      expect(action.x).toBeGreaterThanOrEqual(title.x + title.width)
+    }
     await page.getByText('Details', { exact: true }).click()
     await expect(page.locator('pre')).toHaveText('diagnostic/'.repeat(40))
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

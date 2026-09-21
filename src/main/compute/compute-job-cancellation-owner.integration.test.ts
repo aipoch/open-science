@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { SystemSshRunner } from './ssh-runner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ComputeHostUnavailableError } from '../../shared/compute'
@@ -95,6 +99,61 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     }
     return { client, jobs, operations, createJob }
   }
+
+  it.each(['owned', 'absent', 'mismatch', 'truncated-stdout', 'truncated-termination'] as const)(
+    'uses complete stdout evidence with truncated SSH banners: %s',
+    async (evidence) => {
+      const { jobs, operations, createJob } = await setup()
+      await createJob('running')
+      const directory = await mkdtemp(join(tmpdir(), 'cancellation-transport-'))
+      try {
+        const executable = join(directory, 'ssh-fixture.cjs')
+        // A real child process exercises SystemSshRunner's per-stream byte accounting.
+        const ownershipOutput =
+          evidence === 'truncated-stdout'
+            ? 'owned'.padEnd(100, ' ')
+            : evidence === 'truncated-termination'
+              ? 'owned'
+              : evidence
+        const terminationOutput =
+          evidence === 'truncated-termination' ? 'terminated'.padEnd(100, ' ') : 'terminated'
+        await writeFile(
+          executable,
+          `
+          process.stderr.write('SSH diagnostic banner\\n'.repeat(100));
+          const output = process.argv[2].includes('kill_job_pid')
+            ? ${JSON.stringify(terminationOutput)}
+            : ${JSON.stringify(ownershipOutput)};
+          process.stdout.write(output + '\\n');
+        `
+        )
+        const runner = new SystemSshRunner()
+        const run = vi.fn<ComputeConnectionLease['run']>((command, options) =>
+          runner.run(
+            { sshBinary: process.execPath, extraArgs: [], host: executable },
+            command,
+            options
+          )
+        )
+        const broker = {
+          acquire: vi.fn(async () => ({ run }) as unknown as ComputeConnectionLease)
+        }
+        const owner = new ComputeJobCancellationOwner(operations, jobs)
+        const reaper = new ComputeJobCancellationReaper(operations, jobs, broker)
+        await owner.request('job-1', scope)
+        await reaper.runOnce()
+        await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+          status: evidence.startsWith('truncated-') ? 'running' : 'failed',
+          cancellation_status: evidence.startsWith('truncated-') ? 'cancelling' : 'cancelled'
+        })
+        expect(run).toHaveBeenCalledTimes(
+          evidence === 'owned' || evidence === 'truncated-termination' ? 2 : 1
+        )
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('confirms queued cancellation transactionally without opening SSH', async () => {
     const { jobs, operations, createJob } = await setup()
@@ -217,16 +276,22 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     })
   })
 
-  it('retries unknown, timeout, truncated, and nonzero evidence and never confirms it', async () => {
+  it.each([
+    { ...success('unknown') },
+    { ...success('owned'), timedOut: true },
+    { ...success('owned'), truncated: true },
+    { ...success('owned'), exitCode: 1 },
+    {
+      ...success('owned'),
+      stdoutTruncated: false,
+      stderrTruncated: true,
+      truncated: true,
+      exitCode: 1
+    }
+  ])('retries incomplete or failed evidence without confirming: %j', async (result) => {
     const { jobs, operations, createJob } = await setup()
     await createJob('running')
-    const run = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue({
-      exitCode: 1,
-      stdout: 'owned',
-      stderr: 'transport failed',
-      truncated: true,
-      timedOut: true
-    })
+    const run = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue(result)
     const owner = new ComputeJobCancellationOwner(operations, jobs)
     const reaper = new ComputeJobCancellationReaper(operations, jobs, {
       acquire: vi.fn(async () => ({ run }) as unknown as ComputeConnectionLease)

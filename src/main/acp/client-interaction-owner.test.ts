@@ -42,6 +42,7 @@ const codexApprovalRequest = (): CreateElicitationRequest => ({
 
 const createOwner = (
   options: {
+    permissionPrompts?: 'none'
     frameworkId?: AgentFrameworkId
     activeSession?: boolean
     reviewerFrameworkId?: AgentFrameworkId
@@ -71,6 +72,7 @@ const createOwner = (
     routing: {
       resolveAppSessionId: () => 'app-session',
       isActiveSession: () => options.activeSession ?? true,
+      permissionPromptsForSession: () => options.permissionPrompts,
       frameworkForSession: () => options.frameworkId ?? 'claude-code',
       reviewerFrameworkForSession: () => options.reviewerFrameworkId,
       promptMessageIdForSession: () => 'prompt-1'
@@ -93,6 +95,37 @@ const createOwner = (
 }
 
 describe('ACP client interaction owner', () => {
+  it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex', 'codebuddy'])(
+    'declines unattended %s questions without creating pending elicitation',
+    async (frameworkId) => {
+      const { owner, requestElicitation } = createOwner({ frameworkId, permissionPrompts: 'none' })
+      await expect(owner.createElicitation(elicitationRequest())).resolves.toEqual({
+        action: 'decline'
+      })
+      expect(requestElicitation).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps Codex Bridge authorization on the permission path while suppressing its user questions', async () => {
+    const authorization = createOwner({
+      frameworkId: 'codex',
+      permissionPrompts: 'none',
+      hasTrustedCodexMcpToolCall: true
+    })
+    await authorization.owner.createElicitation(codexApprovalRequest())
+    expect(authorization.requestPermission).toHaveBeenCalledOnce()
+    expect(authorization.requestElicitation).not.toHaveBeenCalled()
+    const question = createOwner({
+      frameworkId: 'codex',
+      permissionPrompts: 'none',
+      consumeTrustedCodexMcpToolCall: true
+    })
+    await expect(question.owner.createElicitation(codexApprovalRequest())).resolves.toEqual({
+      action: 'decline'
+    })
+    expect(question.requestPermission).not.toHaveBeenCalled()
+  })
+
   it.each<AgentFrameworkId>(['claude-code', 'opencode', 'codex'])(
     'routes an ordinary %s elicitation to structured user input',
     async (frameworkId) => {

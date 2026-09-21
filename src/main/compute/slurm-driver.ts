@@ -1,5 +1,9 @@
 import type { ComputeJob } from '../../shared/compute'
-import { classifyConnectionFailure, type ComputeConnectionLease } from './connection-broker'
+import {
+  isConnectionStdoutTruncated,
+  classifyConnectionFailure,
+  type ComputeConnectionLease
+} from './connection-broker'
 import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
 import { toBase64, type SlurmRemoteHandle } from './remote-job-contract'
 import { applyComputeEnvironment } from './compute-environment'
@@ -179,7 +183,7 @@ const readSubmissionError = async (
     if (
       classifyConnectionFailure(result, false) ||
       result.exitCode !== 0 ||
-      result.truncated ||
+      isConnectionStdoutTruncated(result) ||
       !/^[A-Za-z0-9+/=\r\n]*$/.test(result.stdout)
     ) {
       return undefined
@@ -412,9 +416,9 @@ export const pollSlurmJobs = async (
       )
       const failure = classifyConnectionFailure(result, false)
       if (failure) throw failure
-      if (result.exitCode !== 0 || result.truncated) {
+      if (result.exitCode !== 0 || isConnectionStdoutTruncated(result)) {
         throw new Error(
-          result.truncated
+          isConnectionStdoutTruncated(result)
             ? 'Slurm output tail exceeded the polling protocol limit.'
             : result.stderr.trim() || 'Slurm output tail could not be read.'
         )
