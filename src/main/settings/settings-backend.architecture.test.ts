@@ -461,6 +461,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.responsesBridge, 'ResponsesBridge')).toEqual([
       'close',
       'registerHostMessageSession',
+      'registerMcpSession',
       'registerReviewerSession',
       'registerToolLessSession',
       'selectSkills',
@@ -469,6 +470,7 @@ describe('Settings backend ownership architecture', () => {
       'setTarget',
       'start',
       'unregisterHostMessageSession',
+      'unregisterMcpSession',
       'unregisterReviewerSession',
       'unregisterToolLessSession'
     ])
@@ -898,6 +900,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/backend-route-planner.ts',
+      'src/main/settings/codex-bridge-tools.ts',
+      'src/main/settings/codex-bridge-tools.test.ts',
       'src/main/settings/network-proxy-runtime.ts',
       'src/main/settings/environment-check.ts',
       'src/main/settings/system-proxy.ts',
