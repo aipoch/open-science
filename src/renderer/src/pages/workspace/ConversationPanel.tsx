@@ -63,6 +63,7 @@ import {
   RotateCcw,
   ScanEye,
   Square,
+  Stethoscope,
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -400,6 +401,7 @@ type ConversationPanelWorkflows = {
 }
 
 type ConversationPanelSessionTools = {
+  exportDiagnostics?: (session: ChatSession) => void
   togglePin?: (session: ChatSession) => void
   editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
@@ -1175,6 +1177,40 @@ const ConversationPanel = ({
               <span className="block truncate">{t('New conversation')}</span>
             )}
           </h1>
+          {activeSession && sessionTools.exportDiagnostics && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 transition-colors hover:bg-surface-control-hover hover:text-text-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={t('Export diagnostics…')}
+                    onClick={() => sessionTools.exportDiagnostics?.(activeSession)}
+                  >
+                    <Stethoscope className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end" className="space-y-2 p-3 leading-relaxed">
+                  <p className="font-medium">{t('Export diagnostics…')}</p>
+                  <p>
+                    {t(
+                      'If this session fails or behaves unexpectedly, export a diagnostic package to help developers investigate.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Choose diagnostic metadata to include. Private content fields are excluded. Saved locally; nothing is uploaded or sent to an LLM.'
+                    )}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <NotificationBell className="md:hidden" />
           <button
             type="button"

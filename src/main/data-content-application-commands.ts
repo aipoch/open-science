@@ -27,6 +27,8 @@ import {
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
 import * as SessionPackage from '../shared/session-package'
+import type * as SessionDiagnostics from '../shared/session-diagnostics'
+import { sessionDiagnosticCommandContracts } from '../shared/session-diagnostics-contracts'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
@@ -138,6 +140,13 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  inspectSessionDiagnostics: (
+    request: SessionDiagnostics.SessionDiagnosticRequest
+  ) => Promise<SessionDiagnostics.SessionDiagnosticInspection>
+  exportSessionDiagnostics: (
+    request: SessionDiagnostics.SessionDiagnosticExportRequest
+  ) => Promise<SessionDiagnostics.SessionDiagnosticExportResult>
+  cancelSessionDiagnostics: (request: { operationId: string }) => Promise<void>
   forkSession: (
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageRequest | null>
@@ -354,6 +363,21 @@ const dataContentApplicationCommands = Object.freeze({
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
+  sessionInspectDiagnostics: electronCommand(
+    'sessions:inspect-diagnostics',
+    'inspectSessionDiagnostics',
+    sessionDiagnosticCommandContracts.inspect
+  ),
+  sessionExportDiagnostics: electronCommand(
+    'sessions:export-diagnostics',
+    'exportSessionDiagnostics',
+    sessionDiagnosticCommandContracts.export
+  ),
+  sessionCancelDiagnostics: electronCommand(
+    'sessions:cancel-diagnostics',
+    'cancelSessionDiagnostics',
+    sessionDiagnosticCommandContracts.cancel
+  ),
   sessionFork: electronCommand(
     'sessions:fork',
     'forkSession',
@@ -529,6 +553,9 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionInspectDiagnostics,
+    dataContentApplicationCommands.sessionExportDiagnostics,
+    dataContentApplicationCommands.sessionCancelDiagnostics,
     dataContentApplicationCommands.sessionFork,
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
@@ -797,6 +824,27 @@ const registerDataContentApplicationCommands = (
           dataContentApplicationCommands.sessionExportConversation.name
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
+      },
+      'sessions:inspect-diagnostics': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionInspectDiagnostics.name
+        )
+        return dependencies.electron.inspectSessionDiagnostics(invocation)
+      },
+      'sessions:export-diagnostics': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionExportDiagnostics.name
+        )
+        return dependencies.electron.exportSessionDiagnostics(invocation)
+      },
+      'sessions:cancel-diagnostics': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionCancelDiagnostics.name
+        )
+        return dependencies.electron.cancelSessionDiagnostics(invocation)
       },
       'sessions:fork': (invocation) => {
         assertElectronCaller(invocation, dataContentApplicationCommands.sessionFork.name)

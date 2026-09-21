@@ -98,6 +98,7 @@ type WorkspaceSidebarProps = {
   onExportSession?: (session: ChatSession) => void
   onForkSession?: (session: ChatSession) => Promise<void>
   onExportPackage?: (session: ChatSession) => Promise<void>
+  onExportDiagnostics?: (session: ChatSession) => void
   onTogglePin: (session: ChatSession) => void
   canArchiveSession?: (session: ChatSession) => boolean
   onArchiveSession?: (session: ChatSession) => void
@@ -428,6 +429,7 @@ const WorkspaceSidebarView = ({
   onExportSession,
   onForkSession,
   onExportPackage,
+  onExportDiagnostics,
   packageBusy = false,
   onTogglePin,
   canArchiveSession,
@@ -964,6 +966,7 @@ const WorkspaceSidebarView = ({
                         onExportSession,
                         onForkSession,
                         onExportPackage,
+                        onExportDiagnostics,
                         packageBusy,
                         onArchiveSession,
                         onDeleteSession
@@ -983,6 +986,7 @@ const WorkspaceSidebarView = ({
                         Boolean(onExportSession),
                         Boolean(onForkSession),
                         Boolean(onExportPackage),
+                        Boolean(onExportDiagnostics),
                         packageBusy,
                         archiveAvailable
                       ])

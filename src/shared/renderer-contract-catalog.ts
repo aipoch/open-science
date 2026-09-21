@@ -1,4 +1,10 @@
 import type {
+  SessionDiagnosticRequest,
+  SessionDiagnosticInspection,
+  SessionDiagnosticExportRequest,
+  SessionDiagnosticExportResult
+} from './session-diagnostics'
+import type {
   ClassificationSnapshot,
   ClassificationMutation,
   ClassificationMutationResult,
@@ -1864,6 +1870,28 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.inspectDiagnostics': callable<
+    (request: SessionDiagnosticRequest) => Promise<SessionDiagnosticInspection>
+  >()('sessions', [
+    'sessions:inspect-diagnostics',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.exportDiagnostics': callable<
+    (request: SessionDiagnosticExportRequest) => Promise<SessionDiagnosticExportResult>
+  >()('sessions', [
+    'sessions:export-diagnostics',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.cancelDiagnostics': callable<(request: { operationId: string }) => Promise<void>>()(
+    'sessions',
+    ['sessions:cancel-diagnostics', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'sessions.fork': callable<
     (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
   >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),

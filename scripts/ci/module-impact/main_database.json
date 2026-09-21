@@ -331,7 +331,9 @@
       "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
-      "src/main/pdf-annotations/repository.integration.test.ts"
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/session-diagnostics/collector.test.ts",
+      "src/main/session-diagnostics/database.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

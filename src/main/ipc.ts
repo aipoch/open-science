@@ -1,3 +1,6 @@
+import { homedir } from 'node:os'
+import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
+import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
 import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
 import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
@@ -180,7 +183,7 @@ import {
   buildConnectorCredentialRequestBroadcast,
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
-import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
+import { createLogger, diagnosticErrorFields, errorLogFields, getLogFilePath } from './logger'
 import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
 import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
@@ -1163,6 +1166,23 @@ const createApplicationModules = async (
       })
     }
   }
+  const sessionDiagnosticsDesktop = await modules.add(undefined, () => {
+    const owner = createSessionDiagnosticsDesktop({
+      createWorker: createDiagnosticsWorker,
+      resolveSources: () => ({
+        dataRoot: resolveDataRoot(),
+        configRoot: resolveConfigRoot(),
+        logPath: getLogFilePath(),
+        homePath: homedir(),
+        appVersion: app.getVersion()
+      }),
+      chooseDestination: async (defaultName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+        return result.canceled ? undefined : result.filePath
+      }
+    })
+    return { name: 'session-diagnostics', capability: owner, dispose: () => owner.close() }
+  })
   const projectRepository = createDefaultProjectRepository()
   const sessionPackageDesktopLifecycle = {
     close: async (): Promise<void> => undefined,
@@ -4977,6 +4997,12 @@ const createApplicationModules = async (
       runtimeWriter,
       artifacts: artifactHandlers,
       electron: {
+        inspectSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.inspect(invocation.args[0]),
+        exportSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.export(invocation.args[0]),
+        cancelSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.cancel(invocation.args[0]),
         sessionPackageOperation: async (invocation) =>
           sessionPackageDesktop.respond(invocation.args[0]),
         forkSession: (invocation) =>
