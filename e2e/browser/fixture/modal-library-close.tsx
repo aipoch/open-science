@@ -1,4 +1,6 @@
 import '@/assets/main.css'
+import { useState } from 'react'
+import { PdfPreviewContent } from '@/pages/workspace/previews/renderers/PdfPreview'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
@@ -124,8 +126,64 @@ window.api = {
 useNavigationStore.setState({ view: 'library' })
 useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })
+export const AreaSelectionPreview = (): React.JSX.Element => {
+  const [removed, setRemoved] = useState(false)
+  const source = {
+    kind: 'upload-version' as const,
+    projectId: 'selection-project',
+    sessionId: 'selection-session',
+    versionId: 'version-2',
+    name: 'paper.pdf',
+    path: 'upload-version:version-2',
+    checksum: 'a'.repeat(64)
+  }
+  return (
+    <div style={{ height: '100vh' }}>
+      <PdfPreviewContent
+        path={source.path}
+        name={source.name}
+        source="upload"
+        projectId={source.projectId}
+        sessionId={source.sessionId}
+        managedFileId="selection-upload"
+        selectedVersionId={source.versionId}
+        pdfEvidenceSource={source}
+        annotationProps={{
+          item: {
+            id: 'selection-upload',
+            title: source.name,
+            type: 'file',
+            format: 'pdf',
+            source: 'upload',
+            ...source
+          },
+          activeAnnotations: removed
+            ? []
+            : [
+                {
+                  id: 'selection-area',
+                  kind: 'pdf',
+                  target: 'agent',
+                  source,
+                  selector: {
+                    kind: 'region',
+                    pageNumber: 1,
+                    pageRotation: 0,
+                    rect: { x: 50 / 612, y: 88 / 792, width: 85 / 612, height: 12 / 792 },
+                    imageOmissionReason: 'session-budget'
+                  }
+                }
+              ],
+          onRemoveAnnotation: () => setRemoved(true)
+        }}
+      />
+    </div>
+  )
+}
 createRoot(document.getElementById('root')!).render(
-  previewCase === 'search' ? (
+  previewCase === 'area-selection' ? (
+    <AreaSelectionPreview />
+  ) : previewCase === 'search' ? (
     <GlobalSearchDialog open onOpenChange={() => {}} isSessionPersistenceReady />
   ) : (
     <LiteratureLibraryPage />

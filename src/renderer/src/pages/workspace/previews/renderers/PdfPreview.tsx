@@ -1457,6 +1457,7 @@ const PdfEvidenceLayer = ({
             <button
               key={`${annotation.id}-remove`}
               type="button"
+              data-pdf-area-remove={annotation.id}
               className="pointer-events-auto absolute z-10 flex size-[21px] items-center justify-center rounded-full border border-border-300/60 bg-bg-000/95 text-text-200 shadow-sm hover:bg-bg-100 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
               style={{
                 left: `${(rect.x + rect.width) * 100}%`,

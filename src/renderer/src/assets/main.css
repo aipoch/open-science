@@ -171,7 +171,12 @@
    text drag pass through overlays across this viewer; :active ends on release, so ordinary
    annotation clicks and keyboard access remain available without another gesture state. */
 [data-pdf-cursor-mode]:has(.pdf-text-layer:active)
-  :is([data-pdf-bookmark-highlight], [data-pdf-evidence-highlight], [data-pdf-annotation-marker]) {
+  :is(
+    [data-pdf-bookmark-highlight],
+    [data-pdf-evidence-highlight],
+    [data-pdf-annotation-marker],
+    [data-pdf-area-remove]
+  ) {
   pointer-events: none;
 }
 
