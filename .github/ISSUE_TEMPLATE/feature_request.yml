@@ -1,7 +1,7 @@
 name: Feedback
 description: Share an idea, improvement, or general feedback about Open-Science
 title: '[Feedback]: '
-labels: ['enhancement']
+labels: ['enhancement', 'needs-triage']
 body:
   - type: markdown
     attributes:

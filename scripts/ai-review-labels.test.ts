@@ -1,70 +1,136 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
+import { createRequire } from 'node:module'
+import { execFileSync } from 'node:child_process'
+
+import { checkCiIntegrityChanges } from './ci/check-ci-integrity.mjs'
 
 import { load } from 'js-yaml'
 import { describe, expect, it, vi } from 'vitest'
 
 // Behavior tests execute the exact inline github-script blocks shipped by the label lifecycle and
 // AI review workflows instead of reimplementing their logic.
-type WorkflowJob = { steps: { with?: { script?: string } }[] }
+type WorkflowJob = {
+  steps: { with?: { script?: string }; uses?: string; run?: string }[]
+  permissions?: Record<string, string>
+  concurrency?: { group: string; 'cancel-in-progress': boolean }
+  if?: string
+}
+type Workflow = {
+  jobs: Record<string, WorkflowJob>
+  on: Record<string, unknown>
+}
+const catalogText = readFileSync(join(process.cwd(), '.github/labels.json'), 'utf8')
+const catalog = JSON.parse(catalogText) as {
+  name: string
+  color: string
+  description: string
+  type?: string
+  paths?: string[]
+}[]
+const syncWorkflow = load(
+  readFileSync(join(process.cwd(), '.github/workflows/sync-labels.yml'), 'utf8')
+) as Workflow
 const labelsWorkflow = load(
   readFileSync(join(process.cwd(), '.github/workflows/ai-review-labels.yml'), 'utf8')
-) as { jobs: Record<string, WorkflowJob> }
+) as Workflow
 const reviewWorkflow = load(
   readFileSync(join(process.cwd(), '.github/workflows/ai-review-single.yml'), 'utf8')
-) as { jobs: Record<string, WorkflowJob> }
+) as Workflow
 
 type MockFn = ReturnType<typeof vi.fn>
-type MockGithub = {
-  rest: {
-    pulls: { get: MockFn }
-    issues: {
-      createLabel: MockFn
-      addLabels: MockFn
-      removeLabel: MockFn
-    }
-  }
+type MockCore = {
+  notice: MockFn
+  warning: MockFn
+  setFailed: MockFn
+  info: MockFn
+  summary: Record<string, MockFn>
 }
-type MockCore = { notice: MockFn; warning: MockFn; setFailed: MockFn }
-type Context = { repo: { owner: string; repo: string }; payload: Record<string, unknown> }
+type Context = {
+  repo: { owner: string; repo: string }
+  payload: Record<string, unknown>
+  sha?: string
+}
+type ChangedFile = {
+  filename: string
+  additions: number
+  deletions: number
+  previous_filename?: string
+}
 
-function makeGithub({ prHeadSha = 'sha1', prState = 'open', labels = [] as string[] } = {}): {
-  github: MockGithub
-  added: string[][]
-  removed: string[]
-  created: string[]
-} {
+function makeGithub({
+  prHeadSha = 'sha1',
+  prState = 'open',
+  labels = [] as string[],
+  pr = {} as Record<string, unknown>,
+  files = [{ filename: 'README.md', additions: 1, deletions: 0 }] as ChangedFile[],
+  definitions = catalog as { name: string; color: string; description: string }[]
+} = {}): { github: MockGithub; added: string[][]; removed: string[]; created: string[] } {
   const added: string[][] = []
   const removed: string[] = []
   const created: string[] = []
   const github = {
+    paginate: vi.fn(),
     rest: {
+      repos: {
+        getContent: vi.fn(async () => ({
+          data: { content: Buffer.from(catalogText).toString('base64') }
+        }))
+      },
       pulls: {
-        get: vi.fn(async () => ({ data: { head: { sha: prHeadSha }, state: prState } }))
+        get: vi.fn(async () => ({
+          data: {
+            title: 'feat(ai-review): add thing',
+            head: { sha: prHeadSha, ref: 'feat/ai-review-thing' },
+            base: { sha: 'base1' },
+            state: prState,
+            changed_files: files.length,
+            ...pr
+          }
+        })),
+        listFiles: vi.fn()
       },
       issues: {
-        // The label always exists in these tests; the workflow tolerates the 422 either way.
+        listLabelsOnIssue: vi.fn(),
+        listLabelsForRepo: vi.fn(),
+        getLabel: vi.fn(async ({ name }: { name: string }) => ({ data: { name } })),
+        updateLabel: vi.fn(),
         createLabel: vi.fn(async ({ name }: { name: string }) => {
           created.push(name)
-          const error = new Error('already exists') as Error & { status: number }
-          error.status = 422
-          throw error
         }),
         addLabels: vi.fn(async ({ labels: names }: { labels: string[] }) => {
           added.push(names)
         }),
         removeLabel: vi.fn(async ({ name }: { name: string }) => {
-          if (!labels.includes(name)) {
-            const error = new Error('not found') as Error & { status: number }
-            error.status = 404
-            throw error
-          }
+          if (!labels.includes(name)) throw Object.assign(new Error('not found'), { status: 404 })
           removed.push(name)
         })
       }
     }
   }
+  github.paginate.mockImplementation(async (method) => {
+    if (method === github.rest.pulls.listFiles) return files
+    if (method === github.rest.issues.listLabelsOnIssue) return labels.map((name) => ({ name }))
+    if (method === github.rest.issues.listLabelsForRepo) return definitions
+    throw new Error('Unexpected paginated endpoint')
+  })
   return { github, added, removed, created }
+}
+type MockGithub = {
+  paginate: MockFn
+  rest: {
+    repos: { getContent: MockFn }
+    pulls: { get: MockFn; listFiles: MockFn }
+    issues: {
+      listLabelsOnIssue: MockFn
+      listLabelsForRepo: MockFn
+      getLabel: MockFn
+      updateLabel: MockFn
+      createLabel: MockFn
+      addLabels: MockFn
+      removeLabel: MockFn
+    }
+  }
 }
 
 async function runJob(
@@ -73,19 +139,28 @@ async function runJob(
   github: MockGithub,
   env: Record<string, string> = {}
 ): Promise<MockCore> {
-  const workflow = jobId === 'apply_review_outcome' ? reviewWorkflow : labelsWorkflow
+  const workflow =
+    jobId === 'apply_review_outcome'
+      ? reviewWorkflow
+      : jobId === 'sync'
+        ? syncWorkflow
+        : labelsWorkflow
   const script = workflow.jobs[jobId]?.steps[0].with?.script
   if (!script) throw new Error(`job ${jobId} has no inline script`)
-  const core = { notice: vi.fn(), warning: vi.fn(), setFailed: vi.fn() }
+  const summary = { addHeading: vi.fn(), addTable: vi.fn(), write: vi.fn() }
+  summary.addHeading.mockReturnValue(summary)
+  summary.addTable.mockReturnValue(summary)
+  const core = { notice: vi.fn(), warning: vi.fn(), setFailed: vi.fn(), info: vi.fn(), summary }
   const processStub = { env }
   const run = new Function(
     'github',
     'context',
     'core',
     'process',
+    'require',
     `return (async () => {\n${script}\n})()`
   )
-  await run(github, context, core, processStub)
+  await run(github, context, core, processStub, createRequire(import.meta.url))
   return core
 }
 
@@ -101,6 +176,7 @@ function reviewContext(overrides: Record<string, unknown> = {}): Context {
 function pullRequestContext(overrides: Record<string, unknown> = {}): Context {
   return {
     repo,
+    sha: 'trusted-base-sha',
     payload: {
       pull_request: {
         number: 7,
@@ -232,47 +308,238 @@ describe('apply_review_outcome', () => {
   })
 })
 
-describe('apply_type_labels', () => {
-  it('maps the conventional type from the title to the built-in label', async () => {
-    const { github, added, removed } = makeGithub()
+describe('PR classification', () => {
+  it.each(catalog.filter((label) => label.type))('maps $type to $name', async ({ type, name }) => {
+    const { github, added } = makeGithub({ pr: { title: `${type}(scope)!: change thing` } })
     await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added).toEqual([[name, 'size:XS']])
+  })
+
+  it('falls back to the branch when the title is not conventional', async () => {
+    const { github, added } = makeGithub({
+      pr: { title: 'Update docs', head: { sha: 'sha1', ref: 'docs/readme' } }
+    })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added).toEqual([['documentation', 'size:XS']])
+  })
+
+  it('uses current API metadata, changes owned labels and preserves human/bot labels', async () => {
+    const { github, added, removed } = makeGithub({
+      pr: { title: 'fix(notebook): stop crash' },
+      labels: [
+        'enhancement',
+        'area:ci',
+        'size:L',
+        'notebook',
+        'security',
+        'ready-to-merge',
+        'dependencies'
+      ],
+      files: [{ filename: 'src/main/notebook/kernel.ts', additions: 10, deletions: 1 }]
+    })
+    await runJob('apply_type_labels', pullRequestContext({ title: 'docs(old): old title' }), github)
+    expect(added).toEqual([['bug', 'area:notebook', 'size:S']])
+    expect(removed).toEqual(['enhancement', 'area:ci', 'size:L'])
+    expect(github.rest.issues.addLabels.mock.invocationCallOrder[0]).toBeLessThan(
+      github.rest.issues.removeLabel.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('drops stale types for unknown titles and branches', async () => {
+    const { github, added, removed } = makeGithub({
+      labels: ['bug'],
+      pr: { title: 'Update', head: { sha: 'sha1', ref: 'unknown' } }
+    })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added).toEqual([['size:XS']])
+    expect(removed).toEqual(['bug'])
+  })
+
+  it.each([
+    [0, 'XS'],
+    [9, 'XS'],
+    [10, 'S'],
+    [29, 'S'],
+    [30, 'M'],
+    [99, 'M'],
+    [100, 'L'],
+    [499, 'L'],
+    [500, 'XL'],
+    [999, 'XL'],
+    [1000, 'XXL']
+  ])('counts additions plus deletions at %i lines as %s', async (count, size) => {
+    const changes = Number(count)
+    const { github, added } = makeGithub({
+      files: [
+        {
+          filename: 'README.md',
+          additions: Math.floor(changes / 2),
+          deletions: Math.ceil(changes / 2)
+        }
+      ]
+    })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added.flat()).toContain(`size:${size}`)
+  })
+
+  it('ignores nested lockfiles but counts locales and fixtures', async () => {
+    const files = [
+      'package-lock.json',
+      'npm-shrinkwrap.json',
+      'pnpm-lock.yaml',
+      'yarn.lock',
+      'uv.lock'
+    ].map((name) => ({ filename: `nested/${name}`, additions: 10000, deletions: 10000 }))
+    files.push(
+      { filename: 'src/shared/i18n/locales/de.json', additions: 50, deletions: 0 },
+      { filename: 'fixtures/data.json', additions: 40, deletions: 10 }
+    )
+    const { github, added } = makeGithub({ files })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added.flat()).toContain('size:L')
+  })
+
+  it('classifies both paths of a rename, dot paths and test files', async () => {
+    const { github, added } = makeGithub({
+      files: [
+        {
+          filename: 'src/main/literature/new.test.ts',
+          previous_filename: 'src/main/notebook/old.ts',
+          additions: 4,
+          deletions: 3
+        },
+        { filename: '.github/workflows/check.yml', additions: 1, deletions: 0 }
+      ]
+    })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added.flat()).toEqual([
+      'enhancement',
+      'area:notebook',
+      'area:literature',
+      'area:ci',
+      'area:tests',
+      'size:XS'
+    ])
+  })
+
+  it('paginates complete file and label lists', async () => {
+    const { github, added } = makeGithub({
+      files: Array.from({ length: 101 }, (_, i) => ({
+        filename: `file-${i}.md`,
+        additions: 1,
+        deletions: 0
+      }))
+    })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(github.paginate).toHaveBeenCalledWith(github.rest.pulls.listFiles, {
+      ...repo,
+      pull_number: 7,
+      per_page: 100
+    })
+    expect(github.paginate).toHaveBeenCalledWith(github.rest.issues.listLabelsOnIssue, {
+      ...repo,
+      issue_number: 7,
+      per_page: 100
+    })
+    expect(added.flat()).toContain('size:L')
+  })
+
+  it('clears file-derived classifications if GitHub returns a partial list', async () => {
+    const { github, added, removed } = makeGithub({
+      pr: { changed_files: 3001 },
+      labels: ['area:ui', 'size:XXL', 'ready-to-merge']
+    })
+    const core = await runJob('apply_type_labels', pullRequestContext(), github)
     expect(added).toEqual([['enhancement']])
+    expect(removed).toEqual(['area:ui', 'size:XXL'])
+    expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Incomplete'))
+  })
+
+  it.each(['head', 'base', 'title', 'state', 'changed_files'])(
+    'does not write if %s changes during reads',
+    async (field) => {
+      const { github, added, removed } = makeGithub()
+      const original = (await github.rest.pulls.get()).data
+      const values = {
+        head: { sha: 'new', ref: 'feat/new' },
+        base: { sha: 'new-base' },
+        title: 'fix(new): new title',
+        state: 'closed',
+        changed_files: 2
+      }
+      github.rest.pulls.get
+        .mockResolvedValueOnce({ data: original })
+        .mockResolvedValueOnce({ data: { ...original, [field]: values[field] } })
+      const core = await runJob('apply_type_labels', pullRequestContext(), github)
+      expect(added).toEqual([])
+      expect(removed).toEqual([])
+      expect(core.warning).toHaveBeenCalled()
+    }
+  )
+
+  it('does not label closed PRs', async () => {
+    const { github, added } = makeGithub({ prState: 'closed' })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added).toEqual([])
+    expect(github.paginate).not.toHaveBeenCalled()
+  })
+
+  it('is idempotent and reads configuration from the trusted base SHA', async () => {
+    const { github, added, removed } = makeGithub({ labels: ['enhancement', 'size:XS'] })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(added).toEqual([])
+    expect(removed).toEqual([])
+    expect(github.rest.repos.getContent).toHaveBeenCalledWith({
+      ...repo,
+      path: '.github/labels.json',
+      ref: 'trusted-base-sha'
+    })
+  })
+
+  it('dry-runs the real classifier without any writes', async () => {
+    const { github, added, removed, created } = makeGithub({ labels: ['bug'] })
+    const core = await runJob('apply_type_labels', pullRequestContext(), github, {
+      LABELS_DRY_RUN: 'true'
+    })
+    expect(JSON.parse(core.info.mock.calls[0][0])).toEqual({
+      dryRun: true,
+      add: ['enhancement', 'size:XS'],
+      remove: ['bug']
+    })
+    expect([...added, ...removed, ...created]).toEqual([])
+  })
+
+  it('preserves previous classification when additions fail', async () => {
+    const { github, removed } = makeGithub({ labels: ['bug'] })
+    github.rest.issues.addLabels.mockRejectedValueOnce(new Error('unavailable'))
+    await expect(runJob('apply_type_labels', pullRequestContext(), github)).rejects.toThrow(
+      'unavailable'
+    )
     expect(removed).toEqual([])
   })
 
-  it('falls back to the branch name when the title is not conventional', async () => {
-    const { github, added } = makeGithub()
-    await runJob(
-      'apply_type_labels',
-      pullRequestContext({ title: 'Improve the docs', head: { ref: 'docs/readme-update' } }),
-      github
-    )
-    expect(added).toEqual([['documentation']])
+  it('heals missing definitions and only tolerates confirmed creation races', async () => {
+    const { github, created } = makeGithub()
+    github.rest.issues.getLabel.mockRejectedValueOnce({ status: 404 })
+    github.rest.issues.createLabel.mockRejectedValueOnce({ status: 422 })
+    await runJob('apply_type_labels', pullRequestContext(), github)
+    expect(github.rest.issues.createLabel).toHaveBeenCalledWith({
+      ...repo,
+      name: 'enhancement',
+      color: 'a2eeef',
+      description: 'New feature or request'
+    })
+    expect(github.rest.issues.getLabel).toHaveBeenCalledTimes(3)
+    expect(created).toEqual([])
   })
 
-  it('removes the stale managed label when the pull request type changes', async () => {
-    const { github, added, removed } = makeGithub({ labels: ['enhancement'] })
-    await runJob(
-      'apply_type_labels',
-      pullRequestContext({ title: 'fix(notebook): stop crash', labels: [{ name: 'enhancement' }] }),
-      github
-    )
-    expect(removed).toEqual(['enhancement'])
-    expect(added).toEqual([['bug']])
-  })
-
-  it('drops managed labels when the type has no mapping but keeps unmanaged ones', async () => {
-    const { github, added, removed } = makeGithub({ labels: ['bug', 'duplicate'] })
-    await runJob(
-      'apply_type_labels',
-      pullRequestContext({
-        title: 'ci(review): tweak workflow',
-        labels: [{ name: 'bug' }, { name: 'duplicate' }]
-      }),
-      github
-    )
-    expect(removed).toEqual(['bug'])
-    expect(added).toEqual([])
+  it('surfaces authentication errors instead of creating labels', async () => {
+    const { github, created } = makeGithub()
+    github.rest.issues.getLabel.mockRejectedValueOnce({ status: 403 })
+    await expect(runJob('apply_type_labels', pullRequestContext(), github)).rejects.toMatchObject({
+      status: 403
+    })
+    expect(created).toEqual([])
   })
 })
 
@@ -281,5 +548,246 @@ describe('reset_review_labels', () => {
     const { github, removed } = makeGithub({ labels: ['ready-to-merge'] })
     await runJob('reset_review_labels', pullRequestContext(), github)
     expect(removed).toEqual(['ready-to-merge'])
+  })
+})
+
+describe('label catalog synchronization', () => {
+  it('creates missing labels, updates managed metadata, and ignores labels outside the catalog', async () => {
+    const { github, created } = makeGithub({
+      definitions: [
+        { ...catalog[0], color: '000000' },
+        ...catalog.slice(2),
+        { name: 'security', color: 'ffffff', description: 'Human-owned' }
+      ]
+    })
+    const core = await runJob('sync', reviewContext(), github)
+    expect(created).toEqual(['bug'])
+    expect(github.rest.issues.updateLabel).toHaveBeenCalledExactlyOnceWith({
+      ...repo,
+      name: catalog[0].name,
+      color: catalog[0].color,
+      description: catalog[0].description
+    })
+    expect(github.rest.issues.removeLabel).not.toHaveBeenCalled()
+    expect(core.summary.write).toHaveBeenCalled()
+    expect(github.rest.repos.getContent).toHaveBeenCalledWith({
+      ...repo,
+      path: '.github/labels.json',
+      ref: 'main'
+    })
+  })
+
+  it('does not write when the catalog matches or a preview is requested', async () => {
+    for (const dryRun of [false, true]) {
+      const { github, created } = makeGithub({ definitions: dryRun ? [] : catalog })
+      await runJob('sync', reviewContext(), github, { LABELS_DRY_RUN: String(dryRun) })
+      expect(created).toEqual([])
+      expect(github.rest.issues.updateLabel).not.toHaveBeenCalled()
+    }
+  })
+
+  it('recognizes existing names case-insensitively without renaming them', async () => {
+    const { github, created } = makeGithub({
+      definitions: catalog.map((label) => ({ ...label, name: label.name.toUpperCase() }))
+    })
+    await runJob('sync', reviewContext(), github)
+    expect(created).toEqual([])
+    expect(github.rest.issues.updateLabel).not.toHaveBeenCalled()
+  })
+
+  it('confirms a creation race before updating metadata', async () => {
+    const { github } = makeGithub({ definitions: catalog.slice(1) })
+    github.rest.issues.createLabel.mockRejectedValueOnce({ status: 422 })
+    await runJob('sync', reviewContext(), github)
+    expect(github.rest.issues.getLabel).toHaveBeenCalledExactlyOnceWith({
+      ...repo,
+      name: catalog[0].name
+    })
+    expect(github.rest.issues.updateLabel).toHaveBeenCalledExactlyOnceWith({
+      ...repo,
+      name: catalog[0].name,
+      color: catalog[0].color,
+      description: catalog[0].description
+    })
+  })
+
+  it('propagates failed writes and unconfirmed creation errors', async () => {
+    for (const status of [403, 422]) {
+      const { github } = makeGithub({ definitions: [] })
+      github.rest.issues.createLabel.mockRejectedValueOnce({ status })
+      github.rest.issues.getLabel.mockRejectedValueOnce({ status: 404 })
+      await expect(runJob('sync', reviewContext(), github)).rejects.toMatchObject({
+        status: status === 422 ? 404 : 403
+      })
+      expect(github.rest.issues.updateLabel).not.toHaveBeenCalled()
+    }
+  })
+})
+
+describe('label configuration contracts', () => {
+  it('has unique valid metadata, every policy type, and only owned label families', () => {
+    expect(new Set(catalog.map((label) => label.name.toLowerCase())).size).toBe(catalog.length)
+    expect(
+      catalog
+        .filter((label) => label.type)
+        .map((label) => label.type)
+        .sort()
+    ).toEqual(
+      [
+        'feat',
+        'fix',
+        'docs',
+        'style',
+        'refactor',
+        'perf',
+        'test',
+        'build',
+        'ci',
+        'chore',
+        'revert'
+      ].sort()
+    )
+    for (const label of catalog) {
+      expect(label.color).toMatch(/^[a-f0-9]{6}$/)
+      expect(label.description.length).toBeGreaterThan(0)
+      expect(label.description.length).toBeLessThanOrEqual(100)
+      expect(
+        Object.keys(label).every((key) =>
+          ['name', 'color', 'description', 'type', 'paths'].includes(key)
+        )
+      ).toBe(true)
+      expect(
+        Boolean(
+          label.type ||
+          label.paths ||
+          label.name.startsWith('size:') ||
+          ['needs-triage', 'reproducibility'].includes(label.name)
+        )
+      ).toBe(true)
+      if (label.paths) expect(label.name).toMatch(/^area:/)
+    }
+    expect(
+      catalog.filter((label) => label.name.startsWith('size:')).map((label) => label.name)
+    ).toEqual(['size:XS', 'size:S', 'size:M', 'size:L', 'size:XL', 'size:XXL'])
+    const names = catalog.map((label) => label.name)
+    for (const name of [
+      'notebook',
+      'security',
+      'dependencies',
+      'github_actions',
+      'ready-to-merge',
+      'ai-reviewed',
+      'ci-scheduled-failure'
+    ])
+      expect(names).not.toContain(name)
+  })
+
+  it('keeps every area glob grounded in tracked files', () => {
+    const paths = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
+      .split('\0')
+      .filter(Boolean)
+    for (const label of catalog.filter((label) => label.paths)) {
+      for (const pattern of label.paths ?? []) {
+        expect(
+          paths.some((path) => posix.matchesGlob(path, pattern)),
+          `${label.name}: ${pattern}`
+        ).toBe(true)
+      }
+    }
+  })
+
+  it.each([
+    ['src/renderer/src/App.tsx', 'area:ui'],
+    ['src/main/acp/runtime.ts', 'area:agents'],
+    ['src/main/agents/agents-service.ts', 'area:agents'],
+    ['src/shared/provider-registry.ts', 'area:agents'],
+    ['src/renderer/src/components/Notebook.tsx', 'area:notebook'],
+    ['src/main/compute/job-repository.ts', 'area:compute'],
+    ['src/main/literature/library.ts', 'area:literature'],
+    ['prisma/schema.prisma', 'area:storage'],
+    ['src/main/connectors/providers/literature.ts', 'area:extensions'],
+    ['packages/open-science/src/index.ts', 'area:cli'],
+    ['.github/labels.json', 'area:ci'],
+    ['src/main/compute/job.test.ts', 'area:tests']
+  ])('maps %s to %s with portable POSIX globs', (path, area) => {
+    expect(
+      catalog
+        .find((label) => label.name === area)
+        ?.paths?.some((pattern) => posix.matchesGlob(path, pattern))
+    ).toBe(true)
+  })
+
+  it('uses catalog labels in each issue template without adding intake fields', () => {
+    const expected = {
+      bug_report: ['bug', 'needs-triage'],
+      feature_request: ['enhancement', 'needs-triage'],
+      reproducibility_case: ['reproducibility', 'needs-triage']
+    }
+    for (const [template, labels] of Object.entries(expected)) {
+      const form = load(readFileSync(`.github/ISSUE_TEMPLATE/${template}.yml`, 'utf8')) as {
+        labels: string[]
+      }
+      expect(form.labels).toEqual(labels)
+      expect(form.labels.every((name) => catalog.some((label) => label.name === name))).toBe(true)
+    }
+  })
+
+  it('retains target permissions and isolates classification concurrency from AI review resets', () => {
+    expect(labelsWorkflow.on).toEqual({
+      pull_request_target: {
+        branches: ['main'],
+        types: ['opened', 'synchronize', 'reopened', 'edited']
+      }
+    })
+    expect(labelsWorkflow.jobs.apply_type_labels.permissions).toEqual({
+      contents: 'read',
+      issues: 'write',
+      'pull-requests': 'write'
+    })
+    expect(labelsWorkflow.jobs.apply_type_labels.concurrency).toEqual({
+      group: 'pr-classification-${{ github.event.pull_request.number }}',
+      'cancel-in-progress': false
+    })
+    expect(labelsWorkflow.jobs.reset_review_labels.concurrency).toBeUndefined()
+    expect(labelsWorkflow.jobs.reset_review_labels.if).toContain("github.event.action != 'edited'")
+    expect(labelsWorkflow.jobs.apply_type_labels.if).toContain('github.event.changes.title')
+    const text = readFileSync('.github/workflows/ai-review-labels.yml', 'utf8')
+    const result = checkCiIntegrityChanges([
+      { path: '.github/workflows/ai-review-labels.yml', baseText: text, headText: text }
+    ])
+    expect(result).toMatchObject({ ok: true, violations: [] })
+  })
+
+  it('restricts catalog writes to main, offers a safe preview, and never executes checked-out code', () => {
+    expect(syncWorkflow.on).toEqual({
+      push: {
+        branches: ['main'],
+        paths: ['.github/labels.json', '.github/workflows/sync-labels.yml']
+      },
+      workflow_dispatch: {
+        inputs: {
+          'dry-run': {
+            description: 'Preview catalog changes without writing labels',
+            type: 'boolean',
+            default: true
+          }
+        }
+      }
+    })
+    expect(syncWorkflow.jobs.sync.if).toBe("github.ref == 'refs/heads/main'")
+    expect(syncWorkflow.jobs.sync.permissions).toEqual({ contents: 'read', issues: 'write' })
+    for (const workflow of [labelsWorkflow, syncWorkflow]) {
+      for (const job of Object.values(workflow.jobs)) {
+        for (const step of job.steps) {
+          expect(step.uses).toMatch(/^actions\/github-script@[a-f0-9]{40}$/)
+          expect(step.run).toBeUndefined()
+          expect(step.with?.script).not.toContain('${{')
+          expect(step.with?.script).not.toContain('.setLabels(')
+        }
+      }
+    }
+    expect(readFileSync('.github/CODEOWNERS', 'utf8')).toContain(
+      '/.github/labels.json @aipoch/ci-maintainers'
+    )
   })
 })

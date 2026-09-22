@@ -1,0 +1,205 @@
+[
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "New feature or request",
+    "type": "feat"
+  },
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Something isn't working",
+    "type": "fix"
+  },
+  {
+    "name": "documentation",
+    "color": "0075ca",
+    "description": "Improvements or additions to documentation",
+    "type": "docs"
+  },
+  {
+    "name": "chore",
+    "color": "ededed",
+    "description": "Maintenance, cleanup, or tooling — no product behavior change",
+    "type": "chore"
+  },
+  {
+    "name": "style",
+    "color": "c5def5",
+    "description": "Formatting or style changes without behavior changes",
+    "type": "style"
+  },
+  {
+    "name": "refactor",
+    "color": "c5def5",
+    "description": "Restructure code without changing its behavior",
+    "type": "refactor"
+  },
+  {
+    "name": "performance",
+    "color": "c5def5",
+    "description": "Improve runtime performance or resource use",
+    "type": "perf"
+  },
+  {
+    "name": "tests",
+    "color": "c5def5",
+    "description": "Add or improve test coverage",
+    "type": "test"
+  },
+  {
+    "name": "build",
+    "color": "c5def5",
+    "description": "Build system, packaging, or dependency configuration",
+    "type": "build"
+  },
+  {
+    "name": "ci",
+    "color": "c5def5",
+    "description": "Continuous integration and repository automation",
+    "type": "ci"
+  },
+  {
+    "name": "revert",
+    "color": "c5def5",
+    "description": "Revert an earlier change",
+    "type": "revert"
+  },
+  {
+    "name": "area:ui",
+    "color": "bfdadc",
+    "description": "Changes to the renderer and preload UI",
+    "paths": ["src/renderer/**", "src/preload/**"]
+  },
+  {
+    "name": "area:agents",
+    "color": "bfdadc",
+    "description": "Changes to agent execution and model providers",
+    "paths": [
+      "src/main/acp/**",
+      "src/main/agents/**",
+      "src/main/agent-framework/**",
+      "src/main/delegation/**",
+      "src/main/local-models/**",
+      "src/main/settings/*{provider,model}*",
+      "src/shared/{acp,agents,provider,session-agent}*.ts",
+      "src/renderer/src/pages/settings/*{Agent,Provider,Model}*"
+    ]
+  },
+  {
+    "name": "area:notebook",
+    "color": "bfdadc",
+    "description": "Changes to Notebook runtimes and surfaces",
+    "paths": [
+      "src/main/notebook/**",
+      "src/shared/notebook*.ts",
+      "resources/notebook/**",
+      "packages/notebook-*/**",
+      "src/renderer/src/**/*{Notebook,notebook}*"
+    ]
+  },
+  {
+    "name": "area:compute",
+    "color": "bfdadc",
+    "description": "Changes to local or remote compute",
+    "paths": [
+      "src/main/compute/**",
+      "src/shared/compute*.ts",
+      "src/renderer/src/**/*{Compute,compute}*",
+      "src/renderer/src/lib/compute/**"
+    ]
+  },
+  {
+    "name": "area:literature",
+    "color": "bfdadc",
+    "description": "Changes to literature management",
+    "paths": [
+      "src/main/literature/**",
+      "src/shared/*literature*.ts",
+      "src/renderer/src/**/*{Literature,literature}*",
+      "src/renderer/src/pages/literature/**"
+    ]
+  },
+  {
+    "name": "area:storage",
+    "color": "bfdadc",
+    "description": "Changes to database and durable storage",
+    "paths": [
+      "src/main/database/**",
+      "src/main/storage/**",
+      "src/main/storage-root*",
+      "src/main/session-persistence/**",
+      "src/shared/storage*.ts",
+      "prisma/**",
+      "src/renderer/src/**/*{Storage,storage,DataRoot,data-root}*"
+    ]
+  },
+  {
+    "name": "area:extensions",
+    "color": "bfdadc",
+    "description": "Changes to skills, specialists, and connectors",
+    "paths": [
+      "src/main/{skills,specialist,connectors}/**",
+      "src/shared/{skill,specialist,connector,personal-skill}*.ts",
+      "src/renderer/src/**/*{Skill,skill,Specialist,specialist,Connector,connector}*"
+    ]
+  },
+  {
+    "name": "area:cli",
+    "color": "bfdadc",
+    "description": "Changes to the Open-Science CLI",
+    "paths": ["packages/open-science/**"]
+  },
+  {
+    "name": "area:ci",
+    "color": "bfdadc",
+    "description": "Changes to CI and repository automation",
+    "paths": [".github/**", "scripts/ci/**", "scripts/ai-review*"]
+  },
+  {
+    "name": "area:tests",
+    "color": "bfdadc",
+    "description": "Changes to tests and test infrastructure",
+    "paths": ["**/*.{test,spec}.{ts,tsx,js,mjs,cjs}", "e2e/**"]
+  },
+  {
+    "name": "size:XS",
+    "color": "c2e0c6",
+    "description": "0–9 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:S",
+    "color": "7bc96f",
+    "description": "10–29 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:M",
+    "color": "f9d0c4",
+    "description": "30–99 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:L",
+    "color": "f4b183",
+    "description": "100–499 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:XL",
+    "color": "e99695",
+    "description": "500–999 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:XXL",
+    "color": "d73a4a",
+    "description": "1000+ added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "needs-triage",
+    "color": "fbca04",
+    "description": "New issue awaiting initial maintainer assessment"
+  },
+  {
+    "name": "reproducibility",
+    "color": "d4c5f9",
+    "description": "A contributed reproducibility case for a scientific analysis"
+  }
+]

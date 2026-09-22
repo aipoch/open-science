@@ -363,6 +363,64 @@ ci(review): unify automated AI reviews
   Nightly publication additionally requires the advisory runtime-certification and regression
   jobs of the source run to have succeeded.
 
+### PR and issue labels
+
+[`.github/labels.json`](.github/labels.json) owns the classification labels, their colors and
+English descriptions. CI maintainers review this catalog. Labels help browse and triage work;
+they never select tests, satisfy review requirements, or authorize a merge.
+
+PR Labels uses the current title's conventional type, falling back to the branch type when the
+title has none. The title and commit policy remains independently enforced:
+
+| Type                                                  | Label            |
+| ----------------------------------------------------- | ---------------- |
+| `feat`                                                | `enhancement`    |
+| `fix`                                                 | `bug`            |
+| `docs`                                                | `documentation`  |
+| `chore`, `style`, `refactor`, `build`, `ci`, `revert` | Same as the type |
+| `perf`                                                | `performance`    |
+| `test`                                                | `tests`          |
+
+Multiple `area:*` labels describe changed paths: UI, agents, Notebook, compute, literature, storage,
+extensions, CLI, CI and tests. Catalog `paths` use Node's POSIX glob matching against both paths of
+renamed files. This is a browsing map, not the authoritative module-impact ownership registry.
+
+One size label counts added plus deleted lines: `size:XS` (0–9), `size:S` (10–29), `size:M` (30–99),
+`size:L` (100–499), `size:XL` (500–999), or `size:XXL` (1000+). Lockfiles named `package-lock.json`,
+`npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock` and `uv.lock` are excluded at every directory
+level; locales, tests and fixtures count. If GitHub cannot return the complete changed-file list,
+automation clears its area/size labels and records a warning rather than publishing a partial count.
+
+Classification refreshes on opening, reopening, new commits and title edits. Automation owns the
+mapped type, `area:*` and `size:*` labels on PRs; manual edits to these are reconciled on the next
+run. Other labels, including `notebook`, `security`, `hardening`, `relocation`, dependency labels and
+AI review outcomes, keep their existing owners. Updates add/remove individual labels and never
+replace the complete label set. AI review outcome resets remain separate; `ready-to-merge` continues
+to describe the AI verdict only, not the result of all required checks.
+
+New template issues receive `needs-triage` plus `bug`, `enhancement`, or `reproducibility`.
+Maintainers remove `needs-triage` after initial assessment and may apply relevant area labels.
+Issue edits/reopens do not reapply it. API-created issues, including scheduled CI failure reports,
+retain their existing labeling behavior. There is no inactivity auto-close or automatic priority.
+
+**Catalog rollout:** after this configuration merges, check that **Sync Label Catalog** succeeds on
+`main` before relying on new issue-template labels. The workflow creates missing definitions and
+updates only catalog-owned colors/descriptions; it never renames/deletes labels or changes existing
+issue/PR assignments. Existing PRs acquire classifications on their next supported event; there is
+no bulk backfill of historical issues or PRs.
+
+For later catalog changes, manually run **Sync Label Catalog** on `main` with **dry-run** enabled
+(the default) to preview changes in its job summary. Disable **dry-run** to apply. Commits changing
+the catalog or sync workflow on `main` apply automatically. A retry reads current `main` rather
+than restoring an old catalog. PR classification reads the catalog from its trusted base revision
+and heals missing definitions; contributor code is never checked out or executed by label jobs.
+Consequently, a PR's checks test candidate behavior with mocked APIs; the new live target-workflow
+behavior becomes available after merge. Verify a normal PR event after rollout.
+
+GitHub stores label definitions, assignments and workflow logs. Application storage, enums and
+historical user data are unaffected. Reverting automation stops future updates but does not remove
+labels or their GitHub history. Removing a catalog entry also leaves its remote label intact.
+
 ## Reporting Issues
 
 When filing a bug report, please include:

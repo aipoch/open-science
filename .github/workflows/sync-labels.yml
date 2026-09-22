@@ -1,0 +1,70 @@
+name: Sync Label Catalog
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/labels.json
+      - .github/workflows/sync-labels.yml
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Preview catalog changes without writing labels
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-label-catalog
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Synchronize managed label definitions
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          LABELS_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+        with:
+          script: |
+            const repo = context.repo;
+            const dryRun = process.env.LABELS_DRY_RUN === 'true';
+            // Read current main even when retrying an older run: never roll metadata back.
+            const { data: file } = await github.rest.repos.getContent({
+              ...repo, path: '.github/labels.json', ref: 'main',
+            });
+            const catalog = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+            const existing = await github.paginate(github.rest.issues.listLabelsForRepo, {
+              ...repo, per_page: 100,
+            });
+            const current = new Map(existing.map(label => [label.name.toLowerCase(), label]));
+            const rows = [];
+            for (const { name, color, description } of catalog) {
+              const label = current.get(name.toLowerCase());
+              const action = !label ? 'create' :
+                label.color.toLowerCase() !== color || label.description !== description ? 'update' : 'unchanged';
+              rows.push([name, action]);
+              if (dryRun || action === 'unchanged') continue;
+              if (action === 'update') {
+                await github.rest.issues.updateLabel({ ...repo, name: label.name, color, description });
+              } else {
+                try {
+                  await github.rest.issues.createLabel({ ...repo, name, color, description });
+                } catch (error) {
+                  if (error.status !== 422) throw error;
+                  // Another classifier may have created it since listLabelsForRepo.
+                  const { data: created } = await github.rest.issues.getLabel({ ...repo, name });
+                  await github.rest.issues.updateLabel({ ...repo, name: created.name, color, description });
+                }
+              }
+            }
+            await core.summary.addHeading(dryRun ? 'Label catalog preview' : 'Label catalog synchronized')
+              .addTable([['Label', 'Action'], ...rows]).write();
