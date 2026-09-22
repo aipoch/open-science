@@ -616,7 +616,7 @@ describe('ProviderStep', () => {
 
     expect(container.textContent).not.toContain("isn't compatible with Claude Code")
     expect(saveAndActivateProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ vendorId: 'opencode', model: 'claude-fable-5' })
+      expect.objectContaining({ vendorId: 'opencode', model: 'claude-fable-5-1' })
     )
   })
 
