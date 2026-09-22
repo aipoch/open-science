@@ -345,6 +345,89 @@ test.describe('Preview scroll isolation', () => {
   })
 })
 
+test('normalizes OpenCode inline thinking before publishing sanitized message images', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  expect(page.url()).toMatch(/^file:/)
+  await page.evaluate(async () => {
+    const settings = await window.api.settings.upsertProvider({
+      type: 'custom',
+      name: 'Inline thinking replay',
+      apiEndpoints: ['openai'],
+      baseUrl: 'http://127.0.0.1:9/v1',
+      model: 'MiniMax-M3',
+      key: 'e2e-key',
+      supportsImageInput: true
+    })
+    const provider = settings.providers.find((p) => p.name === 'Inline thinking replay')!
+    await window.api.settings.setActiveProvider({ id: provider.id, model: 'MiniMax-M3' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await createProject(page)
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'sanitized-performance.png',
+    mimeType: 'image/png',
+    buffer: await readFile('e2e/fixtures/sanitized-performance.png')
+  })
+  await expect(
+    page.getByRole('button', { name: 'Remove attachment sanitized-performance.png' })
+  ).toBeVisible()
+  const prompt = 'Replay inline thinking. Render the sanitized message images.'
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  const images = page.locator(
+    '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
+  )
+  await expect(images).toHaveCount(3)
+  await images.last().scrollIntoViewIfNeeded()
+  await expect
+    .poll(() => images.last().evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .toBe(1024)
+  await expect(page.getByTestId('message-completion-live-region')).toContainText(
+    'Response completed.'
+  )
+  const events = await page.evaluate(async () => (await window.api.acp.getState()).events)
+  expect(
+    events
+      .filter((e) => e.kind === 'thought')
+      .map((e) => e.text)
+      .join('')
+  ).toContain('Synthetic reasoning only.')
+  expect(
+    events
+      .filter((e) => e.kind === 'message' && e.role === 'assistant')
+      .map((e) => e.text)
+      .join('')
+  ).not.toMatch(/Synthetic reasoning|<\/?think>/)
+  const saved = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
+  const session = saved.find((s) =>
+    s.messages.some((m) => m.role === 'user' && m.content.includes('Replay inline thinking.'))
+  )!
+  expect(
+    session.messages
+      .filter((m) => m.role === 'agent')
+      .map((m) => m.content)
+      .join('')
+  ).not.toMatch(/Synthetic reasoning|<\/?think>/)
+  await page.screenshot({ path: test.info().outputPath('inline-thinking-images.png') })
+  page = await app.restart()
+  const restored = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
+  expect(
+    restored
+      .find((s) => s.id === session.id)
+      ?.messages.filter((m) => m.role === 'agent')
+      .map((m) => m.content)
+      .join('')
+  ).toBe(
+    session.messages
+      .filter((m) => m.role === 'agent')
+      .map((m) => m.content)
+      .join('')
+  )
+})
+
 test.describe('Workspace dividers', () => {
   test.beforeEach(async ({ app }) => {
     await app.completeOnboarding()

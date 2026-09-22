@@ -458,6 +458,25 @@ const assertValidModelLimits = () => {
   }
 }
 
+const inlineThinkingModelOptions = () => {
+  const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+  const route = Object.entries(config.provider ?? {}).find(
+    ([, provider]) => provider?.models?.['MiniMax-M3']
+  )
+  if (!route) return []
+  const value = `${route[0]}/MiniMax-M3`
+  return [
+    {
+      type: 'select',
+      id: 'model',
+      category: 'model',
+      name: 'Model',
+      currentValue: value,
+      options: [{ value, name: 'MiniMax-M3' }]
+    }
+  ]
+}
+
 const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
@@ -1010,8 +1029,11 @@ if (process.argv.includes('--version')) {
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
-      return { sessionId }
+      return { sessionId, configOptions: inlineThinkingModelOptions() }
     })
+    .onRequest(acp.methods.agent.session.setConfigOption, () => ({
+      configOptions: inlineThinkingModelOptions()
+    }))
     .onRequest(acp.methods.agent.session.resume, async (context) => {
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(context.params.sessionId, {
@@ -2283,11 +2305,25 @@ if (process.argv.includes('--version')) {
         reply = `E2E fixture failure: ${error instanceof Error ? error.message : String(error)}`
       }
 
+      const replyMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
+      if (prompt.includes('Replay inline thinking.')) {
+        for (const text of ['<thi', 'nk>Synthetic reasoning only.', '</thi', 'nk>']) {
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: replyMessageId,
+              content: { type: 'text', text }
+            }
+          })
+          await delay(40)
+        }
+      }
       await context.client.notify(acp.methods.client.session.update, {
         sessionId: context.params.sessionId,
         update: {
           sessionUpdate: 'agent_message_chunk',
-          messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+          messageId: replyMessageId,
           content: { type: 'text', text: reply }
         }
       })

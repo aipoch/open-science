@@ -11112,6 +11112,90 @@ describe('ACP runtime session management', () => {
     expect(getRpcConnection).toHaveBeenCalledTimes(2)
   })
 
+  it.each(
+    [opencodeFramework, codeBuddyFramework, claudeCodeFramework, codexFramework].flatMap(
+      (framework) =>
+        (['end_turn', 'cancelled'] as const).map((stopReason) => ({ framework, stopReason }))
+    )
+  )(
+    'normalizes $framework.id output before $stopReason and isolates the next provider turn',
+    async ({ framework, stopReason }) => {
+      const events: AcpRuntimeEvent[] = []
+      const process = new FakeAgentProcess()
+      let replyIndex = 0
+      startFakeAgent(process, ['output-session'], {
+        onPrompt: () => ({ stopReason }),
+        ...(framework.id === 'codex'
+          ? {
+              modes: {
+                currentModeId: 'agent',
+                availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({
+                  id,
+                  name: id
+                }))
+              }
+            }
+          : {}),
+        configOptions: [
+          {
+            type: 'select',
+            id: 'model',
+            name: 'Model',
+            category: 'model',
+            currentValue: 'provider/MiniMax-M3',
+            options: [{ value: 'provider/MiniMax-M3', name: 'MiniMax-M3' }]
+          }
+        ],
+        replyForPrompt: () =>
+          replyIndex++ === 0 ? '<think>reason</think>answer<thi' : 'next answer'
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        framework,
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/test-agent',
+          env: {},
+          sessionModel: 'provider/MiniMax-M3'
+        }),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+      const created = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({ sessionId: created.sessionId, text: 'first' })
+      const generated = events.filter(
+        (e) =>
+          e.kind === 'thought' ||
+          (e.kind === 'message' && e.role === 'assistant') ||
+          e.kind === 'stop'
+      )
+      const split = framework.id === 'codebuddy' || framework.id === 'opencode'
+      expect(
+        generated
+          .filter((e) => e.kind === 'thought')
+          .map((e) => e.text)
+          .join('')
+      ).toBe(split ? 'reason' : '')
+      expect(
+        generated
+          .filter((e) => e.kind === 'message')
+          .map((e) => e.text)
+          .join('')
+      ).toBe(split ? 'answer<thi' : '<think>reason</think>answer<thi')
+      expect(generated.at(-1)?.kind).toBe('stop')
+      events.length = 0
+      await runtime.sendPrompt({ sessionId: created.sessionId, text: 'second' })
+      expect(
+        events
+          .filter((e) => e.kind === 'message' && e.role === 'assistant')
+          .map((e) => e.text)
+          .join('')
+      ).toBe('next answer')
+      expect(events.some((e) => e.kind === 'thought')).toBe(false)
+      await runtime.disconnect()
+    }
+  )
+
   it('projects CodeBuddy inline thinking separately from visible assistant content', async () => {
     const events: AcpRuntimeEvent[] = []
     const process = new FakeAgentProcess()
