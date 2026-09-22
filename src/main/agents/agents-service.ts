@@ -17,7 +17,7 @@ import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   type CustomMcpFailureAvailability
-} from '../connectors/custom-mcp-bootstrap'
+} from '../connectors/custom-mcp'
 import { getConnectorTools } from '../connectors/registry'
 import type { SpecialistService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'

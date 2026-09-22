@@ -207,6 +207,7 @@
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
+      "src/main/skills/census-skill.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts",
       "src/main/specialist/specialist-identity-injection.test.ts",
       "src/main/tasks/task-runner.test.ts",

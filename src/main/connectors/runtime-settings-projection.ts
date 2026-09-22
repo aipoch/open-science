@@ -3,11 +3,11 @@ import {
   toCustomMcpConfig,
   selectEnabledCustomServers,
   type CustomMcpFailureAvailability
-} from './custom-mcp-bootstrap'
+} from './custom-mcp'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { customConnectorSkillName } from '../../shared/custom-connector'
-import type { McpClientManager } from './mcp-client-manager'
+import type { McpClientManager } from './custom-mcp'
 import { createLogger, errorLogFields } from '../logger'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 

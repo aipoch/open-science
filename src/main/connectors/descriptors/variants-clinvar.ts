@@ -1,4 +1,4 @@
-import { ncbiEtiquette } from '../engine'
+import { ncbiEtiquette } from './ncbi'
 import type { ToolContext, ToolDescriptor } from '../types'
 
 const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'

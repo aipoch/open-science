@@ -250,6 +250,13 @@ describe('User Skill repository architecture', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
     expect(manifest.modules.user_skills_repository).toEqual({
       ownerPaths: [
+        'resources/skills/census/SKILL.md',
+        'resources/skills/census/kernel.py',
+        'resources/skills/census/open-science.json',
+        'resources/skills/census/test_contract.py',
+        'resources/skills/census/test_kernel.py',
+        'src/main/skills/census-skill.test.ts',
+
         'src/main/skills/user-skill-catalog-observer.ts',
         'src/main/skills/user-skill-compatibility-index.ts',
         'src/main/skills/user-skill-repository.ts',
@@ -323,6 +330,9 @@ describe('User Skill repository architecture', () => {
         'src/main/skills/zip-extract.ts'
       ],
       interfacePaths: [
+        'resources/skills/census/kernel.py',
+        'resources/skills/census/open-science.json',
+
         'src/main/skills/user-skill-repository.ts',
         'src/main/skills/user-skill-catalog-observer.ts',
         'src/main/skills/activation-policy.ts',
@@ -351,6 +361,8 @@ describe('User Skill repository architecture', () => {
       consumerModules: ['settings_service_facade'],
       testFiles: {
         owner: [
+          'src/main/skills/census-skill.test.ts',
+
           'src/main/skills/user-skill-catalog-observer.test.ts',
           'src/main/skills/user-skill-compatibility-index.test.ts',
           'src/main/skills/user-skill-repository.architecture.test.ts',
@@ -528,7 +540,7 @@ describe('User Skill repository architecture', () => {
           'src/main/compute/session-catalog-hydration.integration.test.ts',
           'src/main/compute/skill-provisioning.test.ts',
           'src/main/connectors/application.test.ts',
-          'src/main/connectors/custom-mcp-bootstrap.test.ts',
+          'src/main/connectors/custom-mcp/bootstrap.test.ts',
           'src/main/connectors/custom-skill-doc.test.ts',
           'src/main/connectors/descriptors/genes-reactome.test.ts',
           'src/main/connectors/descriptors/genes.test.ts',
@@ -537,9 +549,9 @@ describe('User Skill repository architecture', () => {
           'src/main/connectors/descriptors/regulation.test.ts',
           'src/main/connectors/descriptors/variants-gnomad.test.ts',
           'src/main/connectors/descriptors/zinc.test.ts',
-          'src/main/connectors/mcp-client-manager.test.ts',
+          'src/main/connectors/custom-mcp/client-manager.test.ts',
           'src/main/connectors/mcp-payload-pagination.integration.test.ts',
-          'src/main/connectors/oauth-client.test.ts',
+          'src/main/connectors/custom-mcp/oauth-client.test.ts',
           'src/main/connectors/provision.test.ts',
           'src/main/connectors/registry.test.ts',
           'src/main/connectors/runtime-settings-projection.test.ts',

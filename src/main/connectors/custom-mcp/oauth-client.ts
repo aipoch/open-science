@@ -12,11 +12,11 @@ import type {
   OAuthTokens
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 
-import type { StoredCustomMcpOAuthConfig, StoredCustomMcpOAuthState } from '../settings/types'
+import type { StoredCustomMcpOAuthConfig, StoredCustomMcpOAuthState } from '../../settings/types'
 import {
   DEFAULT_LOOPBACK_OAUTH_REDIRECT_URI,
   normalizeLoopbackOAuthRedirectUri
-} from '../../shared/oauth-redirect'
+} from '../../../shared/oauth-redirect'
 
 export type OAuthCallback = {
   code?: string

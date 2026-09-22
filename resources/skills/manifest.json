@@ -158,6 +158,12 @@
       "activationPolicy": "always-on",
       "exposure": "internal",
       "updatedAt": "2026-08-09T00:00:00.000Z"
+    },
+    {
+      "id": "census",
+      "name": "CELLxGENE Census",
+      "source": "featured",
+      "updatedAt": "2026-09-22T00:00:00.000Z"
     }
   ]
 }

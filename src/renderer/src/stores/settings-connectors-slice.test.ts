@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DeviceCredentialStore } from '../../../main/settings/device-credentials'
-import { PersistentOAuthClientProvider } from '../../../main/connectors/oauth-client'
+import { PersistentOAuthClientProvider } from '../../../main/connectors/custom-mcp/oauth-client'
 
 vi.mock('electron', () => ({
   safeStorage: {

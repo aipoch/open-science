@@ -339,6 +339,7 @@
       "src/main/side-chat/runtime-owner.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/skills/export.test.ts",
+      "src/main/skills/census-skill.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts",
       "src/main/specialist/application-commands.test.ts",
       "src/main/specialist/ipc.test.ts",

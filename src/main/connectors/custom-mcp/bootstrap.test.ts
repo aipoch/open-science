@@ -3,8 +3,8 @@ import {
   classifyCustomMcpFailure,
   selectEnabledCustomServers,
   toCustomMcpConfig
-} from './custom-mcp-bootstrap'
-import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
+} from './bootstrap'
+import type { StoredConnectors, StoredCustomMcpServer } from '../../settings/types'
 
 describe('toCustomMcpConfig', () => {
   it('maps a stored stdio server to a McpClientManager config', () => {

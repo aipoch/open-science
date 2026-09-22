@@ -41,11 +41,8 @@ import {
   isCustomConnectorName
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import {
-  hasUsableCustomMcpCredentials,
-  isCustomMcpServerRouteSafe
-} from '../connectors/custom-mcp-bootstrap'
-import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
+import { hasUsableCustomMcpCredentials, isCustomMcpServerRouteSafe } from '../connectors/custom-mcp'
+import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
@@ -72,7 +69,7 @@ import {
   CustomServerIdConflictError,
   customServerSecurityFingerprint
 } from './custom-server-identity'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp-url'
+import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void

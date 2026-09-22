@@ -352,6 +352,8 @@
         "src/main/local-fs/**",
         "src/main/ipc-surfaces/**",
         "src/main/connectors/*.ts",
+        "src/main/connectors/custom-mcp/**",
+        "src/main/connectors/molecule/**",
         "src/main/*runtime*.ts",
         "src/main/*lifecycle*.ts",
         "src/main/*window*.ts",

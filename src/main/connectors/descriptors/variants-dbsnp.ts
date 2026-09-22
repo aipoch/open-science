@@ -1,4 +1,4 @@
-import { ncbiEtiquette } from '../engine'
+import { ncbiEtiquette } from './ncbi'
 import type { ToolDescriptor } from '../types'
 
 // Two NCBI hosts (mirrors the upstream dbsnp_records client): Variation Services for the canonical
