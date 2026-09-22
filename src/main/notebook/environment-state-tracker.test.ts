@@ -19,7 +19,11 @@ import {
   prepareArtifactReproducibilityExecutionPlan,
   sealArtifactReproducibilityRecipe
 } from '../artifacts/artifact-reproducibility-recipe'
-import { environmentCaptureProcessEnv, EnvironmentStateTracker } from './environment-state-tracker'
+import {
+  environmentCaptureProcessEnv,
+  EnvironmentStateTracker,
+  type EnvironmentStateTrackerOptions
+} from './environment-state-tracker'
 
 let dataRoot: string | undefined
 
@@ -99,7 +103,7 @@ describe('EnvironmentStateTracker', () => {
       vi.stubEnv('R_LIBS_USER', '/host-user-r')
       vi.stubEnv('R_LIBS_SITE', '/host-site-r')
       try {
-        const execute = vi.fn((_: string, args: string[], _options: unknown) =>
+        const execute = vi.fn<NonNullable<EnvironmentStateTrackerOptions['execFile']>>((_, args) =>
           Promise.resolve({
             stdout: args.at(-1)?.includes('installed.packages')
               ? 'RUNTIME\t4.4\twin32\tx86-64\n'
