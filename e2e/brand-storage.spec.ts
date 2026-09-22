@@ -49,7 +49,9 @@ for (const mode of ['fresh', 'legacy', 'custom'] as const) {
     await dialog.getByLabel('Name').fill(projectName)
     await dialog.getByRole('button', { name: 'Create project' }).click()
     await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
-    page = await app.restartAfterCrash()
+    // This journey checks brand and data-location persistence across a normal relaunch.
+    // Crash recovery is exercised by the dedicated startup and delegation journeys.
+    page = await app.restart()
     expect((await page.evaluate(() => window.api.storage.getInfo())).dataRoot).toBe(
       initial.dataRoot
     )
