@@ -75,7 +75,9 @@ it('exports only selected available items, opts into historical logs and reports
   expect(document.body.textContent).toContain(
     'Exports diagnostic metadata with private content fields excluded. Saved locally; nothing is uploaded or sent to an LLM. Damaged or large files may include only a summary.'
   )
-  expect(document.querySelector('[data-slot="field-help"]')).not.toBeNull()
+  const title = document.querySelector('[role="dialog"] h2')
+  expect(title?.parentElement?.querySelector('[data-slot="field-help"]')).not.toBeNull()
+  expect(document.querySelector('[role="dialog"] button[aria-label="Close"]')).not.toBeNull()
   expect(checkboxes[0].textContent).toContain('29 KB')
   expect(checkboxes[2].textContent).toContain('193 KB')
   expect(checkboxes[3].textContent).toContain('5.0 MB')
@@ -102,6 +104,14 @@ it('exports only selected available items, opts into historical logs and reports
     expect.objectContaining({ selectedItems: ['session', 'database', 'log:main.1.log'] })
   )
 })
+
+it('closes from the title bar without bypassing the dialog close flow', async () => {
+  await render()
+  await act(async () => {
+    fireEvent.click(document.querySelector('[role="dialog"] button[aria-label="Close"]')!)
+  })
+  expect(onClose).toHaveBeenCalledOnce()
+})
 it('cancels an in-flight inspection using its operation identity', async () => {
   inspectDiagnostics.mockReturnValue(new Promise(() => {}))
   await render()
@@ -122,7 +132,7 @@ it('contains rejected exports in the dialog and permits retry', async () => {
   expect(onClose).not.toHaveBeenCalled()
 })
 
-it('cancels the export operation rather than the completed inspection', async () => {
+it.each(['footer', 'title bar'])('cancels the export operation from the %s', async (source) => {
   let finish!: (value: { status: string }) => void
   exportDiagnostics.mockReturnValue(
     new Promise((resolve) => {
@@ -134,7 +144,13 @@ it('cancels the export operation rather than the completed inspection', async ()
   })
   await render()
   await act(async () => fireEvent.click(button('Export')))
-  await act(async () => fireEvent.click(button('Cancel')))
+  await act(async () =>
+    fireEvent.click(
+      source === 'footer'
+        ? button('Cancel')
+        : document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!
+    )
+  )
   const exportId = exportDiagnostics.mock.calls[0][0].operationId
   expect(exportId).not.toBe(inspectDiagnostics.mock.calls[0][0].operationId)
   expect(cancelDiagnostics).toHaveBeenCalledWith({ operationId: exportId })

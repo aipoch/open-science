@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Check, LoaderCircle } from 'lucide-react'
+import { Check, LoaderCircle, X } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -15,7 +15,8 @@ import {
   dialogTitleClassName,
   dialogDescriptionClassName,
   dialogBodyClassName,
-  dialogFooterClassName
+  dialogFooterClassName,
+  dialogCloseButtonClassName
 } from '@/components/ui/dialog-chrome'
 import type {
   SessionDiagnosticIdentity,
@@ -178,17 +179,29 @@ export const SessionDiagnosticsDialog = ({
           )}
           onInteractOutside={(event) => event.preventDefault()}
         >
-          <div className={`${dialogHeaderClassName} flex-col items-start`}>
-            <div className="flex w-full items-center justify-between gap-3">
-              <Dialog.Title className={dialogTitleClassName}>
-                {t('Export diagnostics')}
-              </Dialog.Title>
-              <FieldHelp
-                content={t(
-                  'The archive always includes a manifest and export log; missing sources do not stop the export. Include screenshots when reporting an issue to developers.'
-                )}
-                contentClassName="max-w-[320px]"
-              />
+          <div className={`${dialogHeaderClassName} flex-col items-stretch`}>
+            <div className="flex w-full items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <Dialog.Title className={dialogTitleClassName}>
+                  {t('Export diagnostics')}
+                </Dialog.Title>
+                <FieldHelp
+                  content={t(
+                    'The archive always includes a manifest and export log; missing sources do not stop the export. Include screenshots when reporting an issue to developers.'
+                  )}
+                  contentClassName="max-w-[320px]"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={`${dialogCloseButtonClassName} shrink-0`}
+                onClick={() => void close()}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
             </div>
             <Dialog.Description className={dialogDescriptionClassName}>
               {t(
