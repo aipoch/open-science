@@ -75,3 +75,26 @@ it.each([
     ).toBeUndefined()
   expect(findSensitivePackageText(value)).toBeUndefined()
 })
+
+it('bounds scanning of malformed CLI quotes with long escape sequences', async () => {
+  const { buildSync } = await import('esbuild')
+  const { execFileSync } = await import('node:child_process')
+  const { resolve } = await import('node:path')
+  const bundled = buildSync({
+    entryPoints: [resolve('src/main/session-package/sensitive-content.ts')],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    write: false
+  }).outputFiles[0].text
+  // Exercise the real detector in a killable process: a synchronous regex can prevent a
+  // Vitest timeout from firing. Include the CodeQL witness and actual credential flags.
+  const probe = `${bundled}\n
+const suffix = '\\\\!'.repeat(2000);
+const inputs = ['-a="' + suffix + '\\n', '--password="' + suffix + '\\n', '--token "' + suffix + '"'];
+process.stdout.write(JSON.stringify(inputs.map(value => Boolean(module.exports.findSensitivePackageText(value)))));
+`
+  expect(
+    execFileSync(process.execPath, [], { input: probe, encoding: 'utf8', timeout: 5000 }).trim()
+  ).toBe('[false,false,true]')
+}, 15000)

@@ -116,7 +116,7 @@ export const findSensitivePackageText = (
       return { offset: match.index, rule: 'assignment' }
   }
   for (const match of text.matchAll(
-    /--?([a-z][a-z0-9_-]*)(?:\s+|=)(["'](?:\\.|[^"'\r\n])*["']|["'][^\r\n]*$|(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+)/gi
+    /--?([a-z][a-z0-9_-]*)(?:\s+|=)(["'](?:\\.|[^"'\\\r\n])*["']|["'][^\r\n]*$|(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+)/gi
   )) {
     if (!isSensitiveDiagnosticKey(match[1])) continue
     const value = match[2].replace(/^(["'])(.*)\1$/, '$2').replace(/^["']/, '')

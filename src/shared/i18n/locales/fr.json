@@ -119,7 +119,7 @@
     "Credential-like assignment": "Affectation pouvant contenir des identifiants",
     "Credential-like URL": "URL pouvant contenir des identifiants",
     "Credential-like token": "Jeton pouvant servir d’identifiant",
-    "Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.": "Contenu sensible détecté à {{location}}. Vérification : {{rule}}. Vérifiez-le avant d’exporter le paquet de session.",
+    "Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.": "Contenu sensible détecté à {{location}}. Vérification : {{rule}}. Vérifiez-le avant d’exporter le paquet de session.",
     "Sensitive content detected. Remove it before exporting the Session package.": "Contenu sensible détecté. Supprimez-le avant d’exporter le paquet de session.",
     "Not enough disk space at {{path}}. The next stage needs at least {{required}} available, including reserved free space; {{available}} is available. Free up at least {{shortfall}}, then try again.": "Espace disque insuffisant dans {{path}}. La prochaine étape nécessite au moins {{required}} disponibles, réserve comprise ; {{available}} sont disponibles. Libérez au moins {{shortfall}}, puis réessayez.",
     "Session package operation in progress": "Opération sur le paquet de session en cours",
