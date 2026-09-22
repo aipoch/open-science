@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { setTimeout as delay } from 'node:timers/promises'
+import { migrationSqlExecutor } from './migration-sql-executor'
+import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
 
 import { literatureCandidateInputSchema } from '../../shared/literature'
 import { LiteratureCatalog } from '../literature/catalog'
@@ -312,6 +315,7 @@ describe('application database migrations', () => {
   let client: PrismaClient | undefined
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     await client?.$disconnect()
     if (storageRoot) await rm(storageRoot, { force: true, recursive: true })
   })
@@ -647,6 +651,36 @@ describe('application database migrations', () => {
       code: 'database_validation_failed'
     })
   })
+
+  it(
+    'commits a slow ordinary migration and its ledger entry atomically',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'slow-migration-'))
+      client = createProjectDbClient(storageRoot)
+      const execute = migrationSqlExecutor.execute
+      let delayed = false
+      vi.spyOn(migrationSqlExecutor, 'execute').mockImplementation(
+        async (target, statement, ...values) => {
+          if (!delayed && statement === grantedLocalRootsMigration.statements[0]) {
+            delayed = true
+            // Reproduce scanner/disk latency exceeding Prisma's default 5-second transaction.
+            await delay(6_000)
+          }
+          return execute(target, statement, ...values)
+        }
+      )
+
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+        applied: expect.arrayContaining([grantedLocalRootsMigration.id])
+      })
+      expect(delayed).toBe(true)
+      await expect(
+        client.$queryRawUnsafe('SELECT COUNT(*) AS count FROM "GrantedLocalRoot"')
+      ).resolves.toEqual([{ count: 0n }])
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('records the runtime baseline once for a fresh database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science 数据 baseline-'))

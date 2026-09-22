@@ -1874,12 +1874,17 @@ describe('production delegated-work composition', () => {
         { wait: false }
       )
       if (dispatched.kind !== 'receipts') throw new Error('Question child was not dispatched.')
-      await expect.poll(() => harness.controls.size).toBe(1)
+      // Preparation and durable continuation writes can exceed the default 1s poll on Windows.
+      const waitOptions = { timeout: 10_000 }
+      await expect.poll(() => harness.controls.size, waitOptions).toBe(1)
       const source = [...harness.controls.values()][0]
       await source.askUser()
       await source.complete({ submit: false, text: 'Waiting for the user.' })
       await expect
-        .poll(() => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status)
+        .poll(
+          () => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status,
+          waitOptions
+        )
         .toBe('pending')
       const question = harness.durable().runtimeContext!.delegatedWork!.questionRequests![0]
 
@@ -1891,7 +1896,7 @@ describe('production delegated-work composition', () => {
         answers: [{ questionIndex: 0, value: 'Focused' }]
       })
 
-      await expect.poll(() => harness.controls.size).toBe(2)
+      await expect.poll(() => harness.controls.size, waitOptions).toBe(2)
       const continuation = [...harness.controls.values()].find(
         (control) => control.input.attemptId !== source.input.attemptId
       )!
@@ -1899,7 +1904,10 @@ describe('production delegated-work composition', () => {
       expect(continuation.input.task).toContain('Answer: Focused')
       await continuation.complete({ submit: false, text: 'Framework question continued.' })
       await expect
-        .poll(() => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status)
+        .poll(
+          () => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status,
+          waitOptions
+        )
         .toBe('confirmed')
       expect(
         harness
