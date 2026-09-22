@@ -1,5 +1,6 @@
 export type RemoteHandle = {
   driver?: 'direct_ssh'
+  scope_version?: 1
   pid: number
   exit_code_path: string
   stdout_path: string

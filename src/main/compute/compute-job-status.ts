@@ -23,6 +23,7 @@ export const projectJobStatus = (
   ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
   result_final: isComputeJobResultFinal(job),
   cancellation_status: cancellationStatus,
+  cancellation: job.cancellation,
   exit_code: job.exit_code,
   stdout_tail: job.stdout_tail,
   stderr_tail: job.stderr_tail,

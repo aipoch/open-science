@@ -7338,6 +7338,7 @@ describe('session store public contract', () => {
 
   it('keeps production consumers on the public store facade', () => {
     expect(directConsumerPaths()).toEqual([
+      'src/renderer/src/components/JobCancellationAgentDialog.tsx',
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',

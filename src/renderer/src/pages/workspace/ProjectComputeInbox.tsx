@@ -55,6 +55,7 @@ const kernelStatusClassName = (status: NotebookProjectKernelActivity['status']):
 }
 
 const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t']): string =>
+  (job.cancellation_status === 'cancel_failed' ? t('Cancellation failed') : undefined) ??
   (job.status === 'queued' && !job.cancellation_status
     ? computeQueueBlockedLabel(job.queue_blocked_reason, t)
     : undefined) ??

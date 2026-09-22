@@ -14,10 +14,17 @@ type CompletedJobCardProps = {
   onOpen: (job: JobSummary) => void
 }
 
-type StatusKey = 'finished' | 'failed' | 'timed out' | 'error'
+type StatusKey =
+  'finished' | 'failed' | 'timed out' | 'error' | 'Cancelled' | 'Cancelling' | 'Cancellation failed'
 
 // Returns the catalog key and color class for a job's terminal status.
 function getStatusLabelKey(job: JobSummary): { key: StatusKey | null; colorClass: string } {
+  if (job.cancellation_status === 'cancelled')
+    return { key: 'Cancelled', colorClass: 'text-muted-foreground' }
+  if (job.cancellation_status === 'cancelling')
+    return { key: 'Cancelling', colorClass: 'text-status-warning-foreground' }
+  if (job.cancellation_status === 'cancel_failed')
+    return { key: 'Cancellation failed', colorClass: 'text-status-failure-foreground' }
   switch (job.status) {
     case 'success':
       return { key: 'finished', colorClass: 'text-green-600 dark:text-green-400' }

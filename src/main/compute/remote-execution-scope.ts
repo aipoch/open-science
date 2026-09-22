@@ -1,0 +1,66 @@
+// Execution completion belongs to the workload owner, never just the launcher PID.
+// Existing jobs without a supervisor marker retain their POSIX session cleanup path.
+export const directLaunchScopeLines = (): string[] => [
+  'nohup setsid bash launcher.sh </dev/null >/dev/null 2>&1 &',
+  'checks=0',
+  'while [ ! -s job.pid ] && [ "$checks" -lt 50 ]; do sleep 0.1; checks=$((checks + 1)); done',
+  '[ -s job.pid ] || exit 1',
+  'cat job.pid'
+]
+
+export const remoteExecutionScopeFunctionLines = (): string[] => [
+  'job_scope_finished() {',
+  '  [ ! -L "$workdir/execution.stopped" ] && [ "$(cat "$workdir/execution.stopped" 2>/dev/null)" = "$scope_marker" ]',
+  '}',
+  'job_scope_members() {',
+  '  scope_table=$(ps -eo pid=,sid=,stat= 2>/dev/null) || return 2',
+  '  scope_members=$(printf "%s\\n" "$scope_table" | awk -v sid="$scope_pid" \'$2 == sid && $3 !~ /^Z/ {print $1}\')',
+  '}',
+  'job_scope_state() {',
+  '  scope_pid=$1',
+  '  scope_version=legacy',
+  '  case $scope_pid in ""|*[!0-9]*) return 2;; esac',
+  '  [ "$scope_pid" -gt 1 ] && [ -n "$workdir" ] || return 2',
+  '  [ "${scope_required:-0}" != 1 ] || [ -f "$workdir/execution.scope" ] || return 2',
+  '  if [ -e "$workdir/execution.scope" ] || [ -L "$workdir/execution.scope" ]; then',
+  '    [ ! -L "$workdir/execution.scope" ] || return 2',
+  '    scope_marker=$(cat "$workdir/execution.scope") || return 2',
+  '    if [ "$scope_marker" != "session-v1 $scope_pid" ]; then',
+  '    IFS=" " read -r scope_version scope_boot scope_anchor scope_birth scope_extra < "$workdir/execution.scope" || return 2',
+  '    [ "$scope_version" = supervisor-v1 ] && [ -z "$scope_extra" ] && [ "$scope_anchor" = "$scope_pid" ] || return 2',
+  '    case $scope_birth in ""|*[!0-9]*) return 2;; esac',
+  '    [ "$scope_boot" = "$(cat /proc/sys/kernel/random/boot_id)" ] || return 2',
+  '    job_scope_finished && return 3',
+  '    if job_pid_is_owned "$scope_pid"; then',
+  `      scope_current_birth=$(sed 's/.*) //' "/proc/$scope_pid/stat" 2>/dev/null | awk '{print $20}')`,
+  '      [ "$scope_current_birth" != "$scope_birth" ] || return 0',
+  '    fi',
+  // The owner publishes completion before exiting. It may exit between the first receipt read
+  // and the liveness/birth checks: reread the receipt before treating that loss as unconfirmed.
+  '    job_scope_finished && return 3',
+  '    return 2',
+  '    fi',
+  '  fi',
+  '  job_pid_is_owned "$scope_pid"',
+  '}',
+  'stop_job_scope() {',
+  '  job_scope_state "$1"',
+  '  scope_status=$?',
+  '  [ "$scope_status" -ne 3 ] || { [ "$scope_version" != legacy ] || return 3; echo terminated; return 0; }',
+  '  [ "$scope_status" -eq 0 ] || return "$scope_status"',
+  '  if [ "$scope_version" = supervisor-v1 ]; then',
+  // The owner receives a durable request; only its ECHILD receipt can confirm completion.
+  '    [ ! -L "$workdir/execution.cancel" ] && [ ! -L "$workdir/execution.cancel.tmp" ] || return 2',
+  '    (umask 077; printf "%s\\n" "$scope_marker" > "$workdir/execution.cancel.tmp") && mv "$workdir/execution.cancel.tmp" "$workdir/execution.cancel" || return 2',
+  '    checks=0',
+  '    while [ "$checks" -lt 70 ]; do',
+  '      job_scope_state "$scope_pid"; scope_status=$?',
+  '      [ "$scope_status" -ne 3 ] || { echo terminated; return 0; }',
+  '      [ "$scope_status" -eq 0 ] || return 2',
+  '      sleep 0.1; checks=$((checks + 1))',
+  '    done',
+  '    return 2',
+  '  fi',
+  '  stop_legacy_job_scope "$scope_pid"',
+  '}'
+]

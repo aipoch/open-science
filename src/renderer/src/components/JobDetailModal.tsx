@@ -1,3 +1,4 @@
+import { JobCancellationRecovery } from './JobCancellationRecovery'
 import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ExternalLink, ShieldAlert, TriangleAlert, X } from 'lucide-react'
@@ -156,8 +157,10 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
     latestJob.status === 'submitted' ||
     latestJob.status === 'running'
   const isCancelling = latestJob.cancellation_status === 'cancelling'
+  const hasCancellationRecovery =
+    isActive && (isCancelling || latestJob.cancellation_status === 'cancel_failed' || !!cancelError)
   const cancelJob = useCallback(async (): Promise<void> => {
-    if (!latestJob.project_id) return
+    if (isCancellingRequest || !latestJob.project_id) return
     setIsCancellingRequest(true)
     setCancelError(undefined)
     try {
@@ -173,7 +176,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
     } finally {
       setIsCancellingRequest(false)
     }
-  }, [hydrateJobs, latestJob, t])
+  }, [hydrateJobs, latestJob, t, isCancellingRequest])
 
   const [isRetryingHarvest, setIsRetryingHarvest] = useState(false)
   const [harvestRetryFailed, setHarvestRetryFailed] = useState(false)
@@ -253,7 +256,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         >
           {t('Refresh')}
         </Button>
-        {isActive && latestJob.cancellation_status !== 'cancelled' ? (
+        {isActive && !hasCancellationRecovery && latestJob.cancellation_status !== 'cancelled' ? (
           <Button
             type="button"
             variant="outline"
@@ -262,7 +265,11 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
             disabled={isCancelling || isCancellingRequest || !latestJob.project_id}
             onClick={() => void cancelJob()}
           >
-            {isCancelling || isCancellingRequest ? t('Cancelling') : t('Cancel')}
+            {isCancelling || isCancellingRequest
+              ? t('Cancelling')
+              : latestJob.cancellation_status === 'cancel_failed'
+                ? t('Retry cancellation')
+                : t('Cancel')}
           </Button>
         ) : null}
         <JobStatusBadge
@@ -270,6 +277,19 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
           cancellationStatus={latestJob.cancellation_status}
         />
       </div>
+
+      <JobCancellationRecovery
+        now={now}
+        job={latestJob}
+        pending={isCancellingRequest}
+        requestFailed={!!cancelError}
+        onRetry={() => cancelJob()}
+        onReviewConnection={
+          runtimeErrorCode
+            ? () => openSettingsToComputeAuthentication(latestJob.provider_id, runtimeErrorCode)
+            : undefined
+        }
+      />
 
       {/* Meta info grid */}
       <div
@@ -372,7 +392,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       ) : null}
 
-      {runtimeErrorCode ? (
+      {runtimeErrorCode && !hasCancellationRecovery ? (
         <div role="alert" className="flex justify-center border-b border-border p-5">
           <ErrorNotice
             icon={ShieldAlert}
@@ -382,21 +402,6 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
               label: computeRuntimeRecoveryAction(runtimeErrorCode, t),
               onClick: () =>
                 openSettingsToComputeAuthentication(latestJob.provider_id, runtimeErrorCode)
-            }}
-          />
-        </div>
-      ) : null}
-
-      {cancelError ? (
-        <div role="alert" className="flex justify-center border-b border-border p-5">
-          <ErrorNotice
-            icon={TriangleAlert}
-            tone="amber"
-            title={t('Unable to cancel remote job.')}
-            primaryButton={{
-              label: t('Retry'),
-              onClick: () => void cancelJob(),
-              loading: isCancellingRequest
             }}
           />
         </div>
@@ -417,7 +422,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       ) : null}
 
-      {latestJob.last_poll_error ? (
+      {latestJob.last_poll_error && !hasCancellationRecovery ? (
         <div className="border-b border-border p-3 text-sm" role="status">
           {latestJob.last_poll_error.startsWith('slurm_pending')
             ? t('Waiting in the Slurm queue.')

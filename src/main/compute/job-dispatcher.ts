@@ -28,6 +28,8 @@ import { applyComputeEnvironment } from './compute-environment'
 import { dispatchSlurmJob, SlurmDriverError } from './slurm-driver'
 import { toBase64, type RemoteHandle } from './remote-job-contract'
 import { remoteJobPidOwnershipFunctionLines } from './remote-job-process'
+import { directLaunchScopeLines } from './remote-execution-scope'
+import { remoteJobSupervisorSource } from './remote-job-supervisor'
 
 export {
   toBase64,
@@ -53,7 +55,8 @@ export const REMOTE_PROCESS_OWNERSHIP_FUNCTION = [
 ].join('\n')
 
 // Builds the launcher.sh script content for a given job.
-// Uses timeout(1) with SIGTERM then SIGKILL after 30s grace. The login shell loads profile
+// Prefers a detached Linux child-subreaper. Hosts without that capability retain timeout(1)
+// with SIGTERM then SIGKILL after 30s grace. Both backends use a login shell to load profile
 // configuration, then attempts to source a readable .bashrc (non-interactive bash does not do so
 // itself). A missing .bashrc is a no-op; a source failure returns through the normal exit-code
 // lifecycle. A .bashrc may deliberately return early for non-interactive shells. exec then replaces
@@ -62,6 +65,12 @@ export const REMOTE_PROCESS_OWNERSHIP_FUNCTION = [
 export const buildLauncherScript = (timeoutSeconds: number): string => {
   return (
     '#!/usr/bin/env bash\n' +
+    // A Linux subreaper owns detached descendants without depending on a login/user service.
+    `if python3 -c 'import ctypes,sys; sys.exit(ctypes.CDLL(None).prctl(36,1,0,0,0) != 0)' >/dev/null 2>&1; then\n` +
+    `  exec python3 supervisor.py ${timeoutSeconds}\n` +
+    'fi\n' +
+    'printf "session-v1 %s\\n" "$$" > execution.scope.tmp && mv execution.scope.tmp execution.scope || exit 1\n' +
+    'printf "%s\\n" "$$" > job.pid.tmp && mv job.pid.tmp job.pid || exit 1\n' +
     `timeout -s TERM -k 30s ${timeoutSeconds} bash -l -c 'if [ -r ~/.bashrc ]; then . ~/.bashrc || exit $?; fi; exec bash command.sh' > stdout 2> stderr\n` +
     'echo $? > exit_code.tmp && mv exit_code.tmp exit_code\n'
   )
@@ -342,18 +351,15 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   // Stdout = the pid (we echo it last).
   const quotedWorkdir = quoteRemotePath(workdir)
   const dispatchCmd = [
-    `mkdir -p ${quotedWorkdir}`,
-    `cd ${quotedWorkdir}`,
+    `mkdir -p ${quotedWorkdir} || exit 1`,
+    `cd ${quotedWorkdir} || exit 1`,
     // Write command.sh and launcher.sh via base64 to avoid heredoc/quoting issues.
-    `printf '%s' ${JSON.stringify(commandB64)} | base64 -d > command.sh`,
-    `printf '%s' ${JSON.stringify(launcherB64)} | base64 -d > launcher.sh`,
-    `chmod +x command.sh launcher.sh`,
+    `printf '%s' ${JSON.stringify(commandB64)} | base64 -d > command.sh || exit 1`,
+    `printf '%s' ${JSON.stringify(launcherB64)} | base64 -d > launcher.sh || exit 1`,
+    `printf '%s' ${JSON.stringify(toBase64(remoteJobSupervisorSource))} | base64 -d > supervisor.py || exit 1`,
+    `chmod +x command.sh launcher.sh || exit 1`,
     // Detached launch: nohup + setsid so the process survives SSH disconnect.
-    `nohup setsid bash launcher.sh >/dev/null 2>&1 &`,
-    // Write pid to file AND echo it so we can read it back in this round-trip.
-    `LAUNCHED_PID=$!`,
-    `echo $LAUNCHED_PID > job.pid`,
-    `echo $LAUNCHED_PID`
+    ...directLaunchScopeLines()
   ].join('\n')
 
   let runResult
@@ -397,6 +403,7 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   // Build the remote handle JSON.
   const handle: RemoteHandle = {
     pid,
+    scope_version: 1,
     exit_code_path: `${workdir}/exit_code`,
     stdout_path: `${workdir}/stdout`,
     stderr_path: `${workdir}/stderr`,

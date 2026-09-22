@@ -222,63 +222,76 @@ describe('JobPoller', () => {
     expect(paused).toHaveBeenCalledOnce()
   })
 
-  it('transitions job to success when exit_code=0 is found', async () => {
-    const job = makeJob()
-    const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
-    const jobRepo = {
-      findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      get: vi.fn(() => Promise.resolve(job)),
-      update,
-      updateIfStatus: guardStatusUpdate(update)
-    } as unknown as ComputeJobRepository
-    const hostRepo = {
-      get: vi.fn(() => Promise.resolve(sampleHost()))
-    } as unknown as ComputeHostRepository
+  it.each([false, true])(
+    'publishes exit_code=0 only after the workload scope stops (alive=%s)',
+    async (alive) => {
+      const job = makeJob()
+      const update = vi.fn((_id: string, u: unknown) =>
+        Promise.resolve({ ...job, ...(u as object) })
+      )
+      const jobRepo = {
+        findNonTerminal: vi.fn(() => Promise.resolve([job])),
+        get: vi.fn(() => Promise.resolve(job)),
+        update,
+        updateIfStatus: guardStatusUpdate(update)
+      } as unknown as ComputeJobRepository
+      const hostRepo = {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository
 
-    // Poll output: pid alive, exit_code=0, tails.
-    const pollOutput = withNonce([
-      'JOB_START:job-1',
-      'alive:1',
-      '0',
-      'hello\n',
-      'STDOUT_END:job-1',
-      '',
-      'STDERR_END:job-1'
-    ])
+      // A launcher result must not finalize a still-live workload.
+      const pollOutput = withNonce([
+        'JOB_START:job-1',
+        `alive:${alive ? 1 : 0}`,
+        '0',
+        'hello\n',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ])
 
-    const runner = makeSshRunner({
-      exitCode: 0,
-      stdout: pollOutput,
-      stderr: '',
-      truncated: false,
-      timedOut: false
-    })
-
-    const onJobUpdated = vi.fn()
-    const connectionBroker = brokerFromRunner(runner)
-    const poller = new JobPoller({
-      connectionBroker,
-      hostRepository: hostRepo,
-      jobRepository: jobRepo,
-      onJobUpdated,
-      makeNonce: () => NONCE
-    })
-
-    await poller.tick()
-
-    expect(connectionBroker.acquire).toHaveBeenCalledWith(
-      job.provider_id,
-      expect.objectContaining({
-        intent: 'job_poll',
-        signal: expect.any(AbortSignal)
+      const runner = makeSshRunner({
+        exitCode: 0,
+        stdout: pollOutput,
+        stderr: '',
+        truncated: false,
+        timedOut: false
       })
-    )
-    expect(update).toHaveBeenCalledWith(
-      'job-1',
-      expect.objectContaining({ status: 'success', exitCode: 0 })
-    )
-    expect(onJobUpdated).toHaveBeenCalled()
-  })
+
+      const onJobUpdated = vi.fn()
+      const connectionBroker = brokerFromRunner(runner)
+      const poller = new JobPoller({
+        connectionBroker,
+        hostRepository: hostRepo,
+        jobRepository: jobRepo,
+        onJobUpdated,
+        makeNonce: () => NONCE
+      })
+
+      await poller.tick()
+
+      expect(connectionBroker.acquire).toHaveBeenCalledWith(
+        job.provider_id,
+        expect.objectContaining({
+          intent: 'job_poll',
+          signal: expect.any(AbortSignal)
+        })
+      )
+      if (alive) {
+        expect(
+          update.mock.calls.some(
+            ([, changes]) => (changes as { status?: string }).status === 'success'
+          )
+        ).toBe(false)
+        return
+      }
+      expect(update).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ status: 'success', exitCode: 0 })
+      )
+      expect(onJobUpdated).toHaveBeenCalled()
+    }
+  )
 
   it('exposes the Slurm terminal state when scheduler failure logs are empty', async () => {
     const job = makeJob({
@@ -392,7 +405,7 @@ describe('JobPoller', () => {
     } as unknown as ComputeJobRepository
     const pollOutput = withNonce([
       'JOB_START:job-1',
-      'alive:1',
+      'alive:0',
       '0',
       'existing first-line fixture\nstdout contains 1\n',
       'STDOUT_END:job-1',
@@ -694,7 +707,7 @@ describe('JobPoller', () => {
     // they would arrive from real job stdout, while the real structural markers carry the nonce.
     const pollOutput = [
       `${NONCE}JOB_START:job-1`,
-      `${NONCE}alive:1`,
+      `${NONCE}alive:0`,
       `${NONCE}exit:0`,
       'JOB_START:job-1', // adversarial line inside the stdout tail
       'alive:0', // adversarial line inside the stdout tail
@@ -963,7 +976,7 @@ describe('JobPoller', () => {
         }
         // This fake models the SSH boundary semantically: signal operations mutate remote process
         // state, while the ownership probe returns the configured remote observation.
-        if (command.includes('kill_job_pid 1234')) {
+        if (/^kill [0-9]/.test(command) || command.endsWith('kill_job_pid 1234')) {
           signals.push(1234)
           return {
             exitCode: 0,
@@ -1425,7 +1438,7 @@ describe('JobPoller', () => {
 
     expect(runner.run).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining('job_pid_is_owned "$RECOVERY_PID"'),
+      expect.stringContaining('job_scope_state "$RECOVERY_PID"'),
       expect.anything()
     )
     expect(runner.run).toHaveBeenCalledWith(

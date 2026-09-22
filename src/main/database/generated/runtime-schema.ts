@@ -858,6 +858,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeJob_leftOnRemoteJson_check" CHECK ("leftOnRemote" IS NULL OR (json_valid("leftOnRemote") AND json_type("leftOnRemote") = 'array'))
 );`,
   `CREATE TABLE IF NOT EXISTS "ComputeJobOperation" (
+    "failureCode" TEXT,
+    "requestedAt" DATETIME,
+    "forceRequested" BOOLEAN NOT NULL DEFAULT false,
     "id" TEXT NOT NULL PRIMARY KEY,
     "jobId" TEXT NOT NULL,
     "kind" TEXT NOT NULL,

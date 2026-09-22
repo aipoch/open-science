@@ -668,6 +668,7 @@ const jobResultWithFiles = (
   ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
   result_final: isComputeJobResultFinal(job),
   cancellation_status: job.cancellation_status,
+  cancellation: job.cancellation,
   exit_code: job.exit_code,
   ...(localOutputRoot ? { local_output_root: localOutputRoot } : {}),
   featured_files: featuredFiles,

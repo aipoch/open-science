@@ -62,7 +62,9 @@ describe('Compute Job harvest retry migration', () => {
       `INSERT INTO "ComputeJobOperation" (id, "jobId", kind, "updatedAt") VALUES ('operation', 'pending', 'cancel', 456)`
     )
     const jobsBefore = await client.$queryRawUnsafe('SELECT * FROM "ComputeJob" ORDER BY id')
-    const operationsBefore = await client.$queryRawUnsafe('SELECT * FROM "ComputeJobOperation"')
+    const operationsBefore = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
+      'SELECT * FROM "ComputeJobOperation"'
+    )
     const indexesBefore = await client.$queryRawUnsafe(
       `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ComputeJob' ORDER BY name`
     )
@@ -71,8 +73,17 @@ describe('Compute Job harvest retry migration', () => {
     expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJob" ORDER BY id')).toEqual(
       jobsBefore
     )
-    expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJobOperation"')).toEqual(
-      operationsBefore
+    expect(
+      await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
+        'SELECT * FROM "ComputeJobOperation"'
+      )
+    ).toEqual(
+      operationsBefore.map((row) => ({
+        ...row,
+        failureCode: null,
+        requestedAt: null,
+        forceRequested: false
+      }))
     )
     expect(
       await client.$queryRawUnsafe(
@@ -90,6 +101,10 @@ describe('Compute Job harvest retry migration', () => {
     expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
     await client.$executeRawUnsafe(`DELETE FROM "ComputeJob" WHERE id = 'pending'`)
-    expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJobOperation"')).toEqual([])
+    expect(
+      await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
+        'SELECT * FROM "ComputeJobOperation"'
+      )
+    ).toEqual([])
   })
 })

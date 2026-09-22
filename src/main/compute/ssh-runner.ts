@@ -388,11 +388,13 @@ export class SystemSshRunner implements SshRunner {
       opts.signal?.addEventListener('abort', onAbort, { once: true })
       child.stdout?.on('data', onStdout)
       child.stderr?.on('data', onStderr)
-      if (streamCommand) child.stdin?.once('error', onStdinError)
+      child.stdin?.once('error', onStdinError)
       child.once('exit', onExit)
       child.once('close', onClose)
       child.once('error', onError)
-      if (streamCommand) child.stdin?.end(finalCommand)
+      // Every invocation is non-interactive. Leaving an unused pipe open can stall OpenSSH on
+      // Windows; streamed commands still receive their complete payload before EOF.
+      child.stdin?.end(streamCommand ? finalCommand : undefined)
 
       // The signal may have changed between throwIfAborted() and listener registration.
       if (opts.signal?.aborted) onAbort()

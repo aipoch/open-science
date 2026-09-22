@@ -176,6 +176,7 @@ export const emitJobNotification = async (
     session_id: updatedJob.session_id,
     status: updatedJob.status,
     cancellation_status: updatedJob.cancellation_status,
+    cancellation: updatedJob.cancellation,
     intent: updatedJob.intent,
     created_at: updatedJob.created_at,
     started_at: updatedJob.started_at,

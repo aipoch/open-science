@@ -57,11 +57,18 @@ export function JobStatusBadge({
   const { t } = useTranslation()
   const { labelKey, className } = cancellationStatus
     ? {
-        labelKey: cancellationStatus === 'cancelled' ? 'Cancelled' : 'Cancelling',
-        className:
+        labelKey:
           cancellationStatus === 'cancelled'
-            ? 'border-border bg-muted text-muted-foreground'
-            : 'border-transparent bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
+            ? 'Cancelled'
+            : cancellationStatus === 'cancel_failed'
+              ? 'Cancellation failed'
+              : 'Cancelling',
+        className:
+          cancellationStatus === 'cancel_failed'
+            ? STATUS_STYLE.failed.className
+            : cancellationStatus === 'cancelled'
+              ? 'border-border bg-muted text-muted-foreground'
+              : 'border-transparent bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
       }
     : STATUS_STYLE[status]
   return (

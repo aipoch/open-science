@@ -136,7 +136,7 @@ describe('database startup logging', () => {
               '0041_bookmarks',
               '0042_classification_usage',
               '0043_pdf_annotations',
-              '0044_literature_smart_collections'
+              '0044_compute_cancellation_feedback'
             ],
             adoptedLegacy: true
           })

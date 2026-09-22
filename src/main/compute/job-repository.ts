@@ -1,3 +1,4 @@
+import { cancellationProjection, type CancellationRecord } from './cancellation-feedback'
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
 import type {
   ComputeJob,
@@ -22,7 +23,7 @@ import {
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
 type PrismaComputeJobWithOperation = PrismaComputeJob & {
-  operations?: Array<{ phase: string; outcome: string | null }>
+  operations?: CancellationRecord[]
 }
 type ComputeJobFieldProtection = Pick<
   OptionalSecureStorageStringProtection,
@@ -792,12 +793,7 @@ export class ComputeJobRepository {
       ...(integrityIssues.length > 0
         ? { integrity_issues: integrityIssues, needs_attention: true }
         : {}),
-      cancellation_status:
-        row.operations?.[0]?.phase === 'active'
-          ? 'cancelling'
-          : row.operations?.[0]?.outcome === 'fulfilled'
-            ? 'cancelled'
-            : undefined,
+      ...cancellationProjection(row.operations?.[0]),
       intent: sensitive.intent,
       command: sensitive.command,
       command_hash: row.commandHash,

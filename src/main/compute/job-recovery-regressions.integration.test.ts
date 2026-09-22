@@ -212,7 +212,7 @@ describe('Compute Job recovery behavior', () => {
       )
       await reaper.runOnce()
       expect((await owner.status(job.job_id, scope)).cancellation_status).toBe(
-        evidence === 'pending' ? 'cancelling' : 'cancelled'
+        evidence === 'pending' ? 'cancel_failed' : 'cancelled'
       )
       expect(run).toHaveBeenCalledTimes(evidence === 'running' ? 2 : 1)
     }
@@ -233,7 +233,7 @@ describe('Compute Job recovery behavior', () => {
     )
     await reaper.runOnce()
     expect(connectionBroker.acquire).not.toHaveBeenCalled()
-    expect((await owner.status(job.job_id, scope)).cancellation_status).toBe('cancelling')
+    expect((await owner.status(job.job_id, scope)).cancellation_status).toBe('cancel_failed')
     tracker.end(job.job_id)
   })
 

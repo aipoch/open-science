@@ -400,7 +400,14 @@ export type ComputeJobIntegrityIssue = Readonly<{
 
 // Additive logical projection. Existing clients can continue reading `status`; cancellation-aware
 // clients use this field to distinguish durable intent from confirmed termination.
-export type ComputeJobCancellationStatus = 'cancelling' | 'cancelled'
+export type ComputeCancellationFeedback = Readonly<{
+  failureCode?: string
+  attemptCount: number
+  requestedAt: number
+  updatedAt: number
+}>
+
+export type ComputeJobCancellationStatus = 'cancelling' | 'cancel_failed' | 'cancelled'
 // A compute job record, normalized for cross-process sharing (main → renderer via IPC, main → repl
 // via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
 // boundary to their respective types.
@@ -420,6 +427,7 @@ export type ComputeJob = {
   integrity_issues?: ComputeJobIntegrityIssue[]
   needs_attention?: boolean
   cancellation_status?: ComputeJobCancellationStatus
+  cancellation?: ComputeCancellationFeedback
   intent: string
   command: string
   command_hash: string
@@ -478,6 +486,7 @@ export type JobStatusResult = {
   // terminality can precede harvest, so callers must not infer finality from status alone.
   result_final: boolean
   cancellation_status?: ComputeJobCancellationStatus
+  cancellation?: ComputeCancellationFeedback
   exit_code: number | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined
@@ -506,6 +515,7 @@ export type JobResult = {
   // whether an Agent has observed the durable final result.
   result_final: boolean
   cancellation_status?: ComputeJobCancellationStatus
+  cancellation?: ComputeCancellationFeedback
   exit_code: number | undefined
   // Absolute canonical Notebook Session root. Join workspace-relative output paths to this root
   // before passing a harvested file to write_artifact_file as an absolute localPath.
@@ -590,6 +600,7 @@ export type JobSummary = {
   integrity_issues?: ComputeJobIntegrityIssue[]
   needs_attention?: boolean
   cancellation_status?: ComputeJobCancellationStatus
+  cancellation?: ComputeCancellationFeedback
   intent: string
   created_at: number
   started_at: number | undefined

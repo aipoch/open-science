@@ -537,6 +537,16 @@ describe('SystemSshRunner', () => {
     expect(child.stdin.end).toHaveBeenCalledWith(command)
   })
 
+  it('closes unused stdin for inline commands so non-interactive SSH cannot wait for input', async () => {
+    const child = new FakeChild()
+    execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+    const result = runner.run(target(), 'printf owned', { timeoutMs: 5000 })
+    child.emit('close', 0)
+    await result
+    expect(child.stdin.end).toHaveBeenCalledOnce()
+    expect(child.stdin.end).toHaveBeenCalledWith(undefined)
+  })
+
   it('captures stdout/stderr and reports exitCode on a clean child close', async () => {
     const child = new FakeChild()
     execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)

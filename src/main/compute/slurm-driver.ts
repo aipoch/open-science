@@ -458,6 +458,7 @@ export const cancelSlurmJob = async (
   )
   const queueFailure = classifyConnectionFailure(queue, false)
   if (queueFailure) throw queueFailure
+  if (queue.exitCode !== 0 || isConnectionStdoutTruncated(queue)) return false
   const queueStates = queue.stdout.split(/\r?\n/).map(normalizeState).filter(Boolean)
   if (queueStates.length > 0) return queueStates.every(isTerminalSlurmState)
 
@@ -467,7 +468,7 @@ export const cancelSlurmJob = async (
   )
   const accountingFailure = classifyConnectionFailure(accounting, false)
   if (accountingFailure) throw accountingFailure
-  if (accounting.exitCode !== 0) return false
+  if (accounting.exitCode !== 0 || isConnectionStdoutTruncated(accounting)) return false
   const parent = accounting.stdout
     .split(/\r?\n/)
     .map((line) => line.trim().split('|'))

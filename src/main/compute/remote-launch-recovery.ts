@@ -8,6 +8,7 @@ import { quoteRemotePath } from './remote-path-security'
 import type { ComputeJob } from '../../shared/compute'
 import type { RemoteHandle } from './job-dispatcher'
 import { remoteJobPidOwnershipFunctionLines } from './remote-job-process'
+import { remoteExecutionScopeFunctionLines } from './remote-execution-scope'
 
 const RECOVERY_PROTOCOL = 'OPEN_SCIENCE_DISPATCH_RECOVERY_V1'
 const RECOVERY_TIMEOUT_MS = 30_000
@@ -75,12 +76,15 @@ const buildRecoveryProbe = (workdir: string): string => {
     `printf 'pid:%s\n' "$RECOVERY_PID"`,
     `  RECOVERY_EXPECTED_CWD=$(cd ${quotedWorkdir} 2>/dev/null && pwd -P)`,
     'workdir=$RECOVERY_EXPECTED_CWD',
+    'scope_required=0; [ ! -f "$workdir/supervisor.py" ] && [ ! -e "$workdir/execution.scope" ] || scope_required=1',
     ...remoteJobPidOwnershipFunctionLines(),
+    ...remoteExecutionScopeFunctionLines(),
     `case "$RECOVERY_PID" in '' ) echo cwd_match:0 ;; *[!0-9]*) echo cwd_match:unknown ;; *)`,
-    '  job_pid_is_owned "$RECOVERY_PID"; case $? in 0) echo cwd_match:1 ;; 1|3) echo cwd_match:0 ;; *) echo cwd_match:unknown ;; esac',
+    '  job_scope_state "$RECOVERY_PID"; case $? in 0) echo cwd_match:1 ;; 3) echo cwd_match:0 ;; *) echo cwd_match:unknown ;; esac',
     ';; esac',
     `RECOVERY_STARTED_AT=$(stat -c %Y ${quotedPidFile} 2>/dev/null || stat -f %m ${quotedPidFile} 2>/dev/null || true)`,
-    `printf 'started_at:%s\n' "$RECOVERY_STARTED_AT"`
+    `printf 'started_at:%s\n' "$RECOVERY_STARTED_AT"`,
+    'printf "scope_version:%s\\n" "$scope_required"'
   ].join('\n')
 }
 
@@ -98,9 +102,18 @@ export const probeRemoteLaunch = async (
   if (result.exitCode !== 0 || isConnectionStdoutTruncated(result)) return { kind: 'ambiguous' }
 
   const lines = result.stdout.trimEnd().split('\n')
-  if ((lines.length !== 5 && lines.length !== 6) || lines[0] !== RECOVERY_PROTOCOL) {
+  if (
+    (lines.length !== 5 && lines.length !== 6 && lines.length !== 7) ||
+    lines[0] !== RECOVERY_PROTOCOL
+  ) {
     return { kind: 'ambiguous' }
   }
+  const scopeVersion = lines[6]?.slice('scope_version:'.length)
+  if (
+    lines.length === 7 &&
+    (!lines[6].startsWith('scope_version:') || !['0', '1'].includes(scopeVersion!))
+  )
+    return { kind: 'ambiguous' }
   const workdirRaw = lines[1]?.startsWith('workdir:')
     ? lines[1].slice('workdir:'.length)
     : undefined
@@ -134,12 +147,16 @@ export const probeRemoteLaunch = async (
     return { kind: 'ambiguous' }
   }
   if (workdirRaw === '0') return { kind: 'not_started' }
-  if (exitCode !== undefined) return { kind: 'exited', exitCode, ...(pid ? { pid } : {}) }
+  if (exitCode !== undefined && cwdMatchRaw === '0')
+    return { kind: 'exited', exitCode, ...(pid ? { pid } : {}) }
   if (!pid) return cwdMatchRaw === '0' ? { kind: 'pending' } : { kind: 'ambiguous' }
   return cwdMatchRaw === '1'
     ? {
         kind: 'running',
-        handle: remoteHandleFor(workdir, pid),
+        handle: {
+          ...remoteHandleFor(workdir, pid),
+          ...(scopeVersion === '1' ? { scope_version: 1 as const } : {})
+        },
         ...(startedAtSeconds === undefined ? {} : { startedAt: new Date(startedAtSeconds * 1000) })
       }
     : { kind: 'vanished', pid }
