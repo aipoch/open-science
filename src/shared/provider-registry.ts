@@ -830,6 +830,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
       {
+        id: 'grok-4.7',
+        contextWindow: 500_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high-xhigh'
+      },
+      {
         id: 'grok-4.6',
         contextWindow: 500_000,
         apiEndpoint: 'responses',
@@ -852,6 +858,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'kimi-k3', contextWindow: 1_048_576 },
       { id: 'kimi-k2.6', contextWindow: 262_144 },
       { id: 'longcat-2.0', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
+      {
+        id: 'deepseek-v4.1-flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'low-high-max'
+      },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
       {
         id: 'deepseek-v4-flash',
@@ -863,6 +874,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_000_000,
         reasoningEffort: 'none-high-max'
       },
+      { id: 'mimo-v2.6-flash', contextWindow: 1_048_576 },
+      { id: 'mimo-v2.6-pro', contextWindow: 1_048_576 },
       { id: 'mimo-v2.5', contextWindow: 1_000_000 },
       { id: 'mimo-v2.5-pro', contextWindow: 1_048_576 },
       {
@@ -870,6 +883,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_000_000,
         apiEndpoint: 'anthropic',
         reasoningEffort: 'none-high'
+      },
+      {
+        id: 'muse-spark-1.3-contributor',
+        contextWindow: 1_048_576,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'minimal-low-medium-high'
       },
       {
         id: 'muse-spark-1.2-contributor',
@@ -884,6 +903,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'none-high'
       },
       {
+        id: 'qwen3.8-flash',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'low-medium-xhigh'
+      },
+      {
         id: 'qwen3.7-max',
         contextWindow: 1_000_000,
         apiEndpoint: 'anthropic',
@@ -895,21 +920,28 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         apiEndpoint: 'anthropic',
         reasoningEffort: 'none-high'
       },
+      { id: 'hy4-preview', contextWindow: 1_024_000, reasoningEffort: 'none-high' },
       { id: 'hy3', contextWindow: 256_000, reasoningEffort: 'none-high' }
     ],
     multimodal: {
       multimodalModels: [
         'kimi-k2.7-code',
+        'grok-4.7',
         'grok-4.6',
         'gpt-5.6-luna',
         'glm-5.3-flash',
         'kimi-k3',
         'kimi-k2.6',
+        'deepseek-v4.1-flash',
         'deepseek-v4-flash-vision-exp',
+        'mimo-v2.6-flash',
+        'mimo-v2.6-pro',
         'mimo-v2.5',
         'mimo-v2.5-pro',
+        'muse-spark-1.3-contributor',
         'muse-spark-1.2-contributor',
         'qwen3.8-max',
+        'qwen3.8-flash',
         'qwen3.7-plus'
       ]
     }
@@ -922,9 +954,17 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     baseUrl: 'https://opencode.ai/zen/v1',
     apiKeyUrl: 'https://opencode.ai/zen',
     // Zen also mixes protocols. Exclude Google-native, deprecated, and explicitly
-    // product-excluded models while preserving the existing Kimi default.
+    // product-excluded models while preserving the existing Kimi default. Legacy lower-tier
+    // models are not backfilled, and the transient limited-time free entries stay out (the
+    // two grandfathered free models at the tail predate that policy).
     models: [
       { id: 'kimi-k2.7-code', contextWindow: 262_144 },
+      {
+        id: 'gpt-6-astra',
+        contextWindow: 1_050_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'standard-5'
+      },
       {
         id: 'gpt-5.6-sol',
         contextWindow: 1_050_000,
@@ -944,6 +984,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         reasoningEffort: 'none-low-medium-high-max'
       },
       {
+        id: 'claude-fable-5-1',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'standard-5'
+      },
+      {
         id: 'claude-fable-5',
         contextWindow: 1_000_000,
         apiEndpoint: 'anthropic',
@@ -960,6 +1006,12 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         contextWindow: 1_000_000,
         apiEndpoint: 'anthropic',
         reasoningEffort: 'standard-5'
+      },
+      {
+        id: 'grok-4.7',
+        contextWindow: 500_000,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'low-medium-high-xhigh'
       },
       {
         id: 'grok-4.6',
@@ -1079,10 +1131,22 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       },
       { id: 'grok-build-0.1', contextWindow: 256_000, apiEndpoint: 'responses' },
       {
+        id: 'muse-spark-1.3',
+        contextWindow: 1_048_576,
+        apiEndpoint: 'responses',
+        reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
         id: 'muse-spark-1.2',
         contextWindow: 1_048_576,
         apiEndpoint: 'responses',
         reasoningEffort: 'minimal-low-medium-high'
+      },
+      {
+        id: 'qwen3.8-flash',
+        contextWindow: 1_000_000,
+        apiEndpoint: 'anthropic',
+        reasoningEffort: 'low-medium-xhigh'
       },
       {
         id: 'qwen3.7-max',
@@ -1104,9 +1168,16 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       },
       { id: 'kimi-k3', contextWindow: 1_048_576 },
       { id: 'kimi-k2.6', contextWindow: 262_144, reasoningEffort: 'none-high' },
+      {
+        id: 'deepseek-v4.1-flash',
+        contextWindow: 1_000_000,
+        reasoningEffort: 'low-high-max'
+      },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'minimax-m3', contextWindow: 512_000 },
+      { id: 'glm-5.3', contextWindow: 1_000_000, reasoningEffort: 'low-high-max' },
+      { id: 'glm-5.3-flash', contextWindow: 1_000_000, reasoningEffort: 'low-high-max' },
       { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'high-max' },
       { id: 'glm-5.1', contextWindow: 204_800, reasoningEffort: 'none-high' },
       // Free Chat Completions models documented at https://opencode.ai/docs/zen/.
@@ -1117,12 +1188,15 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     multimodal: {
       multimodalModels: [
         'kimi-k2.7-code',
+        'gpt-6-astra',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
+        'claude-fable-5-1',
         'claude-fable-5',
         'claude-opus-5',
         'claude-sonnet-5',
+        'grok-4.7',
         'grok-4.6',
         'gpt-5.5',
         'gpt-5.5-pro',
@@ -1144,11 +1218,15 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
         'claude-haiku-4-5',
         'grok-4.5',
         'grok-build-0.1',
+        'muse-spark-1.3',
         'muse-spark-1.2',
+        'qwen3.8-flash',
         'qwen3.5-plus',
         'kimi-k3',
         'kimi-k2.6',
+        'deepseek-v4.1-flash',
         'minimax-m3',
+        'glm-5.3-flash',
         'mimo-v2.5-free'
       ]
     }
