@@ -148,3 +148,34 @@ for (const action of ['disable', 'unmount'] as const) {
     })
   }
 }
+
+for (const action of ['disable', 'unmount'] as const) {
+  test(`clears iframe pointerout before ${action}`, async ({ page }) => {
+    await page.goto('/divider-cursor.html')
+    const handle = page.getByRole('separator', { name: 'Resize fixture' })
+    await expect(handle).toBeVisible()
+    const box = (await handle.boundingBox())!
+    await page.mouse.move(box.x - 5, box.y + box.height / 2)
+    await expect(handle).toHaveAttribute('data-separator', 'hover')
+    const targets = await page.locator('[data-resize-cursor]').elementHandles()
+    expect(targets.length).toBeGreaterThan(0)
+    // A real move into the child frame takes the parent's pointerout path.
+    await page.mouse.move(box.x + 100, box.y + box.height / 2)
+    await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
+    await page.keyboard.press(action === 'disable' ? 'd' : 'u')
+    for (const target of targets) {
+      expect(await target.evaluate((element) => element.hasAttribute('data-resize-cursor'))).toBe(
+        false
+      )
+    }
+    expect(
+      await page.evaluate(() =>
+        document.adoptedStyleSheets
+          .flatMap((sheet) => Array.from(sheet.cssRules))
+          .some((rule) => /cursor:.*resize/.test(rule.cssText))
+      )
+    ).toBe(false)
+    if (action === 'disable')
+      await expect(page.frameLocator('iframe').locator('body')).toHaveCSS('cursor', 'crosshair')
+  })
+}
