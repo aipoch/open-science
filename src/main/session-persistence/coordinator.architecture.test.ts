@@ -1663,7 +1663,13 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/pdf-annotations/repository.integration.test.ts',
       'src/main/pdf-annotations/service.test.ts',
       'src/main/session-package/ro-crate.integration.test.ts',
-      'src/main/session-package/ro-crate.test.ts'
+      'src/main/session-package/ro-crate.test.ts',
+      'src/main/settings/codex-bridge-tools.test.ts',
+      'src/main/settings/backend-route-planner.test.ts',
+      'src/main/settings/claude-provider-configuration.integration.test.ts',
+      'src/main/settings/provider-runtime-health-owner.test.ts',
+      'src/main/settings/provider-transport-owner.test.ts',
+      'src/main/settings/session-details-model-owner.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
