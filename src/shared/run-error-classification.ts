@@ -29,6 +29,13 @@ export const RESUME_RECONNECT_FAILED_MESSAGE =
   'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
 export const RESUME_MODEL_INCOMPATIBLE_MESSAGE =
   "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
+export const CLAUDE_CLI_INCOMPATIBLE_MESSAGE =
+  'The installed Claude Code CLI is incompatible with this ACP adapter. Update Claude Code, then re-detect it in Settings.'
+
+const CLAUDE_CLI_UNKNOWN_OPTION_PATTERN = /unknown option ['"]--managed-settings['"]/i
+
+export const isClaudeCliCompatibilityError = (message: string): boolean =>
+  CLAUDE_CLI_UNKNOWN_OPTION_PATTERN.test(message)
 
 // A conversation that needs image replay on a text-only model (useWorkspaceAgentRuntime).
 export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
@@ -139,6 +146,7 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
   IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE,
   CLAUDE_EXECUTABLE_MISSING_MESSAGE,
@@ -172,6 +180,7 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and
   // any framework name. It is app-authored setup guidance ("Open Settings → Model"), not a bug.
   if (message.startsWith(ACTIVE_MODEL_INCOMPATIBLE_PREFIX)) return true
+  if (message === CLAUDE_CLI_INCOMPATIBLE_MESSAGE) return true
   // Claude Code's fixed transport wrappers (createSession / persisted pre-flag sessions).
   if (isClaudeApiConnectionFailure(message) || isClaudeApiResponseInterruption(message)) return true
   // A request-size overflow the app auto-recovers from — never a reportable bug.

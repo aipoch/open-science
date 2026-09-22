@@ -5,6 +5,7 @@ import { buildUnsupportedCodexAcpVersionMessage } from './codex-runtime'
 import {
   buildActiveModelIncompatibleMessage,
   buildConfiguredModelUnavailableMessage,
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
   CLAUDE_EXECUTABLE_MISSING_MESSAGE,
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
@@ -50,6 +51,7 @@ describe('isReportableRunFailure (text tier)', () => {
       RESUME_UNSUPPORTED_MESSAGE,
       RESUME_RECONNECT_FAILED_MESSAGE,
       RESUME_MODEL_INCOMPATIBLE_MESSAGE,
+      CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
       IMAGE_REPLAY_UNSUPPORTED_MESSAGE
     ]) {
       expect(isReportableRunFailure(message)).toBe(false)

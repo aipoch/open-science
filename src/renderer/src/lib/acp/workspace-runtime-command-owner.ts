@@ -57,7 +57,11 @@ import {
 } from './workspace-runtime-attachment-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import {
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  isClaudeCliCompatibilityError,
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE
+} from '../../../../shared/run-error-classification'
 type SendWorkspaceMessageIntent = {
   expectedFrameworkId?: AgentFrameworkId
   sessionId?: string
@@ -171,11 +175,15 @@ const resolveSendAgentTarget = (
     reasoningEffort: configuration.reasoningEffort
   }
 }
-const createSessionFailureMessage = (error: unknown): string =>
-  errorMessage(error)
+const createSessionFailureMessage = (error: unknown): string => {
+  const detail = errorMessage(error)
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
     .replace(/^Error(?::\s*|$)/i, '')
-    .trim() || 'Agent session could not be created.'
+    .trim()
+  return isClaudeCliCompatibilityError(detail)
+    ? CLAUDE_CLI_INCOMPATIBLE_MESSAGE
+    : detail || 'Agent session could not be created.'
+}
 const latestFailureId = (events: AcpRuntimeEvent[], sessionId: string): string | undefined => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
