@@ -305,6 +305,11 @@ describe('ACP Session presentation policy', () => {
                 'Glob',
                 'Grep'
               ],
+              managedSettings: {
+                disableAgentView: true,
+                disableWorkflows: true,
+                workflowKeywordTriggerEnabled: false
+              },
               env: {
                 CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
                 CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',

@@ -124,6 +124,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。"
   },
   "renderer": {
+    "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "已安装的 Claude Code CLI 不兼容或无法验证其版本。请将 Claude Code 更新至 2.1.118 或更高版本，然后在设置中重新检测。",
     "Public research records, versions and file metadata from Zenodo.": "Zenodo 的公开研究记录、版本和文件元数据。",
     "Search public Zenodo records, one page at a time.": "逐页搜索 Zenodo 的公开记录。",
     "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "获取 Zenodo 记录元数据和文件链接，不下载文件。",

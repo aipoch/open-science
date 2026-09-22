@@ -126,6 +126,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "Ce paquet de session nécessite une version plus récente d’Open Science. Mettez Open Science à jour, puis réessayez de l’importer."
   },
   "renderer": {
+    "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "La CLI Claude Code installée est incompatible ou sa version n’a pas pu être vérifiée. Mettez Claude Code à jour vers la version 2.1.118 ou ultérieure, puis relancez la détection dans les paramètres.",
     "Public research records, versions and file metadata from Zenodo.": "Notices de recherche publiques, versions et métadonnées de fichiers de Zenodo.",
     "Search public Zenodo records, one page at a time.": "Rechercher les notices publiques de Zenodo, une page à la fois.",
     "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Récupérer les métadonnées et les liens de fichiers d’une notice Zenodo. Les fichiers ne sont pas téléchargés.",

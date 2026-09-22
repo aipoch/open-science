@@ -124,6 +124,7 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
   },
   "renderer": {
+    "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "インストール済みの Claude Code CLI に互換性がないか、バージョンを確認できません。Claude Code を 2.1.118 以降に更新し、設定で再検出してください。",
     "Public research records, versions and file metadata from Zenodo.": "Zenodo の公開研究レコード、バージョン、ファイルのメタデータ。",
     "Search public Zenodo records, one page at a time.": "Zenodo の公開レコードを 1 ページずつ検索します。",
     "Retrieve Zenodo record metadata and file links. Files are not downloaded.": "Zenodo のレコードのメタデータとファイルリンクを取得します。ファイルはダウンロードされません。",

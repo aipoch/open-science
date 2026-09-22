@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { describePromptError } from '../main/acp/prompt-error'
 import { buildUnsupportedCodexAcpVersionMessage } from './codex-runtime'
+import { isClaudeCliCompatibilityError } from './claude-runtime'
 import {
   buildActiveModelIncompatibleMessage,
   buildConfiguredModelUnavailableMessage,
@@ -28,6 +29,16 @@ import {
 // errors are suppressed by that flag (set at the ACP layer), NOT here — so at this text tier they read
 // as reportable, and this suite asserts exactly that boundary.
 describe('isReportableRunFailure (text tier)', () => {
+  it('only recognizes app-authored Claude version guidance, not arbitrary CLI errors', () => {
+    expect(
+      isClaudeCliCompatibilityError(
+        `Error invoking remote method 'acp:create-session': Error: ${CLAUDE_CLI_INCOMPATIBLE_MESSAGE}`
+      )
+    ).toBe(true)
+    const stderr = "Internal error: unknown option '--managed-settings'"
+    expect(isClaudeCliCompatibilityError(stderr)).toBe(false)
+    expect(isReportableRunFailure(stderr)).toBe(true)
+  })
   it('reports an empty or whitespace-only failure (nothing explains it)', () => {
     expect(isReportableRunFailure(undefined)).toBe(true)
     expect(isReportableRunFailure(null)).toBe(true)

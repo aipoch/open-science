@@ -1,5 +1,7 @@
 import { isMediaOverflowError } from './media-overflow'
 import { isUnsupportedCodexAcpVersionError } from './codex-runtime'
+import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from './claude-runtime'
+export { CLAUDE_CLI_INCOMPATIBLE_MESSAGE, isClaudeCliCompatibilityError } from './claude-runtime'
 
 // Classifies a failed run into "expected" (keep the message, no report button) vs "unknown/reportable"
 // (an opaque or internal failure worth a GitHub issue). The primary signal is STRUCTURAL, not textual:
@@ -29,13 +31,6 @@ export const RESUME_RECONNECT_FAILED_MESSAGE =
   'Could not reconnect to the agent; check it is installed, then click Resume to retry.'
 export const RESUME_MODEL_INCOMPATIBLE_MESSAGE =
   "The active model isn't compatible with this agent framework. Open Settings → Model to pick a compatible model or switch frameworks."
-export const CLAUDE_CLI_INCOMPATIBLE_MESSAGE =
-  'The installed Claude Code CLI is incompatible with this ACP adapter. Update Claude Code, then re-detect it in Settings.'
-
-const CLAUDE_CLI_UNKNOWN_OPTION_PATTERN = /unknown option ['"]--managed-settings['"]/i
-
-export const isClaudeCliCompatibilityError = (message: string): boolean =>
-  CLAUDE_CLI_UNKNOWN_OPTION_PATTERN.test(message)
 
 // A conversation that needs image replay on a text-only model (useWorkspaceAgentRuntime).
 export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
@@ -180,7 +175,6 @@ export const isExpectedRunFailure = (error: string | null | undefined): boolean 
   // share this leading phrase, so one prefix covers the createSession path (which is not reworded) and
   // any framework name. It is app-authored setup guidance ("Open Settings → Model"), not a bug.
   if (message.startsWith(ACTIVE_MODEL_INCOMPATIBLE_PREFIX)) return true
-  if (message === CLAUDE_CLI_INCOMPATIBLE_MESSAGE) return true
   // Claude Code's fixed transport wrappers (createSession / persisted pre-flag sessions).
   if (isClaudeApiConnectionFailure(message) || isClaudeApiResponseInterruption(message)) return true
   // A request-size overflow the app auto-recovers from — never a reportable bug.

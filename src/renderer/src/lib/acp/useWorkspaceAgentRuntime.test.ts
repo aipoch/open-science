@@ -1123,15 +1123,15 @@ describe('workspace agent runtime event processing', () => {
 })
 
 describe('resume failure classification', () => {
-  it('identifies an unsupported Claude CLI option as an actionable runtime incompatibility', () => {
+  it('preserves the main-process Claude version gate message when resuming', () => {
     const message = getResumeFailureMessage(
       new Error(
-        "Error invoking remote method 'acp:resume-session': RequestError: Internal error (stderr: error: unknown option '--managed-settings')"
+        "Error invoking remote method 'acp:resume-session': Error: The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings."
       )
     )
 
     expect(message).toBe(
-      'The installed Claude Code CLI is incompatible with this ACP adapter. Update Claude Code, then re-detect it in Settings.'
+      'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
     )
   })
 
@@ -6919,14 +6919,14 @@ describe('workspace agent message sending', () => {
     )
   })
 
-  it('surfaces an unsupported Claude CLI option as actionable setup guidance', async () => {
+  it('surfaces the main-process Claude version gate as actionable setup guidance', async () => {
     const runtime = {
       state: createSnapshot(),
       createSession: vi
         .fn()
         .mockRejectedValue(
           new Error(
-            "Error invoking remote method 'acp:create-session': RequestError: Internal error (stderr: error: unknown option '--managed-settings')"
+            "Error invoking remote method 'acp:create-session': Error: The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings."
           )
         ),
       resumeSession: vi.fn(),
@@ -6942,7 +6942,7 @@ describe('workspace agent message sending', () => {
     await flushRuntimeTasks()
 
     expect(useSessionStore.getState().sessions[0]?.error).toBe(
-      'The installed Claude Code CLI is incompatible with this ACP adapter. Update Claude Code, then re-detect it in Settings.'
+      'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
     )
   })
 
