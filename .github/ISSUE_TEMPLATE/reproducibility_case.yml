@@ -73,17 +73,18 @@ body:
       description: How (or whether) you want to be credited in the example index.
     validations:
       required: false
-  - type: dropdown
-    id: licenses
+  - type: input
+    id: code-license
     attributes:
-      label: Code and data licenses (optional)
-      description: Recorded separately for code and data.
-      options:
-        - Not sure yet
-        - MIT
-        - Apache-2.0
-        - CC-BY-4.0 (data)
-        - Other (describe in the case)
+      label: Code license (optional)
+      description: The license covering the contributed code, such as MIT or Apache-2.0. If unknown, say so.
+    validations:
+      required: false
+  - type: input
+    id: data-license
+    attributes:
+      label: Data license (optional)
+      description: The license or terms covering the data, such as CC-BY-4.0, or a link to the source terms. If unknown, say so.
     validations:
       required: false
   - type: checkboxes
