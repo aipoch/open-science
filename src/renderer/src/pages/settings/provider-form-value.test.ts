@@ -353,6 +353,14 @@ describe('provider-kind helpers', () => {
     expect(groupKeys('other')).toEqual(['custom'])
   })
 
+  it('defaults new xAI subscriptions to Grok 4.7', () => {
+    expect(providerKindPatch('xai-subscription')).toMatchObject({
+      type: 'xai-subscription',
+      model: 'grok-4.7',
+      apiEndpoint: 'responses'
+    })
+  })
+
   it('uses one provider kind while keeping the auth mode in the form value', () => {
     expect(providerKindPatch('codex-subscription')).toMatchObject({
       type: 'codex-shared',

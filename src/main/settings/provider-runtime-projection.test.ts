@@ -69,6 +69,43 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
   )
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'offers Grok 4.7 without replacing saved xAI selections for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const framework = getAgentFramework(frameworkId)
+      for (const type of ['official', 'xai-subscription'] as const) {
+        const provider: StoredProvider = {
+          id: `xai-${type}`,
+          type,
+          vendorId: 'xai',
+          name: 'xAI',
+          model: 'grok-4.6'
+        }
+        const before = structuredClone(provider)
+        expect(owner.toProviderView(provider).models).toContain('grok-4.7')
+        expect(
+          owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+        ).toBe('grok-4.6')
+        const target = owner.resolveRuntimeTarget(
+          provider,
+          { kind: 'required', model: 'grok-4.7' },
+          framework
+        )
+        expect(target.effectiveModel).toBe('grok-4.7')
+        expect(target.frameworkCompatible).toBe(
+          type === 'xai-subscription' || frameworkId !== 'claude-code'
+        )
+        expect(target.provider).toMatchObject({
+          model: 'grok-4.7',
+          contextWindow: 500_000,
+          supportsImageInput: true
+        })
+        expect(provider).toEqual(before)
+      }
+    }
+  )
+
   it('fails closed when a required model is outside the provider catalog', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

@@ -476,7 +476,7 @@ const ProviderForm = ({
               'Save this provider, then sign in from its card with a device code. Open-Science securely refreshes the login and exposes Messages, Chat Completions, and Responses locally.'
             )}
           </p>
-          <code className="font-mono text-xs text-muted-foreground">{t('grok-4.6 · 500K')}</code>
+          <code className="font-mono text-xs text-muted-foreground">{t('grok-4.7 · 500K')}</code>
         </div>
       ) : isCodexSubscription ? (
         <>

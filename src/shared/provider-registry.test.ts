@@ -339,7 +339,7 @@ describe('provider registry', () => {
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('anthropic')).toBe('claude-opus-5')
-    expect(defaultVendorModel('xai')).toBe('grok-4.6')
+    expect(defaultVendorModel('xai')).toBe('grok-4.7')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.3')
   })
 
@@ -702,7 +702,24 @@ describe('provider registry', () => {
     // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
     // hidden and expose only the curated language-model catalog.
     expect(resolveVendorModelsUrl('xai')).toBeUndefined()
-    expect(defaultVendorModel('xai')).toBe('grok-4.6')
+    expect(defaultVendorModel('xai')).toBe('grok-4.7')
+  })
+
+  it('exposes Grok 4.7 with its documented capabilities and keeps existing xAI models', () => {
+    expect(getOfficialVendorModelIds('xai')).toEqual([
+      'grok-4.7',
+      'grok-4.6',
+      'grok-4.5',
+      'grok-4.3',
+      'grok-build-0.1'
+    ])
+    expect(resolveModelContextWindow('xai', 'grok-4.7')).toBe(500_000)
+    expect(isVendorModelMultimodal('xai', 'grok-4.7')).toBe(true)
+    expect(resolveVendorModelApiEndpoints('xai', 'grok-4.7')).toEqual(['openai', 'responses'])
+    expect(resolveVendorModelReasoningEffort('xai', 'grok-4.7')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'xhigh']
+    })
   })
 
   it('routes Apodex core models through Messages and Chat Completions', () => {

@@ -305,6 +305,7 @@ describe('ProviderForm field switching', () => {
     expect(providerType?.textContent).toContain('xAI (Grok)')
     expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
     expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>Grok</title>')
+    expect(container.textContent).toContain('grok-4.7')
     expect(container.textContent).toContain('grok-4.6')
   })
 
