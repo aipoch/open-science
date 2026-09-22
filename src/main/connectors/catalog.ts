@@ -209,6 +209,17 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'gdc',
+    displayName: 'GDC',
+    description: 'Cancer project, case and file inventories via the Genomic Data Commons API.',
+    useWhen:
+      'Use when you need GDC project, case or file metadata and data inventories — including project summaries, case identifiers, file formats, checksums, access classification and Data Transfer Tool manifests. GDC file discovery distinguishes open-access files from controlled-access files; controlled data requires the user’s GDC authorization, so finding a file or creating a manifest does not guarantee that it can be downloaded. No file bytes are downloaded by this connector.',
+    sources: ['Genomic Data Commons (GDC)'],
+    termsUrl: 'https://docs.gdc.cancer.gov/API/Users_Guide/Getting_Started/',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'rna',
     displayName: 'RNA',
     description: 'Non-coding RNA family data (metadata, alignments, models, structures) via Rfam.',
