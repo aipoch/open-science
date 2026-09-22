@@ -105,3 +105,46 @@ test('does not mark cursor targets during ordinary text selection', async ({ pag
   await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
   await page.mouse.up()
 })
+
+for (const action of ['disable', 'unmount'] as const) {
+  for (const dragging of [false, true]) {
+    test(`clears ${dragging ? 'drag' : 'hover'} cursor when the group is ${action === 'disable' ? 'disabled' : 'unmounted'}`, async ({
+      page
+    }) => {
+      await page.goto('/divider-cursor.html')
+      const handle = page.getByRole('separator', { name: 'Resize fixture' })
+      await expect(handle).toBeVisible()
+      const box = (await handle.boundingBox())!
+      await page.mouse.move(box.x - 5, box.y + box.height / 2)
+      await expect(handle).toHaveAttribute('data-separator', 'hover')
+      if (dragging) {
+        await page.mouse.down()
+        await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 5 })
+        await expect(handle).toHaveAttribute('data-separator', 'active')
+      }
+      const targets = await page.locator('[data-resize-cursor]').elementHandles()
+      expect(targets.length).toBeGreaterThan(0)
+      // Trigger the React lifecycle without moving the pointer or ending the drag first.
+      await page.keyboard.press(action === 'disable' ? 'd' : 'u')
+      await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
+      for (const target of targets) {
+        expect(await target.evaluate((element) => element.hasAttribute('data-resize-cursor'))).toBe(
+          false
+        )
+      }
+      expect(
+        await page.evaluate(() =>
+          document.adoptedStyleSheets
+            .flatMap((sheet) => Array.from(sheet.cssRules))
+            .some((rule) => /cursor:.*resize/.test(rule.cssText))
+        )
+      ).toBe(false)
+      if (dragging) await page.mouse.up()
+      await page.keyboard.press(action === 'disable' ? 'd' : 'u')
+      await expect(handle).toBeVisible()
+      await handle.hover()
+      await expect(handle).toHaveAttribute('data-separator', /hover|focus/)
+      await expect(handle).toHaveCSS('cursor', 'ew-resize')
+    })
+  }
+}
