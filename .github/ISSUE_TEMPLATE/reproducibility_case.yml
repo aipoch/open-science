@@ -1,0 +1,97 @@
+name: Reproducibility Case
+description: Share one real Agent-generated Python or R analysis — worked, failed, or corrected
+title: '[Case]: '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing a case to the [Reproducibility Pilot (#2725)](https://github.com/aipoch/open-science/issues/2725).
+
+        Only the first four fields are required — failed runs and incomplete reports are welcome.
+        The [contribution guide](https://github.com/aipoch/open-science/blob/main/docs/reproducibility-cases/README.md)
+        explains what happens after you submit.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were you trying to do?
+      description: Your research question and the original prompt, with relevant follow-ups.
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: What code did the agent produce?
+      description: Paste or link the original Python/R script or notebook. Keep your corrections separate from the original.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: What data did it use?
+      description: A small shareable dataset or a public source, plus any preprocessing. Disclose synthetic replacements; link restricted datasets instead of uploading.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What happened?
+      description: The result, the error, or the point where you had to intervene. If you know what should have happened, explain why.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details (optional)
+      description: OS, app version, runtime and package versions — helps others rerun the case.
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected-result evidence (optional)
+      description: What should have happened, and how you know.
+    validations:
+      required: false
+  - type: textarea
+    id: corrections
+    attributes:
+      label: Human corrections (optional)
+      description: Your fixes, kept separate from the agent's original output.
+    validations:
+      required: false
+  - type: input
+    id: sharing
+    attributes:
+      label: Sharing permission (optional)
+      description: May this case be published as a curated example?
+    validations:
+      required: false
+  - type: input
+    id: attribution
+    attributes:
+      label: Attribution (optional)
+      description: How (or whether) you want to be credited in the example index.
+    validations:
+      required: false
+  - type: dropdown
+    id: licenses
+    attributes:
+      label: Code and data licenses (optional)
+      description: Recorded separately for code and data.
+      options:
+        - Not sure yet
+        - MIT
+        - Apache-2.0
+        - CC-BY-4.0 (data)
+        - Other (describe in the case)
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed credentials, private paths, confidential material, and personal or patient data
+          required: true
+        - label: I have permission to share this code and data, or I linked public sources instead
+          required: true

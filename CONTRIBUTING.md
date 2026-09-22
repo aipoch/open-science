@@ -372,6 +372,14 @@ When filing a bug report, please include:
 - Your operating system and app version.
 - Relevant logs or screenshots, if available.
 
+### Reproducibility cases
+
+The [Reproducibility Pilot (#2725)](https://github.com/aipoch/open-science/issues/2725) collects real
+Agent-generated Python and R analyses. Submit one through the reproducibility case template — a
+first case needs only the original prompt, the generated code, the data source, and the observed
+result, and failed runs are welcome. The [contribution guide](docs/reproducibility-cases/README.md)
+explains the format, the curation follow-ups, and how reviewed examples are indexed.
+
 ## Publishing the npm Package
 
 Maintainers should follow the [npm package release guide](docs/npm-release.md). npm package versions
