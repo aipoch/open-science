@@ -38,7 +38,10 @@ describe('legacy pip wheel evidence', () => {
       const prefix = join(root, 'env')
       const execute = promisify(execFile)
       try {
-        await execute(python!, ['-I', '-m', 'venv', prefix], { timeout: 30_000 })
+        // The first Windows ensurepip bootstrap can exceed 30s on a cold CI runner.
+        await execute(python!, ['-I', '-m', 'venv', prefix], {
+          timeout: process.platform === 'win32' ? 60_000 : 30_000
+        })
         const interpreter = join(
           prefix,
           process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
@@ -228,7 +231,7 @@ describe('legacy pip wheel evidence', () => {
         await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
-    60_000
+    process.platform === 'win32' ? 90_000 : 60_000
   )
   it.each(['matched', 'unavailable', 'unused', 'changed-during-probe', 'retry'] as const)(
     'recovers only a required %s pip package through the environment capture owner',
