@@ -93,3 +93,35 @@ it('lets the bottom toast recovery notice be dismissed without marking notificat
   act(() => root.unmount())
   consoleError.mockRestore()
 })
+
+it('restores the toast boundary when a newer notification snapshot arrives after dismissal', async () => {
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  let broken = true
+  const Notification = (): React.JSX.Element => {
+    if (broken) throw new Error('damaged notification')
+    return <span>New notification</span>
+  }
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+  act(() => {
+    root.render(
+      <NotificationErrorBoundary surface="toast">
+        <Notification />
+      </NotificationErrorBoundary>
+    )
+  })
+  fireEvent.click(container.querySelector('button[aria-label="Close"]')!)
+
+  broken = false
+  await act(async () => {
+    useNotificationInboxStore.setState({ revision: 2 })
+    await Promise.resolve()
+  })
+
+  expect(container.textContent).toContain('New notification')
+  expect(container.querySelector('[data-notification-recovery-toast]')).toBeNull()
+
+  act(() => root.unmount())
+  consoleError.mockRestore()
+})
