@@ -538,7 +538,8 @@
       "src/main/pdf-annotations/repository.integration.test.ts",
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
-      "src/main/session-package/ro-crate.test.ts"
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
