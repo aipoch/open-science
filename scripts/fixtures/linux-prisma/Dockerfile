@@ -2,8 +2,8 @@
 FROM node:22-bookworm-slim AS client
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package-lock.json source-lock.json
-RUN node -e 'const { packages } = require("./source-lock.json"); require("node:fs").writeFileSync("package.json", JSON.stringify({ private: true, dependencies: Object.fromEntries(["prisma", "@prisma/client"].map(name => [name, packages["node_modules/" + name].version])) }))' \
+COPY package-lock.json package-lock.json
+RUN node -e 'const { packages } = require("./package-lock.json"); require("node:fs").writeFileSync("package.json", JSON.stringify({ private: true, dependencies: Object.fromEntries(["prisma", "@prisma/client"].map(name => [name, packages["node_modules/" + name].version])) })); require("node:fs").unlinkSync("package-lock.json")' \
     && npm install --no-audit --no-fund
 COPY prisma/schema.prisma prisma/schema.prisma
 RUN npx prisma generate \

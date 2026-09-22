@@ -54,6 +54,12 @@ streaming-render test while waiting for its SVG. Rerunning that unchanged test
 file passed all 23 tests; the full run is therefore recorded as a failure, not
 an all-green result.
 
+The PR migration policy now ignores generator-only changes while still requiring
+migrations for model, default-value, datasource, and SQLite constraint changes.
+Its public Git-revision CLI regression failed twice before the policy fix and
+passes afterward, including when the target branch has advanced. The combined
+policy and packaging suites pass all 59 tests.
+
 This does not add database fields, alter the data model, or require a migration.
 The additional engine is about 17 MiB before installer compression. It does not
 justify changing database libraries or adding runtime downloads.
