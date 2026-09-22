@@ -57,7 +57,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
     .getByRole('button', { name: 'Export diagnostics…', exact: true })
   await expect(diagnosticButton).toBeVisible()
   await diagnosticButton.click()
-  const dialog = page.getByRole('dialog', { name: 'Export diagnostics…', exact: true })
+  const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
   const sessionCheckbox = dialog.getByRole('checkbox', { name: /^session\.json/ })
   await expect(sessionCheckbox).toBeEnabled()
   await expect(sessionCheckbox).toBeChecked()
