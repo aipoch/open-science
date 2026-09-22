@@ -12,6 +12,7 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { finished } from 'node:stream/promises'
 
 import { createPackageWithOptions, listPackage } from '@electron/asar'
 import { describe, expect, it } from 'vitest'
@@ -47,7 +48,9 @@ for (const profile of ['cl100k_base', 'o200k_base']) {
 process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tiktoken') }))
 `
       )
-      await createPackageWithOptions(source, archive, {})
+      // ASAR resolves with a writable stream before its queued writes finish.
+      const archiveStream = await createPackageWithOptions(source, archive, {})
+      await finished(archiveStream)
       expect(listPackage(archive)).toContain('/node_modules/tiktoken/tiktoken_bg.wasm')
       // Remove the source tree so the child can only load the archived JavaScript and WASM.
       rmSync(source, { recursive: true, force: true })
