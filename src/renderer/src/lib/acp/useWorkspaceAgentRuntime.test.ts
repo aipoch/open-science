@@ -6922,11 +6922,13 @@ describe('workspace agent message sending', () => {
   it('surfaces an unsupported Claude CLI option as actionable setup guidance', async () => {
     const runtime = {
       state: createSnapshot(),
-      createSession: vi.fn().mockRejectedValue(
-        new Error(
-          "Error invoking remote method 'acp:create-session': RequestError: Internal error (stderr: error: unknown option '--managed-settings')"
-        )
-      ),
+      createSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:create-session': RequestError: Internal error (stderr: error: unknown option '--managed-settings')"
+          )
+        ),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
       sendPrompt: vi.fn()
