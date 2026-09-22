@@ -232,15 +232,30 @@ class NotebookNetworkSandbox {
       finishPreparation()
     }
     let cleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    const assertOpen = (): void => {
+      if (activeCommand.cleanupRequest) {
+        throw new Error('Notebook sandbox process is already closed.')
+      }
+    }
     return {
       argv: wrapped.argv,
       env: wrapped.env,
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
-      ...(wrapped.beginSpawn ? { beginSpawn: wrapped.beginSpawn } : {}),
+      ...(wrapped.beginSpawn
+        ? {
+            beginSpawn: () => {
+              assertOpen()
+              return wrapped.beginSpawn!()
+            }
+          }
+        : {}),
       annotateStderr: (stderr) => this.#backend.annotateStderr(commandId, stderr),
-      setExecutionActive: (active) => this.#backend.setCommandExecutionActive(commandId, active),
+      setExecutionActive: (active) => {
+        if (active) assertOpen()
+        this.#backend.setCommandExecutionActive(commandId, active)
+      },
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
       cleanup: (reason, processOutcome) => {
         if (cleanupPromise) return cleanupPromise

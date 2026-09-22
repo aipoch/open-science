@@ -543,7 +543,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { beginSpawn: wrapped.beginSpawn }
           : {}),
       beginExecution: () => {
-        if (cleanupPromise) throw new Error('Notebook sandbox process is already closed.')
+        // Cleanup can be retried, but the command can never execute again.
+        if (cleanupReason !== undefined) {
+          throw new Error('Notebook sandbox process is already closed.')
+        }
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
         executionActive = true

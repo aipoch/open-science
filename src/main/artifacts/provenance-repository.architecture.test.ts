@@ -954,7 +954,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/session-package/ro-crate.integration.test.ts',
       'src/main/session-package/ro-crate.test.ts',
       'src/main/settings/codex-bridge-tools.test.ts',
-      'src/main/literature/smart-collections.test.ts'
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/notebook/runtime-service.rpc-retirement.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -198,9 +198,9 @@ type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
 const backgroundExecutionEnabledByDefault = (environmentValue: string | undefined): boolean =>
   environmentValue === undefined || environmentValue === '1'
 
-// The session-scoped connector RPC capability injected into the persistent control-plane REPL. The
-// service caches it for the RuntimeSession lifetime because the child captures it only when spawned;
-// release revokes that capability when the runtime session is shut down.
+// The process-epoch connector RPC capability injected into the persistent control-plane REPL. The
+// service retains it only while that REPL epoch owns the child, which captures it when spawned;
+// epoch retirement revokes authority; invocation completion retains ownership of pending output.
 type McpRpcConnection = NotebookSessionMcpRpcConnection
 type McpRpcConnectionBinding = {
   sessionId: string

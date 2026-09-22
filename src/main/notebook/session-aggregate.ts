@@ -220,6 +220,8 @@ export type NotebookSessionMcpRpcConnection = {
     controlInvocationId: string
   ) => Promise<readonly TransientViewImage[]>
   discardControlInvocation?: (controlInvocationId: string) => void
+  // Revoke process authority without discarding output awaiting invocation completion.
+  revoke?: () => void
   release?: () => void
 }
 
@@ -306,7 +308,16 @@ export class NotebookSessionAggregate<
   private executorLifecycleQueue: Promise<void> = Promise.resolve()
   private readonly executionQueues = new Map<string, Promise<unknown>>()
   private controlQueue: Promise<unknown> = Promise.resolve()
-  private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
+  private mcpRpcConnection:
+    | {
+        epoch: NotebookKernelEpochOwnership
+        pending: Promise<NotebookSessionMcpRpcConnection | undefined>
+        connection?: NotebookSessionMcpRpcConnection
+      }
+    | undefined
+  // Completion gates run outside the FIFO and may outlive their process epoch. Keep their exact
+  // connection owned until completion/discard so session shutdown can still dispose pending output.
+  private readonly controlInvocationConnections = new Map<string, NotebookSessionMcpRpcConnection>()
   private readonly terminatedKernels = new Set<string>()
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
   private readonly kernelStatusLastActivityAt = new Map<string, number>()
@@ -698,6 +709,12 @@ export class NotebookSessionAggregate<
     const epochs = processKeys.flatMap((processKey) => {
       const epoch = this.kernelEpochs.get(processKey)?.ownership
       this.kernelEpochs.delete(processKey)
+      if (epoch && this.mcpRpcConnection?.epoch === epoch) {
+        const connection = this.mcpRpcConnection.connection
+        this.mcpRpcConnection = undefined
+        if (connection?.revoke) connection.revoke()
+        else connection?.release?.()
+      }
       return epoch ? [epoch] : []
     })
     if (epochs.length > 0) await this.onKernelEpochsRetired?.(epochs)
@@ -722,6 +739,10 @@ export class NotebookSessionAggregate<
       () => undefined
     )
     return run
+  }
+
+  async drainExecutorLifecycle(): Promise<void> {
+    await this.executorLifecycleQueue
   }
 
   async terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
@@ -758,6 +779,7 @@ export class NotebookSessionAggregate<
     const lifecycleDrain = this.executorLifecycleQueue
     await lifecycleDrain
     const result = await executor.shutdown()
+    this.releaseMcpRpcConnection()
     await this.retireKernelEpochs([...this.kernelEpochs.keys()])
     return result
   }
@@ -771,39 +793,109 @@ export class NotebookSessionAggregate<
           attemptId?: string
           executionCwd: string
         }) => Promise<NotebookSessionMcpRpcConnection>)
-      | undefined
+      | undefined,
+    epoch: NotebookKernelEpochOwnership
   ): Promise<NotebookSessionMcpRpcConnection | undefined> {
-    if (this.mcpRpcConnection) return this.mcpRpcConnection
+    if (this.kernelEpochs.get('repl')?.ownership !== epoch) {
+      throw new Error('Notebook REPL epoch retired before capability acquisition.')
+    }
+    if (this.mcpRpcConnection?.epoch === epoch) return this.mcpRpcConnection.pending
     if (!resolver) return undefined
-    try {
+    const slot: NonNullable<typeof this.mcpRpcConnection> = {
+      epoch,
+      pending: Promise.resolve(undefined)
+    }
+    this.mcpRpcConnection = slot
+    slot.pending = (async () => {
       const lane = notebookLaneScope(this.lane)
-      this.mcpRpcConnection = await resolver({
-        sessionId: this.sessionId,
-        projectId: this.projectId,
-        agentFrameId: lane.agentFrameId,
-        executionCwd: this.dataRoot,
-        ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
-      })
-      return this.mcpRpcConnection
-    } catch {
-      return undefined
+      let connection: NotebookSessionMcpRpcConnection
+      try {
+        connection = await resolver({
+          sessionId: this.sessionId,
+          projectId: this.projectId,
+          agentFrameId: lane.agentFrameId,
+          executionCwd: this.dataRoot,
+          ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
+        })
+      } catch {
+        if (this.mcpRpcConnection !== slot || this.kernelEpochs.get('repl')?.ownership !== epoch) {
+          throw new Error('Notebook REPL epoch retired during capability acquisition.')
+        }
+        this.mcpRpcConnection = undefined
+        return undefined
+      }
+      if (this.mcpRpcConnection !== slot || this.kernelEpochs.get('repl')?.ownership !== epoch) {
+        connection.release?.()
+        throw new Error('Notebook REPL epoch retired during capability acquisition.')
+      }
+      slot.connection = connection
+      return connection
+    })()
+    return slot.pending
+  }
+
+  retainControlInvocationConnection(
+    controlInvocationId: string,
+    connection: NotebookSessionMcpRpcConnection
+  ): void {
+    this.controlInvocationConnections.set(controlInvocationId, connection)
+  }
+
+  async completeControlInvocation(
+    controlInvocationId: string
+  ): Promise<readonly TransientViewImage[]> {
+    const connection = this.controlInvocationConnections.get(controlInvocationId)
+    if (!connection) return []
+    try {
+      const images = (await connection.completeControlInvocation?.(controlInvocationId)) ?? []
+      // Shutdown may dispose this invocation while its image producer is completing.
+      return this.controlInvocationConnections.get(controlInvocationId) === connection ? images : []
+    } catch (error) {
+      connection.discardControlInvocation?.(controlInvocationId)
+      throw error
+    } finally {
+      this.finishControlInvocationConnection(controlInvocationId, connection)
     }
   }
 
-  releaseMcpRpcConnection(): void {
-    const connection = this.mcpRpcConnection
-    this.mcpRpcConnection = undefined
-    connection?.release?.()
-  }
-
-  completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]> {
-    return (
-      this.mcpRpcConnection?.completeControlInvocation?.(controlInvocationId) ?? Promise.resolve([])
-    )
-  }
-
   discardControlInvocation(controlInvocationId: string): void {
-    this.mcpRpcConnection?.discardControlInvocation?.(controlInvocationId)
+    const connection = this.controlInvocationConnections.get(controlInvocationId)
+    if (!connection) return
+    try {
+      connection.discardControlInvocation?.(controlInvocationId)
+    } finally {
+      this.finishControlInvocationConnection(controlInvocationId, connection)
+    }
+  }
+
+  private finishControlInvocationConnection(
+    controlInvocationId: string,
+    connection: NotebookSessionMcpRpcConnection
+  ): void {
+    if (this.controlInvocationConnections.get(controlInvocationId) !== connection) return
+    this.controlInvocationConnections.delete(controlInvocationId)
+    if (
+      this.mcpRpcConnection?.connection !== connection &&
+      !Array.from(this.controlInvocationConnections.values()).includes(connection)
+    )
+      connection.release?.()
+  }
+
+  releaseMcpRpcConnection(): void {
+    const connections = new Set(this.controlInvocationConnections.values())
+    if (this.mcpRpcConnection?.connection) connections.add(this.mcpRpcConnection.connection)
+    this.mcpRpcConnection = undefined
+    this.controlInvocationConnections.clear()
+    const errors: unknown[] = []
+    for (const connection of connections) {
+      try {
+        connection.release?.()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length > 0)
+      throw new AggregateError(errors, 'Notebook RPC connection release failed.')
   }
 
   private requireCell(cellId: string): NotebookCell {

@@ -229,8 +229,9 @@ export type NotebookKernelExecutorOptions = {
   cancelIdleTimer?: CancelIdleTimer
   // Invoked once a proc is dropped for being idle; the caller can use this to surface a 'terminated'
   // kernel status upward (see NotebookRuntimeService). Carries the resolved env so the caller marks
-  // the right per-(kind, env) kernel status ('' for the env-agnostic repl).
-  onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
+  // the right per-(kind, env) kernel status ('' for the env-agnostic repl). The optional epoch
+  // identifies the original spawn even when later requests have reused the process.
+  onIdleShutdown?: (kind: KernelProcessKind, env: string, kernelEpochId?: string) => void
   // Invoked once a proc is lost unexpectedly (a crash exit or a hard-timeout drop), or cancellation
   // must drop it because Windows cannot recoverably interrupt it or a POSIX grace period expires.
   // NOT invoked on an intentional shutdown()/restart(). Parallels onIdleShutdown so the caller can
@@ -238,7 +239,8 @@ export type NotebookKernelExecutorOptions = {
   onTerminated?: (
     kind: KernelProcessKind,
     env: string,
-    diagnostic?: NotebookKernelTerminationDiagnostic
+    diagnostic?: NotebookKernelTerminationDiagnostic,
+    kernelEpochId?: string
   ) => void
   // Injectable only to exercise the Windows conda activation contract on non-Windows test hosts.
   platform?: NodeJS.Platform
@@ -278,6 +280,8 @@ type ProcState = {
   // Routing key in `procs`; kept on the proc so map ops that only receive a ProcState (dropProc,
   // rearmIdleTimerIfLive, handleIdleTimeout) can re-key without recomputing from the request.
   key: ProcessKey
+  // Identity belongs to the spawn, never to a later request reusing this process.
+  kernelEpochId?: string
   child: ChildProcessWithoutNullStreams
   readline: Interface
   pending?: PendingRequest
@@ -515,7 +519,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly idleTimeoutMs: number
   private readonly scheduleIdleTimer: ScheduleIdleTimer
   private readonly cancelIdleTimer: CancelIdleTimer
-  private readonly onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
+  private readonly onIdleShutdown?: NotebookKernelExecutorOptions['onIdleShutdown']
   private readonly onTerminated?: NotebookKernelExecutorOptions['onTerminated']
   private readonly cancellationGraceMs: number
   private readonly namespaceInspectionTimeoutMs: number
@@ -842,7 +846,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       proc.terminationError = error
       this.dropProc(proc)
       this.killChildTracked(proc)
-      this.onTerminated?.(kind, env)
+      this.notifyTerminated(proc)
       this.rejectPending(proc, error)
     })
     const readline = createInterface({ input: boundedOutput })
@@ -850,6 +854,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       kind,
       env,
       key,
+      kernelEpochId: request.kernelEpochId,
       child,
       readline,
       beginSandboxExecution: spawned.beginSandboxExecution,
@@ -884,7 +889,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       proc.terminationError = error
       void this.killChildTracked(proc, 'spawn-failed').then((result) => {
         this.rejectPending(proc, result.reaped ? error : new NotebookExecutionStopError())
-        this.onTerminated?.(kind, env, {
+        this.notifyTerminated(proc, {
           reason: 'error',
           name: error.name,
           message: error.message,
@@ -909,7 +914,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // Publish the crash as soon as the direct child exits. Process-tree and sandbox cleanup still
       // gate settlement of any in-flight execution, but status observers should not have to wait for
       // that asynchronous cleanup to learn that the live kernel is gone.
-      this.onTerminated?.(kind, env, {
+      this.notifyTerminated(proc, {
         reason: 'exit',
         exitCode: code,
         signal,
@@ -1431,7 +1436,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
                   this.dropProc(proc)
                   void this.killChildTracked(proc, 'timeout').then((result) => {
                     this.clearPendingResources(pending)
-                    this.onTerminated?.(proc.kind, proc.env)
+                    this.notifyTerminated(proc)
                     reject(
                       result.reaped
                         ? new NotebookExecutionTimeoutError(
@@ -1454,7 +1459,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
                 this.clearPendingResources(proc.pending)
                 proc.pending = undefined
                 this.dropProc(proc)
-                this.onTerminated?.(proc.kind, proc.env)
+                this.notifyTerminated(proc)
                 reject(
                   new NotebookExecutionTimeoutError(
                     `Notebook execution timed out after ${timeoutMs}ms.`
@@ -1480,7 +1485,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
             this.dropProc(proc)
             void this.killChildTracked(proc).then(
               (result) => {
-                this.onTerminated?.(proc.kind, proc.env)
+                this.notifyTerminated(proc)
                 pending.reject(
                   result.reaped
                     ? new NotebookExecutionCancelledError()
@@ -1502,7 +1507,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
             this.dropProc(proc)
             void this.killChildTracked(proc).then(
               (result) => {
-                this.onTerminated?.(proc.kind, proc.env)
+                this.notifyTerminated(proc)
                 pending.reject(
                   result.reaped
                     ? new NotebookExecutionCancelledError()
@@ -1561,7 +1566,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         proc.pending = undefined
         this.dropProc(proc)
         this.killChildTracked(proc)
-        this.onTerminated?.(proc.kind, proc.env)
+        this.notifyTerminated(proc)
         reject(
           new Error(
             `Notebook namespace inspection timed out after ${this.namespaceInspectionTimeoutMs}ms.`
@@ -1727,6 +1732,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.armIdleTimer(proc)
   }
 
+  private notifyTerminated(
+    proc: ProcState,
+    diagnostic?: NotebookKernelTerminationDiagnostic
+  ): void {
+    if (proc.kernelEpochId !== undefined) {
+      this.onTerminated?.(proc.kind, proc.env, diagnostic, proc.kernelEpochId)
+    } else if (diagnostic !== undefined) {
+      this.onTerminated?.(proc.kind, proc.env, diagnostic)
+    } else {
+      this.onTerminated?.(proc.kind, proc.env)
+    }
+  }
+
   // Fires after the idle window with no new request on this proc: drops it (kill + remove from the
   // map) so the next execute() lazily respawns a fresh process with a clean namespace. A request that
   // started between the timer arming and firing always wins the race -- execute()/ensureProc() disarm
@@ -1737,7 +1755,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
     this.dropProc(proc)
     this.killChildTracked(proc)
-    this.onIdleShutdown?.(proc.kind, proc.env)
+    if (proc.kernelEpochId !== undefined) {
+      this.onIdleShutdown?.(proc.kind, proc.env, proc.kernelEpochId)
+    } else {
+      this.onIdleShutdown?.(proc.kind, proc.env)
+    }
   }
 
   // Fire-and-forget tree teardown for a DROPPED proc, tracked by its key so ensureProc can await it

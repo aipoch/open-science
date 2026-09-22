@@ -1330,6 +1330,71 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   })
 
+  it.each(['exit', 'idle', 'timeout'] as const)(
+    'reports the original process epoch on %s after reusing it for a later request',
+    async (termination) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-event-epoch-')
+      const h = makeTimerHarness()
+      const onTerminated = vi.fn()
+      const onIdleShutdown = vi.fn()
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        idleTimeoutMs: 1_000,
+        scheduleIdleTimer: h.schedule,
+        cancelIdleTimer: h.cancel,
+        onTerminated,
+        onIdleShutdown
+      })
+      try {
+        await executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'warm',
+          kernelEpochId: 'original-epoch'
+        })
+        await executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'reuse',
+          kernelEpochId: 'later-request-epoch'
+        })
+        if (termination === 'timeout') {
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            code: '__IGNORE_SIGINT__',
+            timeoutMs: 100,
+            kernelEpochId: 'timeout-request-epoch'
+          })
+        } else {
+          const child = procFor(executor, 'python')!.child
+          const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          if (termination === 'idle') h.fireOldest()
+          else child.kill('SIGKILL')
+          await exited
+        }
+        if (termination === 'idle') {
+          expect(onIdleShutdown).toHaveBeenCalledExactlyOnceWith(
+            'python',
+            DEFAULT_PY_ENV,
+            'original-epoch'
+          )
+          expect(onTerminated).not.toHaveBeenCalled()
+        } else {
+          expect(onTerminated).toHaveBeenCalledExactlyOnceWith(
+            'python',
+            DEFAULT_PY_ENV,
+            termination === 'exit' ? expect.objectContaining({ reason: 'exit' }) : undefined,
+            'original-epoch'
+          )
+          expect(onIdleShutdown).not.toHaveBeenCalled()
+        }
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
+
   it('durably binds the OS process to its lane and Kernel epoch until shutdown reaps it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-durable-owner-')
     const owner = new KernelProcessLifecycleOwner({

@@ -1451,6 +1451,7 @@ class NotebookLocalRpcServer {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
       completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
       discardControlInvocation(controlInvocationId: string): void
+      revoke: () => void
       release: () => void
     }
   > {
@@ -1509,6 +1510,9 @@ class NotebookLocalRpcServer {
         this.hostViewImage?.discard(controlInvocationId)
         ownedControlInvocationIds.delete(controlInvocationId)
       },
+      // Epoch retirement closes RPC admission immediately; already produced images remain owned
+      // by their invocation until its completion gate accepts or discards them.
+      revoke: () => this.revokeSessionCapability(token),
       release: () => {
         for (const controlInvocationId of ownedControlInvocationIds) {
           this.hostViewImage?.discard(controlInvocationId)

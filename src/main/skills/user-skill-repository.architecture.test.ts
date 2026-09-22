@@ -678,6 +678,7 @@ describe('User Skill repository architecture', () => {
           'src/main/notebook/runtime-repair.test.ts',
           'src/main/notebook/runtime-service-logging.integration.test.ts',
           'src/main/notebook/runtime-service.export.test.ts',
+          'src/main/notebook/runtime-service.rpc-retirement.test.ts',
           'src/main/notebook/runtime-service.test.ts',
           'src/main/notebook/skill-loading-guidance.test.ts',
           'src/main/notebook/windows-external-r.integration.test.ts',

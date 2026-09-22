@@ -72,7 +72,8 @@
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/tasks/task-runner.test.ts",
-      "src/main/acp/runtime-plan-composition.test.ts"
+      "src/main/acp/runtime-plan-composition.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

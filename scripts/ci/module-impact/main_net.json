@@ -205,6 +205,7 @@
       "src/main/notebook/recovery-coordinator.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/notebook/runtime-repair.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/notebook/runtime-service.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notifications/notification-inbox-runtime.test.ts",

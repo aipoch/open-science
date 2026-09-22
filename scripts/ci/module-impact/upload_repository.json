@@ -301,6 +301,7 @@
       "src/main/notebook/runtime-repair.test.ts",
       "src/main/notebook/runtime-service-logging.integration.test.ts",
       "src/main/notebook/runtime-service.export.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/notebook/runtime-service.test.ts",
       "src/main/notebook/serialized-file-provenance.test.ts",
       "src/main/notebook/session-aggregate.test.ts",

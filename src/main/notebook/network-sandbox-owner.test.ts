@@ -1253,6 +1253,93 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['incomplete', 'throw'] as const)(
+    'permanently retires an owner command after %s package cleanup',
+    async (failure) => {
+      const { NotebookNetworkSandbox } = await vi.importActual<
+        typeof import('../../../packages/notebook-network-sandbox/src/index')
+      >('../../../packages/notebook-network-sandbox/src/index')
+      const { NotebookNetworkRuntime } =
+        await import('../../../packages/notebook-network-sandbox/runtime/src/index')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: '/resources' }
+      })
+      const status = vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+      const initialize = vi.spyOn(NotebookNetworkRuntime, 'initialize').mockResolvedValue(undefined)
+      const runtimeWrap = vi.spyOn(NotebookNetworkRuntime, 'wrap').mockResolvedValue({
+        argv: ['/sandbox/sh'],
+        env: {}
+      })
+      const complete = {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
+      const runtimeCleanup = vi
+        .spyOn(NotebookNetworkRuntime, 'cleanupAfterCommand')
+        .mockResolvedValue(complete)
+      if (failure === 'throw') runtimeCleanup.mockRejectedValueOnce(new Error('cleanup failed'))
+      else runtimeCleanup.mockResolvedValueOnce({ ...complete, temporaryResourcesRemoved: false })
+      const activate = vi.spyOn(NotebookNetworkRuntime, 'setCommandExecutionActive')
+      const reset = vi.spyOn(NotebookNetworkRuntime, 'reset').mockResolvedValue(undefined)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn().mockResolvedValue('deny')
+      })
+      const invocation = {
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'true',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime: 'bash' as const,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      }
+      try {
+        await sandbox.initialize()
+        backend.wrap.mockImplementation((command) => sandbox.wrap(command))
+        const wrapped = await owner.wrap(invocation)
+        const end = wrapped.beginExecution?.()
+        const cleanup = wrapped.cleanup('exit', { processesTerminated: true })
+        expect(() => wrapped.beginExecution?.()).toThrow('already closed')
+        await expect(cleanup).resolves.toMatchObject({ temporaryResourcesRemoved: false })
+        end?.()
+        for (let attempt = 0; attempt < 2; attempt++) {
+          expect(() => wrapped.beginExecution?.()).toThrow('already closed')
+        }
+        expect(activate.mock.calls.filter(([, active]) => active)).toHaveLength(1)
+        await expect(wrapped.cleanup('exit', { processesTerminated: true })).resolves.toEqual(
+          complete
+        )
+        expect(() => wrapped.beginExecution?.()).toThrow('already closed')
+        const fresh = await owner.wrap(invocation)
+        const endFresh = fresh.beginExecution?.()
+        endFresh?.()
+        await fresh.cleanup('exit', { processesTerminated: true })
+        expect(activate.mock.calls.filter(([, active]) => active)).toHaveLength(2)
+      } finally {
+        await owner.dispose()
+        await sandbox.dispose()
+        reset.mockRestore()
+        activate.mockRestore()
+        runtimeCleanup.mockRestore()
+        runtimeWrap.mockRestore()
+        initialize.mockRestore()
+        status.mockRestore()
+      }
+    }
+  )
+
   it.each(['directory', 'receipt'] as const)(
     'preserves production package cleanup proof while retrying a locked command %s',
     async (lockedResource) => {
