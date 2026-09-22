@@ -276,17 +276,45 @@ const assertShareable = async (value: unknown, signal?: AbortSignal): Promise<vo
 }
 
 const assertShareableFile = async (path: string, signal?: AbortSignal): Promise<void> => {
+  // Evidence blobs often have no extension. Only apply text recognizers to valid UTF-8
+  // without NUL bytes; compressed/binary bytes are not credential text. This does not
+  // certify binary payloads (or archive members) free of private information.
+  const decoder = new TextDecoder('utf-8', { fatal: true })
   let tail = ''
+  let sensitiveError: unknown
   for await (const chunk of createReadStream(path, {
-    encoding: 'utf8',
     highWaterMark: 64 * 1024,
     signal
   })) {
-    await paceFileIo(Buffer.byteLength(chunk), signal)
-    const text = tail + chunk
-    await assertShareable(text, signal)
-    tail = text.slice(-8192)
+    await paceFileIo(chunk.length, signal)
+    signal?.throwIfAborted()
+    if (chunk.includes(0)) return
+    let decoded: string
+    try {
+      decoded = decoder.decode(chunk, { stream: true })
+    } catch {
+      return
+    }
+    // A text-like prefix is not enough: finish classifying the file before rejecting it.
+    // Once matched, retain only the error and keep decoding with bounded memory.
+    if (!sensitiveError) {
+      const text = tail + decoded
+      try {
+        await assertShareable(text, signal)
+      } catch (error) {
+        signal?.throwIfAborted()
+        sensitiveError = error
+      }
+      tail = text.slice(-8192)
+    }
   }
+  signal?.throwIfAborted()
+  try {
+    decoder.decode()
+  } catch {
+    return
+  }
+  if (sensitiveError) throw sensitiveError
 }
 
 export class SessionPackageService {
