@@ -128,9 +128,11 @@ for (const action of ['disable', 'unmount'] as const) {
       await page.keyboard.press(action === 'disable' ? 'd' : 'u')
       await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
       for (const target of targets) {
-        expect(await target.evaluate((element) => element.hasAttribute('data-resize-cursor'))).toBe(
-          false
-        )
+        expect(
+          await target.evaluate((element) =>
+            (element as Element).hasAttribute('data-resize-cursor')
+          )
+        ).toBe(false)
       }
       expect(
         await page.evaluate(() =>
@@ -164,9 +166,9 @@ for (const action of ['disable', 'unmount'] as const) {
     await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
     await page.keyboard.press(action === 'disable' ? 'd' : 'u')
     for (const target of targets) {
-      expect(await target.evaluate((element) => element.hasAttribute('data-resize-cursor'))).toBe(
-        false
-      )
+      expect(
+        await target.evaluate((element) => (element as Element).hasAttribute('data-resize-cursor'))
+      ).toBe(false)
     }
     expect(
       await page.evaluate(() =>
