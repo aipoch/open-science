@@ -252,6 +252,16 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'census',
+    displayName: 'CELLxGENE Census',
+    description: 'Single-cell dataset and cell observation metadata via CELLxGENE Census.',
+    useWhen:
+      'Use for single-cell data queries by organism, tissue, cell type, and disease — list CELLxGENE Census datasets or inspect matching cell observation metadata. Sourced from CELLxGENE Census and executed through the configured Python environment.',
+    sources: ['CELLxGENE Census'],
+    termsUrl: 'https://chanzuckerberg.github.io/cellxgene-census/',
+    requiresNcbi: false
+  },
+  {
     id: 'regulation',
     displayName: 'Regulation',
     description:

@@ -142,6 +142,7 @@ import { parseSystemProxyRules } from './settings/system-proxy'
 import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
+import { createCensusHandler } from './connectors/census-runtime'
 import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
@@ -2497,6 +2498,14 @@ const createApplicationModules = async (
       return runtimeRef.current.writeArtifactForCurrentRun(sessionId, input)
     }
   })
+  const censusListDatasetsHandler = createCensusHandler({
+    processSandbox: notebookNetworkSandbox,
+    action: 'list_datasets'
+  })
+  const censusQueryCellsHandler = createCensusHandler({
+    processSandbox: notebookNetworkSandbox,
+    action: 'query_cells'
+  })
   const connectorApplication = await modules.add(
     {
       settings: settingsService,
@@ -2556,7 +2565,11 @@ const createApplicationModules = async (
           return undefined
         }
       },
-      localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler },
+      localToolHandlers: {
+        'molecule/preview_molecule': moleculePreviewHandler,
+        'census/census_list_datasets': censusListDatasetsHandler,
+        'census/census_query_cells': censusQueryCellsHandler
+      },
       onSkillsChanged: requestSkillCatalogRefresh
     } satisfies Parameters<typeof createConnectorApplicationModule>[0],
     createConnectorApplicationModule

@@ -631,7 +631,8 @@
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/workflows.test.ts",
-      "src/main/settings/workflows/connectors-diagnostic.test.ts"
+      "src/main/settings/workflows/connectors-diagnostic.test.ts",
+      "src/main/connectors/census-live.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

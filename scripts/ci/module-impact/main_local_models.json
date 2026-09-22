@@ -311,7 +311,8 @@
       "src/main/settings/workflows.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/settings/application-commands.test.ts"
+      "src/main/settings/application-commands.test.ts",
+      "src/main/connectors/census-live.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

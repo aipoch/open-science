@@ -1,26 +1,31 @@
 {
   "ownerPaths": [
-    "src/main/connectors/descriptors/genes-ontology.ts",
-    "src/main/connectors/descriptors/genes-ontology.test.ts"
+    "src/main/connectors/descriptors/census.test.ts",
+    "src/main/connectors/descriptors/census.ts",
+    "src/main/connectors/census-runtime.test.ts",
+    "src/main/connectors/census-runtime.ts",
+    "src/main/connectors/census-python.integration.test.ts",
+    "src/main/connectors/census-live.integration.test.ts",
+    "src/main/connectors/fixtures/census-contract.py"
   ],
-  "interfacePaths": ["src/main/connectors/descriptors/genes-ontology.ts"],
+  "interfacePaths": [
+    "src/main/connectors/descriptors/census.ts",
+    "src/main/connectors/census-runtime.ts"
+  ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/connectors/descriptors/genes-ontology.test.ts"],
+    "owner": [
+      "src/main/connectors/descriptors/census.test.ts",
+      "src/main/connectors/census-runtime.test.ts",
+      "src/main/connectors/census-python.integration.test.ts",
+      "src/main/connectors/census-live.integration.test.ts"
+    ],
     "contract": [
-      "src/main/connectors/descriptors/genes.test.ts",
-      "src/main/connectors/registry.test.ts",
-      "src/main/connectors/engine.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
-      "src/main/connectors/service.test.ts",
-      "src/main/connectors/skill-doc.test.ts",
-      "src/main/connectors/provision.test.ts",
-      "src/main/notebook/local-rpc-server.mcpcall.test.ts",
-      "src/main/notebook/host-mcp.integration.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/codex-completion-handoff.integration.test.ts",
@@ -79,7 +84,11 @@
       "src/main/connectors/descriptors/literature-doi.test.ts",
       "src/main/connectors/descriptors/variants-gnomad.test.ts",
       "src/main/connectors/mcp-payload-pagination.integration.test.ts",
+      "src/main/connectors/provision.test.ts",
+      "src/main/connectors/registry.test.ts",
       "src/main/connectors/runtime-settings-projection.test.ts",
+      "src/main/connectors/service.test.ts",
+      "src/main/connectors/skill-doc.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/host-application-commands.test.ts",
@@ -100,6 +109,7 @@
       "src/main/literature/scale-regressions.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
+      "src/main/notebook/host-mcp.integration.test.ts",
       "src/main/notebook/host-model-service.test.ts",
       "src/main/notebook/local-rpc-server.agents.test.ts",
       "src/main/notebook/local-rpc-server.artifacts.test.ts",
@@ -109,6 +119,7 @@
       "src/main/notebook/local-rpc-server.frames.test.ts",
       "src/main/notebook/local-rpc-server.lineage.test.ts",
       "src/main/notebook/local-rpc-server.llm.test.ts",
+      "src/main/notebook/local-rpc-server.mcpcall.test.ts",
       "src/main/notebook/local-rpc-server.models.test.ts",
       "src/main/notebook/local-rpc-server.sessions.test.ts",
       "src/main/notebook/local-rpc-server.skill-import.test.ts",
@@ -173,12 +184,11 @@
       "src/main/web-service/task-api.test.ts",
       "src/main/window-find-ipc.test.ts",
       "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
-      "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/connectors/census-live.integration.test.ts"
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/shared/renderer-surface-matrix.test.ts"
     ]
   },
-  "capabilityOverlays": [],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
