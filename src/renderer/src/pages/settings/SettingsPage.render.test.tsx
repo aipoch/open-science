@@ -5148,7 +5148,7 @@ describe('SettingsPage uninstall confirmation', () => {
     // Claude is managed but NOT the active framework (OpenCode is), so its Uninstall is enabled.
     // OpenCode carries a path so the "auto-detect when active + missing" effect doesn't run.
     const snapshot = {
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'opencode',
@@ -5195,7 +5195,7 @@ describe('SettingsPage uninstall confirmation', () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     // Claude is both managed and the active framework — its Uninstall must be disabled.
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.118' },
       opencode: {},
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5223,7 +5223,7 @@ describe('SettingsPage uninstall confirmation', () => {
       .fn()
       .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5272,7 +5272,7 @@ describe('SettingsPage uninstall confirmation', () => {
       .fn()
       .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     const readySnapshot = {
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5318,7 +5318,7 @@ describe('SettingsPage uninstall confirmation', () => {
 
   // An inactive but managed Claude (OpenCode active) whose Uninstall would otherwise be enabled.
   const inactiveManagedClaudeSnapshot = {
-    claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+    claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.118' },
     opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
     providers: [],
     agentFrameworkId: 'opencode',
@@ -5924,7 +5924,7 @@ describe('SettingsPage Codex framework', () => {
   it('keeps an outdated Codex ACP install in Installed and offers an update', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: '2.1.118' },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
       codebuddy: {},
