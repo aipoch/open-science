@@ -31,11 +31,6 @@ describe('claudeCodeFramework', () => {
             'Glob',
             'Grep'
           ],
-          managedSettings: {
-            disableAgentView: true,
-            disableWorkflows: true,
-            workflowKeywordTriggerEnabled: false
-          },
           settings: {
             env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' }
           },
@@ -91,11 +86,7 @@ describe('claudeCodeFramework', () => {
       'Glob',
       'Grep'
     ])
-    expect(options.managedSettings).toMatchObject({
-      disableAgentView: true,
-      disableWorkflows: true,
-      workflowKeywordTriggerEnabled: false
-    })
+    expect(options.managedSettings).toBeUndefined()
     expect(options.settings).toEqual({
       env: {
         SAFE_SETTING_VALUE: 'preserved',

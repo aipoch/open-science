@@ -158,12 +158,11 @@ export const claudeCodeFramework: AgentFramework = {
         ...CLAUDE_CODE_NATIVE_EXECUTION_TOOLS
       ])
     ])
-    const managedSettings = Object.freeze({
-      ...recordValue(sessionOptions.managedSettings),
-      disableAgentView: true,
-      disableWorkflows: true,
-      workflowKeywordTriggerEnabled: false
-    })
+    // Do not send `managedSettings`: claude-agent-acp serializes it as the
+    // `--managed-settings` CLI option, which older installed Claude Code CLIs
+    // reject before an ACP session can be created. The supported environment
+    // flags below enforce the app-owned restrictions without a version-gated
+    // command-line argument.
     const configuredSettings = sessionOptions.settings
     // The ACP adapter resolves string paths against the later session cwd, after this synchronous
     // boundary has lost the chance to enforce settings.env. Require callers to resolve files first
@@ -202,7 +201,6 @@ export const claudeCodeFramework: AgentFramework = {
           ...(toolAliases !== undefined ? { toolAliases } : {}),
           ...(hooks !== undefined ? { hooks } : {}),
           disallowedTools,
-          managedSettings,
           settings,
           env,
           ...(ctx.skillWhitelist !== undefined ? { skills: ctx.skillWhitelist } : {})
