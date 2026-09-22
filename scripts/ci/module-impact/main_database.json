@@ -82,7 +82,8 @@
     "src/main/database/migrations/0042-classification-usage.ts",
     "src/main/database/classification-usage.test.ts",
     "src/main/database/pdf-annotations-migration.test.ts",
-    "src/main/database/migrations/0043-pdf-annotations.ts"
+    "src/main/database/migrations/0043-pdf-annotations.ts",
+    "src/main/database/migrations/0044-artifact-hidden.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",

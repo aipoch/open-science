@@ -8,6 +8,7 @@
     "src/main/project-files/content-search.test.ts",
     "src/main/project-files/content-search.ts",
     "src/main/project-files/host-artifact-catalog.test.ts",
+    "src/main/project-files/artifact-hidden.integration.test.ts",
     "src/main/project-files/ipc.test.ts",
     "src/main/project-files/ipc.ts",
     "src/main/project-files/repository.architecture.test.ts",
@@ -20,7 +21,8 @@
       "src/main/project-files/repository.architecture.test.ts",
       "src/main/project-files/repository.test.ts",
       "src/main/project-files/content-search.test.ts",
-      "src/main/project-files/host-artifact-catalog.test.ts"
+      "src/main/project-files/host-artifact-catalog.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ],
     "contract": [
       "src/main/project-files/ipc.test.ts",
