@@ -2,6 +2,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { actionMenuPage } from './fixtures/action-menu'
 
 test('drops a native package into the current Project without adding an attachment', async ({
   app
@@ -19,8 +20,9 @@ test('drops a native package into the current Project without adding an attachme
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
-  await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
-  await page.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
+  const menuPage = await actionMenuPage(page)
+  await menuPage.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+  await menuPage.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
   const exporting = page.getByRole('dialog', { name: 'Export Session package', exact: true })
   await exporting.getByRole('button', { name: 'Export', exact: true }).click()
   await expect(exporting.getByRole('button', { name: 'Show in folder' })).toBeVisible()

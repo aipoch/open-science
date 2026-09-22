@@ -329,6 +329,9 @@ type ElectronApp = {
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  advanceSessionRevisionBehindRenderer: (
+    session: Pick<PersistedChatSession, 'projectId' | 'id' | 'title' | 'description'>
+  ) => Promise<void>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
   emitSessionPackageProgress: (snapshot: PackageOperationSnapshot) => Promise<void>
@@ -965,6 +968,39 @@ class ElectronAppHarness implements ElectronApp {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
     }, archive)
     return archive
+  }
+
+  async advanceSessionRevisionBehindRenderer(
+    session: Pick<PersistedChatSession, 'projectId' | 'id' | 'title' | 'description'>
+  ): Promise<void> {
+    await this.runningApplication.evaluate(async ({ BrowserWindow }, session) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Main window is unavailable.')
+      const webContents = mainWindow.webContents
+      const send = webContents.send.bind(webContents)
+      let suppressUpdate = true
+      webContents.send = ((channel: string, ...args: unknown[]) => {
+        if (suppressUpdate && channel === 'session:updated') {
+          suppressUpdate = false
+          return true
+        }
+        return send(channel, ...args)
+      }) as typeof webContents.send
+      try {
+        await webContents.executeJavaScript(
+          `window.api.sessions.editDetails(${JSON.stringify({
+            projectId: session.projectId,
+            sessionId: session.id,
+            title: session.title,
+            description: `${session.description ?? ''} concurrent edit`,
+            expectedTitle: session.title,
+            expectedDescription: session.description ?? ''
+          })})`
+        )
+      } finally {
+        webContents.send = send
+      }
+    }, session)
   }
 
   async enableFakeRemoteIt(): Promise<Page> {

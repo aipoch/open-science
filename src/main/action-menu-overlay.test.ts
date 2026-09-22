@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const runtime = vi.hoisted(() => ({
   views: [] as WebContentsView[],
-  focused: null as Pick<WebContents, 'focus' | 'isDestroyed'> | null
+  focused: null as Pick<WebContents, 'focus' | 'isDestroyed'> | null,
+  loads: [] as Array<{ resolve: () => void; reject: (reason?: unknown) => void }>
 }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -16,8 +17,18 @@ vi.mock('electron', async () => {
       webContents = Object.assign(new EventEmitter(), {
         mainFrame: {},
         isDestroyed: () => false,
-        loadFile: vi.fn(async () => {}),
-        loadURL: vi.fn(async () => {}),
+        loadFile: vi.fn(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              runtime.loads.push({ resolve, reject })
+            })
+        ),
+        loadURL: vi.fn(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              runtime.loads.push({ resolve, reject })
+            })
+        ),
         send: vi.fn(),
         focus: vi.fn(),
         close: vi.fn(),
@@ -53,6 +64,7 @@ beforeEach(() => {
   ipcMain.removeAllListeners()
   runtime.views = []
   runtime.focused = null
+  runtime.loads = []
 })
 const setup = (): {
   host: EventEmitter & { mainFrame: object; send: ReturnType<typeof vi.fn> }
@@ -112,7 +124,7 @@ describe('native action menu lifetime', () => {
     open()
     await Promise.resolve()
     open('two')
-    const view = runtime.views[0]
+    const view = runtime.views[1]
     const disabled = request('two')
     disabled.entries.push({
       kind: 'action',
@@ -150,5 +162,26 @@ describe('native action menu lifetime', () => {
     manager.destroy()
     expect(view.webContents.close).toHaveBeenCalledWith({ waitForBeforeUnload: false })
     expect(ipcMain.listenerCount('action-menu:open')).toBe(0)
+  })
+  it('does not let an old load failure dispose a reopened menu view', async () => {
+    const { host, open, manager } = setup()
+    open('one')
+    const firstLoad = runtime.loads[0]
+    const firstView = runtime.views[0]
+    ipcMain.emit('action-menu:close', eventFor(host), 'one')
+    open('two')
+    const view = runtime.views[1]
+
+    firstLoad.reject(new Error('stale load failed'))
+    await Promise.resolve()
+
+    expect(firstView.webContents.close).toHaveBeenCalledWith({ waitForBeforeUnload: false })
+    expect(view.webContents.close).not.toHaveBeenCalled()
+    expect(host.send).not.toHaveBeenCalledWith('action-menu:closed', { id: 'two' })
+    runtime.loads[1].resolve()
+    ipcMain.emit('action-menu:mounted', eventFor(view.webContents))
+    ipcMain.emit('action-menu:ready', eventFor(view.webContents), 'two')
+    expect(view.webContents.focus).toHaveBeenCalledTimes(1)
+    manager.destroy()
   })
 })

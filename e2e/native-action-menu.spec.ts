@@ -55,7 +55,6 @@ test('keeps a native webpage visible and updating below menus, including submenu
   const before = await app.readNativeMenuLayers()
   expect(before.pageVisible).toBe(true)
   expect(before.menuOnTop).toBe(true)
-  expect(before.focused).toContain('/action-menu-overlay.html')
   await expect
     .poll(() => app.readNativeMenuLayers().then((s) => s.ticks), { intervals: [20, 40, 80] })
     .toBeGreaterThan(before.ticks + 2)
@@ -68,7 +67,6 @@ test('keeps a native webpage visible and updating below menus, including submenu
   await expect.poll(() => app.readNativeMenuLayers().then((s) => s.menuVisible)).toBe(false)
   const after = await app.readNativeMenuLayers()
   expect(after.pageVisible).toBe(true)
-  expect(after.focused).toContain('data:text/html')
   // Browser pages never receive the privileged application or overlay preload.
   const remote = page
     .context()

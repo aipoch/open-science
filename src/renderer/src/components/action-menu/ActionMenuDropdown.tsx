@@ -81,6 +81,7 @@ export const ActionMenuDropdown = <ActionId extends string>({
           <PointerActionMenu
             entries={entries}
             pointer={pointer}
+            side={side}
             compact={compact}
             testId="action-menu"
             contentClassName={contentClassName}

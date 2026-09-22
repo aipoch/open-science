@@ -3,6 +3,7 @@ import { realpath, writeFile } from 'node:fs/promises'
 import type { Page } from 'playwright'
 
 import { test } from './fixtures/electron-app'
+import { actionMenuPage } from './fixtures/action-menu'
 
 const PROJECT_NAME = 'Preview context menu journey'
 const TEXT_FILE_NAME = 'context-menu.txt'
@@ -69,21 +70,6 @@ const openLocalFile = async (page: Page, name: string): Promise<void> => {
     'aria-selected',
     'true'
   )
-}
-
-const actionMenuPage = async (page: Page): Promise<Page> => {
-  await expect
-    .poll(() =>
-      page
-        .context()
-        .pages()
-        .some((candidate) => candidate.url().includes('/action-menu-overlay.html'))
-    )
-    .toBe(true)
-  return page
-    .context()
-    .pages()
-    .find((candidate) => candidate.url().includes('/action-menu-overlay.html'))!
 }
 
 const expectContentMenu = async (page: Page, expectedActions: readonly string[]): Promise<void> => {

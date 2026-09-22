@@ -101,3 +101,62 @@ it('opens a button menu with serializable presentation and restores focus before
   expect(closed).toContain(id)
   expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('false')
 })
+
+it('preserves right-side placement in the native request', async () => {
+  let request: NativeActionMenuRequest | undefined
+  const api = {
+    window: {
+      openActionMenu: (value: NativeActionMenuRequest) => {
+        request = value
+      },
+      closeActionMenu: () => {},
+      onActionMenuClosed: () => () => {}
+    }
+  }
+  vi.stubGlobal('api', api)
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  cleanup = () => {
+    act(() => root.unmount())
+    container.remove()
+  }
+
+  await act(async () =>
+    root.render(
+      <ActionMenuDropdown
+        side="right"
+        align="start"
+        entries={[
+          {
+            kind: 'action',
+            action: 'copy',
+            labelKey: 'Copy',
+            icon: Check,
+            disabled: false,
+            danger: false
+          }
+        ]}
+        onSelect={() => {}}
+      >
+        <button>More</button>
+      </ActionMenuDropdown>
+    )
+  )
+  vi.spyOn(container.querySelector('button')!, 'getBoundingClientRect').mockReturnValue({
+    left: 100,
+    right: 120,
+    top: 50,
+    bottom: 70,
+    width: 20,
+    height: 20,
+    x: 100,
+    y: 50,
+    toJSON: () => ({})
+  })
+  await act(async () =>
+    container.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  )
+
+  expect(request).toMatchObject({ side: 'right', align: 'start', pointer: { x: 124, y: 50 } })
+})

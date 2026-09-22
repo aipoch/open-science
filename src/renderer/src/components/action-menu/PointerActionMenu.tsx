@@ -16,6 +16,7 @@ export type PointerActionMenuProps<ActionId extends string> = {
   entries: readonly ResolvedActionMenuEntry<ActionId>[]
   pointer: { x: number; y: number }
   testId: string
+  side?: 'right' | 'bottom'
   align?: 'start' | 'end'
   focusFirst?: boolean
   header?: ReactNode
@@ -42,6 +43,7 @@ export const PointerActionMenu = <ActionId extends string>(
 export const DomPointerActionMenu = <ActionId extends string>({
   entries,
   header,
+  side = 'bottom',
   align = 'start',
   focusFirst,
   label,
@@ -75,6 +77,7 @@ export const DomPointerActionMenu = <ActionId extends string>({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         aria-label={label}
+        side={side}
         align={align}
         onFocus={
           focusFirst

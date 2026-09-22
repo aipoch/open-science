@@ -56,6 +56,7 @@ export const Menu = ({ request }: { request: NativeActionMenuRequest }): React.J
       label={request.label}
       sections={request.sections}
       pointer={request.pointer}
+      side={request.side}
       align={request.align}
       focusFirst={request.focusFirst}
       compact={request.compact}

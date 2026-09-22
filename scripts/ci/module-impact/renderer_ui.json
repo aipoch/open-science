@@ -404,7 +404,8 @@
       "src/renderer/src/pages/settings/ClassificationPanel.render.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
+      "src/renderer/src/components/action-menu/NativeActionMenu.test.tsx"
     ]
   },
   "capabilityOverlays": [],

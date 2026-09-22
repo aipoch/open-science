@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { actionMenuPage } from './fixtures/action-menu'
 
 const PROJECT_NAME = 'Agent journey project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -895,32 +896,15 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
       if (!session) throw new Error('Archive fixture Session was not persisted.')
       return session
     }, USER_MESSAGE)
-    await page.getByRole('menuitem', { name: 'Archive' }).evaluate((element, session) => {
-      // Queue another client's write immediately before the menu submits its captured version.
-      element.addEventListener(
-        'click',
-        () => {
-          void window.api.sessions.editDetails({
-            projectId: session.projectId!,
-            sessionId: session.id,
-            title: session.title,
-            description: `${session.description ?? ''} concurrent edit`,
-            expectedTitle: session.title,
-            expectedDescription: session.description ?? ''
-          })
-        },
-        { capture: true, once: true }
-      )
-    }, session)
+    await app.advanceSessionRevisionBehindRenderer(session)
   }
 
   await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-  // Chromium names a popup menu from its trigger, so the computed accessible name is the
-  // session-specific trigger label rather than the content aria-label "Session actions".
-  const sessionActions = page.getByRole('menu', {
-    name: `Open actions for ${USER_MESSAGE}`
+  const initialMenuPage = await actionMenuPage(page)
+  const sessionActions = initialMenuPage.getByRole('menu', {
+    name: 'Session actions'
   })
   await expect(sessionActions).toBeVisible()
   expect(await sessionActions.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBe(
@@ -928,7 +912,7 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   )
 
   await sessionActions.getByRole('menuitem', { name: 'Export', exact: true }).hover()
-  await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
+  await initialMenuPage.getByRole('menuitem', { name: 'Export conversation…' }).click()
   const exportDialog = page.getByRole('dialog', { name: 'Export conversation' })
   await expect(exportDialog).toBeVisible()
   await expect(exportDialog.getByRole('radio', { name: 'Markdown' })).toBeVisible()
@@ -942,7 +926,8 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await page.getByRole('button', { name: 'Open navigation' }).click()
     await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-    const archive = page.getByRole('menuitem', { name: 'Archive' })
+    const menuPage = await actionMenuPage(page)
+    const archive = menuPage.getByRole('menuitem', { name: 'Archive' })
     await expect(archive).toBeEnabled()
     if (attempt < 2) await advanceRevision()
     await archive.click()
@@ -971,7 +956,8 @@ test('identifies the Project before deleting a workspace Session', async ({ app 
   await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  const deleteMenuPage = await actionMenuPage(page)
+  await deleteMenuPage.getByRole('menuitem', { name: 'Delete', exact: true }).click()
   const confirmation = page.getByRole('alertdialog', { name: 'Delete Session?' })
   await expect(confirmation).toContainText(`Project: ${PROJECT_NAME}`)
   await expect(confirmation).toContainText(USER_MESSAGE)
@@ -1037,8 +1023,9 @@ test('exports a CLI conversation first opened after completion', async ({ app },
     .filter({ hasText: saved!.title })
     .click()
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
-  await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
-  await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
+  let menuPage = await actionMenuPage(page)
+  await menuPage.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+  await menuPage.getByRole('menuitem', { name: 'Export conversation…' }).click()
   const dialog = page.getByRole('dialog', { name: 'Export conversation', exact: true })
   await dialog.getByRole('radio', { name: 'Markdown' }).click()
   await dialog.getByTestId('conversation-export-confirm').click()
@@ -1046,8 +1033,9 @@ test('exports a CLI conversation first opened after completion', async ({ app },
   // The report retries a freshly reviewed snapshot after two idle minutes.
   await new Promise((resolve) => setTimeout(resolve, 120_000))
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
-  await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
-  await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
+  menuPage = await actionMenuPage(page)
+  await menuPage.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+  await menuPage.getByRole('menuitem', { name: 'Export conversation…' }).click()
   await dialog.getByRole('radio', { name: 'Markdown' }).click()
   await dialog.getByTestId('conversation-export-confirm').click()
   await expect(dialog).toBeHidden()

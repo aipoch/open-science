@@ -16,6 +16,7 @@ export type NativeActionMenuRequest = {
   id: string
   pointer: { x: number; y: number }
   entries: NativeActionMenuEntry[]
+  side?: 'right' | 'bottom'
   align?: 'start' | 'end'
   focusFirst?: boolean
   testId?: string
@@ -35,6 +36,7 @@ export const isNativeActionMenuRequest = (value: unknown): value is NativeAction
   const text = (value: unknown): value is string =>
     typeof value === 'string' && value.length <= 16384
   return (
+    (request.side === undefined || request.side === 'right' || request.side === 'bottom') &&
     (request.align === undefined || request.align === 'start' || request.align === 'end') &&
     (request.focusFirst === undefined || typeof request.focusFirst === 'boolean') &&
     text(request.id) &&

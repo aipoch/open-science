@@ -24,6 +24,8 @@ export const createActionMenuOverlay = (
   let previousFocus: WebContents | undefined
   let destroyed = false
   let closedId: string | undefined
+  let nextLoadGeneration = 0
+  let activeLoadGeneration = 0
   const trusted = (event: IpcMainEvent, sender: WebContents | undefined): boolean =>
     !destroyed &&
     !!sender &&
@@ -32,6 +34,7 @@ export const createActionMenuOverlay = (
     event.senderFrame === sender.mainFrame
   const close = (action?: string, restoreFocus = true): void => {
     if (!current) return
+    activeLoadGeneration = 0
     const result: NativeActionMenuResult = { id: current.id, ...(action ? { action } : {}) }
     closedId = current.id
     current = undefined
@@ -44,6 +47,7 @@ export const createActionMenuOverlay = (
     }
     previousFocus = undefined
     if (!host.isDestroyed()) host.send('action-menu:closed', result)
+    if (!rendererReady) dispose()
   }
   const open = (event: IpcMainEvent, request: unknown): void => {
     if (!trusted(event, host) || !isNativeActionMenuRequest(request) || request.id === closedId)
@@ -80,10 +84,14 @@ export const createActionMenuOverlay = (
         close()
         dispose()
       })
+      const createdView = view
+      const loadGeneration = ++nextLoadGeneration
+      activeLoadGeneration = loadGeneration
       const load = paths.url
         ? view.webContents.loadURL(paths.url)
         : view.webContents.loadFile(paths.html)
       void load.catch(() => {
+        if (view !== createdView || activeLoadGeneration !== loadGeneration) return
         close()
         dispose()
       })

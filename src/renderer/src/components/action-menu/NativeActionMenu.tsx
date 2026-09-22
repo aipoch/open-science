@@ -14,6 +14,7 @@ const labelText = (label: ReactNode): string => {
 export const NativeActionMenu = <ActionId extends string>({
   entries,
   pointer,
+  side,
   align,
   focusFirst,
   header,
@@ -63,6 +64,7 @@ export const NativeActionMenu = <ActionId extends string>({
       label,
       sections,
       pointer,
+      side,
       align,
       focusFirst,
       compact,
@@ -103,6 +105,7 @@ export const NativeActionMenu = <ActionId extends string>({
     label,
     sections,
     pointer,
+    side,
     align,
     focusFirst,
     renderLabel,
