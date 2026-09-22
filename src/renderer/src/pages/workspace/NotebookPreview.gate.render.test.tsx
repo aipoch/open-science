@@ -152,6 +152,26 @@ describe('EnvProvisionOverlay', () => {
     expect(retried).toBe(1)
   })
 
+  it('lets the user close a blocked environment gate when retry cannot help', () => {
+    act(() =>
+      root.render(
+        <EnvProvisionOverlay
+          ui={{ kind: 'error', message: 'KERNEL_STARTUP_FENCE: recovery is blocked' }}
+          onRetry={() => undefined}
+        />
+      )
+    )
+
+    const dismiss = container.querySelector(
+      '[data-testid="notebook-env-dismiss"]'
+    ) as HTMLButtonElement
+    expect(dismiss).not.toBeNull()
+
+    act(() => dismiss.click())
+
+    expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+  })
+
   it('announces setup failures assertively', () => {
     act(() => root.render(<EnvProvisionOverlay ui={{ kind: 'error', message: 'offline' }} />))
     const gate = container.querySelector('[data-testid="notebook-env-gate"]')
