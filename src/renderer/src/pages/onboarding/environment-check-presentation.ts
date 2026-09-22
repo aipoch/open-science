@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 
 import type { EnvironmentCheckItem } from '../../../../shared/settings'
+import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../../../../shared/claude-runtime'
 
 const localizedLabel = (check: EnvironmentCheckItem, t: TFunction): string => {
   switch (check.id) {
@@ -21,6 +22,14 @@ const localizeHostEnvironmentCheck = (
   check: EnvironmentCheckItem,
   t: TFunction
 ): EnvironmentCheckItem => {
+  if (check.summary === CLAUDE_CLI_INCOMPATIBLE_MESSAGE) {
+    return {
+      ...check,
+      summary: t(
+        'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+      )
+    }
+  }
   switch (check.presentation?.kind) {
     case 'system-supported':
       return {
