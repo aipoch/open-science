@@ -13,6 +13,108 @@ const wordCounter: TokenCounter = {
 }
 
 describe('ContextUsageTracker', () => {
+  // Counts captured from the previous js-tiktoken implementation. Keep the corpus independent
+  // of the implementation under test, including normalization and malformed UTF-16 behavior.
+  it.each([
+    ['deepseek-v4', [9, 20, 31, 18, 3, 128, 256]],
+    ['gpt-5', [9, 20, 13, 13, 3, 128, 256]]
+  ] as const)('preserves real tokenizer counts for %s', (model, counts) => {
+    const samples = [
+      'Hello, world!\nA short scientific explanation.',
+      'const square = (x: number) => x ** 2;\nconsole.log(square(42));',
+      '中文 简体與繁體 日本語 한국어 Русский العربية',
+      'Ａ ﬁ e\u0301 👩🏽‍🔬\r\n\t',
+      'a\ud800b',
+      'x'.repeat(1024),
+      'abc123'.repeat(128)
+    ]
+    const tracker = new ContextUsageTracker()
+    samples.forEach((text, index) => {
+      const sessionId = `corpus-${index}`
+      tracker.beginSession(sessionId, { frameworkId: 'opencode', model })
+      tracker.appendText(sessionId, 'messages', text)
+      expect(tracker.estimate(sessionId)?.estimatedTokens).toBe(counts[index])
+    })
+  })
+
+  it('retains Anthropic compatibility normalization', () => {
+    const tracker = new ContextUsageTracker()
+    tracker.beginSession('anthropic', { frameworkId: 'claude-code' })
+    tracker.appendText('anthropic', 'messages', 'Ａ ﬁ e\u0301 👩🏽‍🔬')
+    expect(tracker.estimate('anthropic')?.estimatedTokens).toBe(13)
+  })
+
+  it('bounds Anthropic text after compatibility normalization expands it', () => {
+    const tracker = new ContextUsageTracker()
+    tracker.beginSession('expanded', { frameworkId: 'claude-code' })
+    const text = 'ﬃ'.repeat(400)
+    tracker.appendText('expanded', 'messages', text)
+    expect(tracker.estimate('expanded')?.estimatedTokens).toBe(300)
+  })
+
+  it.each(['deepseek-v4', 'gpt-5'])('retains the special-token fallback for %s', (model) => {
+    const tracker = new ContextUsageTracker()
+    tracker.beginSession('special', { frameworkId: 'opencode', model })
+    const text = 'hello <|endoftext|> 中文'
+    tracker.appendText('special', 'messages', text)
+    expect(tracker.estimate('special')?.estimatedTokens).toBe(
+      Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
+    )
+  })
+
+  it.each(['deepseek-v4', 'gpt-5', 'claude-sonnet-4-5'])(
+    'uses whole-text estimates outside the synchronous tokenizer budget for %s',
+    (model) => {
+      const samples = [
+        'x'.repeat(1025),
+        ' '.repeat(1025),
+        ' \t'.repeat(513),
+        'const n = 42;\n'.repeat(3000),
+        '中文 '.repeat(12_000)
+      ]
+      const tracker = new ContextUsageTracker()
+      samples.forEach((text, index) => {
+        const sessionId = `budget-${index}`
+        tracker.beginSession(sessionId, { frameworkId: 'opencode', model })
+        tracker.appendText(sessionId, 'messages', text)
+        expect(tracker.estimate(sessionId)?.estimatedTokens).toBe(
+          Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
+        )
+      })
+    }
+  )
+
+  it('keeps ordinary text exact at the total budget boundary', () => {
+    const tracker = new ContextUsageTracker()
+    tracker.beginSession('boundary', { frameworkId: 'codex' })
+    tracker.appendText('boundary', 'messages', 'a '.repeat(16_384))
+    expect(tracker.estimate('boundary')?.estimatedTokens).toBe(16_385)
+  })
+
+  it('estimates all oversized streamed output once and retains authoritative usage', () => {
+    const tracker = new ContextUsageTracker()
+    tracker.beginSession('stream', { frameworkId: 'codex' })
+    tracker.reconcileProviderUsage('stream', { used: 123, size: 200_000 })
+    const turn = tracker.beginTurn('stream')
+    for (let index = 0; index < 90; index += 1) {
+      tracker.observeSessionUpdate('stream', {
+        sessionId: 'stream',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'x'.repeat(2048) }
+        }
+      })
+    }
+    turn.complete()
+    turn.complete()
+    expect(tracker.estimate('stream')?.estimatedTokens).toBe(0)
+    expect(tracker.usage('stream')?.used).toBe(123)
+    tracker.commitPendingAssistantOutput('stream')
+    tracker.commitPendingAssistantOutput('stream')
+    expect(tracker.estimate('stream')?.estimatedTokens).toBe(46_080)
+    expect(tracker.usage('stream')?.used).toBe(123)
+  })
+
   it('selects a stable local tokenizer profile by model before framework fallback', () => {
     expect(tokenizerProfileFor('claude-code', undefined)).toBe('anthropic')
     expect(tokenizerProfileFor('claude-code', 'deepseek-v4-flash')).toBe('cl100k_base')

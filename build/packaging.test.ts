@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
@@ -12,7 +13,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { createPackageWithOptions } from '@electron/asar'
+import { createPackageWithOptions, listPackage } from '@electron/asar'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = join(__dirname, '..')
@@ -21,6 +22,53 @@ const appBuilderLibRoot = dirname(
 )
 
 describe('packaging config', () => {
+  it('loads both tiktoken WASM encodings from a packed ASAR in Electron', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'tiktoken-asar-')))
+    try {
+      const require = createRequire(import.meta.url)
+      const source = join(root, 'source')
+      const archive = join(root, 'app.asar')
+      mkdirSync(source)
+      cpSync(dirname(require.resolve('tiktoken')), join(source, 'node_modules', 'tiktoken'), {
+        recursive: true
+      })
+      writeFileSync(
+        join(source, 'probe.cjs'),
+        `const { get_encoding } = require('tiktoken')
+const counts = {}
+for (const profile of ['cl100k_base', 'o200k_base']) {
+  const encoding = get_encoding(profile)
+  try {
+    counts[profile] = encoding.encode('x'.repeat(1024)).length
+  } finally {
+    encoding.free()
+  }
+}
+process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tiktoken') }))
+`
+      )
+      await createPackageWithOptions(source, archive, {})
+      expect(listPackage(archive)).toContain('/node_modules/tiktoken/tiktoken_bg.wasm')
+      // Remove the source tree so the child can only load the archived JavaScript and WASM.
+      rmSync(source, { recursive: true, force: true })
+      const result = spawnSync(require('electron') as string, [join(archive, 'probe.cjs')], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_PATH: '' }
+      })
+      expect(result.error).toBeUndefined()
+      expect(result.status, result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toEqual({
+        // A byte-length fallback would return 256; both real encodings return 128.
+        counts: { cl100k_base: 128, o200k_base: 128 },
+        modulePath: join(archive, 'node_modules', 'tiktoken', 'tiktoken.cjs')
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['module', 'commonjs', undefined])(
     'runs unpacked notebook scripts beneath an ancestor package with type %s',
     async (type) => {
