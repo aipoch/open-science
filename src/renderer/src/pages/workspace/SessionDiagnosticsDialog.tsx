@@ -7,6 +7,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { FieldHelp } from '@/components/FieldHelp'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatByteSize } from '@/lib/utils'
 import {
   dialogOverlayClassName,
@@ -192,16 +193,23 @@ export const SessionDiagnosticsDialog = ({
                   contentClassName="max-w-[320px]"
                 />
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Close')}
-                className={`${dialogCloseButtonClassName} shrink-0`}
-                onClick={() => void close()}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Close')}
+                      className={`${dialogCloseButtonClassName} shrink-0`}
+                      onClick={() => void close()}
+                    >
+                      <X className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('Close')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
             <Dialog.Description className={dialogDescriptionClassName}>
               {t(

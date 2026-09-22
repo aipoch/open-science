@@ -74,6 +74,14 @@ test('exports selected diagnostics without changing the persisted session', asyn
   })
   await dialog.getByRole('heading', { name: 'Export diagnostics', exact: true }).click()
   await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await dialog.locator('button[aria-label="Close"]').hover()
+  await expect(page.getByRole('tooltip')).toHaveText('Close')
+  await testInfo.attach('diagnostics-close-tooltip', {
+    body: await page.screenshot({ path: testInfo.outputPath('diagnostics-close-tooltip.png') }),
+    contentType: 'image/png'
+  })
+  await dialog.getByRole('heading', { name: 'Export diagnostics', exact: true }).click()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(dialog.getByRole('checkbox', { name: /^main\.log/ })).toBeChecked()
   await expect(dialog.getByRole('checkbox', { name: /^main\.1\.log/ })).toBeEnabled()
   await expect(dialog.getByRole('checkbox', { name: /^main\.1\.log/ })).not.toBeChecked()
