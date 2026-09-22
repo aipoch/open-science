@@ -94,6 +94,7 @@ describe('AgentStep', () => {
     await renderStep()
     expect(container.textContent).toContain('2.1.117')
     expect(container.textContent).toContain('Update Claude Code to 2.1.118 or later')
+    expect(container.textContent).not.toContain('Requires Codex ACP v2.1.118')
     expect(container.querySelector('[role="radio"]')).toBeNull()
   })
   it('reuses the Settings agent cards without automatic or manual setup modes', async () => {

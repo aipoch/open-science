@@ -25,10 +25,7 @@ import {
   MINIMUM_CODEX_ACP_VERSION
 } from '../../../../shared/codex-runtime'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
-import {
-  isSupportedClaudeCliVersion,
-  MINIMUM_CLAUDE_CLI_VERSION
-} from '../../../../shared/claude-runtime'
+import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { AgentFrameworkIcon } from './provider-icons'
 import { RepairFrameworkDialog } from './RepairFrameworkDialog'
@@ -367,7 +364,6 @@ const AgentPanel = ({
       ready: preflight.claudeReady && isSupportedClaudeCliVersion(claude.version),
       installed: Boolean(claude.resolvedPath),
       updateRequired: Boolean(claude.resolvedPath && !isSupportedClaudeCliVersion(claude.version)),
-      minimumVersion: MINIMUM_CLAUDE_CLI_VERSION,
       version: claude.version,
       path: claude.resolvedPath,
       sourceLabel: 'anthropics/claude-code',
