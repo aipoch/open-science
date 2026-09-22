@@ -967,7 +967,6 @@
       "src/main/skills/materializer.test.ts",
       "src/main/skills/mcp-server.test.ts",
       "src/main/skills/net-fetch.test.ts",
-      "src/main/skills/census-skill.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts",
       "src/main/skills/registry.test.ts",
       "src/main/skills/runtime-mcp-server.test.ts",

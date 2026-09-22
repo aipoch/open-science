@@ -813,7 +813,6 @@
       "src/main/skills/marketplace-installation.test.ts",
       "src/main/skills/materializer-integrity.regression.test.ts",
       "src/main/skills/materializer.test.ts",
-      "src/main/skills/census-skill.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts",
       "src/main/skills/registry.test.ts",
       "src/main/skills/runtime-mcp-server.test.ts",
