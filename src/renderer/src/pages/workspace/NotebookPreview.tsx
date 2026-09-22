@@ -4,7 +4,6 @@ import {
   useEffect,
   useEffectEvent,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
   type RefObject
@@ -15,7 +14,7 @@ import { RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
 import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
 import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import {
@@ -99,7 +98,6 @@ export type NotebookPreviewItem = PreviewToolItem & {
 
 type NotebookPreviewProps = {
   item: NotebookPreviewItem
-  isActive?: boolean
 }
 
 type NotebookNamespaceViewStatus =
@@ -507,7 +505,7 @@ const TerminalInput = ({
 }
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
-const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React.JSX.Element => {
+const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const { t } = useTranslation()
   const kernelScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
@@ -530,15 +528,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const namespaceRequestId = useRef(0)
   const namespaceRefreshQueued = useRef(false)
   const namespaceLoadKey = useRef<string | undefined>(undefined)
-  const retainedSession = useRef<ChatSession | undefined>(undefined)
   const session = useSessionStore((state) =>
-    isActive
-      ? state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
-      : retainedSession.current
+    state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
   )
-  useLayoutEffect(() => {
-    if (isActive) retainedSession.current = session
-  }, [isActive, session])
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewActiveItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
@@ -561,12 +553,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const latestNotebookState = useRef<NotebookSessionState | undefined>(undefined)
   const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
   const stateReloadQueued = useRef(false)
-  const isActiveRef = useRef(isActive)
-  const activationGeneration = useRef(0)
-  useLayoutEffect(() => {
-    if (isActiveRef.current !== isActive) activationGeneration.current += 1
-    isActiveRef.current = isActive
-  }, [isActive])
   const lastFocusedRunRequest = useRef<string | undefined>(undefined)
   const notebookRequest = createNotebookRequest(item.notebook)
   const notebookRequestKey = JSON.stringify(notebookRequest)
@@ -603,7 +589,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
 
   // Reads the latest notebook state from main, including its bounded recent run window.
   const loadNotebookState = useCallback(async (): Promise<boolean> => {
-    if (!isActiveRef.current) return false
     if (stateLoadInFlight.current) {
       stateReloadQueued.current = true
       return stateLoadInFlight.current
@@ -615,34 +600,25 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
         do {
           stateReloadQueued.current = false
           const requested = latestNotebookRequest.current
-          const requestedGeneration = activationGeneration.current
           try {
             const nextState = await window.api.notebook.state(requested.request)
 
-            if (
-              isActiveRef.current &&
-              activationGeneration.current === requestedGeneration &&
-              latestNotebookRequest.current.key === requested.key
-            ) {
+            if (latestNotebookRequest.current.key === requested.key) {
               applyNotebookState(nextState)
               setActionError(null)
               succeeded = true
-            } else if (isActiveRef.current) {
+            } else {
               stateReloadQueued.current = true
             }
           } catch (error) {
-            if (
-              isActiveRef.current &&
-              activationGeneration.current === requestedGeneration &&
-              latestNotebookRequest.current.key === requested.key
-            ) {
+            if (latestNotebookRequest.current.key === requested.key) {
               setActionError(getErrorMessage(error))
               succeeded = false
-            } else if (isActiveRef.current) {
+            } else {
               stateReloadQueued.current = true
             }
           }
-        } while (isActiveRef.current && stateReloadQueued.current)
+        } while (stateReloadQueued.current)
         return succeeded
       } finally {
         setIsLoading(false)
@@ -660,7 +636,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
 
   // Defer the initial state load until after the component has mounted.
   useEffect(() => {
-    if (!isActive) return
     const timeoutId = window.setTimeout(() => {
       void loadNotebookState()
     }, 0)
@@ -668,17 +643,16 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     return () => {
       window.clearTimeout(timeoutId)
     }
-  }, [isActive, loadNotebookState, notebookRequestKey])
+  }, [loadNotebookState, notebookRequestKey])
 
   // Reload whenever the shared runtime publishes a change for this notebook session.
   useEffect(() => {
-    if (!isActive) return
     return window.api.notebook.onChanged((event) => {
       if (event.sessionId === item.notebook.sessionId) {
         void loadNotebookState()
       }
     })
-  }, [isActive, item.notebook.sessionId, loadNotebookState])
+  }, [item.notebook.sessionId, loadNotebookState])
 
   const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
   const frameRuns = session ? normalizeNotebookRootFrameRuns(runs, session) : runs
@@ -886,7 +860,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const cellCount = notebookState?.runCount ?? runs.length
 
   const loadNamespace = async (): Promise<void> => {
-    if (!isActiveRef.current) return
     if (
       !activeDataLanguage ||
       !activeEnvName ||
@@ -956,11 +929,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   // Opening the view, switching target, or changing the private-name filter starts a fresh read.
   // Reopening never treats an old snapshot as current, and target checks drop late responses.
   useEffect(() => {
-    if (!isActive) {
-      namespaceRequestId.current += 1
-      namespaceLoadKey.current = undefined
-      return
-    }
     if (
       (!showVariables && !terminalInputFocused) ||
       !activeDataLanguage ||
@@ -972,27 +940,13 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     }
     const loadKey = `${selectedTarget ?? ''}:${showPrivateVariables}`
     if (namespaceLoadKey.current === loadKey) return
-    // A retained running snapshot must wait for the activation state read to report idle.
-    namespaceRefreshQueued.current = isSelectedKernelRunning
-    if (isSelectedKernelRunning) {
-      namespaceLoadKey.current = loadKey
-      return
-    }
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      namespaceLoadKey.current = loadKey
-      void loadLatestNamespace()
-    })
-    return () => {
-      cancelled = true
-    }
+    namespaceLoadKey.current = loadKey
+    namespaceRefreshQueued.current = false
+    void loadLatestNamespace()
   }, [
     activeDataLanguage,
-    isActive,
     isHistoricalEnvironmentView,
     isNamespaceLost,
-    isSelectedKernelRunning,
     selectedTarget,
     showPrivateVariables,
     showVariables,
@@ -1002,17 +956,16 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   // Runtime events have no process key, so mark the open snapshot stale and wait for the refreshed
   // notebook state. Once the selected kernel is idle, coalesce all queued events into one read.
   useEffect(() => {
-    if (!isActive || (!showVariables && !terminalInputFocused)) return
+    if (!showVariables && !terminalInputFocused) return
     return window.api.notebook.onChanged((event) => {
       if (event.sessionId !== item.notebook.sessionId) return
       namespaceRefreshQueued.current = true
       setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
     })
-  }, [isActive, item.notebook.sessionId, showVariables, terminalInputFocused])
+  }, [item.notebook.sessionId, showVariables, terminalInputFocused])
 
   useEffect(() => {
     if (
-      !isActive ||
       (!showVariables && !terminalInputFocused) ||
       !namespaceRefreshQueued.current ||
       isSelectedKernelRunning ||
@@ -1024,7 +977,6 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     namespaceRefreshQueued.current = false
     void loadLatestNamespace()
   }, [
-    isActive,
     isHistoricalEnvironmentView,
     isNamespaceLost,
     isSelectedKernelRunning,

@@ -337,5 +337,5 @@ export const PreviewToolContent = ({
 
   if (!isNotebookPreviewItem(item)) return null
 
-  return <NotebookPreview item={item} isActive={isActive} />
+  return <NotebookPreview item={item} />
 }

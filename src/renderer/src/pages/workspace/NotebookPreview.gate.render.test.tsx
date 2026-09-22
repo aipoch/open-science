@@ -388,9 +388,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     runStaleness: NotebookSessionState['runStaleness'] = {},
     kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
     stateOverrides: Partial<NotebookSessionState> = {},
-    previewItem: NotebookPreviewItem = item,
-    isActive = true,
-    onChanged: (listener: (event: { sessionId: string }) => void) => () => void = () => vi.fn()
+    previewItem: NotebookPreviewItem = item
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -479,7 +477,7 @@ describe('NotebookPreview per-kernel tabs', () => {
         ),
         execute: vi.fn(() => Promise.resolve({})),
         restart: vi.fn(),
-        onChanged: vi.fn(onChanged)
+        onChanged: vi.fn(() => vi.fn())
       },
       notebookEnv: {
         getStatus: vi.fn(() => Promise.resolve(readyStatus)),
@@ -489,7 +487,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     } as never
 
     await act(async () => {
-      root.render(<NotebookPreview item={previewItem} isActive={isActive} />)
+      root.render(<NotebookPreview item={previewItem} />)
     })
     // Flush the mount-deferred setTimeout(0) that kicks off loadNotebookState(), plus its state()
     // promise resolution and the resulting re-render — React's passive effects also queue via a
@@ -500,180 +498,6 @@ describe('NotebookPreview per-kernel tabs', () => {
       })
     }
   }
-
-  it('suspends notebook updates while inactive and refreshes the mounted view on return', async () => {
-    const listeners = new Set<(event: { sessionId: string }) => void>()
-    const onChanged = (listener: (event: { sessionId: string }) => void): (() => void) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    }
-    await mountWithRuns([makeRun({ runId: 'first' })], [], {}, 'idle', {}, item, false, onChanged)
-    const state = vi.mocked(window.api.notebook.state)
-    expect(state).not.toHaveBeenCalled()
-    expect(listeners.size).toBe(0)
-
-    const flushLoad = async (): Promise<void> => {
-      for (let i = 0; i < 5; i += 1) {
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0))
-        })
-      }
-    }
-    await act(async () => root.render(<NotebookPreview item={item} isActive />))
-    await flushLoad()
-    expect(state).toHaveBeenCalledTimes(1)
-    expect(listeners.size).toBe(1)
-    const cells = container.querySelector('[data-testid="notebook-cells"]')
-    expect(container.querySelector('[data-run-id="first"]')).not.toBeNull()
-    await act(async () => {
-      for (const listener of listeners) listener({ sessionId: 'session-1' })
-    })
-    await flushLoad()
-    expect(state).toHaveBeenCalledTimes(2)
-
-    await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
-    expect(listeners.size).toBe(0)
-    expect(container.querySelector('[data-testid="notebook-cells"]')).toBe(cells)
-    await act(async () => {
-      for (const listener of listeners) listener({ sessionId: 'session-1' })
-    })
-    await flushLoad()
-    expect(state).toHaveBeenCalledTimes(2)
-    expect(container.querySelector('[data-run-id="first"]')).not.toBeNull()
-
-    await act(async () => root.render(<NotebookPreview item={item} isActive />))
-    await flushLoad()
-    expect(state).toHaveBeenCalledTimes(3)
-    expect(listeners.size).toBe(1)
-    expect(container.querySelector('[data-testid="notebook-cells"]')).toBe(cells)
-  })
-
-  it('retains inactive cells without rendering on session updates and catches up on return', async () => {
-    await mountWithRuns([makeRun({ runId: 'first', agentFrameId: 'frame-child' })])
-    await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
-    notebookCodeBlockSpy.mockClear()
-    const cells = container.querySelector('[data-testid="notebook-cells"]')
-    await act(async () => {
-      for (let index = 0; index < 5; index += 1) {
-        useSessionStore.setState((state) => ({
-          sessions: state.sessions.map((session) => ({
-            ...session,
-            updatedAt: index,
-            conversationGraph: session.conversationGraph && {
-              ...session.conversationGraph,
-              frames: session.conversationGraph.frames.map((frame) =>
-                frame.id === 'frame-child' ? { ...frame, delegateName: `Updated ${index}` } : frame
-              )
-            }
-          }))
-        }))
-      }
-    })
-    expect(notebookCodeBlockSpy).not.toHaveBeenCalled()
-    expect(container.querySelector('[data-testid="notebook-cells"]')).toBe(cells)
-
-    const state = vi.mocked(window.api.notebook.state)
-    const initial = await state.mock.results[0]?.value
-    const latest = makeRun({ runId: 'latest', agentFrameId: 'frame-child' })
-    state.mockResolvedValue({ ...initial, runs: [latest], recentRuns: [latest] })
-    await act(async () => root.render(<NotebookPreview item={item} isActive />))
-    for (let index = 0; index < 5; index += 1) {
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    }
-    expect(container.querySelector('[data-run-id="latest"]')).not.toBeNull()
-    expect(screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).title).toBe(
-      'Updated 4'
-    )
-    expect(container.querySelector('[data-testid="notebook-cells"]')).toBe(cells)
-  })
-
-  it('refreshes open variables when an inactive running kernel finishes before return', async () => {
-    const listeners = new Set<(event: { sessionId: string }) => void>()
-    await mountWithRuns([makeRun({ runId: 'p1' })], [], {}, 'idle', {}, item, true, (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
-    })
-    const inspect = vi.mocked(window.api.notebook.inspectNamespace)
-    expect(inspect).toHaveBeenCalledTimes(1)
-    const state = vi.mocked(window.api.notebook.state)
-    const idle = await state.mock.results[0]?.value
-    state.mockResolvedValue({
-      ...idle,
-      environments: idle.environments.map((environment: NotebookEnvironmentStatus) => ({
-        ...environment,
-        status: 'running'
-      }))
-    })
-    await act(async () => {
-      for (const listener of listeners) listener(item.notebook)
-    })
-    await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
-    expect(listeners.size).toBe(0)
-    const inspectionCount = inspect.mock.calls.length
-    let resolveIdle!: (value: NotebookSessionState) => void
-    state.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveIdle = resolve
-        })
-    )
-    await act(async () => {
-      for (const listener of listeners) listener(item.notebook)
-    })
-    expect(inspect).toHaveBeenCalledTimes(inspectionCount)
-
-    await act(async () => root.render(<NotebookPreview item={item} isActive />))
-    for (let index = 0; index < 5; index += 1) {
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    }
-    expect(inspect).toHaveBeenCalledTimes(inspectionCount)
-    await act(async () => resolveIdle(idle))
-    expect(inspect).toHaveBeenCalledTimes(inspectionCount + 1)
-    expect(container.querySelector('[data-testid="notebook-variables-view"]')).not.toBeNull()
-  })
-
-  it('discards an earlier activation response that arrives after reactivation', async () => {
-    await mountWithRuns([], [], {}, 'idle', {}, item, false)
-    const state = vi.mocked(window.api.notebook.state)
-    const base = await state(item.notebook)
-    state.mockClear()
-    const staleRun = makeRun({ runId: 'stale' })
-    const freshRun = makeRun({ runId: 'fresh' })
-    let resolveStale!: (value: NotebookSessionState) => void
-    let resolveFresh!: (value: NotebookSessionState) => void
-    const staleResponse = new Promise<NotebookSessionState>((resolve) => {
-      resolveStale = resolve
-    })
-    const freshResponse = new Promise<NotebookSessionState>((resolve) => {
-      resolveFresh = resolve
-    })
-    state
-      .mockImplementationOnce(() => staleResponse)
-      .mockImplementationOnce(() => freshResponse)
-      .mockImplementation(() => freshResponse)
-
-    await act(async () => root.render(<NotebookPreview item={item} isActive />))
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    expect(state).toHaveBeenCalledTimes(1)
-
-    await act(async () => root.render(<NotebookPreview item={item} isActive={false} />))
-    await act(async () => root.render(<NotebookPreview item={item} isActive />))
-    resolveStale({ ...base, runCount: 1, runs: [staleRun], recentRuns: [staleRun] })
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(state).toHaveBeenCalledTimes(2)
-    expect(container.querySelector('[data-run-id="stale"]')).toBeNull()
-
-    resolveFresh({ ...base, runCount: 1, runs: [freshRun], recentRuns: [freshRun] })
-    for (let i = 0; i < 5; i += 1) {
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
-    }
-    expect(container.querySelector('[data-run-id="fresh"]')).not.toBeNull()
-  })
 
   it('uses one notebook scroll owner and an accessible real resize handle', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
