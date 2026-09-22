@@ -176,8 +176,10 @@ export const ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE =
 
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit; the renderer tries framework-native
-// compaction first, then falls back to a fresh context plus text replay. Absent on ordinary events.
-export type AcpRecoverableFailure = 'context-overflow'
+// compaction first, then falls back to a fresh context plus text replay. 'session-lost' means the
+// provider session disappeared; the renderer creates a fresh provider session and replays the text.
+// Absent on ordinary events.
+export type AcpRecoverableFailure = 'context-overflow' | 'session-lost'
 
 export type AcpContextUsageCategoryKey =
   'system' | 'tools' | 'messages' | 'mcp' | 'skills' | 'other'
@@ -537,6 +539,8 @@ type AcpRuntimeEventBase = {
   // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
   // actionable reminder messages.
   providerError?: boolean
+  // Main has durably committed this event's Message/Artifact projection before publication.
+  publicationOwner?: 'main'
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'
@@ -909,6 +913,8 @@ export type AcpSetPermissionProfileRequest = {
 }
 
 export type AcpPromptRequest = {
+  /** Application-owned execution policy; never grants additional authority. */
+  permissionPrompts?: 'none'
   sessionId: string
   text: string
   // Renderer-owned Session preference. Main still applies the higher-priority global Memory gate.

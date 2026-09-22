@@ -49,7 +49,7 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.30.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.30.2는 안정성 릴리스입니다. Windows R 런타임이 안정적으로 복구되고(conda 시작, 실행 파일 확인, 커널 복구, 검증된 pip 진입점), Notebook의 같은 턴 입력이 올바르게 재실행되며, 검토자 수정이 연결된 피드백 전반에서 컨텍스트를 유지합니다. 문헌 가져오기는 PubMed 저자의 성과 이니셜을 분리하고 철회 관계를 잡아내며, 커넥터는 Ensembl, VEP, Reactome, UCSC, gnomAD 동작을 다듬고, DeepSeek V4.1 Flash가 모델 카탈로그에 합류합니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
+> 💡 **[AIPOCH Open-Science v0.32.0 출시](https://github.com/aipoch/open-science/releases/latest)** _(마지막 업데이트: 2026년 9월)_. AIPOCH Open-Science v0.32.0은 PDF 증거를 오래 보존하고 아티팩트 내보내기의 상호 운용성을 높입니다. 영속적인 주석과 파일별 문서 Notebook은 텍스트 스타일, 영역 표시, 노트, 댓글, 색상, 태그를 해당 파일 버전에 함께 유지하고 원본 바이트를 건드리지 않은 채 주석 반영 PDF 또는 Markdown/CSV로 내보내며, 검증을 통과한 아티팩트 버전은 정확한 입력과 함께 완전한 RO-Crate 아카이브로 패키징됩니다. 서열과 오믹스 작업에는 비동기 NCBI BLAST 검색, 원본 제출 파일을 포함한 ENA 실행 검색, PRIDE 프로젝트 파일 목록, 유전자 또는 생물로 하는 UniProt 단백질 검색이 더해집니다. 검증된 미러 덕분에 로컬 PDF 파싱 모델 설치는 단일 다운로드 소스에 의존하지 않고, 기능 선택은 사용자가 직접 운영하는 TypeSafe 호환 분류 서비스를 가리킬 수 있으며, 무인 CLI 실행은 사람을 기다리지 않도록 차단할 수 있습니다. 일괄 처리된 복구, 미뤄진 Markdown 작업, 줄어든 옵저버 오버헤드 덕분에 시작과 긴 대화가 더 빨라집니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 확인하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

@@ -58,8 +58,27 @@ describe('Linux package smoke', () => {
     await expect(assertPackagedResources(executable)).rejects.toThrow(/micromamba/)
   })
 
-  it('requires exactly one native Linux Prisma engine', async () => {
+  it('requires Debian and RHEL native Linux Prisma engines', async () => {
     const appRoot = await mkdtemp(join(tmpdir(), 'open-science-linux-engine-'))
+    const executable = join(appRoot, 'open-science')
+    const resources = join(appRoot, 'resources')
+    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    await mkdir(prismaClient, { recursive: true })
+    await Promise.all([
+      writeFile(executable, ''),
+      writeFile(join(resources, 'app.asar'), ''),
+      writeFile(join(resources, 'micromamba'), ''),
+      writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), ''),
+      writeFile(join(prismaClient, 'libquery_engine-rhel-openssl-3.0.x.so.node'), '')
+    ])
+
+    await expect(assertPackagedResources(executable)).resolves.toBeUndefined()
+    await writeFile(join(prismaClient, 'libquery_engine-darwin.dylib.node'), '')
+    await expect(assertPackagedResources(executable)).rejects.toThrow(/Prisma engines/)
+  })
+
+  it('rejects a Debian-only engine set because Fedora selects the RHEL runtime', async () => {
+    const appRoot = await mkdtemp(join(tmpdir(), 'open-science-linux-fedora-engine-'))
     const executable = join(appRoot, 'open-science')
     const resources = join(appRoot, 'resources')
     const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
@@ -71,8 +90,6 @@ describe('Linux package smoke', () => {
       writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), '')
     ])
 
-    await expect(assertPackagedResources(executable)).resolves.toBeUndefined()
-    await writeFile(join(prismaClient, 'libquery_engine-rhel-openssl-3.0.x.so.node'), '')
-    await expect(assertPackagedResources(executable)).rejects.toThrow(/exactly one Prisma engine/)
+    await expect(assertPackagedResources(executable)).rejects.toThrow(/rhel-openssl-3\.0\.x/)
   })
 })

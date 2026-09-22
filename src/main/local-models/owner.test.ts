@@ -3,9 +3,11 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { net } from 'electron'
 import { DownloadChecksumError } from '../net/resilient-download'
 import { createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
+import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
 import type { DownloadProgress } from '../../shared/download-progress'
 import { LOCAL_MODEL_NOT_INSTALLED } from '../../shared/local-models'
 import {
@@ -18,7 +20,7 @@ import { composeApplicationRuntime } from '../application-runtime'
 import * as durableJson from '../storage/durable-json-file'
 
 vi.mock('electron', () => ({
-  net: {},
+  net: { fetch: vi.fn() },
   app: { isPackaged: false, getPath: () => tmpdir() },
   dialog: {}
 }))
@@ -63,6 +65,59 @@ const seed = async (root: string, name = 'v1'): Promise<void> => {
     JSON.stringify({ schemaVersion: 1, revision: name, installedAt: 1 })
   )
 }
+
+it('uses the proxy-aware mirror downloader and activates only the complete verified pack', async () => {
+  const root = await prepare()
+  const fixture = revision('v1')
+  const mirrored = {
+    ...fixture,
+    assets: fixture.assets.map((asset, index) => ({
+      ...asset,
+      url: PDF_TABLE_MODEL_REVISIONS[0].assets[index].url
+    }))
+  }
+  vi.mocked(net.fetch).mockImplementation(async (url, init) => {
+    const probe = new Headers(init?.headers).has('Range')
+    if (!probe && String(url).startsWith('https://huggingface.co/'))
+      return new Response(null, { status: 403 })
+    return new Response(content, { headers: { 'Content-Length': String(content.length) } })
+  })
+  const owner = createLocalModelOwner({
+    dataRoot: () => root,
+    revisions: [mirrored],
+    acquireWriter: () => () => undefined
+  })
+  try {
+    await owner.install()
+    await waitForIdle(owner)
+    expect(await owner.getSnapshot()).toMatchObject({
+      availability: 'ready',
+      installedRevision: 'v1',
+      installedBytes: content.length * 2
+    })
+    const requests = vi.mocked(net.fetch).mock.calls
+    expect(requests.filter(([, init]) => new Headers(init?.headers).has('Range'))).toHaveLength(6)
+    expect(
+      requests.some(
+        ([url, init]) =>
+          !new Headers(init?.headers).has('Range') &&
+          !String(url).startsWith('https://huggingface.co/')
+      )
+    ).toBe(true)
+    const use = await owner.acquireUse()
+    expect(await Promise.all(use.assets.map((asset) => readFile(asset.path)))).toEqual([
+      content,
+      content
+    ])
+    use.release()
+    const calls = requests.length
+    await owner.install()
+    await waitForIdle(owner)
+    expect(net.fetch).toHaveBeenCalledTimes(calls)
+  } finally {
+    await owner.close()
+  }
+})
 
 describe('local model use leases', () => {
   it('lets parsing join an initial install without starting a duplicate download', async () => {

@@ -1,9 +1,12 @@
+# Cancels merge-group runs whose gh-readonly-queue ref GitHub already deleted or replaced.
+# A new queue run (PR Gate or CI Integrity) is the moment earlier entries can turn stale, so
+# only `requested` is needed; a run completing never makes another run obsolete.
 name: Clean up obsolete queue runs
 
 on:
   workflow_run:
-    workflows: [PR Gate]
-    types: [requested, completed]
+    workflows: [PR Gate, CI Integrity]
+    types: [requested]
   workflow_dispatch:
 
 permissions:

@@ -393,7 +393,10 @@ function TokenUsagePanel({
   return (
     <TooltipProvider delayDuration={200}>
       <div data-slot="token-usage-panel" className="min-w-0 overflow-x-clip">
-        <section className="flex flex-col gap-5 px-4 pb-5 pt-6 sm:px-5">
+        <section
+          data-settings-anchor="usage.list"
+          className="flex flex-col gap-5 px-4 pb-5 pt-6 sm:px-5"
+        >
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div className="min-w-0 max-w-xl">
               <h1 className="min-w-0 text-xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">

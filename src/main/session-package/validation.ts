@@ -13,6 +13,7 @@ import { executionEvidenceKeys } from './execution-evidence'
 import { validateExcludedFiles, assertNoExcludedContentCopies } from './selection'
 import { copyFileWithinBudget } from '../bounded-file-io'
 import { assertPackageCapacity } from './capacity'
+import { validatePackageRoCrateMetadata } from './ro-crate'
 import {
   nativeStorageKeys,
   projectIncludedHeads,
@@ -128,6 +129,7 @@ export const validatePackageRecords = async (
     await validatePackageReproducibility(root, records, manifest, sourceIdentity)
     const notebooks = await readPackageNotebooks(root, [...files.keys()])
     await executionEvidenceKeys(root, records, notebooks, signal)
+    await validatePackageRoCrateMetadata(directory, manifest, records, signal)
     // File and reproducibility checks still apply to conversation-only packages. With no
     // native rows, there are no database relationships or provenance records to validate.
     if (Object.values(records.tables).every((rows) => rows.length === 0)) return

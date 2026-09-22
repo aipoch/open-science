@@ -204,6 +204,59 @@ This boundary preserves the current surface asymmetry; it is not a parity roadma
 - Web and Task invoke transport-neutral application commands directly. Electron continues to use
   typed IPC adapters; no Web or Task path captures or synthesizes an Electron sender.
 
+#### Delegated provider process ownership
+
+Production delegation owns one versioned JSON receipt per provider process-tree generation under
+`<dataRoot>/delegation-process-ownership/<projectId>/<sessionId>/`. The receipt precedes physical
+launch and is outside the removable Frame/runtime workspace. Resource phases are `starting`,
+`owned`, and `cleanup-pending`; these do not add Attempt statuses or cancellation reasons.
+Receipt contents are restricted to existing Project/Session/Frame/Attempt/framework identities,
+a random generation identity, diagnostics time, and platform process ownership material. They
+contain no credentials, prompt text, full environment, or arbitrary deletion paths.
+
+Launch, workspace preparation/reuse, Session/Project removal, and quit/update teardown share the
+same owner. Corrupt, unreadable, incomplete, or symlinked receipt storage blocks the affected
+operation. Unconfirmed cleanup preserves files and capacity, including after reconstruction;
+confirmed recovery releases the receipt and retained execution resources. Terminal cleanup releases
+its model bridge/transport references even when process exit remains unconfirmed; shared transports
+stay alive while sibling references exist. Recovery runs at relevant
+explicit lifecycle boundaries, with no polling service or force-clear action. Saved result reads do
+not imply that process cleanup succeeded. Uninstall or manual data-folder removal must not treat
+terminal Attempt status as proof that external processes stopped.
+
+On Windows, the native process-tree package creates an exclusive named Job with a current-user
+DACL, non-inherited ownership handles, kill-on-close, and no breakaway flag. The process joins the
+Job through `PROC_THREAD_ATTRIBUTE_JOB_LIST` during creation. Piped ACP IO remains on Node/libuv
+streams. Recovery terminates and queries that exact Job until it has no active processes; unknown
+or inaccessible ownership remains blocked. The atomic-assignment rationale follows
+[Microsoft's process-creation guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812).
+
+POSIX launches use the existing live process-tree tracker, a random inherited marker, and captured
+kernel leader identity. After an application crash, interrupted observation cannot rule out escaped
+or environment-scrubbed descendants. On cold recovery (a new application instance reading receipts
+from a prior crash), ownership is cleared in three provable cases:
+
+- The recorded leader pid is absent from a complete process snapshot, or its birth token no longer
+  matches (PID reuse) — the recorded tree is demonstrably gone.
+- A proven reboot: the recorded per-boot session id (`ownership.bootId`) differs from the one
+  currently read from the kernel. On Linux this is `/proc/sys/kernel/random/boot_id` (lowercase
+  UUID); on macOS this is `kern.bootsessionuuid` (uppercase UUID, generated fresh on every boot
+  by `IOPMrootDomain::initializeBootSessionUUID()`). Both change on a true reboot and are stable
+  across sleep and hibernation.
+- The live ChildProcess handle is reaped by the same instance that holds it.
+
+When none of the above applies — an incomplete process snapshot, a leader with no recorded birth
+token, or an unresolvable ambiguous case — the receipt stays blocked: the affected workspace
+cannot be deleted or reused. A blocked receipt is not propagated into the global quit/update
+reaping gate; it only protects the specific workspace. `recordFailure` receipts also carry an
+ownership block with the platform and boot session id so they can be cleared after a proven
+reboot. Normal live whole-tree teardown clears its receipt before releasing files.
+
+This format protects newly launched executions only. It does not backfill historical Attempts or
+infer old orphan ownership from paths, process names, or terminal history. Older application versions
+do not enforce these receipts, so downgrading is outside the protection guarantee. No database
+schema migration or rewriting of historical Task data is performed.
+
 ### User-attention, activity, and audit projections
 
 Application events are lifecycle facts used for in-process and cross-surface synchronization. They
@@ -244,7 +297,7 @@ Key implemented capabilities, mapped to the codebase:
 - **App-local tool transport.** App-owned stdio MCP and control-REPL processes call the main-process Notebook, Artifact, and Skill services over authenticated local RPC. Windows uses named pipes for this boundary so host firewall or endpoint-security loopback rules cannot break the child-process connection; macOS and Linux retain loopback HTTP. The Windows Reviewer uses a stdio MCP proxy over the same named-pipe transport while keeping its existing scope and token checks in the main process.
 - **Artifacts and provenance.** An in-process MCP server (`open-science-artifacts`) exposes a `write_artifact_file` tool the agent calls with either inline content or a local file path. Each save creates an immutable, session-scoped artifact version with available producer code, execution history, input references, environment inventory, message context, and reviewer evidence.
 - **File preview.** Responsive multi-tab renderers cover CSV, FASTA, HTML, PDF, images including TIFF, JSON, Markdown, plain text, Office documents, molecular structures/reactions, and read-only Notebook history, with inline and full-screen preview surfaces.
-- **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime, resolves matching app-owned remembered grants, and surfaces unmatched requests to the renderer for explicit approval before the call proceeds. Durable allow grants can be scoped globally, by project, or by session, then filtered, revoked individually or by family, and restored through Undo. Secret values are encrypted through OS-backed secure storage when persisted by the app.
+- **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime, resolves matching app-owned remembered grants, and surfaces unmatched requests to the renderer for explicit approval before the call proceeds. Task callers can opt into per-Run `permissionPrompts: none`: existing grants and automatic policy still apply, but unresolved approvals and questions are denied without publishing a human wait. The policy follows delegated work and continuations of the same originating prompt, is not saved as a Session preference, and rejects Plan generation requiring human approval. Durable allow grants can be scoped globally, by project, or by session, then filtered, revoked individually or by family, and restored through Undo. Secret values are encrypted through OS-backed secure storage when persisted by the app.
 - **Attachments.** File uploads up to 10 GB are streamed into managed storage and threaded into the agent's prompt context; existing project files can be referenced explicitly with `@`.
 - **Conversation Skill import.** Primary sessions receive an app-owned MCP action that can submit an eligible uploaded package or a validated public GitHub Skill URL to the same preview-and-confirm flow used by Settings. Its local RPC credential is bound to the owning session and restricted to the Skill import method; the server replaces request-body session fields with that authenticated binding before opening approval UI or importing content.
 

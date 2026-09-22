@@ -26,6 +26,7 @@ import {
   decodeRunDocumentDataPaths,
   encodeRunDocumentDataPaths
 } from './run-document-data-path-codec'
+import { decodeNotebookHelperEvidence } from './helper-evidence'
 import {
   createFrameNotebookLane,
   createRootNotebookLane,
@@ -147,6 +148,19 @@ const persistedScopeValue = (value: unknown): string =>
 
 const isOptionalSha256 = (value: unknown): boolean =>
   value === undefined || (typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value))
+
+const notebookHelperEvidenceStatusCandidate = (value: unknown): boolean => {
+  if (!isRecord(value) || (value.state !== 'complete' && value.state !== 'incomplete')) return false
+  return (
+    value.state === 'complete' ||
+    (Array.isArray(value.reasons) &&
+      value.reasons.length > 0 &&
+      value.reasons.every(
+        (reason) =>
+          reason === 'source-missing' || reason === 'source-corrupt' || reason === 'payload-limit'
+      ))
+  )
+}
 
 class UnsupportedNotebookDocumentVersionError extends DurableJsonRecoveryBarrierError {
   constructor() {
@@ -297,6 +311,20 @@ const notebookRunCandidate = (value: unknown): boolean => {
           typeof artifact.path !== 'string' ||
           (typeof artifact.projectId !== 'string' && typeof artifact.projectName !== 'string')
       ))
+  ) {
+    return false
+  }
+  if (
+    value.helperModules !== undefined &&
+    (!Array.isArray(value.helperModules) ||
+      // Analysis budgets are not validity constraints on durable execution history.
+      value.helperModules.some((helper) => decodeNotebookHelperEvidence(helper).state !== 'valid'))
+  ) {
+    return false
+  }
+  if (
+    value.helperEvidenceStatus !== undefined &&
+    !notebookHelperEvidenceStatusCandidate(value.helperEvidenceStatus)
   ) {
     return false
   }

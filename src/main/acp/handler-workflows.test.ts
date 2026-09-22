@@ -89,6 +89,7 @@ const createHarness = (
   hasLiveSession: ReturnType<typeof vi.fn>
   captureSessionBackend: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
+  prepareRuntimeResume: ReturnType<typeof vi.fn>
   session: PersistedChatSession
   request: {
     projectId: string
@@ -108,6 +109,7 @@ const createHarness = (
     cwd: request.cwd
   }))
   const hasLiveSession = vi.fn(() => true)
+  const prepareRuntimeResume = vi.fn(async () => {})
   const captureSessionBackend = vi.fn(
     () =>
       ({
@@ -143,7 +145,7 @@ const createHarness = (
     { create: vi.fn() } as never,
     taskNotifications,
     archiveAvailability,
-    { loadSession: vi.fn(async () => session) },
+    { loadSession: vi.fn(async () => session), prepareRuntimeResume },
     saveAsSkillAdmission
   )
   const graph = session.conversationGraph!
@@ -154,6 +156,7 @@ const createHarness = (
     startContinuation,
     startContinuationWhenDispatchAdmitted,
     hasLiveSession,
+    prepareRuntimeResume,
     captureSessionBackend,
     resumeSession,
     session,
@@ -181,11 +184,53 @@ describe('ACP resume Session workflow', () => {
     ): Promise<Result> => operation(persistedProjectId)
   }
 
+  it('commits restart recovery before a dormant runtime attaches', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    harness.hasLiveSession.mockReturnValue(false)
+    await harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    expect(harness.prepareRuntimeResume).toHaveBeenCalledWith(persistedProjectId, 'session-1')
+    expect(harness.prepareRuntimeResume.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.resumeSession.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('clears the interrupted run before admitting the next prompt after restart', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    harness.hasLiveSession.mockReturnValue(false)
+    harness.prepareRuntimeResume.mockImplementationOnce(async () => {
+      harness.session.status = 'idle'
+      harness.session.activeRun = undefined
+    })
+    harness.startPrompt.mockImplementationOnce(async () => {
+      if (harness.session.status === 'running' || harness.session.activeRun) {
+        throw new Error('Cannot append a user Message while the Session run is active.')
+      }
+    })
+
+    await harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    await expect(
+      harness.workflows.sendPrompt({ sessionId: 'session-1', text: 'Continue the work.' })
+    ).resolves.toEqual({ status: 'connected' })
+
+    expect(harness.prepareRuntimeResume).toHaveBeenCalledBefore(harness.startPrompt)
+  })
+
+  it('does not attach the provider when restart recovery cannot be persisted', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    harness.hasLiveSession.mockReturnValue(false)
+    harness.prepareRuntimeResume.mockRejectedValueOnce(new Error('disk full'))
+    await expect(
+      harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    ).rejects.toThrow('disk full')
+    expect(harness.resumeSession).not.toHaveBeenCalled()
+  })
+
   it('injects the persisted Project owner when the request omits projectId', async () => {
     const harness = createHarness(undefined, archiveAvailability)
     const request = { sessionId: 'session-1', cwd: '/workspace' }
 
     await harness.workflows.resumeSession(request)
+    expect(harness.prepareRuntimeResume).not.toHaveBeenCalled()
 
     expect(harness.resumeSession).toHaveBeenCalledWith({
       ...request,
@@ -195,6 +240,7 @@ describe('ACP resume Session workflow', () => {
 
   it('rejects a request whose projectId disagrees with the persisted owner', async () => {
     const harness = createHarness(undefined, archiveAvailability)
+    harness.hasLiveSession.mockReturnValue(false)
 
     await expect(
       harness.workflows.resumeSession({
@@ -205,6 +251,7 @@ describe('ACP resume Session workflow', () => {
     ).rejects.toThrow('Session does not belong to the requested Project.')
 
     expect(harness.resumeSession).not.toHaveBeenCalled()
+    expect(harness.prepareRuntimeResume).not.toHaveBeenCalled()
   })
 })
 

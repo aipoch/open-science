@@ -22,7 +22,8 @@ type AcpTaskAgentRuntime = {
   sendPromptObserved(
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void,
-    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+    runtimeReviewOwner?: 'task' | 'renderer'
   ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }
@@ -40,6 +41,7 @@ type SessionArchiveAvailability = {
 const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
   sessionId: request.sessionId,
   text: request.text,
+  ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
   provenanceContext: request.provenanceContext,
   ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
@@ -116,7 +118,8 @@ const createAcpTaskAgentPort = (
         await runtime.sendPromptObserved(
           acpRequest,
           observer.onProviderPromptAccepted ?? (() => undefined),
-          observer.onPromptAdmitted
+          observer.onPromptAdmitted,
+          'task'
         )
       } else {
         await runtime.sendPrompt(acpRequest)

@@ -9,7 +9,7 @@ import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
-import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
+import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -77,6 +77,7 @@ import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 
 const log = createLogger('acp')
 const MAX_LITERATURE_CANDIDATE_FILE_BYTES = 2 * 1024 * 1024
@@ -173,6 +174,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
+  finalizeRuntimeArtifacts?: (request: {
+    claimId: string
+    messageId: string
+  }) => Promise<ArtifactFile[]>
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
   pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
@@ -196,6 +201,8 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   resolveComputeExecutionTargetIds?: AcpRuntimeOptions['resolveComputeExecutionTargetIds']
   memory?: AcpRuntimeOptions['memory']
   auxiliaryUsage?: AcpRuntimeOptions['auxiliaryUsage']
+  classifySkills?: AcpRuntimeOptions['classifySkills']
+  classifyReadingRoute?: AcpRuntimeOptions['classifyReadingRoute']
 }
 
 const isLiteratureItemInScope = (
@@ -254,6 +261,7 @@ const createAcpRuntime = ({
   afterSessionDelete,
   specialistService,
   sessionPersistenceCoordinator,
+  finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
   literatureAttachments,
@@ -271,6 +279,8 @@ const createAcpRuntime = ({
   imageInputCompatibility,
   resolveComputeExecutionTargetIds,
   memory,
+  classifySkills,
+  classifyReadingRoute,
   auxiliaryUsage
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
@@ -292,6 +302,19 @@ const createAcpRuntime = ({
     () => getProjectDbClient(resolveConfigRoot()),
     configRoot
   )
+  const runtimeSessionOwner =
+    !delegatedNotebookConnection && sessionPersistenceCoordinator && finalizeRuntimeArtifacts
+      ? new RuntimeSessionOwner({
+          loadSession: (scope) =>
+            sessionPersistenceCoordinator.loadSessionForContinuation(
+              scope.projectId,
+              scope.sessionId
+            ),
+          mutateSession: (scope, mutate) =>
+            sessionPersistenceCoordinator.mutateRuntimeSession(scope, mutate),
+          finalizeArtifacts: finalizeRuntimeArtifacts
+        })
+      : undefined
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })
@@ -348,6 +371,10 @@ const createAcpRuntime = ({
   }
   const callbacks: AcpRuntimeCallbacks = {
     ...clientCallbacks,
+    onEvent: (event) => {
+      runtimeSessionOwner?.accept(event)
+      clientCallbacks.onEvent?.(event)
+    },
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
       codexTransportFallbackLog.begin(
         sessionId,
@@ -376,6 +403,9 @@ const createAcpRuntime = ({
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         auxiliaryUsage,
+        classifySkills: delegatedNotebookConnection ? undefined : classifySkills,
+        classifyReadingRoute: delegatedNotebookConnection ? undefined : classifyReadingRoute,
+        ...(runtimeSessionOwner ? { runtimeSessions: runtimeSessionOwner } : {}),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
         ...(delegatedNotebookConnection && fixedBackend?.framework.id === 'opencode'

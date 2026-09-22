@@ -61,6 +61,34 @@ afterEach(() => {
 })
 
 describe('ConnectorCredentialDialog', () => {
+  it.each([false, true])(
+    'offers a key link without settling the request (embedded: %s)',
+    (embedded) => {
+      const request = useSettingsStore.getState().pendingCredentialRequests[0]
+      act(() =>
+        root.render(
+          embedded ? (
+            <ConnectorCredentialControls request={request} embedded />
+          ) : (
+            <ConnectorCredentialDialog />
+          )
+        )
+      )
+      const link = document.body.querySelector<HTMLAnchorElement>('a')!
+      expect(link.textContent).toBe('Get an API key')
+      expect(link.href).toBe('https://openalex.org/settings/api')
+      expect(link.target).toBe('_blank')
+      expect(link.rel).toBe('noreferrer')
+      link.addEventListener('click', (event) => event.preventDefault())
+      act(() => link.click())
+      expect(useSettingsStore.getState().respondCredentialRequest).not.toHaveBeenCalled()
+      expect(useSettingsStore.getState().setOpenAlexCredential).not.toHaveBeenCalled()
+      expect(
+        document.body.querySelector('[data-testid="connector-credential-controls"]')
+      ).not.toBeNull()
+    }
+  )
+
   it('closes queued credential dialogs after one Not now response', async () => {
     let sequence = 0
     const broker = new CredentialRequestBroker({

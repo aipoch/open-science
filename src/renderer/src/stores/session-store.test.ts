@@ -1470,6 +1470,105 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it.each(['progress', 'upload', 'replacement'] as const)(
+    'keeps the Plan visible when a %s save receipt advances step progress',
+    (receipt) => {
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Plan approval',
+          cwd: '/workspace',
+          status: 'running',
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            plan: {
+              artifactId: 'artifact-version-1',
+              artifactVersionId: 'version-1',
+              artifactChecksum: 'a'.repeat(64),
+              approval: 'approved',
+              originatingPromptMessageId: 'prompt-1',
+              stepStatuses: {}
+            }
+          },
+          messages: [
+            {
+              id: 'prompt-1',
+              role: 'user',
+              content: 'Execute the plan',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1,
+              uploads: [createUploadAttachment()]
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ])
+      const projection = {
+        ...createPlanProjection('version-1'),
+        approval: 'approved' as const,
+        originatingPromptMessageId: 'prompt-1',
+        lifecycle: 'approved' as const
+      }
+      useSessionStore.getState().setActivePlanProjection('session-1', projection)
+      const source = useSessionStore.getState().sessions[0]
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: {
+          ...toPersistedSession(source),
+          messages: source.messages.map((message) => ({
+            ...message,
+            uploads: [
+              createUploadAttachment(receipt === 'upload' ? { versionId: 'upload-version-1' } : {})
+            ]
+          })),
+          status: 'running',
+          runtimeContext: {
+            version: 1,
+            revision: 2,
+            plan: {
+              artifactId: 'artifact-version-1',
+              artifactVersionId: 'version-1',
+              artifactChecksum: 'a'.repeat(64),
+              approval: 'approved',
+              originatingPromptMessageId: 'prompt-1',
+              stepStatuses: { 'Step version-1': { status: 'in_progress', updatedAt: 3 } }
+            }
+          },
+          updatedAt: source.updatedAt + 1
+        },
+        mode: receipt === 'replacement' ? 'replace-persisted-if-current' : 'merge-upload-identities'
+      })
+
+      expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
+        ...projection,
+        revision: 2
+      })
+      if (receipt === 'upload') {
+        expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0].versionId).toBe(
+          'upload-version-1'
+        )
+      }
+      // The full activity projection can arrive after the save receipt at the same revision.
+      // Keeping the entrance visible must not prevent it from updating the displayed counts.
+      const progress = {
+        ...projection,
+        revision: 2,
+        lifecycle: 'in_progress' as const,
+        stepStatuses: { 'Step version-1': { status: 'in_progress' as const, updatedAt: 3 } },
+        stepStates: { 'Step version-1': { status: 'in_progress' as const } },
+        counts: { ...projection.counts, inProgress: 1 }
+      }
+      useSessionStore.getState().setActivePlanProjection('session-1', progress)
+      expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(progress)
+    }
+  )
+
   it('rebases the active Plan projection when Permission advances the runtime revision', () => {
     useSessionStore.getState().hydrateSessions([
       {
@@ -1506,6 +1605,12 @@ describe('session store', () => {
         runtimeContext: {
           ...source.runtimeContext!,
           revision: 2,
+          plan: {
+            ...source.runtimeContext!.plan!,
+            stepStatuses: {
+              'Step version-1': { status: 'in_progress', updatedAt: 3 }
+            }
+          },
           permission: {
             state: 'pending',
             request: {
@@ -1533,7 +1638,13 @@ describe('session store', () => {
       source: updated,
       session: {
         ...toPersistedSession(updated),
-        runtimeContext: { ...updated.runtimeContext!, revision: 3 },
+        // Permission-authority updates are partial and may omit the Plan while a step
+        // progress write is in flight. The Composer must keep showing the active Plan.
+        runtimeContext: {
+          version: updated.runtimeContext!.version,
+          revision: 3,
+          permission: updated.runtimeContext!.permission
+        },
         updatedAt: 4
       },
       mode: 'permission-authority'
@@ -1541,7 +1652,7 @@ describe('session store', () => {
 
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
       ...projection,
-      revision: 3
+      revision: 2
     })
   })
 
@@ -7258,6 +7369,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
+      'src/renderer/src/pages/home/use-recent-sessions.ts',
       'src/renderer/src/pages/settings/ArchivedPanel.tsx',
       'src/renderer/src/pages/settings/SettingsPage.tsx',
       'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
@@ -7270,6 +7382,8 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
+      'src/renderer/src/pages/workspace/SessionInfoPopover.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
       'src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',

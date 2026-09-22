@@ -1481,6 +1481,116 @@ describe('ACP session capability owner', () => {
     expect(releaseSessionCapabilities).toHaveBeenCalledOnce()
   })
 
+  it('unregisters the previous provider key when replacing a bridge MCP session', async () => {
+    const registerBridgeMcpSession = vi.fn()
+    const unregisterBridgeMcpSession = vi.fn()
+    const owner = createOwner({ registerBridgeMcpSession, unregisterBridgeMcpSession })
+    const input = {
+      stableAppSessionId: 'session-1',
+      framework: codexFramework,
+      nativeMcpEnabled: false,
+      bridgeMcpAliasesEnabled: true,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    } as const
+    const first = await owner.provision(input)
+    first.registerBridgeMcpSession?.('session-1', 'provider-session-1')
+    const second = await owner.provision(input)
+
+    second.registerBridgeMcpSession?.('session-1', 'provider-session-2')
+
+    expect(unregisterBridgeMcpSession).toHaveBeenCalledWith('provider-session-1')
+    expect(registerBridgeMcpSession).toHaveBeenNthCalledWith(
+      2,
+      'provider-session-2',
+      expect.any(Array),
+      expect.arrayContaining(['mcp__open_science_skills'])
+    )
+  })
+
+  it('claims the Skill Import namespace while advertising only mounted tools', async () => {
+    const owner = createOwner()
+    const primary = await owner.provision({
+      stableAppSessionId: 'primary-session',
+      framework: codexFramework,
+      nativeMcpEnabled: false,
+      bridgeMcpAliasesEnabled: true,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    })
+    const reviewer = await owner.provision({
+      stableAppSessionId: 'reviewer-session',
+      framework: codexFramework,
+      nativeMcpEnabled: false,
+      bridgeMcpAliasesEnabled: true,
+      policy: REVIEWER_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    })
+
+    expect(primary.bridgeMcpTools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          namespace: 'mcp__open_science_skills',
+          name: 'request_skill_import'
+        })
+      ])
+    )
+    expect(primary.bridgeMcpNamespaces).toContain('mcp__open_science_skills')
+    expect(reviewer.bridgeMcpTools).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ namespace: 'mcp__open_science_skills' })])
+    )
+    expect(reviewer.bridgeMcpNamespaces).toContain('mcp__open_science_skills')
+  })
+
+  it('removes stale bridge-wide Skill Import tooling after the preference is disabled', async () => {
+    let enabled = true
+    const registerBridgeMcpSession = vi.fn()
+    const owner = createOwner({
+      registerBridgeMcpSession,
+      skillImport: {
+        mcpEntryPath: '/app/main.js',
+        isEnabled: async () => enabled,
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:2', token: 'skill' })
+      }
+    })
+    const request = {
+      stableAppSessionId: 'session-1',
+      framework: codexFramework,
+      nativeMcpEnabled: false,
+      bridgeMcpAliasesEnabled: true,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+    const initial = await owner.provision(request)
+    initial.commit('session-1')
+    initial.registerBridgeMcpSession?.('session-1', 'provider-session-1')
+    expect(initial.descriptor.capabilities).toContain('skill-import')
+    expect(initial.bridgeMcpTools).toContainEqual(
+      expect.objectContaining({ name: 'request_skill_import' })
+    )
+
+    enabled = false
+    const replacement = await owner.provision(request)
+    replacement.commit('session-1')
+    replacement.registerBridgeMcpSession?.('session-1', 'provider-session-2')
+
+    expect(replacement.descriptor.capabilities).not.toContain('skill-import')
+    expect(replacement.bridgeMcpTools).not.toContainEqual(
+      expect.objectContaining({ name: 'request_skill_import' })
+    )
+    // An empty catalog must still replace this namespace from the existing bridge target.
+    expect(registerBridgeMcpSession).toHaveBeenLastCalledWith(
+      'provider-session-2',
+      replacement.bridgeMcpTools,
+      expect.arrayContaining(['mcp__open_science_skills'])
+    )
+    owner.dispose()
+  })
+
   it('keeps per-session route revocation separate from the HTTP host lifetime', async () => {
     const unregister = vi.fn()
     const close = vi.fn()

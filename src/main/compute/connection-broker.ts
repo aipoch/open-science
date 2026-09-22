@@ -10,6 +10,13 @@ import { resolveSshTarget, type ResolvedSshTarget, type SshRunner } from './ssh-
 type ConnectionRunOptions = Parameters<SshRunner['run']>[2]
 type ConnectionRunResult = Awaited<ReturnType<SshRunner['run']>>
 
+// Machine protocols are carried by stdout. SSH banners and diagnostics on stderr must not
+// invalidate complete protocol evidence. Legacy/injected runners without stream metadata retain
+// the conservative aggregate check; human-facing output keeps the aggregate truncated flag.
+export const isConnectionStdoutTruncated = (
+  result: Pick<ConnectionRunResult, 'truncated' | 'stdoutTruncated'>
+): boolean => result.stdoutTruncated ?? result.truncated
+
 type AcquireComputeConnectionRequest = Readonly<{
   intent:
     | 'probe'

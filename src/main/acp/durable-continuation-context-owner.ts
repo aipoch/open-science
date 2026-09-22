@@ -16,6 +16,7 @@ import {
 } from '../../shared/session-history-replay'
 import {
   sanitizeSessionReferences,
+  rearmUnacceptedElicitationContinuations,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
@@ -100,10 +101,63 @@ class AcpDurableContinuationContextOwner {
     }
     const authority = this.resolvePendingElicitation(session, input)
     const continuation = this.prepareFromSession(session, authority.promptMessageId, input.replay)
+    const request = this.canonicalRequest(session.id, authority)
+    if (session.runtimeTranscriptOwner === 'main') {
+      if (!this.sessions?.mutateRuntimeSession) {
+        throw new Error('Durable elicitation response authority is not available.')
+      }
+      const answers =
+        input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
+      await this.sessions.mutateRuntimeSession(input, (latest) => {
+        const current = this.resolvePendingElicitation(latest, input)
+        if (!isDeepStrictEqual(current, authority)) {
+          throw new Error('Durable elicitation changed before its answer was committed.')
+        }
+        const projection = {
+          ...latest.conversationGraph!.activities.find(({ id }) => id === input.toolCallId)!
+            .elicitation!,
+          state:
+            input.action === 'accept'
+              ? ('answered' as const)
+              : input.action === 'decline'
+                ? ('declined' as const)
+                : ('cancelled' as const),
+          ...(answers ? { answers } : {}),
+          respondedAt: Date.now(),
+          ...(input.action !== 'cancel' ? { continuationPending: true as const } : {})
+        }
+        return {
+          ...latest,
+          activities: latest.activities?.map((activity) =>
+            activity.id === input.toolCallId ? { ...activity, elicitation: projection } : activity
+          ),
+          conversationGraph: {
+            ...latest.conversationGraph!,
+            activities: latest.conversationGraph!.activities.map((activity) =>
+              activity.id === input.toolCallId ? { ...activity, elicitation: projection } : activity
+            )
+          }
+        }
+      })
+    }
     return {
       ...continuation,
       request: this.canonicalRequest(session.id, authority)
     }
+  }
+
+  async rearmElicitation(input: {
+    projectId: string
+    sessionId: string
+    promptMessageId: string
+    requestId: string
+    toolCallId: string
+  }): Promise<void> {
+    if (!this.sessions?.mutateRuntimeSession) return
+    const session = await this.sessions.mutateRuntimeSession(input, (latest) =>
+      rearmUnacceptedElicitationContinuations(latest, input.promptMessageId, input)
+    )
+    await this.publishSessionUpdated?.(structuredClone(session))
   }
 
   private resolvePendingElicitation(

@@ -775,6 +775,8 @@ it('recognizes the alternate C0 publisher subset for a plus glyph', async () => 
 it.each([
   ['AdvP4C4E74', 2, '\u0002', 770, 'C0', '−'],
   ['AdvP4C4E74', 4, '\u0004', 770, 'C6', '±'],
+  ['AdvP4C4E74', 4, '\u0004', 500, 'C3', '*'],
+  ['AdvP4C4E74', 2, '\u0002', 500, 'C3', '*'],
   ['AdvP4C4E74', 5, '\u0005', 770, 'C2', '×'],
   ['AdvP4C4E74', 2, '\u0014', 770, 'C20', '≤'],
   ['AdvP4C4E74', 3, '\u0015', 770, 'C21', '≥'],

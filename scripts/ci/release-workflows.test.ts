@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 type Step = {
   'continue-on-error'?: boolean
   env?: Record<string, string>
+  id?: string
   if?: string
   name?: string
   run?: string
@@ -21,10 +22,11 @@ type Job = {
   if?: string
   needs?: string | string[]
   outputs?: Record<string, string>
+  permissions?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
   strategy?: { matrix?: { shard?: number[] } }
-  'timeout-minutes'?: number
+  'timeout-minutes'?: number | string
   uses?: string
   with?: Record<string, unknown>
 }
@@ -46,7 +48,7 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('batches latest-main Windows coverage daily across five serial shards', () => {
+  it('batches latest-main Windows coverage daily across eight serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
     const dispatch = windows.on?.workflow_dispatch as {
@@ -60,7 +62,7 @@ describe('release and scheduled workflow topology', () => {
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toBe(
-      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}"
+      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     )
     expect(dependencies).toMatchObject({
       needs: 'plan',
@@ -77,11 +79,11 @@ describe('release and scheduled workflow topology', () => {
     expect(step(windows.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/5')
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/8')
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '47 18 * * *' }])
+    expect(schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
       options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
@@ -89,11 +91,12 @@ describe('release and scheduled workflow topology', () => {
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
       'runs-on': 'ubuntu-latest',
-      outputs: { should_test: '${{ steps.decide.outputs.should_test }}' }
+      outputs: { should_test: '${{ steps.decide.outputs.should_run }}' }
     })
-    expect(step(plan, 'Check for untested main changes').run).toContain(
-      'actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1'
-    )
+    expect(step(plan, 'Check for untested main changes')).toMatchObject({
+      uses: './.github/actions/skip-unchanged-scheduled',
+      with: { 'workflow-file': 'windows-full-test.yml' }
+    })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
       if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
@@ -133,6 +136,7 @@ describe('release and scheduled workflow topology', () => {
       'src/main/database/database-null-and-version-bounds.test.ts',
       'src/main/database/migration-service.test.ts',
       'src/main/notebook/runtime-service.test.ts',
+      'src/main/notebook/python-command.test.ts',
       'src/main/notebook/shell-process-ownership.test.ts',
       'src/main/literature/batch-jobs.test.ts',
       'src/main/notebook/source-file-access-analysis.test.ts',
@@ -177,7 +181,7 @@ describe('release and scheduled workflow topology', () => {
     const profile = step(soak, 'Record runtime resource profile')
     const upload = step(soak, 'Upload runtime resource evidence')
 
-    expect(schedule).toEqual([{ cron: '23 21 * * *' }])
+    expect(schedule).toEqual([{ cron: '23 19 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
       options: ['smoke', 'soak', 'package-macos-arm64']
@@ -187,9 +191,10 @@ describe('release and scheduled workflow topology', () => {
       group: 'runtime-resource-soak-${{ github.event_name }}-${{ github.ref }}',
       'cancel-in-progress': true
     })
-    expect(step(plan, 'Check for unprofiled main changes').run).toContain(
-      'event=schedule&status=success&per_page=1'
-    )
+    expect(step(plan, 'Check for unprofiled main changes')).toMatchObject({
+      uses: './.github/actions/skip-unchanged-scheduled',
+      with: { 'workflow-file': 'runtime-resource-soak.yml' }
+    })
     expect(soak).toMatchObject({
       needs: 'plan',
       if: "needs.plan.outputs.should_test == 'true' && inputs.mode != 'package-macos-arm64'",
@@ -225,7 +230,7 @@ describe('release and scheduled workflow topology', () => {
     const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '17 17 * * *' }])
+    expect(schedule).toEqual([{ cron: '17 15 * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
@@ -244,9 +249,15 @@ describe('release and scheduled workflow topology', () => {
           "${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}"
       }
     })
-    expect(step(nightly.jobs.plan, 'Compare main with the rolling nightly tag').run).toContain(
-      'repos/$GITHUB_REPOSITORY/commits/nightly'
-    )
+    expect(nightly.jobs.plan.outputs).toEqual({
+      should_build: '${{ steps.decide.outputs.should_run }}'
+    })
+    expect(
+      step(nightly.jobs.plan, 'Compare main with the last successful scheduled build')
+    ).toMatchObject({
+      uses: './.github/actions/skip-unchanged-scheduled',
+      with: { 'workflow-file': 'nightly.yml' }
+    })
     expect(nightly.jobs).not.toHaveProperty('publish-dry-run')
     const dispatch = nightly.on?.workflow_dispatch as {
       inputs?: { dry_run?: { default?: string; options?: string[] } }
@@ -304,7 +315,30 @@ describe('release and scheduled workflow topology', () => {
     expect(plan.if).toContain("github.event.workflow_run.conclusion == 'success'")
     expect(plan.if).toContain("github.event.workflow_run.event == 'schedule'")
     expect(plan.if).toContain("github.event.workflow_run.head_branch == 'main'")
-    const publicationPlan = step(plan, 'Check for an unpublished build').run
+    const checkout = step(plan, 'Checkout trusted gate code')
+    expect(checkout.uses).toMatch(/^actions\/checkout@[0-9a-f]{40}/)
+    expect(checkout.with).toEqual({
+      ref: 'refs/heads/main',
+      'persist-credentials': false,
+      'sparse-checkout': 'scripts/ci/nightly-publish-gates.mjs',
+      'sparse-checkout-cone-mode': false
+    })
+    const gates = step(plan, 'Require advisory certification and regression jobs to have passed')
+    expect(gates.id).toBe('gates')
+    expect(gates.run).toContain('repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs')
+    expect(gates.run).toContain('--paginate')
+    expect(gates.run).toContain('{name, conclusion}')
+    expect(gates.run).toContain('node scripts/ci/nightly-publish-gates.mjs --jobs')
+    expect(gates.run).not.toContain('workflow_run.head')
+    expect(plan.steps?.some(({ run }) => run?.includes('npm '))).toBe(false)
+    const decide = step(plan, 'Check for an unpublished build')
+    expect(decide.env).toMatchObject({ GATES_OK: '${{ steps.gates.outputs.ok }}' })
+    const publicationPlan = decide.run
+    expect(publicationPlan).toContain('if [ "$GATES_OK" != "true" ]')
+    expect(publicationPlan).toContain('blocked publication gates')
+    const planSteps = plan.steps ?? []
+    expect(planSteps.indexOf(checkout)).toBeLessThan(planSteps.indexOf(gates))
+    expect(planSteps.indexOf(gates)).toBeLessThan(planSteps.indexOf(decide))
     expect(publicationPlan).toContain('repos/$GITHUB_REPOSITORY/commits/nightly')
     expect(publicationPlan).toContain('repos/$GITHUB_REPOSITORY/compare/$published...$SOURCE_SHA')
     expect(publicationPlan).toContain("grep -Eq 'HTTP (404|422)'")
@@ -466,6 +500,9 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'nightly.yml',
       'nightly-publish.yml',
       'release.yml',
+      'release-sbom-poc.yml',
+      'runtime-resource-soak.yml',
+      'source-regression.yml',
       'windows-full-test.yml',
       'windows-upgrade-smoke.yml'
     ]) {
@@ -476,6 +513,136 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
         }
       }
     }
+  })
+
+  it('automatically probes final stable-release SBOM coverage without publication rights', () => {
+    const sbom = workflow('release-sbom-poc.yml')
+    const job = sbom.jobs['sbom-poc']
+    const triggers = sbom.on as {
+      push: { branches: string[]; paths: string[] }
+      release: { types: string[] }
+      workflow_call: { inputs: { tag: { required: boolean; type: string } } }
+      workflow_dispatch: { inputs: { tag: { required: boolean; type: string } } }
+    }
+
+    expect(triggers.workflow_call.inputs.tag).toMatchObject({
+      required: true,
+      type: 'string'
+    })
+    expect(triggers.release).toEqual({ types: ['published'] })
+    expect(triggers.push).toEqual({
+      branches: ['main'],
+      paths: ['.github/workflows/release-sbom-poc.yml', 'scripts/ci/validate-release-sbom.mjs']
+    })
+    expect(triggers.workflow_dispatch.inputs.tag).toMatchObject({
+      required: false,
+      type: 'string'
+    })
+    expect(sbom.permissions).toEqual({ contents: 'read' })
+    expect(sbom.concurrency).toEqual({
+      group: 'release-sbom-poc-${{ github.event.release.tag_name || inputs.tag || github.sha }}',
+      'cancel-in-progress': false
+    })
+    expect(job).toMatchObject({
+      if: "${{ github.event_name != 'release' || github.event.release.prerelease == false }}",
+      'continue-on-error': true,
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 20
+    })
+    expect(step(job, 'Resolve stable release').run).toContain(
+      'gh release list --exclude-drafts --exclude-pre-releases'
+    )
+    expect(step(job, 'Download final macOS arm64 archive').run).toContain(
+      "--pattern '*-mac-arm64.zip'"
+    )
+    expect(step(job, 'Generate SPDX SBOM from final archive')).toMatchObject({
+      uses: 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+      with: {
+        file: '${{ steps.artifact.outputs.path }}',
+        format: 'spdx-json',
+        'output-file': 'release-sbom.spdx.json',
+        'dependency-snapshot': false,
+        'upload-artifact': false,
+        'upload-release-assets': false,
+        'syft-version': 'v1.52.0'
+      }
+    })
+    expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
+      'node scripts/ci/validate-release-sbom.mjs'
+    )
+    expect(step(job, 'Upload PoC evidence')).toMatchObject({
+      if: '${{ always() }}',
+      with: {
+        'retention-days': 7,
+        'if-no-files-found': 'warn'
+      }
+    })
+    const text = readFileSync(join(process.cwd(), '.github/workflows/release-sbom-poc.yml'), 'utf8')
+    expect(text).not.toContain('actions/attest')
+    expect(text).not.toContain('contents: write')
+
+    expect(workflow('release.yml').jobs['release-sbom-poc']).toMatchObject({
+      needs: 'publish',
+      permissions: { contents: 'read' },
+      uses: './.github/workflows/release-sbom-poc.yml',
+      with: { tag: '${{ github.ref_name }}' }
+    })
+  })
+
+  it.each([
+    'nightly.yml',
+    'windows-full-test.yml',
+    'source-regression.yml',
+    'runtime-resource-soak.yml'
+  ])('reports scheduled %s outcomes to a tracking issue after every job', (name) => {
+    const document = workflow(name)
+    const { report, ...jobs } = document.jobs
+    const script = step(report, 'Open, refresh, or close the tracking issue')
+
+    expect(report.name).toBe('Report scheduled outcome')
+    expect(report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
+    expect([...(report.needs as string[])].sort()).toEqual(Object.keys(jobs).sort())
+    expect(report).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      'timeout-minutes': 5,
+      permissions: { contents: 'read', issues: 'write' }
+    })
+    expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
+    for (const [id, job] of Object.entries(jobs)) {
+      expect(
+        (job as Job & { permissions?: Record<string, string> }).permissions,
+        id
+      ).toBeUndefined()
+    }
+    expect(step(report, 'Checkout reporter')).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: {
+        'persist-credentials': false,
+        'sparse-checkout': expect.stringContaining('scripts/ci/report-scheduled-failure.mjs')
+      }
+    })
+    expect(script.uses).toBe('actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3')
+    // Nightly's certification and regression callers are advisory, so their job results stay
+    // successful; the reporter inspects the nested conclusions instead.
+    const advisory = name === 'nightly.yml' ? " || steps.advisory.outputs.ok != 'true'" : ''
+    expect(script.env?.CONCLUSION).toBe(
+      `\${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')${advisory}) && 'failure' || 'success' }}`
+    )
+    if (name === 'nightly.yml') {
+      const detect = step(report, 'Detect advisory job failures')
+      expect(detect.id).toBe('advisory')
+      expect(detect.run).toContain('actions/runs/$GITHUB_RUN_ID/jobs')
+      expect(detect.run).toContain('nightly-publish-gates.mjs --jobs')
+      expect(detect.run).toContain('--report')
+      expect(step(report, 'Checkout reporter').with?.['sparse-checkout']).toContain(
+        'scripts/ci/nightly-publish-gates.mjs'
+      )
+    }
+    expect(script.with?.script).toContain(`workflowFile: '${name}'`)
+    expect(script.with?.script).toContain('conclusion: process.env.CONCLUSION')
+    expect(readFileSync(join(process.cwd(), '.github/workflows', name), 'utf8')).toContain(
+      'tracking issue labelled ci-scheduled-failure'
+    )
   })
 })
 
@@ -580,6 +747,53 @@ describe('build verification throughput', () => {
       expect(release.jobs[name].if).toBe(
         "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')"
       )
+    }
+  })
+
+  it('keeps reusable build workflows read-only, caller-scoped, and time-bounded', () => {
+    const build = workflow('build.yml')
+    const notarize = workflow('notarize-mac.yml')
+    const regression = workflow('desktop-regression.yml')
+    const dryRun = workflow('notarize-dryrun.yml')
+    const release = workflow('release.yml')
+
+    expect(build.permissions).toEqual({ contents: 'read' })
+    expect(notarize.permissions).toEqual({ contents: 'read' })
+    expect(dryRun.permissions).toEqual({ contents: 'read' })
+    // Packaging and notarization queue instead of cancelling; regression reruns supersede.
+    expect(build.concurrency).toEqual({
+      group: 'build-${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': false
+    })
+    expect(notarize.concurrency).toEqual({
+      group: 'notarize-mac-${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': false
+    })
+    expect(regression.concurrency).toEqual({
+      group: 'desktop-regression-${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': true
+    })
+    expect(build.jobs.verify['timeout-minutes']).toBe(15)
+    expect(build.jobs.setup['timeout-minutes']).toBe(5)
+    expect(build.jobs.build['timeout-minutes']).toBe("${{ matrix.platform == 'mac' && 45 || 30 }}")
+    expect(regression.jobs.source['timeout-minutes']).toBe(5)
+    expect(release.jobs['release-preflight']['timeout-minutes']).toBe(5)
+    expect(release.jobs.publish['timeout-minutes']).toBe(15)
+    const publishSteps = release.jobs.publish.steps ?? []
+    const setupNode = publishSteps.findIndex(({ name }) => name === 'Setup Node')
+    const install = publishSteps.findIndex(
+      ({ name }) => name === 'Install release transform dependencies'
+    )
+    expect(publishSteps[setupNode]?.with).toEqual({ 'node-version': 22 })
+    expect(setupNode).toBeLessThan(install)
+    for (const reusable of [build, regression, workflow('package-smoke.yml')]) {
+      for (const job of Object.values(reusable.jobs)) {
+        for (const checkout of (job.steps ?? []).filter(({ uses }) =>
+          uses?.startsWith('actions/checkout@')
+        )) {
+          expect(checkout.with?.['persist-credentials']).toBe(false)
+        }
+      }
     }
   })
 })

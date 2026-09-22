@@ -5,7 +5,13 @@ import { join, relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { classifyChanges, parseNameStatus, toGitHubOutputPlan } from './classify-pr-changes.mjs'
+import {
+  classifyChanges,
+  parseNameStatus,
+  platformExecutionPlan,
+  toGitHubOutputPlan
+} from './classify-pr-changes.mjs'
+import { createAffectedTestPlan } from './module-test-impact.mjs'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
@@ -235,6 +241,47 @@ describe('pull request change classification', () => {
     )
   })
 
+  it.each(['yml', 'yaml'])('keeps issue-template .%s changes on static checks', (extension) => {
+    const changes = [
+      { path: `.github/ISSUE_TEMPLATE/reproducibility_case.${extension}`, status: 'added' },
+      { path: '.github/ISSUE_TEMPLATE/config.yml', status: 'modified' },
+      { path: 'CONTRIBUTING.md', status: 'modified' },
+      { path: 'docs/reproducibility-cases/README.md', status: 'added' },
+      { path: 'docs/reproducibility-cases/index.md', status: 'added' }
+    ]
+    const plan = classifyChanges(changes)
+    expect(plan.mode).toBe('selective')
+    expect(plan.lanes).toEqual(['policy', 'docs', 'format'])
+    expect(plan.bundles).toEqual(['policy', 'static'])
+    for (const event of ['pull_request', 'merge_group']) {
+      expect(platformExecutionPlan(plan, changes, event).bundles).toEqual(['policy', 'static'])
+    }
+    const tests = createAffectedTestPlan(changes, {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    })
+    expect(tests.mode).toBe('selective')
+    expect(tests.testFiles).toEqual([])
+  })
+
+  it.each([
+    '.github/ISSUE_TEMPLATE/helper.js',
+    '.github/ISSUE_TEMPLATE/nested/form.yml',
+    '.github/unknown.yml',
+    '.github/workflows/pr-gate.yml'
+  ])('does not exempt unknown or executable inputs: %s', (path) => {
+    expect(classifyChanges([{ path, status: 'added' }]).mode).toBe('full')
+  })
+
+  it('retains the full fallback when an issue form accompanies runtime changes', () => {
+    const plan = classifyChanges([
+      { path: '.github/ISSUE_TEMPLATE/bug_report.yml', status: 'modified' },
+      { path: 'src/unknown-runtime.ts', status: 'added' }
+    ])
+    expect(plan.mode).toBe('full')
+    expect(plan.bundles).toEqual(expect.arrayContaining(['unit', 'windows_core', 'windows_e2e']))
+  })
+
   it('uses one specific owner instead of a broad fallback owner', () => {
     const manifest = readManifest()
     manifest.rules.push({
@@ -389,6 +436,7 @@ describe('pull request change classification', () => {
     ['Windows install evidence', 'src/main/notebook/pip-install-evidence.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['delegated process ownership', 'src/main/delegation/process-ownership.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],

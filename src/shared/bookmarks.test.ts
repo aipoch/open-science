@@ -87,6 +87,59 @@ describe('private bookmark command contract', () => {
       }).success
     ).toBe(false)
   })
+  it('persists PDF mark style, color, and tags while keeping legacy selectors valid', () => {
+    const input = {
+      ...request(),
+      target: {
+        kind: 'pdf',
+        source: {
+          kind: 'upload-version',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          sourceFileId: 'file-1',
+          versionId: 'version-1',
+          checksum: 'a'.repeat(64),
+          name: 'paper.pdf',
+          path: 'upload://version-1'
+        },
+        selector: {
+          kind: 'text',
+          pageNumber: 2,
+          exact: 'selected text',
+          position: { start: 0, end: 13 },
+          quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.04 }],
+          extractorVersion: 'pdfjs-test',
+          pageRotation: 0,
+          coordinateVersion: 1,
+          markKind: 'squiggly',
+          color: 'blue',
+          tags: ['methods', 'important']
+        }
+      }
+    }
+    expect(createBookmarkRequestSchema.parse(input).target).toMatchObject({
+      kind: 'pdf',
+      selector: { markKind: 'squiggly', color: 'blue', tags: ['methods', 'important'] }
+    })
+    expect(
+      createBookmarkRequestSchema.safeParse({
+        ...input,
+        target: {
+          ...input.target,
+          selector: { ...input.target.selector, markKind: 'unknown' }
+        }
+      }).success
+    ).toBe(false)
+    expect(
+      createBookmarkRequestSchema.safeParse({
+        ...input,
+        target: {
+          ...input.target,
+          selector: { ...input.target.selector, tags: Array.from({ length: 13 }, () => 'tag') }
+        }
+      }).success
+    ).toBe(false)
+  })
   it('rejects invalid anchors and unknown routing fields without rewriting user input', () => {
     const input = request()
     expect(

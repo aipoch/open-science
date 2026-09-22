@@ -6,6 +6,7 @@ import {
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
+import { normalizeSessionFile } from '../../shared/session-persistence'
 import type {
   PersistedChatMessage,
   PersistedChatSession,
@@ -167,6 +168,119 @@ describe('AcpDurableContinuationContextOwner', () => {
       ]
     })
   })
+
+  it('commits a restored Main-owned answer before returning continuation context', async () => {
+    let session = createSession([message('prompt-active', 'Choose an approach.')])
+    session.runtimeTranscriptOwner = 'main'
+    setActivities(session, [pendingChoice()])
+    const owner = new AcpDurableContinuationContextOwner({
+      loadSessionForContinuation: async () => structuredClone(session),
+      mutateRuntimeSession: async (_scope, mutate) => {
+        session = mutate(structuredClone(session))
+        return session
+      }
+    })
+    await owner.prepareElicitation({
+      projectId: session.projectId,
+      sessionId: session.id,
+      requestId: 'choice-1',
+      toolCallId: 'tool-choice-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+    })
+    expect(session.activities?.[0].elicitation).toMatchObject({
+      state: 'answered',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+    })
+    expect(session.conversationGraph?.activities[0].elicitation).toEqual(
+      session.activities?.[0].elicitation
+    )
+    await expect(
+      owner.prepareElicitation({
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action: 'accept'
+      })
+    ).rejects.toThrow('pending Session activity')
+  })
+
+  it('does not rearm a later question when an accepted continuation finishes', async () => {
+    let session = createSession([message('prompt-active', 'Choose an approach.')])
+    session.runtimeTranscriptOwner = 'main'
+    const accepted = pendingChoice()
+    accepted.elicitation = { ...accepted.elicitation!, state: 'answered', respondedAt: 10 }
+    const next = pendingChoice({ id: 'tool-choice-2' })
+    next.elicitation = {
+      ...next.elicitation!,
+      durable: { ...next.elicitation!.durable!, requestId: 'choice-2' },
+      state: 'answered',
+      continuationPending: true,
+      respondedAt: 20
+    }
+    setActivities(session, [accepted, next])
+    session.status = 'running'
+    session.activeRun = { promptMessageId: 'prompt-active', startedAt: 30 }
+    const before = structuredClone(session)
+    const owner = new AcpDurableContinuationContextOwner({
+      loadSessionForContinuation: async () => structuredClone(session),
+      mutateRuntimeSession: async (_scope, mutate) => {
+        session = mutate(structuredClone(session))
+        return session
+      }
+    })
+    await owner.rearmElicitation({
+      projectId: session.projectId,
+      sessionId: session.id,
+      promptMessageId: 'prompt-active',
+      requestId: 'choice-1',
+      toolCallId: 'tool-choice-1'
+    })
+    expect(session).toEqual(before)
+  })
+
+  it.each(['accept', 'decline'] as const)(
+    're-presents an unaccepted %s after failure and process restart without losing its answer',
+    async (action) => {
+      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      session.runtimeTranscriptOwner = 'main'
+      setActivities(session, [pendingChoice()])
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(session),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          session = mutate(structuredClone(session))
+          return session
+        }
+      })
+      const response = {
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action,
+        ...(action === 'accept' ? { answers: [{ fieldId: 'question_0', value: 'Expanded' }] } : {})
+      }
+      await owner.prepareElicitation(response)
+      expect(session.activities?.[0].elicitation?.continuationPending).toBe(true)
+      const committed = structuredClone(session)
+      await owner.rearmElicitation({ ...response, promptMessageId: 'prompt-active' })
+      expect(session.status).toBe('waiting-for-user')
+      expect(session.activities?.[0].elicitation?.state).toBe('pending')
+      await expect(owner.prepareElicitation(response)).resolves.toBeDefined()
+
+      // No finally callback runs after process loss: the durable receipt alone restores the card.
+      const restarted = normalizeSessionFile(committed)!
+      expect(restarted.status).toBe('waiting-for-user')
+      expect(restarted.activities?.[0].elicitation).toMatchObject({ state: 'pending' })
+      expect(restarted.conversationGraph?.activities[0].elicitation).toEqual(
+        restarted.activities?.[0].elicitation
+      )
+      if (action === 'accept') {
+        expect(restarted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
+      }
+    }
+  )
 
   it.each([
     ['missing', []],

@@ -31,7 +31,8 @@ describe('Vitest discovery boundaries', () => {
     '**/tmp/**',
     '**/.worktrees/**',
     '**/.worktree/**',
-    'docs/internal/**'
+    'docs/internal/**',
+    'packages/credential-identity-probe-native/test/**'
   ])('excludes %s from recursive test discovery', (pattern) => {
     expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
   })
@@ -116,13 +117,20 @@ it('keeps a safe default timeout for schema-backed hooks', () => {
   )
 })
 
-it.each(['0', '1'])('resolves real Vitest project budgets with Windows profile %s', (profile) => {
-  const probe = spawnSync(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      `import { createVitest } from 'vitest/node'
+it.each([
+  ['0', undefined],
+  ['1', undefined],
+  ['0', '2'],
+  ['1', '2']
+])(
+  'resolves real Vitest project budgets with Windows profile %s and worker cap %s',
+  (profile, override) => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import { createVitest } from 'vitest/node'
        const ctx = await createVitest('test', {
          watch: false, hookTimeout: 60000, testTimeout: 60000, maxWorkers: 1
        })
@@ -132,25 +140,31 @@ it.each(['0', '1'])('resolves real Vitest project budgets with Windows profile %
            testTimeout: config.testTimeout
          }))))
        } finally { await ctx.close() }`
-    ],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, VITEST_WINDOWS_FULL_TEST: profile },
-      encoding: 'utf8',
-      timeout: 30_000
-    }
-  )
-  expect(probe.error).toBeUndefined()
-  expect(probe.status, probe.stderr).toBe(0)
-  expect(JSON.parse(probe.stdout)).toEqual(
-    ['default', 'architecture', 'process', 'database'].map((name) => ({
-      name,
-      hookTimeout: profile === '1' ? 60_000 : 30_000,
-      maxWorkers: profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(),
-      testTimeout: 60_000
-    }))
-  )
-})
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          VITEST_WINDOWS_FULL_TEST: profile,
+          OPEN_SCIENCE_TEST_MAX_WORKERS: override
+        },
+        encoding: 'utf8',
+        timeout: 30_000
+      }
+    )
+    expect(probe.error).toBeUndefined()
+    expect(probe.status, probe.stderr).toBe(0)
+    expect(JSON.parse(probe.stdout)).toEqual(
+      ['default', 'architecture', 'process', 'database'].map((name) => ({
+        name,
+        hookTimeout: profile === '1' ? 60_000 : 30_000,
+        maxWorkers:
+          profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(undefined, override),
+        testTimeout: 60_000
+      }))
+    )
+  }
+)
 
 it('prints captured console output only for failed tests', () => {
   expect(vitestConfig.test?.silent).toBe('passed-only')
@@ -163,7 +177,9 @@ it('pins the full-suite worker cap to the machine rather than leaving it unbound
   expect(resolveVitestMaxWorkers(1)).toBe(1)
   expect(resolveVitestMaxWorkers(0)).toBe(1)
   expect(vitestConfig.test?.maxWorkers).toBe(
-    process.env.VITEST_WINDOWS_FULL_TEST === '1' ? 1 : Math.max(available - 1, 1)
+    process.env.VITEST_WINDOWS_FULL_TEST === '1'
+      ? 1
+      : resolveVitestMaxWorkers(available, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS)
   )
 })
 
@@ -249,4 +265,18 @@ it('does not treat a 50ms scheduler delay as ACP deadlock', () => {
   for (const source of sources) {
     expect(source).not.toMatch(/setTimeout\(\(\) => resolve\('(?:timed-out|blocked)'\), 50\)/)
   }
+})
+
+it.each(['', '0', '-1', '1.5', 'two', ' 2', '2 ', 'Infinity', '9007199254740992'])(
+  'rejects invalid worker cap %j',
+  (override) => {
+    expect(() => resolveVitestMaxWorkers(8, override)).toThrow(
+      'OPEN_SCIENCE_TEST_MAX_WORKERS must be a positive integer.'
+    )
+  }
+)
+
+it('accepts an explicit positive worker cap independently of available CPUs', () => {
+  expect(resolveVitestMaxWorkers(8, '2')).toBe(2)
+  expect(resolveVitestMaxWorkers(1, '4')).toBe(4)
 })

@@ -383,6 +383,58 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.optimisticMessage).toBeUndefined()
   })
 
+  it('removes only this send preview when its real message appears before admission settles', async () => {
+    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
+    let onMessageAppended: ((message: { sessionId: string; messageId: string }) => void) | undefined
+    const input = options()
+    input.runtime.sendMessage = vi.fn((request) => {
+      onMessageAppended = request.onMessageAppended
+      return new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+        resolveAdmission = resolve
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(hook.result.current.optimisticMessage?.content).toBe('hello')
+
+    act(() => onMessageAppended?.({ sessionId: 'session-a', messageId: 'real-message-1' }))
+    expect(hook.result.current.optimisticMessage).toBeUndefined()
+    // Clearing the preview must not unlock a send that is still in flight.
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'real-message-1' }))
+
+    const previousNotification = onMessageAppended
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(hook.result.current.optimisticMessage?.content).toBe('hello')
+    // Identical text (even a reused draft version) is a different submission.
+    act(() => previousNotification?.({ sessionId: 'session-a', messageId: 'real-message-1' }))
+    expect(hook.result.current.optimisticMessage?.content).toBe('hello')
+    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'real-message-2' }))
+  })
+
+  it('restores a failed draft even after its preview handed off to the real message', async () => {
+    let rejectAdmission!: (error: Error) => void
+    let onMessageAppended: (() => void) | undefined
+    const input = options()
+    input.runtime.sendMessage = vi.fn((request) => {
+      onMessageAppended = () =>
+        request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'real-message' })
+      return new Promise<{ sessionId: string; messageId: string }>((_resolve, reject) => {
+        rejectAdmission = reject
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    act(() => onMessageAppended?.())
+    expect(hook.result.current.optimisticMessage).toBeUndefined()
+    await act(async () => rejectAdmission(new Error('save failed')))
+    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
+    expect(input.composer.actions.setError).toHaveBeenCalledWith('save failed')
+  })
+
   it('branches from a completed Agent Message without consuming the composer draft', async () => {
     const input = options()
     const hook = renderController(input)

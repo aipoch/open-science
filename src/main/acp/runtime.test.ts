@@ -1,3 +1,4 @@
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
@@ -1903,6 +1904,98 @@ describe('ACP runtime migration write-gate', () => {
     await drainPromise
     expect(drained).toBe(true)
   })
+})
+
+describe('unattended permission prompt ownership', () => {
+  it('declines app-owned questions without creating a durable user-choice wait', async () => {
+    const process = new FakeAgentProcess()
+    let sessionId = ''
+    let result: unknown
+    startFakeAgent(process, ['unattended-question'], {
+      onPrompt: async () => {
+        result = await runtime.requestUserInput({
+          sessionId,
+          questions: [
+            { question: 'Choose a method', options: [{ label: 'First' }, { label: 'Second' }] }
+          ]
+        })
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    sessionId = (await runtime.createSession({ cwd: '/workspace' })).sessionId
+    await runtime.sendPrompt({ sessionId, text: 'Research', permissionPrompts: 'none' })
+    expect(result).toEqual({ action: 'cancelled' })
+    expect(runtime.getSnapshot().pendingElicitations ?? []).toEqual([])
+  })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic'],
+    ['CodeBuddy', codeBuddyFramework, 'codebuddy-openai'],
+    ['OpenCode', opencodeFramework, 'opencode-openai'],
+    ['Codex Responses', codexFramework, 'codex-responses'],
+    ['Codex Bridge', codexFramework, 'codex-bridge']
+  ] as const)(
+    'denies unresolved %s permissions and releases the per-turn policy',
+    async (_name, framework, modelRoute) => {
+      const process = new FakeAgentProcess()
+      const responses: unknown[] = []
+      const permissionSeen = vi.fn()
+      startPermissionProbeAgent(process, {
+        newSessionId: 'unattended-session',
+        toolCallId: 'unattended-tool',
+        toolTitle: 'Run command',
+        permissionOptions: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+        ],
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        onPermissionResponse: (response) => {
+          responses.push(response)
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: { onPermissionRequest: permissionSeen },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId: `${framework.id}:provider-a`,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
+        })
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Run command',
+        permissionPrompts: 'none'
+      })
+      expect(responses).toEqual([{ outcome: { outcome: 'selected', optionId: 'reject-once' } }])
+      expect(permissionSeen).not.toHaveBeenCalled()
+      expect(runtime.getState().pendingPermissions).toEqual([])
+      expect(runtime.getPermissionPrompts(session.sessionId)).toBeUndefined()
+      const interactive = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Ask for permission'
+      })
+      await vi.waitFor(() => expect(permissionSeen).toHaveBeenCalledOnce())
+      await runtime.respondToPermission({
+        requestId: permissionSeen.mock.calls[0][0].requestId,
+        cancelled: true
+      })
+      await interactive
+    }
+  )
 })
 
 describe('ACP runtime provider prompt acceptance', () => {
@@ -4265,7 +4358,10 @@ describe('ACP runtime session management', () => {
       }),
       appendUserMessageToInteraction: vi.fn(),
       containsMessageOnActiveBranch: vi.fn(async () => true),
-      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession)),
+      mutateRuntimeSession: vi.fn(async (_scope, mutate) =>
+        mutate(structuredClone(persistedSession))
+      )
     }
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -4437,7 +4533,10 @@ describe('ACP runtime session management', () => {
       }),
       appendUserMessageToInteraction: vi.fn(),
       containsMessageOnActiveBranch: vi.fn(async () => true),
-      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession)),
+      mutateRuntimeSession: vi.fn(async (_scope, mutate) =>
+        mutate(structuredClone(persistedSession))
+      )
     }
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
@@ -4687,7 +4786,7 @@ describe('ACP runtime session management', () => {
           ]
         : [])
     ]
-    const persistedSession: PersistedChatSession = materializeSessionConversationGraph({
+    let persistedSession: PersistedChatSession = materializeSessionConversationGraph({
       id: 'restored-plan-session',
       projectId: 'project-1',
       title: 'Restored approved Plan',
@@ -4727,15 +4826,30 @@ describe('ACP runtime session management', () => {
       patchSessionRuntimeContext,
       appendUserMessageToInteraction: vi.fn(),
       containsMessageOnActiveBranch: vi.fn(async () => true),
-      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession)),
+      mutateRuntimeSession: vi.fn(async (_scope, mutate) =>
+        mutate(structuredClone(persistedSession))
+      )
     }
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone({ ...persistedSession, runtimeContext }),
+      mutateSession: async (_scope, mutate) => {
+        persistedSession = mutate(structuredClone({ ...persistedSession, runtimeContext }))
+        return structuredClone(persistedSession)
+      },
+      finalizeArtifacts: async () => []
+    })
     const runtime = new AcpRuntime({
+      runtimeSessions,
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       callbacks: {
-        onEvent: (event) => events.push(event),
+        onEvent: (event) => {
+          runtimeSessions.accept(event)
+          events.push(event)
+        },
         onPromptStarted: (_sessionId, _turnToken, promptAttemptId) =>
           promptAttempts.push(promptAttemptId)
       },
@@ -7351,6 +7465,79 @@ describe('ACP runtime session management', () => {
         })
       ])
     )
+  })
+
+  it('rearms a restored answer when continuation admission fails and accepts a retry', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+    let persisted = addPendingRestoredChoice(
+      createRestoredContinuationSession('prompt-restored-1', 'restored-choice-session', 'project-1')
+    )
+    persisted.runtimeTranscriptOwner = 'main'
+    const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+      _scope,
+      mutate
+    ) => {
+      persisted = mutate(structuredClone(persisted))
+      return structuredClone(persisted)
+    }
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(persisted),
+      mutateSession: mutateRuntimeSession,
+      finalizeArtifacts: async () => []
+    })
+    vi.spyOn(runtimeSessions, 'begin').mockRejectedValueOnce(
+      new Error('temporary admission failure')
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      runtimeSessions,
+      callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation: async () => structuredClone(persisted),
+          mutateRuntimeSession
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+    const request = {
+      requestId: 'choice-restored-1',
+      sessionId: 'restored-choice-session',
+      toolCallId: 'tool-choice-restored-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: {
+        kind: 'agent-user-choice' as const,
+        requestId: 'choice-restored-1',
+        promptMessageId: 'prompt-restored-1'
+      }
+    }
+    const response = {
+      requestId: request.requestId,
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request
+    }
+    await runtime.respondToElicitation(response)
+    await vi.waitFor(() => {
+      expect(persisted.status).toBe('waiting-for-user')
+      expect(persisted.activities?.[0].elicitation?.state).toBe('pending')
+    })
+    expect(fakeAgent.prompts).toHaveLength(0)
+    expect(persisted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
+    await runtime.respondToElicitation(response)
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() => {
+      expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
+      expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+    })
+    expect(fakeAgent.prompts[0].text).toContain('Expanded')
   })
 
   it('validates a revised choice against the durable fork before continuing', async () => {
@@ -17953,98 +18140,111 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('continues a completed Notebook turn when generated files were not saved as Artifacts', async () => {
-    const root = await createTemporaryRoot()
-    const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['session-1'], {
-      updatesForPrompt: (text) =>
-        text === 'draw a pie chart'
-          ? [
-              {
-                sessionUpdate: 'tool_call',
-                toolCallId: 'notebook-tool-1',
-                title: 'mcp__open-science-notebook__notebook_execute',
-                status: 'pending',
-                _meta: {
-                  claudeCode: {
-                    toolName: 'mcp__open-science-notebook__notebook_execute'
-                  }
-                }
-              },
-              {
-                sessionUpdate: 'tool_call_update',
-                toolCallId: 'notebook-tool-1',
-                status: 'completed',
-                content: [
-                  {
-                    type: 'content',
-                    content: {
-                      type: 'text',
-                      text: JSON.stringify({
-                        runId: 'notebook-run-1',
-                        workingFiles: [
-                          {
-                            relativePath: 'data/pie_chart.png',
-                            kind: 'other',
-                            size: 59_152,
-                            createdByRunId: 'notebook-run-1'
-                          },
-                          {
-                            relativePath: '/tmp/not-an-artifact.png',
-                            kind: 'other',
-                            size: 1,
-                            createdByRunId: 'notebook-run-1'
-                          },
-                          {
-                            relativePath: '../not-an-artifact-either.png',
-                            kind: 'other',
-                            size: 1,
-                            createdByRunId: 'notebook-run-1'
-                          }
-                        ]
-                      })
+  it.each([undefined, 'none'] as const)(
+    'preserves permission prompts %s when publishing generated Notebook files',
+    async (permissionPrompts) => {
+      const root = await createTemporaryRoot()
+      const process = new FakeAgentProcess()
+      const observedPolicies: Array<'none' | undefined> = []
+      const fakeAgent = startFakeAgent(process, ['session-1'], {
+        onPrompt: () => {
+          observedPolicies.push(runtime.getPermissionPrompts('session-1'))
+        },
+        updatesForPrompt: (text) =>
+          text.includes('draw a pie chart')
+            ? [
+                {
+                  sessionUpdate: 'tool_call',
+                  toolCallId: 'notebook-tool-1',
+                  title: 'mcp__open-science-notebook__notebook_execute',
+                  status: 'pending',
+                  _meta: {
+                    claudeCode: {
+                      toolName: 'mcp__open-science-notebook__notebook_execute'
                     }
                   }
-                ]
-              }
-            ]
-          : []
-    })
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      artifacts: {
-        configRoot: root,
-        dataRoot: root,
-        projectId: 'default-project',
-        mcpEntryPath: '/app/out/main/index.js'
-      },
-      notebook: {
-        projectId: 'default-project',
-        mcpEntryPath: '/app/out/main/index.js',
-        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
-      }
-    })
-    const session = await runtime.createSession({ cwd: '/workspace' })
+                },
+                {
+                  sessionUpdate: 'tool_call_update',
+                  toolCallId: 'notebook-tool-1',
+                  status: 'completed',
+                  content: [
+                    {
+                      type: 'content',
+                      content: {
+                        type: 'text',
+                        text: JSON.stringify({
+                          runId: 'notebook-run-1',
+                          workingFiles: [
+                            {
+                              relativePath: 'data/pie_chart.png',
+                              kind: 'other',
+                              size: 59_152,
+                              createdByRunId: 'notebook-run-1'
+                            },
+                            {
+                              relativePath: '/tmp/not-an-artifact.png',
+                              kind: 'other',
+                              size: 1,
+                              createdByRunId: 'notebook-run-1'
+                            },
+                            {
+                              relativePath: '../not-an-artifact-either.png',
+                              kind: 'other',
+                              size: 1,
+                              createdByRunId: 'notebook-run-1'
+                            }
+                          ]
+                        })
+                      }
+                    }
+                  ]
+                }
+              ]
+            : []
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        artifacts: {
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js'
+        },
+        notebook: {
+          projectId: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+        }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
 
-    await runtime.sendPrompt({
-      sessionId: session.sessionId,
-      text: 'draw a pie chart',
-      provenanceContext: { promptMessageId: 'prompt-1' }
-    })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'draw a pie chart',
+        permissionPrompts,
+        provenanceContext: { promptMessageId: 'prompt-1' }
+      })
 
-    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
-    expect(fakeAgent.prompts[1]).toEqual({
-      sessionId: session.sessionId,
-      text: expect.stringContaining('data/pie_chart.png')
-    })
-    expect(fakeAgent.prompts[1].text).toContain('notebook-run-1')
-    expect(fakeAgent.prompts[1].text).toContain('"filename": "pie_chart.png"')
-    expect(fakeAgent.prompts[1].text).toContain('"kind": "localPath"')
-    expect(fakeAgent.prompts[1].text).toContain('mcp__open-science-artifacts__write_artifact_file')
-    expect(fakeAgent.prompts[1].text).not.toContain('not-an-artifact')
-  })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+      await vi.waitFor(() =>
+        expect(observedPolicies).toEqual([permissionPrompts, permissionPrompts])
+      )
+      expect(fakeAgent.prompts[1]).toEqual({
+        sessionId: session.sessionId,
+        text: expect.stringContaining('data/pie_chart.png')
+      })
+      expect(fakeAgent.prompts[1].text).toContain('notebook-run-1')
+      expect(fakeAgent.prompts[1].text).toContain('"filename": "pie_chart.png"')
+      expect(fakeAgent.prompts[1].text).toContain('"kind": "localPath"')
+      expect(fakeAgent.prompts[1].text).toContain(
+        'mcp__open-science-artifacts__write_artifact_file'
+      )
+      expect(fakeAgent.prompts[1].text).not.toContain('not-an-artifact')
+    }
+  )
 
   it('retains handoff continuity across expected reconnect teardown', async () => {
     const process = new FakeAgentProcess()
@@ -23795,6 +23995,76 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(onPromptEnded).toHaveBeenCalledWith(session.sessionId, onPromptStarted.mock.calls[0][1])
   })
 
+  it.each(['backend resolution', 'provider resume'] as const)(
+    'does not send a stopped prompt after forced Skill reload pauses at %s',
+    async (pauseAt) => {
+      const entered = createDeferred()
+      const release = createDeferred()
+      const agents: Array<ReturnType<typeof startFakeAgent>> = []
+      const spawn = (): ChildProcessWithoutNullStreams => {
+        const process = new FakeAgentProcess()
+        const reconnect = agents.length === 1
+        agents.push(
+          startFakeAgent(process, ['remote-session-1'], {
+            onResumeRequest: async () => {
+              if (reconnect && pauseAt === 'provider resume') {
+                entered.resolve()
+                await release.promise
+              }
+            }
+          })
+        )
+        return asAgentProcess(process)
+      }
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: async (context) => {
+          if (context.forcedSkillIds.length > 0 && pauseAt === 'backend resolution') {
+            entered.resolve()
+            await release.promise
+          }
+          return {
+            framework: { ...claudeCodeFramework, spawn },
+            executablePath: '/bin/agent',
+            env: {}
+          }
+        },
+        resolveSpecialistIdentity: resolveForceLoadSpecialistIdentity,
+        resolveSpecialistSkills: resolveForceLoadSpecialistSkills,
+        skills: createSkillsHooks({ needForceLoad: ['research'] })
+      })
+      const session = await runtime.createSession({
+        cwd: '/workspace',
+        specialistId: 'force-load-specialist'
+      })
+      const prompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'summarize the paper',
+        forcedSkillIds: ['research']
+      })
+      try {
+        await entered.promise
+        await runtime.cancelPrompt({ sessionId: session.sessionId })
+        release.resolve()
+        await prompt
+        expect(agents.flatMap((agent) => agent.prompts)).toEqual([])
+        await vi.waitFor(() => expect(runtime.getSnapshot().status).toBe('idle'))
+        await runtime.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+        await expect(
+          runtime.sendPrompt({ sessionId: session.sessionId, text: 'new request' })
+        ).resolves.toMatchObject({ stopReason: 'end_turn' })
+        expect(agents.flatMap((agent) => agent.prompts)).toEqual([
+          { sessionId: session.sessionId, text: 'new request' }
+        ])
+      } finally {
+        release.resolve()
+        await prompt.catch(() => undefined)
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it('passes turn-forced skill ids to backend resolution per runtime instance', async () => {
     const firstSpawner = createFreshAgentSpawner()
     const secondSpawner = createFreshAgentSpawner()
@@ -28139,6 +28409,9 @@ describe('Specialist Skill scoping', () => {
             throw new Error('not used in this test')
           },
           loadSessionForContinuation: async () => {
+            throw new Error('not used in this test')
+          },
+          mutateRuntimeSession: async () => {
             throw new Error('not used in this test')
           },
           containsMessageOnActiveBranch: async () => true

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check } from 'lucide-react'
+import { Check, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
@@ -12,6 +12,7 @@ import {
   type LiteratureDuplicatePolicy
 } from '../../../../shared/literature'
 import type { UploadTransferProgress, UploadedAttachment } from '../../../../shared/uploads'
+import type { PdfNativeAnnotationImportProgress } from '../../../../shared/pdf-annotations'
 
 type Row = {
   file: File
@@ -22,6 +23,7 @@ type Row = {
   linked?: boolean
   uncertain?: boolean
   error?: string
+  nativeAnnotations?: { importedCount: number; unsupportedCount: number; truncated: boolean }
 }
 export type PdfImportDestination = { name: string; projectId?: string; collectionId?: string }
 
@@ -47,10 +49,12 @@ export function LiteraturePdfBatchImportDialog({
   const [stopping, setStopping] = useState(false)
   const [visible, setVisible] = useState(100)
   const [progress, setProgress] = useState<UploadTransferProgress>()
+  const [nativeProgress, setNativeProgress] = useState<PdfNativeAnnotationImportProgress>()
   const active = useRef(true)
   const running = useRef(false)
   const stopped = useRef(false)
   const upload = useRef<{ controller: AbortController; transferId: string } | undefined>(undefined)
+  const nativeImport = useRef<{ operationId: string; stop: () => void } | undefined>(undefined)
   const publish = (): void => {
     if (active.current) setRows(rowsRef.current.map((row) => ({ ...row })))
   }
@@ -69,6 +73,12 @@ export function LiteraturePdfBatchImportDialog({
       void window.api.uploads
         .abortTransfer({ transferId: transfer.transferId })
         .catch(() => undefined)
+    }
+    const activeNativeImport = nativeImport.current
+    if (activeNativeImport) {
+      void window.api.literature
+        .cancelPdfImport?.({ operationId: activeNativeImport.operationId })
+        ?.catch(() => undefined)
     }
   }
   useEffect(() => {
@@ -194,7 +204,22 @@ export function LiteraturePdfBatchImportDialog({
           // Once submitted, finish the write before stopping; the upload is no longer cancellable.
           upload.current = undefined
           if (active.current) setProgress(undefined)
-          await window.api.literature.importPdf({ itemId: row.itemId, attachment: staged })
+          const operationId = crypto.randomUUID()
+          const stopNativeProgress = window.api.pdfAnnotations?.onImportProgress
+            ? window.api.pdfAnnotations.onImportProgress((value) => {
+                if (value.operationId === operationId && active.current) setNativeProgress(value)
+              })
+            : () => undefined
+          nativeImport.current = { operationId, stop: stopNativeProgress }
+          const receipt = await window.api.literature.importPdf({
+            itemId: row.itemId,
+            attachment: staged,
+            operationId
+          })
+          stopNativeProgress()
+          nativeImport.current = undefined
+          if (active.current) setNativeProgress(undefined)
+          row.nativeAnnotations = receipt.nativeAnnotations
           row.status = 'done'
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -216,6 +241,9 @@ export function LiteraturePdfBatchImportDialog({
           if (staged)
             await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
           upload.current = undefined
+          nativeImport.current?.stop()
+          nativeImport.current = undefined
+          if (active.current) setNativeProgress(undefined)
           if (active.current) setProgress(undefined)
           publish()
         }
@@ -359,6 +387,39 @@ export function LiteraturePdfBatchImportDialog({
               </p>
             </>
           ) : null}
+          {nativeProgress ? (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {nativeProgress.phase === 'parsing' || nativeProgress.phase === 'saving' ? (
+                <LoaderCircle
+                  className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : null}
+              {nativeProgress.phase === 'completed'
+                ? t('Imported {{count}} native annotations.', {
+                    count: nativeProgress.importedCount
+                  })
+                : nativeProgress.phase === 'cancelled'
+                  ? t('Native annotation import cancelled.')
+                  : nativeProgress.phase === 'failed'
+                    ? t('Native annotation import failed.')
+                    : t('Importing native annotations…')}{' '}
+              {nativeProgress.pageCount > 0
+                ? t('{{processed}} / {{total}} pages', {
+                    processed: nativeProgress.pagesProcessed,
+                    total: nativeProgress.pageCount
+                  })
+                : null}
+              {nativeProgress.truncated
+                ? ` · ${t('Native annotation import limit reached. Some annotations were not imported.')}`
+                : null}
+              {nativeProgress.unsupportedCount > 0
+                ? ` · ${t('Unsupported native annotations: {{count}}', {
+                    count: nativeProgress.unsupportedCount
+                  })}`
+                : null}
+            </p>
+          ) : null}
         </div>
         {selectable.length > 0 ? (
           <label className="flex items-center gap-2 text-sm">
@@ -398,6 +459,13 @@ export function LiteraturePdfBatchImportDialog({
                   {!row.checked ? t('Skipped') : labels[row.status]}
                 </span>
               </div>
+              {row.nativeAnnotations && row.nativeAnnotations.unsupportedCount > 0 ? (
+                <p className="pl-7 text-xs text-status-warning-foreground">
+                  {t('Unsupported native annotations: {{count}}', {
+                    count: row.nativeAnnotations.unsupportedCount
+                  })}
+                </p>
+              ) : null}
               {row.error ? <LiteratureErrorNotice title={row.error} /> : null}
             </li>
           ))}

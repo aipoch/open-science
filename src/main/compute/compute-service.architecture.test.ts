@@ -622,6 +622,9 @@ describe('Compute service architecture', () => {
       'src/main/compute/compute-host-profile-owner.test.ts',
       'src/main/compute/compute-integration.test-support.ts',
       'src/main/compute/compute-job-cancellation-owner.integration.test.ts',
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/compute/cancellation.real-ssh.integration.test.ts',
+      'src/main/compute/remote-job-process.test.ts',
       'src/main/compute/compute-job-lifecycle.test.ts',
       'src/main/compute/compute-job-workflow-owner.test.ts',
       'src/main/compute/compute-jobs.integration.test.ts',
@@ -729,6 +732,9 @@ describe('Compute service architecture', () => {
       'src/main/compute/compute-host-profile-owner.test.ts',
       'src/main/compute/compute-job-workflow-owner.test.ts',
       'src/main/compute/compute-job-cancellation-owner.integration.test.ts',
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/compute/cancellation.real-ssh.integration.test.ts',
+      'src/main/compute/remote-job-process.test.ts',
       'src/main/compute/job-recovery-regressions.integration.test.ts',
       'src/main/compute/compute-remote-operation-owner.test.ts',
       'src/main/compute/session-cache-owner.test.ts',
@@ -791,6 +797,8 @@ describe('Compute service architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(computeService.testFiles.consumer).toEqual([
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/compute/job-runtime.test.ts',
       'src/main/compute/enabled-hosts-registry.test.ts',
       'src/main/acp/application-commands.test.ts',
@@ -1100,7 +1108,21 @@ describe('Compute service architecture', () => {
       'src/main/storage/brand-location.test.ts',
       'src/main/storage/migration-target-race.test.ts',
       'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/session-persistence/runtime-authority.test.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts',
+      'src/main/settings/codex-bridge-tools.test.ts',
+      'src/main/settings/backend-route-planner.test.ts',
+      'src/main/settings/claude-provider-configuration.integration.test.ts',
+      'src/main/settings/provider-runtime-health-owner.test.ts',
+      'src/main/settings/provider-transport-owner.test.ts'
     ])
   })
 

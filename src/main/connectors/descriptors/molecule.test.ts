@@ -60,6 +60,17 @@ describe('molecule/render_molecule', () => {
     expect(out.filename_suggestion).toBe('C9H8O4.mol')
   })
 
+  it.each([
+    ['[H][H]', 0],
+    ['[2H]O[2H]', 1],
+    ['[3H]O[3H]', 1],
+    ['[13C]O', 2]
+  ])('counts heavy atoms by atomic number for %s', async (smiles, expected) => {
+    const out = (await renderMolecule.run!(ctx, { smiles })) as RenderResult
+    expect(out.valid).toBe(true)
+    expect(out.heavy_atom_count).toBe(expected)
+  })
+
   it.each(['\n', '\r\n'])('preserves a generated molfile with %j line endings', async (newline) => {
     const seed = (await renderMolecule.run!(ctx, { smiles: ASPIRIN_SMILES })) as RenderResult
     expect(seed.molfile).toMatch(/^\n/)

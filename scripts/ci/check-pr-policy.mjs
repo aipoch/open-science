@@ -29,6 +29,7 @@ const databaseSchemaPaths = new Set([
   'prisma/schema.prisma',
   'prisma/sqlite-check-constraints.json'
 ])
+const prismaSchemaPath = 'prisma/schema.prisma'
 const migrationDirectory = 'src/main/database/migrations/'
 const migrationServicePath = 'src/main/database/migration-service.ts'
 const migrationPathPattern =
@@ -102,6 +103,21 @@ const sanitizePolicySource = (source, { maskStrings = false } = {}) => {
     } else result += character
   }
   return result
+}
+
+// Generator settings select client artifacts, not the persisted database structure.
+const databaseContract = (source) => {
+  const masked = sanitizePolicySource(source, { maskStrings: true })
+  const generators = [...masked.matchAll(/^[ \t]*generator\s+\w+\s*\{[^{}]*\}/gm)]
+  let contract = sanitizePolicySource(source)
+  for (const match of generators.reverse()) {
+    contract = contract.slice(0, match.index) + contract.slice(match.index + match[0].length)
+  }
+  return contract
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
 }
 
 const manifestEntries = (source) => {
@@ -181,9 +197,18 @@ export function checkDatabaseMigrationPolicy({
 }) {
   const violations = []
   const basePaths = new Set(baseMigrationPaths)
-  const schemaChanged = changes.some(({ path, previousPath }) =>
-    [path, previousPath].some((candidate) => databaseSchemaPaths.has(candidate))
-  )
+  const schemaChanged = changes.some(({ path, previousPath }) => {
+    if (![path, previousPath].some((candidate) => databaseSchemaPaths.has(candidate))) return false
+    if (
+      path === prismaSchemaPath &&
+      (!previousPath || previousPath === prismaSchemaPath) &&
+      typeof baseFiles[path] === 'string' &&
+      typeof headFiles[path] === 'string'
+    ) {
+      return databaseContract(baseFiles[path]) !== databaseContract(headFiles[path])
+    }
+    return true
+  })
   const addedPaths = changes
     .filter(
       ({ path, status }) =>
@@ -302,13 +327,14 @@ export function checkPrPolicy({
   commitMessages = commitSubjects,
   scope = 'all'
 }) {
-  if (eventName !== 'pull_request') return { ok: true, violations: [] }
+  if (!['pull_request', 'merge_group'].includes(eventName)) return { ok: true, violations: [] }
 
   const violations = []
+  // The merge queue squashes with the PR title, so the title is validated for both events.
   if (scope !== 'commits' && !subjectPattern.test(title ?? '')) {
     violations.push({ kind: 'title', subject: title ?? '' })
   }
-  if (scope !== 'title') {
+  if (scope !== 'title' && eventName === 'pull_request') {
     for (const [index, subject] of commitSubjects.entries()) {
       if (!subjectPattern.test(subject)) violations.push({ kind: 'commit', subject })
       if (/\)!:/.test(subject) && !/^BREAKING CHANGE:\s+\S.*$/m.test(commitMessages[index] ?? '')) {
@@ -413,6 +439,26 @@ export function runPrPolicyCli(environment = process.env) {
         }
       } catch {
         baseFiles = {}
+      }
+    }
+    if (changes.some(({ path, previousPath }) => [path, previousPath].includes(prismaSchemaPath))) {
+      // Compare the PR's changes with its merge base, even when the target branch has advanced.
+      for (const [revision, files] of [
+        [mergeBase, baseFiles],
+        [head, headFiles]
+      ]) {
+        try {
+          files[prismaSchemaPath] = execFileSync(
+            'git',
+            ['show', `${revision}:${prismaSchemaPath}`],
+            {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore']
+            }
+          )
+        } catch {
+          // Added/deleted schemas or unavailable contents still require a migration.
+        }
       }
     }
     databaseMigrationViolations = checkDatabaseMigrationPolicy({

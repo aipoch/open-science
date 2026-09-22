@@ -26,11 +26,22 @@ describe('platform risk execution policy', () => {
     expect(plan.macosProfile).toBe('smoke')
     expect(macosGroupsForPlan(plan)).toEqual([])
     expect(plan.lanes).toEqual(
-      expect.arrayContaining(['e2e_functional_windows', 'e2e_workspace_windows'])
+      expect.arrayContaining([
+        'e2e_functional_windows',
+        'e2e_workspace_windows',
+        'e2e_browser_windows'
+      ])
     )
+    expect(plan.bundles).toContain('windows_e2e')
     expect(plan.lanes).not.toContain('e2e_regressions_macos')
     expect(plan.lanes).not.toContain('e2e_workspace_macos')
     expect(toGitHubOutputPlan(plan).macosProfile).toBe('smoke')
+  })
+  it('does not add Windows E2E lanes to PRs without desktop impact', () => {
+    const docs = classifyChanges(changes('README.md'))
+    const plan = platformExecutionPlan(docs, changes('README.md'), 'pull_request')
+    expect(plan.bundles).not.toContain('windows_e2e')
+    expect(plan.lanes.some((lane) => lane.endsWith('_windows'))).toBe(false)
   })
   it('keeps Linux and short Mac but removes ordinary Windows E2E from queue', () => {
     const plan = platformExecutionPlan(
@@ -359,6 +370,13 @@ describe('queue-only Mac policy', () => {
     expect(plan.bundles).not.toContain('macos_e2e')
     expect(macosGroupsForPlan(plan)).toEqual([])
     expect(plan.bundles).toContain('windows_e2e')
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining([
+        'e2e_functional_windows',
+        'e2e_workspace_windows',
+        'e2e_browser_windows'
+      ])
+    )
     expect(
       plan.lanes.filter((lane: string) => lane.startsWith('e2e_') && lane.endsWith('_macos'))
     ).toEqual([])

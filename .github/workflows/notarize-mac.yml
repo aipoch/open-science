@@ -50,6 +50,12 @@ on:
 permissions:
   contents: read
 
+# Keyed by caller workflow + ref so the release and dry-run callers never queue behind each other.
+# Never cancel mid-run: an interrupted Apple submission still counts against the release wait.
+concurrency:
+  group: notarize-mac-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   notarize:
     name: Notarize + staple ${{ matrix.arch }}

@@ -46,6 +46,8 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/lib/acp/runtime-observer.test.ts",
+      "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
       "src/renderer/src/components/SessionPackageOperation.test.tsx",
@@ -95,7 +97,8 @@
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/lib/session-fork.test.ts"
+      "src/renderer/src/lib/session-fork.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts"
     ]
   },
   "capabilityOverlays": [],

@@ -62,7 +62,7 @@ describe('SessionPersistenceAlert', () => {
 
     expect(
       container.querySelector('[data-testid="session-persistence-alert"]')?.className
-    ).toContain('w-full max-w-md')
+    ).toContain('w-full')
     expect(alert?.closest('section')?.className).toContain('border-border')
     expect(alert?.className).not.toContain('fixed')
     expect(alert?.className).not.toContain('border-destructive/40')

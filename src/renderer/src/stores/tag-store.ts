@@ -29,7 +29,7 @@ type TagStore = TagSnapshot & {
   listen(): () => void
 }
 
-const EMPTY_SNAPSHOT: TagSnapshot = { revision: 0, tags: [], assignments: [] }
+const EMPTY_SNAPSHOT: TagSnapshot = { revision: 0, tags: [], assignments: [], pdfAnnotations: [] }
 export const createInitialTagState = (): TagSnapshot & {
   status: TagStore['status']
   error?: string
@@ -92,7 +92,12 @@ const rollbackProjection = <T>(failed: WeakMap<T[], T[]>, optimistic: T[], befor
 
 const stateFromSnapshot = (snapshot: TagSnapshot): Pick<TagStore, keyof TagSnapshot | 'status'> => {
   confirmedAssignments = snapshot.assignments
-  return { ...snapshot, assignments: projectAssignments(snapshot.tags), status: 'ready' }
+  return {
+    ...snapshot,
+    pdfAnnotations: snapshot.pdfAnnotations ?? [],
+    assignments: projectAssignments(snapshot.tags),
+    status: 'ready'
+  }
 }
 
 const stateFromMutationSnapshot = (
@@ -213,8 +218,15 @@ export const useTagStore = create<TagStore>((set, get) => ({
   },
   listen: () => {
     if (!window.api?.tags) return () => undefined
-    return window.api.tags.onChanged(({ revision }) => {
+    const stopTags = window.api.tags.onChanged(({ revision }) => {
       if (revision > get().revision) void get().load()
     })
+    const stopProjects = window.api.projects?.onDeleted?.(() => {
+      void get().load()
+    })
+    return () => {
+      stopTags()
+      stopProjects?.()
+    }
   }
 }))

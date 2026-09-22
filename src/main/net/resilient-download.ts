@@ -7,7 +7,16 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import type { DownloadProgress } from '../../shared/download-progress'
 import { SpeedMeter } from './download-speed'
 
-export class DownloadChecksumError extends Error {
+// Only failures attributable to the remote representation/transport permit trying another source.
+// Local storage failures and caller cancellation retain their original errors and fail closed.
+export class DownloadSourceError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'DownloadSourceError'
+  }
+}
+
+export class DownloadChecksumError extends DownloadSourceError {
   constructor(message = 'Checksum mismatch') {
     super(message)
     this.name = 'DownloadChecksumError'
@@ -53,7 +62,7 @@ class IncompleteStreamError extends Error {}
 // The response cannot belong to the expected representation (oversized metadata/body or an invalid
 // resume range). It is terminal for this invocation, and the untrusted partial is removed after its
 // write handle has been closed.
-class DownloadResponseIntegrityError extends Error {}
+class DownloadResponseIntegrityError extends DownloadSourceError {}
 
 type ResumeValidator = {
   kind: 'etag' | 'last-modified'
@@ -336,7 +345,7 @@ export const resilientDownload = async (
       if (res.status >= 500) throw new Error(`server error ${res.status}`)
       if (res.status >= 400 && res.status < 500) {
         // Terminal: 4xx errors are not transient network problems.
-        const err = new Error(`request failed (${res.status})`)
+        const err = new DownloadSourceError(`request failed (${res.status})`)
         ;(err as { terminal?: boolean }).terminal = true
         throw err
       }
@@ -400,7 +409,9 @@ export const resilientDownload = async (
         //    terminal now, so this should be unreachable — but re-seeding keeps the digest correct
         //    rather than silently skipping the gap and later failing checksum.
         hash = createHash('sha256')
-        await seedHash(hash, offset)
+        await seedHash(hash, offset).catch((error) => {
+          throw markTerminal(error)
+        })
         hashSeededTo = offset
       }
       // else: hash already covers [0, offset) — no I/O needed.
@@ -443,7 +454,11 @@ export const resilientDownload = async (
         attempt
       })
 
-      file = mkWrite(partPath, offset > 0 ? { flags: 'a' } : undefined)
+      try {
+        file = mkWrite(partPath, offset > 0 ? { flags: 'a' } : undefined)
+      } catch (error) {
+        throw markTerminal(error)
+      }
       // A stream 'error' is a local disk fault (ENOSPC/EIO/…), not a network problem — terminal.
       file.on('error', (e) => (fileError = markTerminal(e)))
 
@@ -494,12 +509,10 @@ export const resilientDownload = async (
       if (total != null && transferred < total) throw new IncompleteStreamError('short read')
 
       if (opts.expectedSha256 && hash.digest('hex') !== opts.expectedSha256) {
-        // digest() has finalized the hash, so it can never be reused on a retry. Guarantee the
-        // DownloadChecksumError is what propagates: if the .part cleanup itself fails (EACCES/EIO),
-        // swallow that error rather than let it escape — otherwise the loop would retry with a dead
-        // hash. A leftover .part is harmless (the next run re-checks or overwrites it).
-        await removeFile(partPath).catch(() => undefined)
-        await removeFile(metadataPath).catch(() => undefined)
+        // digest() finalized the hash. Cleanup errors must be terminal storage errors, preventing
+        // both reuse of that hash and a caller's fallback to another source on a broken filesystem.
+        await removeForSafety(partPath)
+        await removeForSafety(metadataPath)
         throw new DownloadChecksumError()
       }
 
@@ -541,12 +554,13 @@ export const resilientDownload = async (
       // Terminal errors: never retry.
       if (error instanceof DownloadChecksumError) throw error
       if (error instanceof DownloadResponseIntegrityError) {
-        await removeFile(partPath).catch(() => undefined)
-        await removeFile(metadataPath).catch(() => undefined)
+        await removeForSafety(partPath)
+        await removeForSafety(metadataPath)
         throw error
       }
       if ((error as { terminal?: boolean }).terminal) {
-        await removeFile(metadataPath).catch(() => undefined)
+        if (error instanceof DownloadSourceError) await removeForSafety(metadataPath)
+        else await removeFile(metadataPath).catch(() => undefined)
         throw error
       }
       if (opts.signal?.aborted) throw opts.signal.reason ?? error
@@ -559,5 +573,8 @@ export const resilientDownload = async (
       controller.abort()
     }
   }
-  throw lastError ?? new Error('download failed after retries')
+  throw new DownloadSourceError(
+    lastError instanceof Error ? lastError.message : 'download failed after retries',
+    { cause: lastError }
+  )
 }

@@ -375,6 +375,12 @@ test('supports the core project journey with keyboard input only', async ({ app 
     }))
   )
     return
+  if (
+    !(await expectKeyboardOutcome(page, 'Wait for the message run to finish', async () => {
+      await expect(page.getByTestId('branch-send-menu-trigger')).toBeVisible({ timeout: 60_000 })
+    }))
+  )
+    return
 
   const files = page.getByRole('button', { name: 'Files', exact: true })
   if (!(await focusWithTab(page, files))) return

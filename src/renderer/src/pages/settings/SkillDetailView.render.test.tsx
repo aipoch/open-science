@@ -1,3 +1,4 @@
+import { openResourceMainSwitch } from './test-utils'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -88,15 +89,11 @@ describe('SkillDetailView', () => {
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.textContent).toContain('First skill description.')
     expect(document.body.textContent).toContain('Availability')
-    expect(document.body.textContent).toContain('Shared with Main')
-    await act(async () =>
-      document.body
-        .querySelector<HTMLButtonElement>('[data-slot="skill-usage-agents-trigger"]')
-        ?.focus()
+    expect(document.body.textContent).toContain(
+      'Control access separately for Main Agent and each Specialist.'
     )
-    expect(
-      document.body.querySelector('[data-slot="skill-usage-agents-popover"]')?.textContent
-    ).toContain('Literature Reviewer')
+    expect(openResourceMainSwitch('Alpha')).not.toBeNull()
+    expect(document.body.textContent).toContain('Literature Reviewer')
 
     // Files section renders the SKILL.md body.
     expect(document.body.textContent).toContain('Files')
@@ -194,7 +191,7 @@ describe('SkillDetailView', () => {
       root.render(<SkillDetailView skillId="a" />)
     })
 
-    const toggle = document.body.querySelector<HTMLButtonElement>('[role="switch"]')
+    const toggle = openResourceMainSwitch('Alpha')
     act(() => toggle?.click())
 
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
@@ -216,12 +213,12 @@ describe('SkillDetailView', () => {
       await Promise.resolve()
     })
 
-    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle Alpha"]')
+    const toggle = openResourceMainSwitch('Alpha')
     expect(toggle?.getAttribute('data-state')).toBe('checked')
     expect(toggle?.disabled).toBe(true)
     expect(toggle?.className).toContain('pointer-events-none')
     expect(document.body.textContent).not.toContain('Application required')
-    expect(document.body.textContent).not.toContain('Always enabled')
+    expect(document.body.textContent).toContain('Always enabled')
 
     await act(async () => {
       const trigger = document.body.querySelector<HTMLElement>(
@@ -299,12 +296,12 @@ describe('SkillDetailView', () => {
     })
 
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      openResourceMainSwitch('Alpha')?.click()
       await Promise.resolve()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not save this setting. The previous value was restored.'
+      'Could not update resource access. Refresh and try again.'
     )
   })
 })

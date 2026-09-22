@@ -36,6 +36,7 @@
     "src/main/delegation/durable-delegated-work.architecture.test.ts",
     "src/main/delegation/durable-delegated-work.test.ts",
     "src/main/delegation/durable-delegated-work.ts",
+    "src/main/delegation/escaped-descendant.test.ts",
     "src/main/delegation/execution-backend-lease.test.ts",
     "src/main/delegation/execution-backend-lease.ts",
     "src/main/delegation/execution-contract.test.ts",
@@ -65,7 +66,9 @@
     "src/main/delegation/structured-output-owner.test.ts",
     "src/main/delegation/structured-output-submission.ts",
     "src/main/delegation/structured-output.test.ts",
-    "src/main/delegation/structured-output.ts"
+    "src/main/delegation/structured-output.ts",
+    "src/main/delegation/process-ownership.ts",
+    "src/main/delegation/process-ownership.test.ts"
   ],
   "interfacePaths": [
     "src/main/delegation/delegated-artifact-publication.ts",
@@ -83,7 +86,8 @@
     "src/main/delegation/settlement-continuation-dispatch.ts",
     "src/main/delegation/structured-output.ts",
     "src/main/delegation/certification-contract.test.ts",
-    "src/main/delegation/execution-contract.test.ts"
+    "src/main/delegation/execution-contract.test.ts",
+    "src/main/delegation/process-ownership.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -100,6 +104,7 @@
       "src/main/delegation/delegation-settlement-wake-owner.test.ts",
       "src/main/delegation/durable-delegated-work.architecture.test.ts",
       "src/main/delegation/durable-delegated-work.test.ts",
+      "src/main/delegation/escaped-descendant.test.ts",
       "src/main/delegation/execution-backend-lease.test.ts",
       "src/main/delegation/execution-contract.test.ts",
       "src/main/delegation/frame-workspace.test.ts",
@@ -113,7 +118,8 @@
       "src/main/delegation/settlement-continuation-dispatch.test.ts",
       "src/main/delegation/specialist-runtime-consumption.test.ts",
       "src/main/delegation/structured-output-owner.test.ts",
-      "src/main/delegation/structured-output.test.ts"
+      "src/main/delegation/structured-output.test.ts",
+      "src/main/delegation/process-ownership.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -121,6 +127,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -518,7 +526,20 @@
       "src/main/specialist/marketplace/service.test.ts",
       "src/main/specialist/package/release-certification.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
-      "src/main/specialist/package/transaction.test.ts"
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/acp/agent-process.test.ts",
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/agent-framework/opencode-mcp-isolation.integration.test.ts",
+      "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

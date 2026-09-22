@@ -290,7 +290,9 @@ describe('OpenAiProviderBridge', () => {
         authorization: `Bearer ${connection.token}`,
         'content-type': 'application/json',
         'sec-fetch-site': 'same-origin',
-        'x-request-id': 'request-1'
+        'x-request-id': 'request-1',
+        'session-id': 'codex-conversation',
+        'x-opencode-session': 'opencode-conversation'
       },
       body: JSON.stringify({ model: 'ignored', input: [] })
     })
@@ -298,6 +300,8 @@ describe('OpenAiProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+    expect(upstreamHeaders?.get('session-id')).toBe('codex-conversation')
+    expect(upstreamHeaders?.get('x-opencode-session')).toBe('opencode-conversation')
   })
 
   it('replays an identical deterministic provider error without a second upstream request', async () => {

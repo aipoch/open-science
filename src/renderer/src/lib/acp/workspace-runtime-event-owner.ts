@@ -1,4 +1,11 @@
 import {
+  ensureRuntimeWriter,
+  isRuntimeWriter,
+  runtimeWriterSaveOptions,
+  setRuntimeWriterActivation
+} from './runtime-writer-client'
+import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import {
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
@@ -19,7 +26,7 @@ import { useSessionStore } from '../../stores/session-store'
 import { loadPersistedSession } from '../session-persistence/session-persistence'
 import {
   acceptAcpRuntimeSnapshotRevision,
-  resetAcpRuntimeSnapshotRevisionForTests
+  resetAcpRuntimeSnapshotRevision
 } from './runtime-snapshot-revision-owner'
 import { isBufferableAssistantTextEvent } from './chat-events'
 import { applyWorkspaceRuntimeEvent, applyWorkspaceRuntimeEventBatch } from './workspace-events'
@@ -329,11 +336,16 @@ const createWorkspaceRuntimeEventProcessor = (
     events: readonly AcpRuntimeEvent[],
     replaceLatestEvents: boolean
   ): Promise<void> => {
+    // Thought chunks are private provider reasoning. The renderer intentionally never projects
+    // them into the transcript, so keeping them in presentation lanes only adds queue, map, and
+    // event-id work during a long thinking turn. Drop them at admission while retaining terminal
+    // events (especially Stop) on the same prompt lane.
+    const presentableEvents = events.filter((event) => event.kind !== 'thought')
     const evictedEvents: AcpRuntimeEvent[] = []
     if (replaceLatestEvents) {
-      latestEventsById = new Map(events.map((event) => [event.id, event]))
+      latestEventsById = new Map(presentableEvents.map((event) => [event.id, event]))
     } else {
-      for (const event of events) {
+      for (const event of presentableEvents) {
         if (!latestEventsById.has(event.id)) {
           latestEventsById.set(event.id, event)
         }
@@ -348,7 +360,7 @@ const createWorkspaceRuntimeEventProcessor = (
     }
     const visibleLaneKeys = new Set<string | symbol>()
 
-    for (const event of events) {
+    for (const event of presentableEvents) {
       const laneKey = getEventLaneKey(event)
       const lane = getEventLane(laneKey)
       visibleLaneKeys.add(laneKey)
@@ -429,39 +441,82 @@ const subscribeWorkspacePermissionLifecycle = (
   return () => permissionLifecycleObservers.delete(observer)
 }
 
-const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(
-  async (event) => {
-    const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event) ? event : undefined
-    if (
-      permissionLifecycleEvent &&
-      [...permissionLifecycleObservers].some(
-        (observer) => !observer.shouldApply(permissionLifecycleEvent)
-      )
-    ) {
-      return true
-    }
-    const applied = await applyWorkspaceRuntimeEvent(event, {
-      // Read current authority when the lane applies the event, not when its batch was queued.
-      agentPromptInFlight: Boolean(
-        event.sessionId && agentPromptOwnershipSessionIds.has(event.sessionId)
-      )
-    })
-    if (applied && permissionLifecycleEvent) {
-      for (const observer of permissionLifecycleObservers) {
-        observer.onApplied(permissionLifecycleEvent)
+const createLiveWorkspaceRuntimeEventProcessor = (): WorkspaceRuntimeEventProcessor =>
+  createWorkspaceRuntimeEventProcessor(
+    async (event) => {
+      if (!(await ensureRuntimeWriter())) return true
+      const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event)
+        ? event
+        : undefined
+      if (
+        permissionLifecycleEvent &&
+        [...permissionLifecycleObservers].some(
+          (observer) => !observer.shouldApply(permissionLifecycleEvent)
+        )
+      ) {
+        return true
       }
+      const writerOptions = runtimeWriterSaveOptions()
+      const applied = await applyWorkspaceRuntimeEvent(event, {
+        canProject: () =>
+          isRuntimeWriter() &&
+          runtimeWriterSaveOptions()?.runtimeWriterToken === writerOptions?.runtimeWriterToken,
+        saveSession: (session) => saveSessionInOrder(session, undefined, undefined, writerOptions),
+        // Read current authority when the lane applies the event, not when its batch was queued.
+        agentPromptInFlight: Boolean(
+          event.sessionId && agentPromptOwnershipSessionIds.has(event.sessionId)
+        )
+      })
+      if (applied && permissionLifecycleEvent) {
+        for (const observer of permissionLifecycleObservers) {
+          observer.onApplied(permissionLifecycleEvent)
+        }
+      }
+      return applied
+    },
+    {
+      applyEventBatch: async (events) => {
+        if (!(await ensureRuntimeWriter())) return true
+        const token = runtimeWriterSaveOptions()?.runtimeWriterToken
+        return applyWorkspaceRuntimeEventBatch(
+          events,
+          () => isRuntimeWriter() && runtimeWriterSaveOptions()?.runtimeWriterToken === token
+        )
+      },
+      presentation: liveWorkspaceRuntimePresentation
     }
-    return applied
-  },
-  {
-    applyEventBatch: applyWorkspaceRuntimeEventBatch,
-    presentation: liveWorkspaceRuntimePresentation
+  )
+
+let liveWorkspaceRuntimeEventProcessor = createLiveWorkspaceRuntimeEventProcessor()
+let writerBacklog: AcpRuntimeEvent[] = []
+setRuntimeWriterActivation(async () => {
+  // Start from durable authority before replaying the bounded host event window. A newly elected
+  // writer must not publish the old snapshots it retained while it was an observer.
+  const loaded = useSessionStore
+    .getState()
+    .sessions.filter((session) => session.contentLoaded !== false)
+  for (const session of loaded) {
+    const durable = await loadPersistedSession({
+      projectId: session.projectId,
+      sessionId: session.id
+    })
+    if (durable) useSessionStore.getState().upsertPersistedSession(durable)
   }
-)
+  const snapshot = await window.api.acp.getState()
+  writerBacklog = [...snapshot.events]
+  liveWorkspaceRuntimeEventProcessor = createLiveWorkspaceRuntimeEventProcessor()
+  resetAcpRuntimeSnapshotRevision()
+})
+const drainWriterBacklog = async (): Promise<void> => {
+  const backlog = writerBacklog
+  writerBacklog = []
+  if (backlog.length) await liveWorkspaceRuntimeEventProcessor.processIncremental(backlog)
+}
 
 // Projects runtime foreground ownership and its initial silent gap into renderer-only state. Unknown
 // ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.
 const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
+  if (!isRuntimeWriter()) return
   const nextSessionIds = new Set(sessionIds)
   agentPromptOwnershipSessionIds = nextSessionIds
   const store = useSessionStore.getState()
@@ -487,6 +542,7 @@ const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
 
 // Keeps store permission state aligned with the runtime's current pending request set.
 const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void => {
+  if (!isRuntimeWriter()) return
   const nextSessionIds = new Set(requests.map((request) => request.sessionId))
   const store = useSessionStore.getState()
   for (const session of store.sessions) {
@@ -512,6 +568,7 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
 // detached; requiring the waiting status prevents a stale pending activity from re-arming after
 // its answer has synchronously returned the Session to running.
 const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): void => {
+  if (!isRuntimeWriter()) return
   const store = useSessionStore.getState()
   const nextSessionIds = new Set(
     requests.filter(isDurableAgentUserChoiceRequest).map((request) => request.sessionId)
@@ -558,7 +615,7 @@ const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
   pendingElicitationSessionIds.clear()
   firstOutputWaitingSessionIds.clear()
   agentPromptOwnershipSessionIds = new Set()
-  resetAcpRuntimeSnapshotRevisionForTests()
+  resetAcpRuntimeSnapshotRevision()
 }
 
 // Accepts Main snapshots once in construction order. This gate is shared by React subscription and
@@ -579,6 +636,8 @@ const ingestWorkspaceRuntimeSnapshot = async (
   snapshot: WorkspaceRuntimeEventSnapshot,
   syncFirstOutput: boolean
 ): Promise<boolean> => {
+  if (!(await ensureRuntimeWriter())) return false
+  await drainWriterBacklog()
   if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
   if (syncFirstOutput) {
     syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
@@ -597,7 +656,12 @@ const processWorkspaceRuntimeEvents = (snapshot: WorkspaceRuntimeEventSnapshot):
 // while asynchronous presentation or persistence is still draining.
 const processIncrementalWorkspaceRuntimeEvents = (
   events: readonly AcpRuntimeEvent[]
-): Promise<void> => liveWorkspaceRuntimeEventProcessor.processIncremental(events)
+): Promise<void> =>
+  ensureRuntimeWriter().then(async (owner) => {
+    if (!owner) return
+    await drainWriterBacklog()
+    await liveWorkspaceRuntimeEventProcessor.processIncremental(events)
+  })
 
 type WorkspaceRuntimeEventIngestRuntime = {
   state: AcpStateSnapshot
@@ -656,6 +720,18 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
   ])
 
   useEffect(() => {
+    void ensureRuntimeWriter()
+      .then((owner) => (owner ? drainWriterBacklog() : undefined))
+      .catch(() => undefined)
+    const timer = setInterval(() => {
+      void ensureRuntimeWriter()
+        .then((owner) => (owner ? drainWriterBacklog() : undefined))
+        .catch(() => undefined)
+    }, 4_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     if (!subscribeRuntimeEvents) return
     return subscribeRuntimeEvents((events, snapshot) => {
       const currentRuntime = runtimeRef.current
@@ -667,7 +743,8 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
       if (acceptedSnapshot) {
         syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
       }
-      processLifecycleEvents(eventRuntime, acceptedEvents, optionsRef.current)
+      if (isRuntimeWriter())
+        processLifecycleEvents(eventRuntime, acceptedEvents, optionsRef.current)
       void processIncrementalWorkspaceRuntimeEvents(acceptedEvents)
     })
   }, [processLifecycleEvents, subscribeRuntimeEvents])
@@ -691,6 +768,7 @@ const markRunningSessionsDisconnectedOnDrop = (
   currentSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {},
   durablePermissionSessionIds: ReadonlySet<string> = new Set()
 ): void => {
+  if (!isRuntimeWriter()) return
   const { sessions, markDisconnected } = useSessionStore.getState()
 
   for (const session of sessions) {
@@ -724,6 +802,7 @@ const syncWorkspaceContextUsage = (
   sessionIds: readonly string[],
   contextUsageBySession: Record<string, AcpContextUsage>
 ): void => {
+  if (!isRuntimeWriter()) return
   const { setContextUsage } = useSessionStore.getState()
   for (const sessionId of sessionIds) setContextUsage(sessionId, contextUsageBySession[sessionId])
 }

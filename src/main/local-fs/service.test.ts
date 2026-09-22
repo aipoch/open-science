@@ -276,7 +276,7 @@ describe('LocalFsService granted roots', () => {
   let outside = ''
   let store: GrantedLocalRoot[] = []
   let grantService: LocalFsService
-  let beforeGrantedRootsChange: ReturnType<typeof vi.fn<() => Promise<void>>>
+  let beforeGrantedRootsChange: ReturnType<typeof vi.fn<() => Promise<{ reaped: boolean } | void>>>
   // In-memory row-level store matching the SQLite repository's contract. Plain closures, not
   // vi.fn: the afterEach restoreAllMocks (for the app.getPath spy) must not reset the stub's
   // implementations between tests.
@@ -349,6 +349,16 @@ describe('LocalFsService granted roots', () => {
     await expect(
       grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
     ).rejects.toThrow('shutdown failed')
+
+    expect(store).toEqual([])
+  })
+
+  it('does not persist a grant when notebook cleanup is incomplete', async () => {
+    beforeGrantedRootsChange.mockResolvedValueOnce({ reaped: false })
+
+    await expect(
+      grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
+    ).rejects.toThrow(/cleanup is incomplete/i)
 
     expect(store).toEqual([])
   })

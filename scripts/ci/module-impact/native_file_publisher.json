@@ -12,6 +12,8 @@
     "owner": [],
     "contract": [],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/codex-completion-handoff.integration.test.ts",
@@ -77,6 +79,7 @@
       "src/main/artifacts/artifact-provenance-graph.test.ts",
       "src/main/artifacts/artifact-reproducibility-execution.test.ts",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
+      "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
       "src/main/artifacts/artifact-reproducibility-outputs.test.ts",
@@ -341,7 +344,18 @@
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/settings/backend-route-planner.test.ts",
+      "src/main/settings/claude-provider-configuration.integration.test.ts",
+      "src/main/settings/provider-runtime-health-owner.test.ts",
+      "src/main/settings/provider-transport-owner.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

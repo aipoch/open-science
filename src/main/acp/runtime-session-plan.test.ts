@@ -56,6 +56,7 @@ const createRuntimeHarness = (options: {
   onEvent?: (event?: unknown) => void
   activeProjection?: ActivePlanProjection
   durableMessageIds?: string[]
+  permissionPrompts?: 'none'
   cancelNotify?: () => Promise<void>
 }): RuntimeHarness => {
   const generated = projection('version-1')
@@ -113,6 +114,7 @@ const createRuntimeHarness = (options: {
     updateStepStatus
   }
   let currentInteraction = {
+    permissionPrompts: options.permissionPrompts,
     kind: 'prompt' as const,
     sessionId: 'session-1',
     sequence: 7,
@@ -121,6 +123,7 @@ const createRuntimeHarness = (options: {
     promptMessageId: 'interaction-1'
   }
   const sessionInteractions = {
+    has: () => true,
     snapshot: () => [{ kind: 'prompt', sessionId: 'session-1' }],
     current: () => currentInteraction,
     cancelPrompt: vi.fn(
@@ -172,6 +175,7 @@ const createRuntimeHarness = (options: {
     sessionRegistry: {
       lookup: () => ({ attachment: { session: { sessionId: 'provider-session-1' } } })
     },
+    promptTurnWorkflow: { captureCancellation: () => undefined },
     sessionPlanWorkflow,
     appContinuations: {
       get: vi.fn(() => undefined),
@@ -205,6 +209,19 @@ const createRuntimeHarness = (options: {
 }
 
 describe('AcpRuntime Session Plan seam', () => {
+  it('rejects unattended Plan generation before creating approval state', async () => {
+    const { runtime, service } = createRuntimeHarness({ permissionPrompts: 'none' })
+    await expect(
+      runtime.callSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+    ).rejects.toThrow('Plan approval is unavailable in unattended execution')
+    expect(service.generate).not.toHaveBeenCalled()
+  })
+
   it('blocks generate_plan until approval and then resumes the same interaction', async () => {
     const { runtime, service } = createRuntimeHarness({
       onEvent: () => {

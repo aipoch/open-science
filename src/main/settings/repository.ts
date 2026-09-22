@@ -1,3 +1,4 @@
+import type { StoredClassificationSettings } from './types'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { samePath } from '../storage-root'
@@ -1097,6 +1098,19 @@ class SettingsRepository {
     return this.mutateConnectors((connectors) => {
       connectors.openAlexApiKeyRef = apiKeyRef || undefined
     })
+  }
+
+  async mutateClassification(
+    update: (
+      value: StoredClassificationSettings | undefined,
+      settings: StoredSettings
+    ) => StoredClassificationSettings
+  ): Promise<StoredClassificationSettings> {
+    const settings = await this.mutate((current) => ({
+      ...current,
+      classification: update(current.classification, current)
+    }))
+    return settings.classification!
   }
 
   async setGitHubToken(

@@ -25,6 +25,7 @@ export type AcpSessionInteractionKind = 'prompt' | 'compaction'
 export interface AcpPromptSessionInteractionRequest {
   readonly sessionId: string
   readonly kind: 'prompt'
+  readonly permissionPrompts?: 'none'
   readonly promptMessageId?: string
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly memoryEnabled?: boolean
@@ -48,6 +49,7 @@ interface AcpSessionInteractionScopeBase {
 
 export interface AcpPromptSessionInteractionScope extends AcpSessionInteractionScopeBase {
   readonly kind: 'prompt'
+  readonly permissionPrompts?: 'none'
   readonly promptMessageId?: string
   readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly memoryEnabled?: boolean
@@ -154,6 +156,13 @@ export class AcpSessionInteractionOwner {
 
   current(sessionId: string): AcpSessionInteractionScope | undefined {
     return this.activeInteractions.get(sessionId)?.scope
+  }
+
+  permissionPromptsForSession(sessionId: string): 'none' | undefined {
+    const scope = (
+      this.activeInteractions.get(sessionId) ?? this.pendingPromptReservations.get(sessionId)
+    )?.scope
+    return scope?.kind === 'prompt' ? scope.permissionPrompts : undefined
   }
 
   has(sessionId: string): boolean {
@@ -408,6 +417,7 @@ export class AcpSessionInteractionOwner {
     const scope: AcpPromptSessionInteractionScope = Object.freeze({
       sessionId: request.sessionId,
       kind: 'prompt',
+      ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
       promptMessageId: request.promptMessageId,
       get provenanceContext() {
         return promptProvenance.value
@@ -479,6 +489,7 @@ export class AcpSessionInteractionOwner {
         ? {
             ...base,
             kind: request.kind,
+            ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
             promptMessageId: request.promptMessageId,
             get provenanceContext() {
               return promptProvenance?.value

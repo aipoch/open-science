@@ -1,3 +1,4 @@
+import { PACKAGE_REQUIRES_UPDATE } from './archive'
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { formatPackageBytes } from '../../shared/session-package'
@@ -329,6 +330,13 @@ export class SessionPackageDesktop {
       )
       const detail = error instanceof Error ? error.message : ''
       const translate = this.options.translate
+      if (detail === PACKAGE_REQUIRES_UPDATE)
+        throw new Error(
+          translate(
+            'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+          ),
+          { cause: error }
+        )
       if (error instanceof PackageSourceUnavailableError)
         throw new Error(
           translate(

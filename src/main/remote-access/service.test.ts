@@ -129,6 +129,52 @@ const createReadyDeps = (): {
 }
 
 describe('RemoteAccessService', () => {
+  it('disconnects all selected browsers before the batch save finishes and preserves other connections', async () => {
+    const repository = await createRepository()
+    const now = Date.now()
+    await repository.save({
+      version: 5,
+      mode: 'off',
+      trustedBrowsers: ['first', 'second', 'other'].map((id) => ({
+        id,
+        browser: 'Chrome',
+        platform: 'macOS',
+        tokenHash: '00',
+        createdAt: now,
+        lastSeenAt: now,
+        expiresAt: Number.MAX_SAFE_INTEGER
+      }))
+    })
+    const service = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    const controller = webController()
+    service.attachWebController(controller)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const saveOriginal = repository.save.bind(repository)
+    const save = vi.spyOn(repository, 'save').mockImplementationOnce(async (value) => {
+      await gate
+      await saveOriginal(value)
+    })
+    const revocation = service.revokeBrowsers(['first', 'second', 'first'], false, true)
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(controller.closeExternalConnections).toHaveBeenCalledTimes(2)
+    expect(controller.closeExternalConnections).toHaveBeenNthCalledWith(1, 'first')
+    expect(controller.closeExternalConnections).toHaveBeenNthCalledWith(2, 'second')
+    release()
+    await expect(revocation).resolves.toMatchObject({
+      canManage: false,
+      canManagePairing: true,
+      trustedBrowsers: [{ id: 'other' }]
+    })
+    expect((await repository.load()).trustedBrowsers.map(({ id }) => id)).toEqual(['other'])
+  })
+
   it('keeps access locally off after a failed preference save and supports retry before restart', async () => {
     const repository = await createRepository()
     const deps = createReadyDeps()
@@ -752,28 +798,33 @@ describe('RemoteAccessService', () => {
       ...deps,
       broadcast: vi.fn()
     })
-    service.attachWebController(webController())
-    await service.setMode('remoteit')
-    await service.webAccess.authorizeHttp(
-      remoteRequest('private-app.r3proxy.com'),
-      remoteResponse(),
-      new URL('https://private-app.r3proxy.com/')
-    )
-    const [pending] = service.snapshot(true).pendingRequests
-    await service.approve({ requestId: pending.id, decision: 'always' })
+    try {
+      service.attachWebController(webController())
+      await service.setMode('remoteit')
+      await service.webAccess.authorizeHttp(
+        remoteRequest('private-app.r3proxy.com'),
+        remoteResponse(),
+        new URL('https://private-app.r3proxy.com/')
+      )
+      const [pending] = service.snapshot(true).pendingRequests
+      await service.approve({ requestId: pending.id, decision: 'always' })
 
-    const persist = repository.save.bind(repository)
-    vi.spyOn(repository, 'save')
-      .mockRejectedValueOnce(new Error('cleanup persistence failed'))
-      .mockImplementation((value) => persist(value))
+      const persist = repository.save.bind(repository)
+      vi.spyOn(repository, 'save')
+        .mockRejectedValueOnce(new Error('cleanup persistence failed'))
+        .mockImplementation((value) => persist(value))
 
-    await expect(service.setMode('remoteit-public')).resolves.toMatchObject({
-      mode: 'remoteit-public',
-      enabled: false,
-      lifecycle: 'error',
-      error: 'cleanup persistence failed'
-    })
-    expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
+      await expect(service.setMode('remoteit-public')).resolves.toMatchObject({
+        mode: 'remoteit-public',
+        enabled: false,
+        lifecycle: 'error',
+        error: 'cleanup persistence failed'
+      })
+      expect(deps.enableRemoteIt).toHaveBeenCalledTimes(1)
+    } finally {
+      // Error snapshots can retry cleanup in the background; drain it before removing the root.
+      await service.shutdown()
+    }
   })
 
   it('soft-disables access without deleting either provider service', async () => {

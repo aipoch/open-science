@@ -24,6 +24,7 @@ describe('read-only ciphertext inventory', () => {
     const settings = JSON.stringify({
       version: 2,
       providers: [{ keyRef: ref('old-provider') }],
+      classification: { services: [{ keyRef: ref('classification-key') }] },
       connectors: { customMcpServers: [{ envRefs: { TOKEN: ref('old-env') } }] }
     })
     const credentials = JSON.stringify({
@@ -46,6 +47,7 @@ describe('read-only ciphertext inventory', () => {
     writeFileSync(join(paths.configRoot, 'credentials.json'), credentials)
     expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
       'old-provider',
+      'classification-key',
       'old-env',
       'old-oauth'
     ])
@@ -153,6 +155,7 @@ it('does not interpret ordinary names, prompts, command output, or legacy opaque
       version: 2,
       providers: [{ name: 'enc:normal label', keyRef: ref('real-key') }],
       customPrompt: 'literal open-science:protected:v1:example',
+      classification: { services: [{ keyRef: ref('classification-key') }] },
       connectors: { customMcpServers: [{ name: 'enc:label', args: ['enc:argument'] }] }
     })
   )
@@ -183,6 +186,7 @@ it('does not interpret ordinary names, prompts, command output, or legacy opaque
   db.close()
   expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
     'real-key',
+    'classification-key',
     'real-device-key'
   ])
 })

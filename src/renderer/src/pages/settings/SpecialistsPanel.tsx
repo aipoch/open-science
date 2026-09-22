@@ -1504,6 +1504,7 @@ const InstalledSpecialistsPanel = ({
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
               type="button"
+              data-settings-anchor="specialists.marketplace"
               disabled={webPackageImport && !window.api.specialist.listMarketplace}
               onClick={() => onNavigate({ kind: 'marketplace' })}
               className="whitespace-nowrap"
@@ -1513,7 +1514,11 @@ const InstalledSpecialistsPanel = ({
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="shrink-0 whitespace-nowrap">
+                <Button
+                  variant="outline"
+                  className="shrink-0 whitespace-nowrap"
+                  data-settings-anchor="specialists.add"
+                >
                   <Plus data-icon="inline-start" aria-hidden="true" />
                   {t('Add specialist')}
                   <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />

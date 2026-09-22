@@ -13,6 +13,7 @@ type AcpClientInteractionOwnerOptions = {
   routing: {
     resolveAppSessionId: (providerSessionId: string) => string
     isActiveSession: (appSessionId: string) => boolean
+    permissionPromptsForSession?: (sessionId: string) => 'none' | undefined
     frameworkForSession: (appSessionId: string) => AgentFrameworkId | undefined
     reviewerFrameworkForSession: (providerSessionId: string) => AgentFrameworkId | undefined
     promptMessageIdForSession: (appSessionId: string) => string | undefined
@@ -66,6 +67,9 @@ class AcpClientInteractionOwner {
       return this.requestCodexMcpAuthorization(params.sessionId, sessionId, intent.toolCallId)
     }
     if (reviewerFramework !== undefined) return Promise.resolve({ action: 'cancel' })
+    if (this.options.routing.permissionPromptsForSession?.(sessionId) === 'none') {
+      return Promise.resolve({ action: 'decline' })
+    }
 
     const promptMessageId = this.options.routing.promptMessageIdForSession(sessionId)
     return this.options.elicitation.request(
@@ -91,7 +95,12 @@ class AcpClientInteractionOwner {
         'open-science-notebook/ask_user_question'
       )
     ) {
-      return { action: 'accept' }
+      return {
+        action:
+          this.options.routing.permissionPromptsForSession?.(appSessionId) === 'none'
+            ? 'decline'
+            : 'accept'
+      }
     }
     if (!this.options.permission.hasTrustedCodexMcpToolCall(appSessionId, toolCallId)) {
       return { action: 'cancel' }

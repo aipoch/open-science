@@ -1,3 +1,8 @@
+import type {
+  ClassifyReadingRoute,
+  ClassifySkills,
+  ClassificationUsage
+} from '../../shared/classification'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile } from 'node:fs/promises'
 
@@ -8,7 +13,12 @@ import type { NotebookPromptInput } from '../../shared/notebook'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  runWithDiagnosticCorrelation
+} from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,
@@ -26,6 +36,7 @@ import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-ow
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
+import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
 
 const log = createLogger('acp-prompt-preparation-owner')
 type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
@@ -54,6 +65,11 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     | 'usage'
     | 'refreshUsage'
   >
+  classifySkills?: ClassifySkills
+  classifyReadingRoute?: ClassifyReadingRoute
+  recordClassificationUsage?: (
+    input: ClassificationUsage & { projectId: string; sessionId: string; frameworkId: string }
+  ) => Promise<unknown>
   selectBridgeSkills: SelectBridgeSkills
   authorizeReferencedUploads?: (
     projectId: string,
@@ -85,6 +101,7 @@ type AcpPromptPreparationInput = Readonly<{
   sessionSetupPromptPrefix?: string
   projectId: string
   fallbackPromptMessageId?: string
+  classificationEnabled?: boolean
   bridgeSkillsAvailable: boolean
   skillImportEnabled: boolean
   skillImportTurnToken: string
@@ -239,6 +256,79 @@ class AcpPromptPreparationOwner {
           ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {})
         })
       }
+      let classifierAttempted = false
+      const selectSkills: SelectBridgeSkills = async (text, catalog, signal, observeUsage) => {
+        if (input.signal.aborted || !input.isCurrent()) return []
+        // Classification is an optional optimization layer. An absent result means
+        // that no usable decision was available (for example, no service, an error,
+        // a timeout, or an ambiguous response), so keep the existing selector as the
+        // source of truth for that turn.
+        if (
+          input.classificationEnabled &&
+          !classifierAttempted &&
+          (!input.role || input.role === 'primary') &&
+          this.options.classifySkills
+        ) {
+          classifierAttempted = true
+          return runWithDiagnosticCorrelation(async () => {
+            const context = {
+              projectId: input.projectId,
+              sessionId: input.request.sessionId,
+              frameworkId: input.backend.framework.id
+            }
+            log.info('classification selection started', {
+              ...context,
+              catalogCount: catalog.length
+            })
+            const usage: ClassificationUsage[] = []
+            let classified
+            try {
+              classified = await this.options.classifySkills!({
+                text,
+                catalog,
+                signal: input.signal,
+                observeUsage: (entry) => usage.push(entry)
+              })
+            } catch (error) {
+              log.warn('classification selection unavailable', {
+                ...context,
+                ...diagnosticErrorFields(error)
+              })
+            }
+            for (const entry of usage) {
+              await this.options
+                .recordClassificationUsage?.({ ...entry, ...context })
+                .catch((error) => {
+                  log.warn('classification usage recording failed', {
+                    ...context,
+                    eventId: entry.eventId,
+                    ...diagnosticErrorFields(error)
+                  })
+                })
+            }
+            if (input.signal.aborted || !input.isCurrent()) {
+              log.info('classification selection discarded', {
+                ...context,
+                reason: input.signal.aborted ? 'cancelled' : 'stale-turn'
+              })
+              return []
+            }
+            if (classified !== undefined) {
+              log.info('classification selection applied', {
+                ...context,
+                selectedCount: classified.length
+              })
+              return classified
+            }
+            log.info('classification selection fallback', {
+              ...context,
+              reason: 'unavailable-decision'
+            })
+            return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
+          })
+        }
+        return this.options.selectBridgeSkills(text, catalog, signal, observeUsage)
+      }
       const skillPreparation = await input.turnSkill.prepareProvider({
         frameworkId: input.backend.framework.id,
         selectionText: [input.request.text, computeExecutionTargetReminder]
@@ -248,8 +338,7 @@ class AcpPromptPreparationOwner {
         codex: {
           home: input.backend.adapter.codexHome,
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,
-          selectSkills: async (text, catalog, signal, observeUsage) =>
-            (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ?? [],
+          selectSkills,
           signal: input.signal,
           observeUsage: observeSelectorUsage
         },
@@ -258,9 +347,7 @@ class AcpPromptPreparationOwner {
               codebuddy: {
                 root: codeBuddySkillRuntimeRoot(input.backend.session.options),
                 selectorAvailable: input.bridgeSkillsAvailable,
-                selectSkills: async (text, catalog, signal, observeUsage) =>
-                  (await this.options.selectBridgeSkills(text, catalog, signal, observeUsage)) ??
-                  [],
+                selectSkills,
                 signal: input.signal,
                 observeUsage: observeSelectorUsage
               }
@@ -279,6 +366,11 @@ class AcpPromptPreparationOwner {
         specialistPrefix: input.specialistPrefix,
         sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
+          ...(input.request.permissionPrompts === 'none'
+            ? [
+                'This execution is unattended. Existing permission rules still apply. No person is available to approve tools, review a new Plan, or answer questions. If an operation is denied, do not retry it or infer consent; use an already-authorized alternative or report the limitation in your final answer.'
+              ]
+            : []),
           ...(skillPreparation.skillScopeGuidance ? [skillPreparation.skillScopeGuidance] : []),
           ...(computeExecutionTargetReminder ? [computeExecutionTargetReminder] : []),
           ...(input.turnPromptReminders ?? [])
@@ -336,11 +428,70 @@ class AcpPromptPreparationOwner {
           filteredCount: requestedHistoryUploads.length - historyUploads.length
         })
       }
+      let pdfPreparationScope: 'full-document' | undefined
+      const hasActiveLinkedPdf = references.some(
+        (reference) =>
+          'pdfContextDocumentId' in reference &&
+          reference.pdfContextActive === true &&
+          Boolean(reference.pdfContextDocumentId)
+      )
+      if (
+        input.classificationEnabled &&
+        hasActiveLinkedPdf &&
+        (input.backend.framework.id === 'codex' || input.backend.framework.id === 'codebuddy') &&
+        !hasFullDocumentIntent(input.request.text) &&
+        !hasCurrentPageIntent(input.request.text) &&
+        this.options.classifyReadingRoute
+      ) {
+        const context = {
+          projectId: input.projectId,
+          sessionId: input.request.sessionId,
+          frameworkId: input.backend.framework.id
+        }
+        log.info('classification reading route started', context)
+        const usage: ClassificationUsage[] = []
+        let classified: Awaited<ReturnType<ClassifyReadingRoute>>
+        try {
+          classified = await this.options.classifyReadingRoute({
+            text: input.request.text,
+            signal: input.signal,
+            observeUsage: (entry) => usage.push(entry)
+          })
+        } catch (error) {
+          classified = undefined
+          log.warn('classification reading route unavailable', {
+            ...context,
+            ...diagnosticErrorFields(error)
+          })
+        }
+        for (const entry of usage) {
+          await this.options
+            .recordClassificationUsage?.({ ...entry, ...context })
+            .catch((error) => {
+              log.warn('classification usage recording failed', {
+                ...context,
+                eventId: entry.eventId,
+                ...diagnosticErrorFields(error)
+              })
+            })
+        }
+        if (input.signal.aborted || !input.isCurrent()) return cancelPrepared()
+        if (classified === 'full-document') {
+          pdfPreparationScope = classified
+          log.info('classification reading route applied', { ...context, route: classified })
+        } else {
+          log.info('classification reading route fallback', {
+            ...context,
+            reason: 'unavailable-or-auto'
+          })
+        }
+      }
       const prepared = await this.options.promptContent.prepare({
         appSessionId: input.request.sessionId,
         projectId: input.projectId,
         connectionGeneration: input.connectionGeneration,
         text: promptText,
+        readingIntentText: input.request.text,
         historyImages: input.request.historyImages ?? [],
         currentImages: input.request.currentImages ?? [],
         historyUploads,
@@ -352,6 +503,7 @@ class AcpPromptPreparationOwner {
           input.backend.context.supportsImageInput === false &&
           this.options.imageInputCompatibility !== undefined,
         fileTextBudget: resolveFileTextBudget(input.backend.context.window),
+        pdfPreparationScope,
         skillImportTurnToken: input.skillImportTurnToken,
         onSkillImportAttachmentEligible: (attachmentUri) => {
           skillImportAttachmentPaths.add(attachmentUri)

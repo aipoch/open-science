@@ -1796,7 +1796,7 @@ describe('ProviderAccountsModule', () => {
       id: 'builtin-xai-subscription',
       type: 'xai-subscription',
       name: 'xAI (Grok) OAuth',
-      model: 'grok-4.6',
+      model: 'grok-4.7',
       apiEndpoints: ['anthropic', 'openai', 'responses']
     })
     expect(stored.keyRef).toBeUndefined()

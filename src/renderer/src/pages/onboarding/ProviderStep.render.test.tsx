@@ -811,7 +811,7 @@ describe('ProviderStep', () => {
 
     await vi.waitFor(() => {
       expect(persistProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.6' })
+        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.7' })
       )
       expect(validateProvider).toHaveBeenCalledWith({
         providerId: 'builtin-xai-subscription'

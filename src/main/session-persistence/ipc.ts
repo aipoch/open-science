@@ -1,3 +1,4 @@
+import type { RuntimeWriterOwner } from './runtime-writer'
 import { createMessageSearch } from './message-search'
 import type { MessageSearchRequest, MessageSearchPage } from '../../shared/message-search'
 import { ipcMainHandle } from '../ipc-handler-registry'
@@ -325,7 +326,8 @@ const registerSessionPersistenceIpcHandlers = (
     reviewRepository
   ),
   onSessionSaved?: (session: PersistedChatSession) => Promise<void> | void,
-  openRecoveryFolder?: (request: OpenSessionRecoveryFolderRequest) => Promise<void>
+  openRecoveryFolder?: (request: OpenSessionRecoveryFolderRequest) => Promise<void>,
+  runtimeWriter?: Pick<RuntimeWriterOwner, 'commit'>
 ): void => {
   // Keep persistence IPC separate from ACP runtime commands; it owns durable UI state only.
   // loadAll can replay pending deletions and every mutation can materialize provenance/upload bytes.
@@ -359,8 +361,8 @@ const registerSessionPersistenceIpcHandlers = (
       const originClientId = getLifecycleClientId(event)
       let durable: PersistedChatSession
       try {
-        durable = await withDataRootWrite(async () => {
-          const rendererOptions = sanitizeRendererSaveSessionOptions(options)
+        const persist = async (): Promise<PersistedChatSession> => {
+          const rendererOptions = sanitizeRendererSaveSessionOptions(options, session)
           const result = rendererOptions
             ? await handlers.saveSession(session, rendererOptions)
             : await handlers.saveSession(session)
@@ -372,7 +374,12 @@ const registerSessionPersistenceIpcHandlers = (
             }
           )
           return result.session
-        })
+        }
+        durable = await withDataRootWrite(() =>
+          options?.runtimeWriterToken && runtimeWriter
+            ? runtimeWriter.commit(originClientId, options.runtimeWriterToken, persist)
+            : persist()
+        )
       } catch (error) {
         if (!isSessionRevisionConflictError(error) && !isSessionSizeLimitError(error)) throw error
         const sizeLimit = isSessionSizeLimitError(error)

@@ -77,6 +77,7 @@ type AcpHandlerWorkflows = {
 
 type InterruptedTurnSessionSource = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
+  prepareRuntimeResume?(projectId: string, sessionId: string): Promise<void>
 }
 
 type SaveAsSkillAdmission = (sessionId: string) => void | Promise<void>
@@ -297,11 +298,21 @@ const createAcpHandlerWorkflows = (
     logResumeDiagnostic('info', 'acp:resume-session started', context)
 
     try {
-      const resume = (projectId: string): Promise<AcpCreateSessionResponse> =>
-        runtime.resumeSession(bindResumeRequestToProject(request, projectId))
+      const resume = async (projectId: string): Promise<AcpCreateSessionResponse> => {
+        const bound = bindResumeRequestToProject(request, projectId)
+        if (
+          interruptedTurnSessions?.prepareRuntimeResume &&
+          !runtime.hasLiveSession(projectId, request.sessionId)
+        ) {
+          await interruptedTurnSessions.prepareRuntimeResume(projectId, request.sessionId)
+        }
+        return runtime.resumeSession(bound)
+      }
       const result = archiveAvailability
         ? await archiveAvailability.withSessionAvailableById(request.sessionId, resume)
-        : await runtime.resumeSession(request)
+        : request.projectId
+          ? await resume(request.projectId)
+          : await runtime.resumeSession(request)
       logResumeDiagnostic('info', 'acp:resume-session completed', {
         ...context,
         durationMs: Math.max(0, Date.now() - startedAt),

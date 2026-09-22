@@ -40,6 +40,7 @@ const expectedChannels = [
   'settings:detect-codex',
   'settings:detect-opencode',
   'settings:get-connector-detail',
+  'settings:get-classification',
   'settings:get-github-token-status',
   'settings:get-package-mirror',
   'settings:get-notebook-network-status',
@@ -94,6 +95,8 @@ const expectedChannels = [
   'settings:set-session-details-model',
   'settings:set-subagent-model',
   'settings:set-vision-model',
+  'settings:update-classification',
+  'settings:test-classification',
   'settings:save-validated-provider',
   'settings:validate-provider'
 ] as const

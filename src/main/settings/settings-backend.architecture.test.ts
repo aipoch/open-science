@@ -343,6 +343,7 @@ describe('Settings backend ownership architecture', () => {
       'markLegacyDataMovePromptDismissed',
       'markOnboardingComplete',
       'markPathsNormalized',
+      'mutateClassification',
       'publishBootstrapOpenAlex',
       'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',
@@ -460,6 +461,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.responsesBridge, 'ResponsesBridge')).toEqual([
       'close',
       'registerHostMessageSession',
+      'registerMcpSession',
       'registerReviewerSession',
       'registerToolLessSession',
       'selectSkills',
@@ -468,6 +470,7 @@ describe('Settings backend ownership architecture', () => {
       'setTarget',
       'start',
       'unregisterHostMessageSession',
+      'unregisterMcpSession',
       'unregisterReviewerSession',
       'unregisterToolLessSession'
     ])
@@ -477,7 +480,7 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
-        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
+        buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
@@ -512,6 +515,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/ipc.ts',
       'src/main/locale/owner.ts',
       'src/main/settings/agent-runtime-manager.ts',
+      'src/main/settings/classification-settings.ts',
       'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
@@ -675,6 +679,7 @@ describe('Settings backend ownership architecture', () => {
       'agentEnvironmentCreationEnabled',
       'agentFrameworkId',
       'appIconVariant',
+      'classification',
       'claude',
       'claudeSubscriptionProviderId',
       'closePreference',
@@ -835,7 +840,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/record-codec.test.ts',
       'src/main/settings/repository.test.ts',
       'src/main/settings/document-read-error.ts',
-      'src/main/settings/document-shape.ts'
+      'src/main/settings/document-shape.ts',
+      'src/main/settings/classification-config.ts'
     ])
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
@@ -894,6 +900,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/backend-route-planner.ts',
+      'src/main/settings/codex-bridge-tools.ts',
+      'src/main/settings/codex-bridge-tools.test.ts',
       'src/main/settings/network-proxy-runtime.ts',
       'src/main/settings/environment-check.ts',
       'src/main/settings/system-proxy.ts',
@@ -977,7 +985,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.connectors.test.ts',
       'src/main/settings/service.providers.test.ts',
       'src/main/settings/service.test.ts',
-      'src/main/settings/settings-snapshot-commit-owner.test.ts'
+      'src/main/settings/settings-snapshot-commit-owner.test.ts',
+      'src/main/settings/classification-settings.ts',
+      'src/main/settings/classification-settings.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',
@@ -1059,6 +1069,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/web-service/task-api.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'packages/open-science/cli.test.ts',
       'src/main/acp/artifact-code-reconstruction-runner.test.ts',
       'src/main/acp/backend-generation-owner.test.ts',
@@ -1469,7 +1481,21 @@ describe('Settings backend ownership architecture', () => {
       'src/main/specialist/marketplace/service.test.ts',
       'src/main/specialist/package/release-certification.test.ts',
       'src/main/specialist/package/reported-regressions.test.ts',
-      'src/main/specialist/package/transaction.test.ts'
+      'src/main/specialist/package/transaction.test.ts',
+      'src/main/delegation/process-ownership.test.ts',
+      'src/main/process-tree.windows.integration.test.ts',
+      'src/main/delegation/frame-workspace.test.ts',
+      'src/main/acp/agent-process.test.ts',
+      'src/main/settings/classification-settings.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/agent-framework/opencode-mcp-isolation.integration.test.ts',
+      'src/main/agent-framework/session-mcp-isolation.integration.test.ts',
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts'
     ])
     expect(
       [

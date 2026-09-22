@@ -937,10 +937,53 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
           'delete',
           'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
           '/f'
-        ]
+        ],
+        { allowNonZero: true }
       ],
-      ['reg.exe', ['delete', 'HKCU\\Software\\a65c5229-0b29-5716-a0fe-d8755e62f3ca', '/f']]
+      [
+        'reg.exe',
+        ['delete', 'HKCU\\Software\\a65c5229-0b29-5716-a0fe-d8755e62f3ca', '/f'],
+        { allowNonZero: true }
+      ]
     ])
+  })
+
+  it('tolerates a key removed between the ownership check and the delete', async () => {
+    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+    const uninstall = join(root, 'installed app', 'Uninstall open-science.exe')
+    const install = join(root, 'installed app')
+    const run = vi.fn(async (_executable: string, args: string[]) => {
+      if (args[0] === 'delete')
+        return {
+          code: 1,
+          stdout: '',
+          stderr: 'ERROR: The system was unable to find the specified registry key or value.\r\n'
+        }
+      const output = args[1].includes('CurrentVersion')
+        ? `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
+        : `InstallLocation    REG_SZ    ${install}\r\n`
+      return { code: 0, stdout: output, stderr: '' }
+    })
+
+    await expect(cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })).resolves.toBeUndefined()
+  })
+
+  it('still reports unexpected delete failures from registration cleanup', async () => {
+    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+    const uninstall = join(root, 'installed app', 'Uninstall open-science.exe')
+    const install = join(root, 'installed app')
+    const run = vi.fn(async (_executable: string, args: string[]) => {
+      if (args[0] === 'delete')
+        return { code: 5, stdout: '', stderr: 'ERROR: Access is denied.\r\n' }
+      const output = args[1].includes('CurrentVersion')
+        ? `DisplayName    REG_SZ    Open-Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
+        : `InstallLocation    REG_SZ    ${install}\r\n`
+      return { code: 0, stdout: output, stderr: '' }
+    })
+
+    await expect(cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })).rejects.toThrow(
+      'reg.exe delete exited with 5'
+    )
   })
 
   it('preserves unrelated installer registrations', async () => {
@@ -981,7 +1024,8 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
           'delete',
           'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
           '/f'
-        ]
+        ],
+        { allowNonZero: true }
       ]
     ])
   })

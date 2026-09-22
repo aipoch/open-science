@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
+import { useSettingsStore } from '@/stores/settings-store'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 
@@ -309,23 +311,78 @@ describe('NotebookRunOutputs', () => {
 
     expect(container.querySelector('[data-testid="notebook-run-outputs"]')).toBeNull()
   })
-})
 
-it('distinguishes cancellation intent, pre-dispatch failure and incomplete evidence', () => {
-  render([], { status: 'queued', cancellationRequestedAt: 1, kernelDispatched: false })
-  expect(container.textContent).toContain('Cancellation requested. Waiting for the executor')
-  expect(container.textContent).not.toContain('Code was not dispatched')
-  render([], { status: 'failed', kernelDispatched: false })
-  expect(container.textContent).toContain('Code was not dispatched to the kernel.')
-  render([], {
-    status: 'completed',
-    environmentCapture: { state: 'unavailable', reason: 'environment-manifest-publication-failed' }
+  it('shows a network recovery action for an R preflight block', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+
+    render(
+      [
+        {
+          type: 'error',
+          message: 'Enable protected mode before authorizing R access.',
+          traceback: 'Enable protected mode before authorizing R access.'
+        }
+      ],
+      {
+        kernelKind: 'r',
+        status: 'failed',
+        kernelDispatched: false
+      }
+    )
+
+    expect(
+      container.querySelector('[data-testid="notebook-network-recovery-notice"]')?.textContent
+    ).toContain('Notebook execution was blocked')
+
+    fireEvent.click(
+      container.querySelector('[data-testid="notebook-network-recovery-notice"] button')!
+    )
+    expect(openSettingsToPanel).toHaveBeenCalledWith('network')
   })
-  expect(container.textContent).toContain(
-    'Code completed, but environment evidence could not be saved.'
-  )
-  render([], { status: 'interrupted', interruptionReason: 'app-terminated' })
-  expect(container.textContent).toContain('Execution may have had effects')
-  render([], { status: 'failed' })
-  expect(container.textContent).not.toContain('Code was not dispatched')
+
+  it('recognizes the Windows AppContainer diagnostic emitted by the sandbox', () => {
+    render(
+      [
+        {
+          type: 'error',
+          message:
+            'Windows protected mode is not ready for R: Notebook AppContainer profile is not installed',
+          traceback:
+            'Windows protected mode is not ready for R: Notebook AppContainer profile is not installed'
+        }
+      ],
+      {
+        kernelKind: 'r',
+        status: 'failed',
+        kernelDispatched: false
+      }
+    )
+
+    expect(
+      container.querySelector('[data-testid="notebook-network-recovery-notice"]')
+    ).not.toBeNull()
+  })
+
+  it('distinguishes cancellation intent, pre-dispatch failure and incomplete evidence', () => {
+    render([], { status: 'queued', cancellationRequestedAt: 1, kernelDispatched: false })
+    expect(container.textContent).toContain('Cancellation requested. Waiting for the executor')
+    expect(container.textContent).not.toContain('Code was not dispatched')
+    render([], { status: 'failed', kernelDispatched: false })
+    expect(container.textContent).toContain('Code was not dispatched to the kernel.')
+    render([], {
+      status: 'completed',
+      environmentCapture: {
+        state: 'unavailable',
+        reason: 'environment-manifest-publication-failed'
+      }
+    })
+    expect(container.textContent).toContain(
+      'Code completed, but environment evidence could not be saved.'
+    )
+    render([], { status: 'interrupted', interruptionReason: 'app-terminated' })
+    expect(container.textContent).toContain('Execution may have had effects')
+    render([], { status: 'failed' })
+    expect(container.textContent).not.toContain('Code was not dispatched')
+  })
 })

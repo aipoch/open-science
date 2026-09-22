@@ -423,6 +423,16 @@ describe('GeneralPanel close behavior', () => {
 })
 
 describe('GeneralPanel diagnostics', () => {
+  it('keeps the log file path focusable for keyboard scrolling', async () => {
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+
+    const logPath = container.querySelector<HTMLElement>('[aria-label="Log file path"]')!
+    expect(logPath.tabIndex).toBe(0)
+    logPath.focus()
+    expect(document.activeElement).toBe(logPath)
+  })
+
   it('D04 distinguishes a missing file with a known path from a failed status request', async () => {
     vi.mocked(window.api.logs.getStatus).mockResolvedValueOnce({
       configured: true,

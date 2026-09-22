@@ -1,3 +1,4 @@
+import { writePackageRoCrateMetadata } from './ro-crate'
 import { initDataRoot } from '../storage-root'
 import { createUploadVersionReference } from '../../shared/uploads'
 import { join, sep } from 'node:path'
@@ -20,6 +21,7 @@ import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
+import { SessionProjectionAfterCommitError } from '../session-persistence/save-session'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   startWorkingFileObservation,
@@ -106,82 +108,89 @@ it('resolves a copying file name once across progress chunks', async () => {
   expect(new Set(counts).size).toBe(1)
 })
 
-it('imports a compact package with required duplicate evidence and forwards the same safe selection', async () => {
-  const source = await createProvenanceTestFixture()
-  initDataRoot(source.storageRoot)
-  const target = await createProvenanceTestFixture()
-  initDataRoot(target.storageRoot)
-  fixtures.push(source, target)
-  await source.client.project.create({ data: { id: 'project-1', name: 'Compact research' } })
-  await new SessionRepository(source.storageRoot).saveSession({
-    id: 'session-1',
-    projectId: 'project-1',
-    title: 'Compact research',
-    cwd: '',
-    status: 'idle',
-    createdAt: 1,
-    updatedAt: 2,
-    messages: []
-  })
-  await source.stagePng('required evidence', 'evidence.png')
-  const required = await source.repository.createVersion(
-    createArtifactVersionRequest({ filename: 'evidence.png' })
-  )
-  await source.stagePng('optional output with a different length', 'optional.png')
-  const optional = await source.repository.createVersion(
-    createArtifactVersionRequest({ filename: 'optional.png', writeOperationId: 'write-2' })
-  )
-  const requiredRow = await source.client.artifactVersion.findUniqueOrThrow({
-    where: { id: required.versionId }
-  })
-  const optionalRow = await source.client.artifactVersion.findUniqueOrThrow({
-    where: { id: optional.versionId }
-  })
-  const evidenceKey = 'notebooks/project-1/session-1/data/evidence.png'
-  await mkdir(dirname(join(source.storageRoot, evidenceKey)), { recursive: true })
-  await writeFile(
-    join(source.storageRoot, evidenceKey),
-    await readFile(join(source.storageRoot, requiredRow.contentStorageKey))
-  )
-  const exporter = new SessionPackageService({
-    storageRoot: source.storageRoot,
-    getClient: async () => source.client
-  })
-  const importer = new SessionPackageService({
-    storageRoot: target.storageRoot,
-    getClient: async () => target.client
-  })
-  const complete = join(source.storageRoot, 'full.science')
-  await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, complete)
-  const full = await importer.importFrom(complete)
-  for (const path of ['native', 'forward'] as const) {
-    const archive = join(source.storageRoot, `${path}-compact.science`)
-    const choose = async (
-      files: import('../../shared/session-package').PackageSelectableFile[]
-    ): Promise<string[]> => {
-      expect(files.find((file) => file.storageKey === requiredRow.contentStorageKey)).toMatchObject(
-        { requiredForEvidence: true }
+it.each(['native', 'forward'] as const)(
+  'imports a %s compact package with required duplicate evidence and the same safe selection',
+  async (path) => {
+    const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
+    const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
+    fixtures.push(source, target)
+    await source.client.project.create({ data: { id: 'project-1', name: 'Compact research' } })
+    await new SessionRepository(source.storageRoot).saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Compact research',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: []
+    })
+    await source.stagePng('required evidence', 'evidence.png')
+    const required = await source.repository.createVersion(
+      createArtifactVersionRequest({ filename: 'evidence.png' })
+    )
+    await source.stagePng('optional output with a different length', 'optional.png')
+    const optional = await source.repository.createVersion(
+      createArtifactVersionRequest({ filename: 'optional.png', writeOperationId: 'write-2' })
+    )
+    const requiredRow = await source.client.artifactVersion.findUniqueOrThrow({
+      where: { id: required.versionId }
+    })
+    const optionalRow = await source.client.artifactVersion.findUniqueOrThrow({
+      where: { id: optional.versionId }
+    })
+    const evidenceKey = 'notebooks/project-1/session-1/data/evidence.png'
+    await mkdir(dirname(join(source.storageRoot, evidenceKey)), { recursive: true })
+    await writeFile(
+      join(source.storageRoot, evidenceKey),
+      await readFile(join(source.storageRoot, requiredRow.contentStorageKey))
+    )
+    const exporter = new SessionPackageService({
+      storageRoot: source.storageRoot,
+      getClient: async () => source.client
+    })
+    const importer = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+    try {
+      let identity = { projectId: 'project-1', sessionId: 'session-1' }
+      if (path === 'forward') {
+        const complete = join(source.storageRoot, 'full.science')
+        await exporter.exportTo(identity, complete)
+        identity = await importer.importFrom(complete)
+      }
+      const archive = join(source.storageRoot, `${path}-compact.science`)
+      const choose = async (
+        files: import('../../shared/session-package').PackageSelectableFile[]
+      ): Promise<string[]> => {
+        expect(
+          files.find((file) => file.storageKey === requiredRow.contentStorageKey)
+        ).toMatchObject({ requiredForEvidence: true })
+        expect(
+          files.find((file) => file.storageKey === optionalRow.contentStorageKey)
+        ).toMatchObject({ requiredForEvidence: false })
+        return files.filter((file) => !file.requiredForEvidence).map((file) => file.storageKey)
+      }
+      await (path === 'native' ? exporter : importer).exportTo(identity, archive, {
+        selectFiles: choose
+      })
+      const imported = await importer.importFrom(archive)
+      const receipt = await importer.readOrigin(imported)
+      expect(receipt.sourceManifest.excludedFiles).toEqual([
+        expect.objectContaining({ storageKey: optionalRow.contentStorageKey })
+      ])
+      expect(receipt.sourceManifest.inventory.map((entry) => entry.storageKey)).toEqual(
+        expect.arrayContaining([requiredRow.contentStorageKey, evidenceKey])
       )
-      expect(files.find((file) => file.storageKey === optionalRow.contentStorageKey)).toMatchObject(
-        { requiredForEvidence: false }
-      )
-      return files.filter((file) => !file.requiredForEvidence).map((file) => file.storageKey)
+    } finally {
+      await Promise.all([exporter.close(), importer.close()])
     }
-    await (path === 'native' ? exporter : importer).exportTo(
-      path === 'native' ? { projectId: 'project-1', sessionId: 'session-1' } : full,
-      archive,
-      { selectFiles: choose }
-    )
-    const imported = await importer.importFrom(archive)
-    const receipt = await importer.readOrigin(imported)
-    expect(receipt.sourceManifest.excludedFiles).toEqual([
-      expect.objectContaining({ storageKey: optionalRow.contentStorageKey })
-    ])
-    expect(receipt.sourceManifest.inventory.map((entry) => entry.storageKey)).toEqual(
-      expect.arrayContaining([requiredRow.contentStorageKey, evidenceKey])
-    )
-  }
-}, 60_000)
+  },
+  60_000
+)
 
 it('reports oversized retained Artifact content as unavailable through the provenance reader', async () => {
   const source = await createProvenanceTestFixture()
@@ -632,7 +641,7 @@ it.each([1, 12, 'unavailable'] as const)(
       storageRoot: source.storageRoot,
       getClient: async () => source.client
     }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
-    expect(capacity).toHaveBeenCalledTimes(3)
+    expect(capacity).toHaveBeenCalledTimes(4)
     capacity.mockClear()
     const importer = new SessionPackageService({
       storageRoot: target.storageRoot,
@@ -650,7 +659,7 @@ it.each([1, 12, 'unavailable'] as const)(
     ).toBe('Capacity')
     capacity.mockClear()
     await importer.exportTo(imported, join(target.storageRoot, 'forwarded.science'))
-    expect(capacity).toHaveBeenCalledTimes(3)
+    expect(capacity).toHaveBeenCalledTimes(4)
   }
 )
 
@@ -1520,11 +1529,27 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
         return remove(path, ...args)
       })
     }
-    await expect(
-      new SessionPackageService(options).importFrom(archive, undefined, undefined, undefined, {
-        projectId: 'target'
+    const importPromise = new SessionPackageService(options).importFrom(
+      archive,
+      undefined,
+      undefined,
+      undefined,
+      { projectId: 'target' }
+    )
+    if (state === 'projection-pending') {
+      const error = await importPromise.catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(SessionProjectionAfterCommitError)
+      expect(error).toMatchObject({
+        committedSession: {
+          projectId: 'target',
+          title: 'Original title',
+          packageOrigin: expect.any(Object)
+        },
+        cause: expect.objectContaining({ message: failure })
       })
-    ).rejects.toThrow(failure)
+    } else {
+      await expect(importPromise).rejects.toThrow(failure)
+    }
     const repository = new SessionRepository(
       configRoot,
       {},
@@ -1862,12 +1887,18 @@ it('rejects self-consistent archive hashes when the embedded evidence contradict
     entry.sizeBytes = (await stat(join(expanded, entry.path))).size
     entry.checksum = await fileChecksum(join(expanded, entry.path))
   }
+  await writePackageRoCrateMetadata(
+    expanded,
+    manifest,
+    JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+  )
   await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
   await createTar({ cwd: expanded, file: archive, gzip: true }, [
     'manifest.json',
     'session.json',
     'records.json',
     'README.md',
+    'ro-crate-metadata.json',
     'objects'
   ])
   const importer = new SessionPackageService({
@@ -2846,6 +2877,11 @@ it('blocks recognized sensitive content when forwarding an externally created pa
     entry.sizeBytes = (await stat(join(expanded, entry.path))).size
     entry.checksum = await fileChecksum(join(expanded, entry.path))
   }
+  await writePackageRoCrateMetadata(
+    expanded,
+    manifest,
+    JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+  )
   await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
   await createTar({ cwd: expanded, file: archive, gzip: true }, [
     'manifest.json',

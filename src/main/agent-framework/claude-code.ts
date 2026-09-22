@@ -84,6 +84,7 @@ export const claudeCodeFramework: AgentFramework = {
     // Still routes through the existing spawner; env carries the resolved provider overrides.
     return spawnClaudeAgentAcp({
       envOverrides: input.env,
+      spawnProcess: input.spawnProcess,
       executablePath: input.executablePath
     })
   },

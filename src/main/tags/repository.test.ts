@@ -196,6 +196,7 @@ describe('TagRepository', () => {
         'catalog.skill': new Set(),
         'catalog.connector': new Set(),
         'catalog.specialist': new Set(),
+        'pdf.annotation': new Set<string>(),
         'literature.item': new Set()
       })
     ).resolves.toBe(1)
@@ -212,6 +213,7 @@ describe('TagRepository', () => {
         if (catalogFails) throw new Error('Specialist catalog offline')
         return []
       },
+      listPdfAnnotations: async () => [],
       listLiteratureItems: async () => []
     })
     const service = new TagService(repository, catalog, { publish: () => undefined })
@@ -240,6 +242,7 @@ describe('TagRepository', () => {
       listSkills: async () => skills,
       listConnectors: async () => ({ connectors: [], customServers: [] }),
       listSpecialists: async () => [],
+      listPdfAnnotations: async () => [],
       listLiteratureItems: async () => []
     })
     const service = new TagService(repository, catalog, { publish: () => undefined })

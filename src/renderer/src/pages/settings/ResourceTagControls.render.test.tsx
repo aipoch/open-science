@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
-import { ResourceTagMenu, ResourceTagSummary } from './ResourceTagControls'
+import { ResourceTagMenu, ResourceTagSummary, TagSelection } from './ResourceTagControls'
 import type { TagSnapshot } from '../../../../shared/tags'
 
 const storeSetAssignment = useTagStore.getState().setAssignment
@@ -496,4 +496,85 @@ describe('ResourceTagMenu', () => {
     expect(input().value).toBe('Second')
     expect(setAssignment).toHaveBeenCalledWith({ ...reference, tagId: 'created', assigned: true })
   })
+})
+
+it('keeps draft selections local and preserves current choices when asynchronous Tag creation finishes', async () => {
+  let finish!: (id: string) => void
+  create.mockImplementation(
+    () =>
+      new Promise<string>((resolve) => {
+        finish = resolve
+      })
+  )
+  const Draft = (): React.JSX.Element => {
+    const [ids, setIds] = useState<string[]>([])
+    return <TagSelection value={ids} onChange={setIds} />
+  }
+  render(<Draft />)
+  fireEvent.click(screen.getByRole('button', { name: 'Add or remove Tags' }))
+  search('New research')
+  key('Enter')
+  search('')
+  fireEvent.click(screen.getByRole('option', { name: 'ds-v4-pro' }))
+  await act(async () => finish('created'))
+  expect(setAssignment).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Remove ds-v4-pro from this resource' })).toBeTruthy()
+  cleanup()
+  expect(setAssignment).not.toHaveBeenCalled()
+})
+it('keeps an overflowing draft tag row from clipping badges under its scrollbar', () => {
+  const tags = Array.from({ length: 7 }, (_, index) => ({
+    id: `tag-${index}`,
+    name: `research-${index}`,
+    iconKey: 'tag' as const,
+    colorKey: 'blue' as const,
+    createdAt: 1,
+    updatedAt: 1
+  }))
+  useTagStore.setState({ tags })
+  const Draft = (): React.JSX.Element => {
+    const [ids, setIds] = useState(tags.map(({ id }) => id))
+    return <TagSelection value={ids} onChange={setIds} />
+  }
+
+  render(<Draft />)
+
+  const tagRow = screen.getByRole('group', { name: 'Tags' }).querySelector('.overflow-x-auto')
+  expect(tagRow).not.toBeNull()
+  expect(tagRow?.className).toContain('[scrollbar-width:none]')
+  expect(tagRow?.className).toContain('[&::-webkit-scrollbar]:hidden')
+  expect(screen.getByRole('button', { name: 'Remove research-6 from this resource' })).toBeTruthy()
+})
+it('removes draft tags only through the inset remove control, without persisting before Save', () => {
+  const Draft = (): React.JSX.Element => {
+    const [ids, setIds] = useState(['tag-0'])
+    return <TagSelection value={ids} onChange={setIds} />
+  }
+  render(<Draft />)
+  fireEvent.click(screen.getByText('ds-v4-flash'))
+  const remove = screen.getByRole('button', { name: 'Remove ds-v4-flash from this resource' })
+  expect(remove.className).toContain('absolute')
+  expect(remove.className).toContain('group-hover/tag:opacity-100')
+  expect(remove.className).toContain('group-focus-within/tag:opacity-100')
+  fireEvent.click(remove)
+  expect(screen.queryByText('ds-v4-flash')).toBeNull()
+  expect(setAssignment).not.toHaveBeenCalled()
+})
+
+it('enforces draft capacity while still allowing removal', () => {
+  const Draft = (): React.JSX.Element => {
+    const [ids, setIds] = useState(['tag-0'])
+    return <TagSelection value={ids} onChange={setIds} max={1} />
+  }
+  render(<Draft />)
+  fireEvent.click(screen.getByRole('button', { name: 'Add or remove Tags' }))
+  expect(screen.getByRole('option', { name: 'ds-v4-pro' }).getAttribute('aria-disabled')).toBe(
+    'true'
+  )
+  fireEvent.click(screen.getByRole('option', { name: 'ds-v4-pro' }))
+  expect(screen.queryByRole('button', { name: 'Remove ds-v4-pro from this resource' })).toBeNull()
+  fireEvent.click(screen.getByRole('option', { name: 'ds-v4-flash' }))
+  expect(screen.getByRole('option', { name: 'ds-v4-pro' }).getAttribute('aria-disabled')).toBe(
+    'false'
+  )
 })

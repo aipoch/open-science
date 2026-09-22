@@ -39,6 +39,7 @@ export const SearchContentHighlight = ({
     let ranges: Range[] = []
     let positioned = false
     let canceled = false
+    let frame: number | undefined
     const highlight =
       typeof Highlight !== 'undefined' && globalThis.CSS?.highlights
         ? (CSS.highlights.get(HIGHLIGHT_NAME) ?? new Highlight())
@@ -54,7 +55,7 @@ export const SearchContentHighlight = ({
     }
     const update = (): void => {
       ranges.forEach((range) => highlight?.delete(range))
-      ranges = searchContentRanges(root, query)
+      ranges = query.trim() ? searchContentRanges(root, query) : []
       ranges.forEach((range) => highlight?.add(range))
       root.dataset.searchMatchCount = String(ranges.length)
       if (!positioned && ranges[0]) {
@@ -68,15 +69,22 @@ export const SearchContentHighlight = ({
     }
     update()
     // File reads and optional Markdown renderers finish after the initial mount.
-    const observer = new MutationObserver(update)
+    const observer = new MutationObserver(() => {
+      if (frame !== undefined) return
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        update()
+      })
+    })
     observer.observe(root, { subtree: true, childList: true, characterData: true })
     return () => {
       canceled = true
       observer.disconnect()
+      if (frame !== undefined) cancelAnimationFrame(frame)
       ranges.forEach((range) => highlight?.delete(range))
       if (highlight?.size === 0) CSS.highlights.delete(HIGHLIGHT_NAME)
     }
-  }, [query, children])
+  }, [query])
   return (
     <div ref={ref} className={className}>
       {children}

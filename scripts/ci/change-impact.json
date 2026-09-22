@@ -105,6 +105,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "issue_template",
+      "role": "owner",
+      "paths": [".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml"],
+      "capabilities": ["issue_template"]
+    },
+    {
       "id": "native_runtime_packages",
       "role": "owner",
       "paths": ["packages/process-tree-native/**", "packages/safe-file-publisher-native/**"],
@@ -166,6 +172,7 @@
         "src/main/compute/ssh-runner.ts",
         "src/main/crash-diagnostics.ts",
         "src/main/credential-identity/**",
+        "src/main/delegation/process-ownership.ts",
         "src/main/immutable-input-authority.ts",
         "src/main/index.ts",
         "src/main/ipc.ts",
@@ -173,6 +180,7 @@
         "src/main/literature/pdf-structure/engine.ts",
         "src/main/local-rpc-transport.ts",
         "src/main/notebook/dependency-analysis-python.ts",
+        "src/main/notebook/dependency-analysis-repl.ts",
         "src/main/notebook/conditional-restore-script.ts",
         "src/main/notebook/environment-discovery.ts",
         "src/main/notebook/environment-lock.ts",
@@ -517,6 +525,10 @@
         "e2e_visual_macos",
         "e2e_browser_windows"
       ]
+    },
+    "issue_template": {
+      "consumers": [],
+      "lanes": ["docs", "format"]
     }
   }
 }

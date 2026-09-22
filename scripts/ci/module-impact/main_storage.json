@@ -114,6 +114,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "cli/config-root.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -195,6 +197,7 @@
       "src/main/artifacts/artifact-provenance-graph.test.ts",
       "src/main/artifacts/artifact-reproducibility-execution.test.ts",
       "src/main/artifacts/artifact-reproducibility-export.test.ts",
+      "src/main/artifacts/ro-crate-export.test.ts",
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
       "src/main/artifacts/artifact-reproducibility-outputs.test.ts",
@@ -596,6 +599,7 @@
       "src/main/settings/xai-provider-account-owner.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
+      "src/main/side-chat/session-lifetime.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/skills/export.test.ts",
       "src/main/skills/host-skills-service.test.ts",
@@ -676,7 +680,22 @@
       "src/main/session-plan/plan-legacy-compatibility.test.ts",
       "src/main/session-plan/plan-context-file.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/session-persistence/runtime-authority.test.ts",
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/notebook/dependency-analysis.repl.test.ts",
+      "src/main/notebook/compute-evidence-recovery.integration.test.ts",
+      "src/main/session-persistence/runtime-resume-recovery.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/compute/cancellation.real-ssh.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

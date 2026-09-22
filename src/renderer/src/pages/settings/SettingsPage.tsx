@@ -1,5 +1,8 @@
+import { SettingsFormFooter } from './SettingsLayout'
+import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
+import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { Notice } from '@/components/notice'
-import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open-Science tokens · slop: pass */
@@ -37,6 +40,7 @@ import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
   forwardRef,
   lazy,
+  Suspense,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -68,6 +72,7 @@ import {
   selectFrameworkApiEndpoints,
   useSettingsStore
 } from '@/stores/settings-store'
+import { takeSettingsReturnFocusTarget } from '@/stores/settings-return-focus'
 import {
   INITIAL_SETTINGS_ROUTE,
   settingsPanelRoute,
@@ -382,6 +387,12 @@ const SETTINGS_WRITE_ERROR_COPY: Record<SettingsWriteErrorCode, string> = {
 const EMPTY_USAGE_SESSIONS = [] as const
 const EMPTY_USAGE_PROJECTS = [] as const
 
+const PdfAnnotationPreviewDialog = lazy(() =>
+  import('../workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((module) => ({
+    default: module.PdfAnnotationPreviewDialog
+  }))
+)
+
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
@@ -398,6 +409,49 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   ref
 ): React.JSX.Element {
   const { t } = useTranslation()
+  const [tagAnnotationError, setTagAnnotationError] = useState<string>()
+  const [openingTagAnnotation, setOpeningTagAnnotation] = useState(false)
+  const [tagAnnotationPreview, setTagAnnotationPreview] = useState<{
+    annotation: PdfAnnotation
+    item: PreviewFileItem
+  }>()
+  const tagAnnotationRequest = useRef(0)
+  useEffect(() => {
+    if (!open) {
+      tagAnnotationRequest.current += 1
+      setOpeningTagAnnotation(false)
+      setTagAnnotationError(undefined)
+      setTagAnnotationPreview(undefined)
+    }
+    return () => {
+      tagAnnotationRequest.current += 1
+    }
+  }, [open])
+  const openTaggedPdfAnnotation = async (id: string): Promise<void> => {
+    const sequence = ++tagAnnotationRequest.current
+    const reference = useTagStore.getState().pdfAnnotations?.find((item) => item.id === id)
+    setTagAnnotationError(undefined)
+    setOpeningTagAnnotation(true)
+    try {
+      if (!reference) throw new Error('Missing annotation')
+      const scope =
+        reference.literatureItemId && reference.versionId
+          ? { literatureVersionId: reference.versionId }
+          : { projectId: reference.projectId }
+      const result = await window.api.pdfAnnotations.list({ ...scope, id, limit: 1 })
+      if (sequence !== tagAnnotationRequest.current) return
+      const annotation = result.items.find((item) => item.id === id)
+      if (!annotation) throw new Error('Missing annotation')
+      const item = createBookmarkPreviewItem({ id, kind: 'pdf', ...annotation.target })
+      if (!item) throw new Error('Missing source')
+      setTagAnnotationPreview({ annotation, item })
+    } catch {
+      if (sequence === tagAnnotationRequest.current)
+        setTagAnnotationError(t('PDF annotations are unavailable for this source.'))
+    } finally {
+      if (sequence === tagAnnotationRequest.current) setOpeningTagAnnotation(false)
+    }
+  }
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -761,24 +815,34 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')
-          : skillsView.kind === 'manage'
-            ? t('Manage skills')
-            : skillsView.kind === 'upload'
-              ? t('Upload skills')
-              : skillsView.kind === 'import'
-                ? t('Import from GitHub')
-                : skillsView.kind === 'import-agent-home'
-                  ? t('Import installed skills')
-                  : (() => {
-                      const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                      return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
-                    })()
+          : skillsView.kind === 'upload'
+            ? t('Upload skills')
+            : skillsView.kind === 'import'
+              ? t('Import from GitHub')
+              : skillsView.kind === 'import-agent-home'
+                ? t('Import installed skills')
+                : (() => {
+                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                    return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
+                  })()
       return {
         rootLabelKey: 'Skills',
         rootTo: { panel: 'skills', view: { kind: 'list' } },
         leaf
       }
     }
+    if (
+      activePanel === 'model' &&
+      (modelView.kind === 'classification-create' || modelView.kind === 'classification-edit')
+    )
+      return {
+        rootLabelKey: 'Model',
+        rootTo: { panel: 'model', view: { kind: 'classification' } },
+        leaf:
+          modelView.kind === 'classification-create'
+            ? t('Add model service')
+            : t('Edit model service')
+      }
     if (activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')) {
       const name =
         modelView.kind === 'edit'
@@ -845,24 +909,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         }
       }
       const leaf =
-        connectorsView.kind === 'manage'
-          ? t('Manage connectors')
-          : connectorsView.kind === 'add'
-            ? t('Add connector')
-            : connectorsView.kind === 'import'
-              ? t('Import Connector or MCP configuration')
-              : connectorsView.kind === 'export'
-                ? t('Export {{name}}', {
+        connectorsView.kind === 'add'
+          ? t('Add connector')
+          : connectorsView.kind === 'import'
+            ? t('Import Connector or MCP configuration')
+            : connectorsView.kind === 'export'
+              ? t('Export {{name}}', {
+                  name:
+                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
+                }).trim()
+              : connectorsView.kind === 'edit'
+                ? t('Edit {{name}}', {
                     name:
                       customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
                   }).trim()
-                : connectorsView.kind === 'edit'
-                  ? t('Edit {{name}}', {
-                      name:
-                        customServers.find((s) => s.id === connectorsView.id)?.name ??
-                        t('connector')
-                    }).trim()
-                  : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabelKey: 'Connectors',
         rootTo: { panel: 'connectors', view: { kind: 'list' } },
@@ -1246,8 +1307,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           data-slot="settings-dialog"
           className="pointer-events-none fixed inset-0 z-50 outline-none data-[state=closed]:animate-out motion-reduce:data-[state=closed]:animate-none"
           onOpenAutoFocus={() => {
+            const activeElement = document.activeElement
+            const capturedReturnFocus = takeSettingsReturnFocusTarget()
+            if (returnFocusRef.current?.isConnected) return
             returnFocusRef.current =
-              document.activeElement instanceof HTMLElement ? document.activeElement : null
+              capturedReturnFocus ??
+              (activeElement instanceof HTMLElement && activeElement !== document.body
+                ? activeElement
+                : null)
           }}
           onCloseAutoFocus={(event) => {
             const returnFocus = returnFocusRef.current
@@ -1613,12 +1680,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       (skillsView.kind === 'marketplace' || skillsView.kind === 'marketplace-batch')
                       ? 'max-w-none'
                       : 'max-w-[880px]',
-                    activePanel === 'memory' ||
+                    (activePanel === 'model' &&
+                      (modelView.kind === 'classification-create' ||
+                        modelView.kind === 'classification-edit')) ||
+                      activePanel === 'memory' ||
                       activePanel === 'tags' ||
-                      (activePanel === 'skills' &&
-                        (skillsView.kind === 'marketplace-batch' ||
-                          skillsView.kind === 'manage')) ||
-                      (activePanel === 'connectors' && connectorsView.kind === 'manage')
+                      (activePanel === 'skills' && skillsView.kind === 'marketplace-batch')
                       ? 'h-full'
                       : 'min-h-full'
                   )}
@@ -1629,7 +1696,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     }
                     panelKey={
                       activePanel === 'model' &&
-                      (modelView.kind === 'list' || modelView.kind === 'local-models')
+                      (modelView.kind === 'list' ||
+                        modelView.kind === 'local-models' ||
+                        modelView.kind === 'classification')
                         ? 'model:tabs'
                         : activePanel === 'skills' &&
                             (skillsView.kind === 'marketplace' ||
@@ -1687,48 +1756,69 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }
                       />
                     ) : activePanel === 'tags' ? (
-                      <TagsPanel
-                        view={tagsView}
-                        onNavigate={navigateTags}
-                        onSelectedTagChange={recordSelectedTag}
-                        onOpenResource={(reference) => {
-                          if (reference.resourceType === 'catalog.skill') {
+                      <>
+                        {openingTagAnnotation ? (
+                          <div
+                            role="status"
+                            className="flex items-center gap-2 px-4 py-2 text-sm text-muted-foreground"
+                          >
+                            <Loader2
+                              className="size-4 animate-spin motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                            {t('Loading annotations…')}
+                          </div>
+                        ) : null}
+                        {tagAnnotationError ? (
+                          <ErrorNotice tone="amber" description={tagAnnotationError} />
+                        ) : null}
+                        <TagsPanel
+                          view={tagsView}
+                          onNavigate={navigateTags}
+                          onSelectedTagChange={recordSelectedTag}
+                          onOpenResource={(reference) => {
+                            if (reference.resourceType === 'catalog.skill') {
+                              navigate({
+                                panel: 'skills',
+                                view: { kind: 'detail', id: reference.resourceId }
+                              })
+                              return
+                            }
+                            if (reference.resourceType === 'catalog.connector') {
+                              navigate({
+                                panel: 'connectors',
+                                view: customServers.some(
+                                  (server) => server.id === reference.resourceId
+                                )
+                                  ? { kind: 'edit', id: reference.resourceId }
+                                  : { kind: 'detail', id: reference.resourceId }
+                              })
+                              return
+                            }
+                            if (reference.resourceType === 'pdf.annotation') {
+                              void openTaggedPdfAnnotation(reference.resourceId)
+                              return
+                            }
+                            if (reference.resourceType === 'literature.item') {
+                              useNavigationStore
+                                .getState()
+                                .openLiteratureItem(reference.resourceId, 'user')
+                              onClose()
+                              return
+                            }
+                            const specialist = specialistItems.find(
+                              (item) => item.id === reference.resourceId
+                            )
                             navigate({
-                              panel: 'skills',
-                              view: { kind: 'detail', id: reference.resourceId }
+                              panel: 'specialists',
+                              view:
+                                specialist?.kind === 'builtin'
+                                  ? { kind: 'builtin', id: reference.resourceId }
+                                  : { kind: 'edit', id: reference.resourceId }
                             })
-                            return
-                          }
-                          if (reference.resourceType === 'catalog.connector') {
-                            navigate({
-                              panel: 'connectors',
-                              view: customServers.some(
-                                (server) => server.id === reference.resourceId
-                              )
-                                ? { kind: 'edit', id: reference.resourceId }
-                                : { kind: 'detail', id: reference.resourceId }
-                            })
-                            return
-                          }
-                          if (reference.resourceType === 'literature.item') {
-                            useNavigationStore
-                              .getState()
-                              .openLiteratureItem(reference.resourceId, 'user')
-                            onClose()
-                            return
-                          }
-                          const specialist = specialistItems.find(
-                            (item) => item.id === reference.resourceId
-                          )
-                          navigate({
-                            panel: 'specialists',
-                            view:
-                              specialist?.kind === 'builtin'
-                                ? { kind: 'builtin', id: reference.resourceId }
-                                : { kind: 'edit', id: reference.resourceId }
-                          })
-                        }}
-                      />
+                          }}
+                        />
+                      </>
                     ) : activePanel === 'memory' ? (
                       <MemoryPanel
                         view={memoryView}
@@ -1738,9 +1828,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }}
                       />
                     ) : activePanel === 'connectors' ? (
-                      connectorsView.kind === 'manage' ? (
-                        <ConnectorBulkManageView />
-                      ) : connectorsView.kind === 'detail' ? (
+                      connectorsView.kind === 'detail' ? (
                         <div>
                           <ResourceTagSummary
                             reference={{
@@ -1751,6 +1839,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             onOpenTag={navigateTag}
                           />
                           <ConnectorDetailView
+                            onOpenSpecialist={(usage) =>
+                              navigate({
+                                panel: 'specialists',
+                                view:
+                                  usage.kind === 'builtin'
+                                    ? { kind: 'builtin', id: usage.id }
+                                    : { kind: 'edit', id: usage.id }
+                              })
+                            }
                             key={connectorsView.id}
                             id={connectorsView.id}
                             onManagePermissions={() => navigatePanel('permissions')}
@@ -2051,6 +2148,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </div>
                     ) : (
                       <ModelPanel
+                        view={modelView}
+                        navigate={(view) => navigate({ panel: 'model', view })}
                         local={modelView.kind === 'local-models'}
                         onChange={(local) =>
                           navigate({
@@ -2103,56 +2202,46 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 </div>
               </motion.div>
               {isProviderFormOpen ? (
-                <div
-                  className="shrink-0 border-t border-border bg-card"
-                  data-slot="provider-form-footer"
-                >
-                  <div className="mx-auto max-w-[880px] space-y-3 px-5 py-4">
-                    {connectionResult ? (
-                      <ProviderTestResultCard result={connectionResult} />
-                    ) : statusMessage ? (
-                      <ErrorNotice
-                        inline
-                        role={statusOk ? 'status' : 'alert'}
-                        level={statusOk ? 'success' : 'error'}
-                        description={statusMessage}
-                      />
-                    ) : null}
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        {canTestConnection ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={!canSave}
-                            onClick={() => void handleTestConnection()}
-                          >
-                            {isTestingConnection ? (
-                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                            ) : null}
-                            {isTestingConnection ? t('Testing…') : t('Test connection')}
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="flex gap-2">
+                <SettingsFormFooter data-slot="provider-form-footer">
+                  {connectionResult ? (
+                    <ProviderTestResultCard result={connectionResult} />
+                  ) : statusMessage ? (
+                    <ErrorNotice
+                      inline
+                      role={statusOk ? 'status' : 'alert'}
+                      level={statusOk ? 'success' : 'error'}
+                      description={statusMessage}
+                    />
+                  ) : null}
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      {canTestConnection ? (
                         <Button
                           type="button"
-                          variant="ghost"
-                          onClick={closeForm}
-                          disabled={isSaving}
+                          variant="outline"
+                          disabled={!canSave}
+                          onClick={() => void handleTestConnection()}
                         >
-                          {t('Cancel')}
-                        </Button>
-                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                          {isSaving ? (
+                          {isTestingConnection ? (
                             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                           ) : null}
-                          {isSaving ? t('Saving…') : t('Save')}
+                          {isTestingConnection ? t('Testing…') : t('Test connection')}
                         </Button>
-                      </div>
+                      ) : null}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
+                        {t('Cancel')}
+                      </Button>
+                      <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                        {isSaving ? (
+                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                        ) : null}
+                        {isSaving ? t('Saving…') : t('Save')}
+                      </Button>
                     </div>
                   </div>
-                </div>
+                </SettingsFormFooter>
               ) : null}
             </div>
           </motion.div>
@@ -2165,6 +2254,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      {open && tagAnnotationPreview ? (
+        <Suspense fallback={null}>
+          <PdfAnnotationPreviewDialog
+            {...tagAnnotationPreview}
+            onClose={() => setTagAnnotationPreview(undefined)}
+            onError={setTagAnnotationError}
+          />
+        </Suspense>
+      ) : null}
     </Dialog.Root>
   )
 })

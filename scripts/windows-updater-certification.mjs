@@ -283,6 +283,7 @@ Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" | Out-Null
 [Console]::Out.Flush()
 $deadline = [DateTime]::UtcNow.AddMinutes(1)
 $candidate = $null
+$handle = [IntPtr]::Zero
 do {
   $candidate = Get-CimInstance -ClassName Win32_Process -Filter "Name = '$([IO.Path]::GetFileName($target).Replace("'", "''"))'" |
     Where-Object {
@@ -290,16 +291,18 @@ do {
       [String]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase)
     } |
     Select-Object -First 1
-  if (-not $candidate) { Start-Sleep -Milliseconds 50 }
-} while (-not $candidate -and [DateTime]::UtcNow -lt $deadline)
+  if ($candidate) {
+    $access = 0x00100000 -bor 0x00001000
+    $handle = [OpenScienceProcessObserver]::OpenProcess($access, $false, [uint32]$candidate.ProcessId)
+  }
+  if ($handle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 50 }
+} while ($handle -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline)
 if (-not $candidate) {
   [Console]::Error.Write("The updater installer process did not appear at $target.")
   exit 124
 }
-$access = 0x00100000 -bor 0x00001000
-$handle = [OpenScienceProcessObserver]::OpenProcess($access, $false, [uint32]$candidate.ProcessId)
 if ($handle -eq [IntPtr]::Zero) {
-  [Console]::Error.Write("Could not observe updater installer process $($candidate.ProcessId).")
+  [Console]::Error.Write("Could not observe updater installer process $($candidate.ProcessId) after retrying.")
   exit 126
 }
 $wait = [OpenScienceProcessObserver]::WaitForSingleObject($handle, 300000)

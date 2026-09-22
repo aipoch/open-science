@@ -1513,6 +1513,15 @@ const readRegistryKey = async (key, run) => {
   return result.code === 0 ? result.stdout : undefined
 }
 
+const deleteOwnedRegistryKey = async (key, run) => {
+  // An uninstaller running concurrently can remove the key between the ownership check and this
+  // delete; "key not found" already is the cleanup goal, so only other failures propagate.
+  const result = await run('reg.exe', ['delete', key, '/f'], { allowNonZero: true })
+  if (result.code !== 0 && !/unable to find the specified registry key/iu.test(result.stderr)) {
+    throw new Error(`reg.exe delete exited with ${result.code}.\n${result.stderr}`)
+  }
+}
+
 const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = runProcess } = {}) => {
   if (!win32.basename(root).startsWith(SMOKE_ROOT_PREFIX)) {
     throw new Error(`Refusing to clean registrations for unexpected smoke root: ${root}`)
@@ -1533,7 +1542,7 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
       (!installLocation || isOwnedSmokePath(root, installLocation)) &&
       isOwnedSmokePath(root, uninstallTarget) &&
       isOwnedSmokePath(root, quietUninstallTarget)
-    if (ownedStaleRegistration) await run('reg.exe', ['delete', uninstallKey, '/f'])
+    if (ownedStaleRegistration) await deleteOwnedRegistryKey(uninstallKey, run)
   }
 
   const installKey = `HKCU\\Software\\${APP_GUID}`
@@ -1542,7 +1551,7 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
     ? registryValue(installOutput, 'InstallLocation')
     : undefined
   if (isOwnedSmokePath(root, installLocation)) {
-    await run('reg.exe', ['delete', installKey, '/f'])
+    await deleteOwnedRegistryKey(installKey, run)
   }
 }
 

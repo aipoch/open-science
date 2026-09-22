@@ -6,7 +6,7 @@ import type { Language, Node, Tree } from 'web-tree-sitter'
 
 const here = typeof __dirname === 'string' ? __dirname : dirname(fileURLToPath(import.meta.url))
 
-type NotebookParserLanguage = 'python' | 'r' | 'bash'
+type NotebookParserLanguage = 'python' | 'r' | 'bash' | 'javascript'
 
 // Grammar wasm: web-tree-sitter 0.26.12, tree-sitter-python 0.25.0, @davisvaughan/tree-sitter-r 1.3.0.
 // Bash 0.25.1 provenance and license are bundled beside its grammar in resources/tree-sitter.

@@ -35,6 +35,8 @@ jobs:
   stage:
     name: Stage ${{ matrix.subdir }}
     runs-on: ${{ matrix.os }}
+    # Observed 2–6 min per subdir; the ceiling leaves room for a slow conda solve or CDN upload.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

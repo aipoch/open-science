@@ -1,4 +1,4 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process'
 import type { ClientConnection, McpServer, SessionModeState } from '@agentclientprotocol/sdk'
 
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
@@ -202,7 +202,15 @@ export type ProxyEnvironmentMode = 'inherit' | 'replace'
 
 // Already-resolved spawn inputs: env and args come from prepareModelConfig merged over the base
 // process env; configFiles are written by the runtime before this call.
+export type AgentProcessSpawner = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptionsWithoutStdio & { stdio: 'pipe' }
+) => ChildProcessWithoutNullStreams
+
 export type AgentSpawnInput = {
+  // Injected only for app-owned delegated launches, after framework-specific preparation.
+  spawnProcess?: AgentProcessSpawner
   executablePath: string
   env: Record<string, string>
   args: string[]
@@ -384,6 +392,12 @@ export type ResolvedAgentBackend = {
       options?: Readonly<{ failClosedUnknownKeys?: boolean }>
     ) => void
     unregisterHostMessageSession?: (promptCacheKey: string) => boolean
+    registerMcpSession?: (
+      promptCacheKey: string,
+      namespacedTools: ResponsesBridgeNamespacedTool[],
+      namespaces?: readonly string[]
+    ) => void
+    unregisterMcpSession?: (promptCacheKey: string) => boolean
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void

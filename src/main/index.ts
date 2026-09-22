@@ -122,10 +122,12 @@ if (shouldRunArtifactMcpServer) {
     if (error instanceof CredentialIdentityError) {
       if (!credentialRecoveryPresented) {
         credentialRecoveryPresented = true
-        dialog.showErrorBox(
-          APP_NAME,
-          credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
-        )
+        const message = credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
+        // A headless launch (web service, packaged smoke) has no one to dismiss a modal; a
+        // blocking box hangs an unattended run instead of failing it, so recovery goes to stderr.
+        if (parseWebModeOptions(process.argv).headless)
+          process.stderr.write(`${APP_NAME}: ${message}\n`)
+        else dialog.showErrorBox(APP_NAME, message)
       }
       // Do not yield to Electron's profile/key initialization after a failed pre-ready probe.
       app.exit(1)
@@ -244,10 +246,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         ...(error.probe ? { identityProbe: error.probe } : {})
       })
       credentialRecoveryPresented = true
-      dialog.showErrorBox(
-        APP_NAME,
-        credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
-      )
+      const message = credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
+      // Same headless rule as the pre-ready recovery path: never block an unattended launch.
+      if (webMode.headless) process.stderr.write(`${APP_NAME}: ${message}\n`)
+      else dialog.showErrorBox(APP_NAME, message)
     }
     app.exit(1)
   })

@@ -141,9 +141,12 @@ const Notice = ({
       ? undefined
       : { info: Info, success: CircleCheck, warning: TriangleAlert, error: CircleAlert }[level])
   const Heading = compact ? 'h2' : 'h1'
+  // Explanations own the full text row; only title-only notices share it with actions.
   const trailingAction =
     compact &&
-    (title !== undefined || description !== undefined || content !== undefined) &&
+    title !== undefined &&
+    description === undefined &&
+    content === undefined &&
     (primaryButton || secondaryButton) &&
     !primaryButton?.description &&
     !secondaryButton?.description &&
@@ -258,7 +261,7 @@ const Notice = ({
             describedActions
               ? 'grid gap-3 border-t border-border pt-3 sm:grid-cols-2'
               : 'flex flex-wrap items-center justify-end gap-2',
-            compact && Icon && (unboxed ? 'ml-6' : 'ml-7')
+            compact && Icon && (unboxed ? 'sm:ml-6' : 'sm:ml-7')
           )}
         >
           {describedActions && primaryButton ? (

@@ -23,6 +23,8 @@ import {
 import 'katex/dist/katex.min.css'
 
 import { createMarkdownPluginNeedsScanner } from './code-fence'
+import { createIncrementalMarkdownBlocks } from './incremental-markdown-blocks'
+import { retainMarkdownParser } from './markdown-parser'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import {
   DeferredImage,
@@ -35,7 +37,7 @@ import {
 import { LinkSafetyModal } from './LinkSafetyModal'
 import { SessionMessageLink } from './SessionMessageLink'
 import { createStreamingBlockquote } from './streaming-blockquote'
-import { StreamingBlock } from './StreamingBlock'
+import { AsyncStreamingBlock } from './AsyncStreamingBlock'
 import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
 import { useCodeHighlighter } from './use-code-highlighter'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
@@ -75,6 +77,8 @@ const sessionLinkComponents = { a: SessionMessageLink } satisfies Components
 // Import previews render untrusted Markdown. Removing every element that can initiate a media fetch
 // prevents opening a candidate from disclosing viewer activity to an external host. `use` is
 // included because an SVG use element may reference a remote document.
+// Stable references let completed blocks skip unchanged media-policy props during streaming.
+const EMBEDDED_DOCUMENT_ELEMENTS = ['iframe', 'object', 'embed']
 const NETWORK_FETCHING_MEDIA_ELEMENTS = [
   'img',
   'video',
@@ -245,6 +249,8 @@ const RichAgentMarkdown = memo(
   }: RichAgentMarkdownProps): React.JSX.Element => {
     // Append-only streaming re-normalizes just the trailing block instead of the full message.
     const [normalizer] = useState(() => createAgentMarkdownNormalizer())
+    const [splitBlocks] = useState(() => createIncrementalMarkdownBlocks())
+    useEffect(() => (isAnimating ? retainMarkdownParser() : undefined), [isAnimating])
     const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
     const allowedTags = useMemo(
       () => (extension ? { ...AGENT_ALLOWED_TAGS, ...extension.allowedTags } : AGENT_ALLOWED_TAGS),
@@ -284,13 +290,14 @@ const RichAgentMarkdown = memo(
           mode={isAnimating || incrementalBlocks ? 'streaming' : 'static'}
           isAnimating={isAnimating}
           animated={false}
-          BlockComponent={StreamingBlock}
+          BlockComponent={AsyncStreamingBlock}
+          parseMarkdownIntoBlocksFn={splitBlocks}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={allowedTags}
           literalTagContent={extension?.literalTagContent}
           disallowedElements={
-            allowMedia ? ['iframe', 'object', 'embed'] : NETWORK_FETCHING_MEDIA_ELEMENTS
+            allowMedia ? EMBEDDED_DOCUMENT_ELEMENTS : NETWORK_FETCHING_MEDIA_ELEMENTS
           }
           shikiTheme={plugins.code ? shikiThemes : undefined}
           mermaid={plugins.mermaid ? mermaidOptions : undefined}

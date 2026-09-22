@@ -378,7 +378,9 @@
       "src/main/acp/task-agent-port.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/acp/vision-evidence-repository.test.ts",
-      "src/main/acp/workspace-path.test.ts"
+      "src/main/acp/workspace-path.test.ts",
+      "src/main/delegation/process-ownership.test.ts",
+      "src/main/process-tree.windows.integration.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",
@@ -422,6 +424,8 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/session-persistence/runtime-session-owner.test.ts",
+      "src/main/session-plan/adversarial-session-plan.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
@@ -695,6 +699,7 @@
       "src/main/settings/xai-provider-account-owner.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/main-prompt-relay.test.ts",
+      "src/main/side-chat/session-lifetime.test.ts",
       "src/main/skills/conversation-import.test.ts",
       "src/main/specialist/application-commands.test.ts",
       "src/main/specialist/ipc.test.ts",
@@ -753,7 +758,20 @@
       "src/main/specialist/marketplace/service.test.ts",
       "src/main/specialist/package/release-certification.test.ts",
       "src/main/specialist/package/reported-regressions.test.ts",
-      "src/main/specialist/package/transaction.test.ts"
+      "src/main/specialist/package/transaction.test.ts",
+      "src/main/delegation/frame-workspace.test.ts",
+      "src/main/settings/classification-settings.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/main/artifacts/resumed-finalization-ownership.test.ts",
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/agent-framework/opencode-mcp-isolation.integration.test.ts",
+      "src/main/agent-framework/session-mcp-isolation.integration.test.ts",
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/pdf-annotations/service.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

@@ -23,7 +23,8 @@ import {
 import {
   AnnotationDraftEditor,
   AnnotationMarkers,
-  type AnnotationControl
+  type AnnotationControl,
+  type BookmarkSaveInput
 } from './TextAnnotationEditors'
 import {
   textAnnotationAnchorForRange,
@@ -85,7 +86,7 @@ const sourcesMatch = (left: TextAnnotationSource, right: SessionTextAnnotationSo
 
 const TextAnnotationSurface = ({
   children,
-  source,
+  source: sourceInput,
   activeAnnotations,
   onAdd,
   onUpdateNote,
@@ -104,6 +105,25 @@ const TextAnnotationSurface = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const bookmarkPort = useBookmarks()
+  // Parent projections may allocate an equivalent source on each streaming update. Keep
+  // source-owned subscriptions and observer callbacks stable until its actual identity changes.
+  const { kind, sessionId } = sourceInput
+  const sourceItemId = kind === 'agent-message' ? sourceInput.messageId : sourceInput.itemId
+  const itemType = kind === 'session-item' ? sourceInput.itemType : undefined
+  const sectionId = kind === 'session-item' ? sourceInput.sectionId : undefined
+  const source = useMemo<SessionTextAnnotationSource>(
+    () =>
+      kind === 'agent-message'
+        ? { kind, sessionId, messageId: sourceItemId }
+        : {
+            kind,
+            sessionId,
+            itemId: sourceItemId,
+            itemType: itemType!,
+            ...(sectionId === undefined ? {} : { sectionId })
+          },
+    [kind, sessionId, sourceItemId, itemType, sectionId]
+  )
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const ownedHighlightIds = useRef(new Set<string>())
@@ -125,6 +145,11 @@ const TextAnnotationSurface = ({
     readonly { id: string; left: number; top: number; note: string }[]
   >([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
+  const isAnimatingRef = useRef(isAnimating)
+  const hasDraftSelection = selection !== undefined
+  useLayoutEffect(() => {
+    isAnimatingRef.current = isAnimating
+  }, [isAnimating])
   const matchingAnnotations = useMemo(
     () => (activeAnnotations ?? []).filter((annotation) => sourcesMatch(annotation.source, source)),
     [activeAnnotations, source]
@@ -137,8 +162,36 @@ const TextAnnotationSurface = ({
       ),
     [bookmarkPort.bookmarks, source]
   )
+  const visibleAnnotationControls = useMemo(
+    () =>
+      isAnimating
+        ? []
+        : annotationControls.filter(({ annotation }) =>
+            matchingAnnotations.some((candidate) => candidate.id === annotation.id)
+          ),
+    [annotationControls, isAnimating, matchingAnnotations]
+  )
+  const visibleBookmarkMarkers = useMemo(
+    () =>
+      isAnimating
+        ? []
+        : bookmarkMarkers.filter(({ id }) =>
+            matchingBookmarks.some((bookmark) => bookmark.id === id)
+          ),
+    [bookmarkMarkers, isAnimating, matchingBookmarks]
+  )
 
   const measureAnnotationControls = useCallback((): void => {
+    // Reading an offscreen message's geometry defeats content-visibility containment.
+    // Most messages have no markers, including when other messages are annotated.
+    if (matchingAnnotations.length === 0 && matchingBookmarks.length === 0) {
+      setAnnotationControls((current) => (current.length === 0 ? current : []))
+      setBookmarkMarkers((current) => (current.length === 0 ? current : []))
+      return
+    }
+    // Streaming replaces the text tree every frame. Marker geometry is stale
+    // until the stream settles, so avoid layout reads while it is animating.
+    if (isAnimatingRef.current) return
     const surfaceRect = surfaceRef.current?.getBoundingClientRect()
     if (!surfaceRect) return
     setAnnotationControls(
@@ -442,11 +495,6 @@ const TextAnnotationSurface = ({
     setNote('')
   }, [])
 
-  const isAnimatingRef = useRef(isAnimating)
-  useLayoutEffect(() => {
-    isAnimatingRef.current = isAnimating
-  }, [isAnimating])
-
   useLayoutEffect(() => {
     // While the message streams in, this surface re-renders every frame; the
     // highlight reconcile re-anchors ranges against a tree the next frame
@@ -460,6 +508,9 @@ const TextAnnotationSurface = ({
   useLayoutEffect(() => {
     const content = contentRef.current
     if (!content || typeof MutationObserver === 'undefined') return
+    // Highlight reconciliation is already deferred during streaming. Keep
+    // the observer only when a live draft selection still needs retargeting.
+    if (isAnimating && !hasDraftSelection) return
     let scheduled = false
     let disconnected = false
     const observer = new MutationObserver(() => {
@@ -477,21 +528,23 @@ const TextAnnotationSurface = ({
       disconnected = true
       observer.disconnect()
     }
-  }, [reconcileAnnotationHighlights, retargetDraftSelection])
+  }, [hasDraftSelection, isAnimating, reconcileAnnotationHighlights, retargetDraftSelection])
 
   useEffect(() => {
+    if (isAnimating) return
     window.addEventListener('resize', measureAnnotationControls)
     return () => window.removeEventListener('resize', measureAnnotationControls)
-  }, [measureAnnotationControls])
+  }, [isAnimating, measureAnnotationControls])
 
   useEffect(() => {
+    if (isAnimating) return
     const surface = surfaceRef.current
     if (!surface || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measureAnnotationControls)
     observer.observe(surface)
     if (contentRef.current) observer.observe(contentRef.current)
     return () => observer.disconnect()
-  }, [measureAnnotationControls])
+  }, [isAnimating, measureAnnotationControls])
 
   useLayoutEffect(
     () => () => {
@@ -535,7 +588,7 @@ const TextAnnotationSurface = ({
     window.getSelection()?.removeAllRanges()
   }
 
-  const saveBookmark = async (bookmarkNote: string): Promise<void> => {
+  const saveBookmark = async (input: BookmarkSaveInput): Promise<void> => {
     if (!selection) return
     const id = pendingBookmarkIdRef.current ?? createBookmarkId()
     pendingBookmarkIdRef.current = id
@@ -545,7 +598,7 @@ const TextAnnotationSurface = ({
       quote: selection.quote,
       anchor: textAnnotationAnchorForRange(contentRef.current!, selection.range)
     }
-    await bookmarkPort.create(id, target, bookmarkNote)
+    await bookmarkPort.create(id, target, input.note)
     clearDraft()
     window.getSelection()?.removeAllRanges()
   }
@@ -592,14 +645,14 @@ const TextAnnotationSurface = ({
         </p>
       ) : null}
       <AnnotationMarkers
-        controls={annotationControls}
+        controls={visibleAnnotationControls}
         hoveredAnnotationId={hoveredAnnotationId}
         variant="workspace"
         onUpdateNote={onUpdateNote}
         onRemove={onRemove}
         onError={onError}
       />
-      {bookmarkMarkers.map((marker) => (
+      {visibleBookmarkMarkers.map((marker) => (
         <BookmarkMarker key={marker.id} {...marker} />
       ))}
       {matchingAnnotations.length > 0 ? (

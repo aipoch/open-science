@@ -674,6 +674,7 @@ const AgentPanel = ({
           so management (Installed) and acquisition (Available) don't compete for attention — but
           the active runtime can't be uninstalled (switch to the other one first). */}
       <SettingsSection
+        data-settings-anchor="agent.framework"
         title={title}
         headingAs={isOnboarding ? 'h2' : 'h3'}
         aria-label={title}

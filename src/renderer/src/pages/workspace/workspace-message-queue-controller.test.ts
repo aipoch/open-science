@@ -199,6 +199,83 @@ afterEach(() => {
 })
 
 describe('workspace message queue controller', () => {
+  it('hides an appended queue preview while preserving the in-flight dispatch lock', async () => {
+    let finish!: (result: { sessionId: string; messageId: string }) => void
+    const sendMessage = vi.fn<WorkspaceMessageQueueControllerOptions['runtime']['sendMessage']>(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    let currentSession = session('idle')
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: { sendMessage, cancelRun: vi.fn() }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession })
+    )
+    expect(hook.result.current.items[0]).toMatchObject({ text: 'first', phase: 'sending' })
+    act(() =>
+      sendMessage.mock.calls[0][0].onMessageAppended?.({
+        sessionId: 'session-a',
+        messageId: 'first-message'
+      })
+    )
+    expect(hook.result.current.items).toEqual([])
+    expect(hook.result.current.hasPendingWork).toBe(true)
+    expect(hook.result.current.lifecycle.blocksImmediateSend('session-a')).toBe(true)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession })
+    )
+    expect(hook.result.current.items).toMatchObject([{ text: 'second', phase: 'queued' }])
+    expect(sendMessage).toHaveBeenCalledOnce()
+    currentSession = session('running')
+    await act(async () => finish({ sessionId: 'session-a', messageId: 'first-message' }))
+    expect(hook.result.current.items).toMatchObject([{ text: 'second', phase: 'queued' }])
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it.each(['rejection', 'not-admitted'] as const)(
+    'restores the queued error and draft when %s follows the preview handoff',
+    async (failure) => {
+      let finish!: (result: undefined) => void
+      let fail!: (reason: Error) => void
+      const sendMessage = vi.fn<WorkspaceMessageQueueControllerOptions['runtime']['sendMessage']>(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const currentSession = session('idle')
+      const input = options(currentSession, { runtime: { sendMessage, cancelRun: vi.fn() } })
+      const hook = renderController(input)
+      mounted.push(hook)
+      const draft = { ...admission('keep this draft'), session: currentSession }
+      act(() => hook.result.current.lifecycle.enqueue(draft))
+      act(() =>
+        sendMessage.mock.calls[0][0].onMessageAppended?.({
+          sessionId: 'session-a',
+          messageId: 'first-message'
+        })
+      )
+      expect(hook.result.current.items).toEqual([])
+      await act(async () => {
+        if (failure === 'rejection') fail(new Error('Save acknowledgement failed'))
+        else finish(undefined)
+      })
+      expect(hook.result.current.items).toMatchObject([{ text: 'keep this draft', phase: 'error' }])
+      act(() => hook.result.current.actions.edit(hook.result.current.items[0].id))
+      expect(input.composer.restoreQueuedDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ doc: draft.snapshot.doc })
+      )
+      expect(sendMessage).toHaveBeenCalledOnce()
+    }
+  )
+
   it.each(['permission change', 'persistence block'] as const)(
     'MQ01: does not abort automatic repair when send now encounters %s',
     async (blocker) => {
@@ -688,6 +765,7 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(resendEditedMessage).toHaveBeenCalledOnce())
     expect(resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-user-a', {
       agentConfiguration: admission('').agentConfiguration,
+      onMessageAppended: expect.any(Function),
       text: 'revised prompt',
       annotations: [],
       referencedArtifacts: [],
@@ -695,6 +773,46 @@ describe('workspace message queue controller', () => {
       forcedSkillIds: []
     })
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('hides a queued revision preview after its edited message is appended', async () => {
+    let finish!: (result: boolean) => void
+    let onMessageAppended: ((message: { sessionId: string; messageId: string }) => void) | undefined
+    const resendEditedMessage = vi.fn(
+      async (
+        _sessionId: string,
+        _messageId: string,
+        input: { onMessageAppended?: (message: { sessionId: string; messageId: string }) => void }
+      ) => {
+        onMessageAppended = input.onMessageAppended
+        return new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+      }
+    )
+    let currentSession = session()
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      runtime: { sendMessage: vi.fn(), resendEditedMessage, cancelRun: vi.fn() },
+      getSession: () => currentSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('revised prompt'),
+        session: currentSession,
+        revisionMessageId: 'message-user-a'
+      })
+    )
+    currentSession = session('idle')
+    await act(async () => hook.rerender({ ...input, activeSession: currentSession }))
+    await vi.waitFor(() => expect(resendEditedMessage).toHaveBeenCalledOnce())
+    expect(hook.result.current.items).toMatchObject([{ text: 'revised prompt', phase: 'sending' }])
+    act(() => onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-sent' }))
+    expect(hook.result.current.items).toEqual([])
+    expect(hook.result.current.hasPendingWork).toBe(true)
+    await act(async () => finish(true))
   })
 
   it('resumes background draining when a Specialist barrier settles', async () => {

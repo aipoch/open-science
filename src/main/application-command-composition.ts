@@ -92,6 +92,11 @@ import {
   type LiteratureCommandOwner
 } from './literature/application-commands'
 import {
+  pdfAnnotationApplicationCommandGroup,
+  registerPdfAnnotationApplicationCommands,
+  type PdfAnnotationCommandOwner
+} from './pdf-annotations/application-commands'
+import {
   bookmarkApplicationCommandGroup,
   registerBookmarkApplicationCommands,
   type BookmarkCommandOwner
@@ -136,6 +141,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
   bookmarks: BookmarkCommandOwner
+  pdfAnnotations: PdfAnnotationCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -155,6 +161,9 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'remote-access:set-mode',
   'sessions:export-conversation',
   'sessions:fork',
+  'sessions:inspect-diagnostics',
+  'sessions:export-diagnostics',
+  'sessions:cancel-diagnostics',
   'sessions:export-package',
   'sessions:import-package',
   'sessions:package-operation',
@@ -295,6 +304,9 @@ const createApplicationCommandModules = (
     defineApplicationCommandModule([bookmarkApplicationCommandGroup], (registrar) =>
       registerBookmarkApplicationCommands(registrar, dependencies.bookmarks)
     ),
+    defineApplicationCommandModule([pdfAnnotationApplicationCommandGroup], (registrar) =>
+      registerPdfAnnotationApplicationCommands(registrar, dependencies.pdfAnnotations)
+    ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)
     ),
@@ -323,7 +335,8 @@ const createRemoteAccessSlot = (): Readonly<{
     disable: (...args) => current().disable(...args),
     approve: (...args) => current().approve(...args),
     reject: (...args) => current().reject(...args),
-    revoke: (...args) => current().revoke(...args)
+    revoke: (...args) => current().revoke(...args),
+    revokeBrowsers: (...args) => current().revokeBrowsers(...args)
   })
 
   return Object.freeze({

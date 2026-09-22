@@ -1071,6 +1071,49 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.adopt).toHaveBeenCalledOnce()
   })
 
+  it('fresh-adopts a forked Codex Session when its adapter reports missing rollout details', async () => {
+    const forkedSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const harness = createHarness({
+      initialBackend: {
+        ...codexResponsesCompatibilityBackend,
+        session: {
+          ...codexResponsesCompatibilityBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      }
+    })
+    // The installed Codex adapter succeeds on close, then wraps the native missing-thread
+    // diagnostic in data.details rather than the top-level ACP error message.
+    harness.request.mockImplementation(async (method) => {
+      if (method === acp.methods.agent.session.close) return {}
+      throw acp.RequestError.internalError({
+        details: `no rollout found for thread id ${forkedSessionId}`
+      })
+    })
+
+    await expect(
+      harness.resume({
+        sessionId: forkedSessionId,
+        previousFrameworkId: 'codex',
+        previousBackendId: codexResponsesCompatibilityBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
+      acp.methods.agent.session.close,
+      acp.methods.agent.session.resume
+    ])
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['Responses', codexResponsesBackend],
     ['Responses Compatibility', codexResponsesCompatibilityBackend]

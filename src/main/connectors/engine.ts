@@ -287,8 +287,13 @@ export class ParserEngine {
           status: response.status
         }
       },
-      fetchText: async (url, accept = 'text/plain, application/xml, */*') => {
-        const { response, bodyText } = await doFetch(url, accept)
+      fetchText: async (url, accept = 'text/plain, application/xml, */*', options) => {
+        const { response, bodyText } = await doFetch(
+          url,
+          accept,
+          undefined,
+          options?.retry === false ? 0 : this.retries
+        )
         return bodyText === undefined ? response.text() : bodyText
       },
       postForm: async (url, body) => {

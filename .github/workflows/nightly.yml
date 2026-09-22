@@ -1,10 +1,13 @@
 name: Nightly
 
-# Batch main into one build per day. A newer scheduled build may supersede an older build, while
-# publication is delegated to nightly-publish.yml and is never cancelled once it starts.
+# Batch main into one build per day, skipping heads that the last successful scheduled build
+# already covered and that the rolling nightly tag already publishes. A newer scheduled build may
+# supersede an older build, while publication is delegated to nightly-publish.yml and is never
+# cancelled once it starts.
+# Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '17 17 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '17 15 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       dry_run:
@@ -29,24 +32,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skip when the last successful scheduled Nightly already built this head. Whether the rolling
+  # tag has been advanced is decided separately by nightly-publish.yml.
   plan:
-    name: Check for unpublished main changes
+    name: Check for unbuilt main changes
     runs-on: ubuntu-latest
     outputs:
-      should_build: ${{ steps.decide.outputs.should_build }}
+      should_build: ${{ steps.decide.outputs.should_run }}
     steps:
-      - name: Compare main with the rolling nightly tag
+      - name: Checkout skip check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/skip-unchanged-scheduled
+          sparse-checkout-cone-mode: false
+      - name: Compare main with the last successful scheduled build
         id: decide
+        uses: ./.github/actions/skip-unchanged-scheduled
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>/dev/null || true)
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$published" != "$GITHUB_SHA" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "Nightly already points at $GITHUB_SHA; there is no new batch to build."
-          fi
+          GH_TOKEN: ${{ github.token }}
+        with:
+          workflow-file: nightly.yml
+          require-published-ref: nightly
 
   build:
     needs: plan
@@ -61,14 +68,16 @@ jobs:
       skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}
       platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
 
-  # Scheduled coverage remains advisory during burn-in and is deliberately absent from prepare.needs.
-  # A manual `runtime-source` dispatch runs this exact reusable job as a blocking focused dry-run while
-  # build/package/publish preparation stay skipped.
+  # Scheduled coverage is advisory for the build only: it stays absent from prepare.needs so artifacts
+  # and evidence remain diagnosable, but nightly-publish.yml refuses to roll the tag unless every
+  # runtime-certification job succeeded. A manual `runtime-source` dispatch runs this exact reusable
+  # job as a blocking focused dry-run while build/package/publish preparation stay skipped.
   runtime-certification:
     needs: plan
     if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli'
     uses: ./.github/workflows/runtime-certification.yml
     with:
+      # Scheduled failures keep the build green so prepare still runs; publication gates on them.
       allow_failure: ${{ github.event_name != 'workflow_dispatch' }}
 
   package-smoke:
@@ -78,13 +87,15 @@ jobs:
     with:
       platform_name: ${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
 
-  # Run advisory desktop behavior checks inside the same read-only Nightly run. Failures remain
-  # visible and independently rerunnable, but do not gate preparation or publication.
+  # Run desktop behavior checks inside the same read-only Nightly run. Failures keep the build green
+  # and independently rerunnable so artifacts stay diagnosable, but nightly-publish.yml refuses to
+  # roll the tag unless every regression job succeeded.
   regression:
     needs: [build, package-smoke]
     if: inputs.dry_run != 'linux-cli'
     uses: ./.github/workflows/desktop-regression.yml
     with:
+      # Advisory for the build only; publication gates on the real job conclusions.
       allow_failure: true
 
   # Aggregate and checksum on the low-privilege build run. A manual Nightly stops here, making this
@@ -131,3 +142,55 @@ jobs:
             artifacts/SHA256SUMS.txt
             artifacts/RELEASE-CERTIFICATION.json
           if-no-files-found: error
+
+  # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
+  report:
+    name: Report scheduled outcome
+    needs: [plan, build, runtime-certification, package-smoke, regression, prepare]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    # Reporting must never turn a publishable Nightly into a failed workflow_run for the publisher.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/report-scheduled-failure.mjs
+            scripts/ci/nightly-publish-gates.mjs
+          sparse-checkout-cone-mode: false
+      # runtime-certification and regression are advisory, so their caller results stay successful
+      # even when a child job failed. Inspect the nested conclusions so those failures are tracked.
+      - name: Detect advisory job failures
+        id: advisory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --paginate \
+            --jq '.jobs[] | {name, conclusion}' | jq -s . > "$RUNNER_TEMP/nightly-jobs.json"
+          node scripts/ci/nightly-publish-gates.mjs --jobs "$RUNNER_TEMP/nightly-jobs.json" --report
+      - name: Open, refresh, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || steps.advisory.outputs.ok != 'true') && 'failure' || 'success' }}
+        with:
+          script: |
+            const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github,
+              repo: context.repo,
+              workflowFile: 'nightly.yml',
+              workflowName: context.workflow,
+              runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              headSha: context.sha,
+              conclusion: process.env.CONCLUSION,
+              log: core.info
+            })

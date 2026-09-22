@@ -29,6 +29,8 @@ import {
   analyzePythonFileAccesses,
   analyzePythonNotebookSource
 } from './dependency-analysis-python'
+import { managedEnvironmentIsReadOnly } from './managed-path-context'
+import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzeRFileAccesses, analyzeRNotebookSource } from './dependency-analysis-r'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
 import { serializedFileContext, serializedValueDescriptors } from './serialized-file-provenance'
@@ -47,6 +49,17 @@ import {
 const SIDECAR_FILE = 'dependency-analysis.json'
 const MAX_NAMES_PER_RUN = 512
 const MAX_STATIC_STRING_LENGTH = 4_096
+const helperReplayWithinBudget = (
+  modules: readonly { source: string; exports: readonly string[] }[]
+): boolean =>
+  modules.length <= 32 &&
+  modules.reduce((bytes, module) => bytes + Buffer.byteLength(module.source, 'utf8'), 0) <=
+    512 * 1024 &&
+  modules.every(
+    (module) =>
+      module.exports.length <= MAX_NAMES_PER_RUN &&
+      module.exports.every((name) => name.length <= MAX_STATIC_STRING_LENGTH)
+  )
 const MAX_STATIC_COLLECTION_VALUES = 128
 const MAX_STATIC_COLLECTION_VALUES_PER_CONTEXT = 1_024
 const MAX_INCREMENTAL_PROJECTIONS = 32
@@ -339,6 +352,26 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       })
     }
   }
+  const pythonHelperModules =
+    record.pythonHelperModules === undefined ? [] : record.pythonHelperModules
+  if (
+    !Array.isArray(pythonHelperModules) ||
+    pythonHelperModules.length > 32 ||
+    pythonHelperModules.some((module) => {
+      if (!module || typeof module !== 'object') return true
+      const record = module as Record<string, unknown>
+      return (
+        typeof record.source !== 'string' ||
+        record.source.length > 512 * 1024 ||
+        !Array.isArray(record.exports) ||
+        record.exports.length > MAX_NAMES_PER_RUN ||
+        record.exports.some(
+          (name) => typeof name !== 'string' || name.length > MAX_STATIC_STRING_LENGTH
+        )
+      )
+    })
+  )
+    return undefined
   return {
     ...(pythonTaintedNamespaces.length ? { pythonTaintedNamespaces } : {}),
     ...(pythonBindings.length
@@ -346,7 +379,15 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       : {}),
     staticStrings: staticStrings.sort((left, right) => left.name.localeCompare(right.name)),
     staticCollections: staticCollections.sort((left, right) => left.name.localeCompare(right.name)),
-    localFileWrappers: localFileWrappers.sort((left, right) => left.name.localeCompare(right.name))
+    localFileWrappers: localFileWrappers.sort((left, right) => left.name.localeCompare(right.name)),
+    ...(pythonHelperModules.length
+      ? {
+          pythonHelperModules: pythonHelperModules.map((module) => ({
+            source: (module as { source: string }).source,
+            exports: [...(module as { exports: string[] }).exports]
+          }))
+        }
+      : {})
   }
 }
 
@@ -1215,6 +1256,14 @@ const boundedFileContext = (
     namespaces.some((name) => name.length > MAX_STATIC_STRING_LENGTH)
       ? ['*']
       : namespaces
+  const pythonHelperModules = (context.pythonHelperModules ?? [])
+    .filter(
+      (module) =>
+        module.source.length <= 512 * 1024 &&
+        module.exports.length <= MAX_NAMES_PER_RUN &&
+        module.exports.every((name) => name.length <= MAX_STATIC_STRING_LENGTH)
+    )
+    .slice(0, 32)
   return {
     ...(pythonTaintedNamespaces.length ? { pythonTaintedNamespaces } : {}),
     ...(pythonBindings.length ? { pythonBindings } : {}),
@@ -1226,7 +1275,8 @@ const boundedFileContext = (
       .slice(0, MAX_NAMES_PER_RUN),
     localFileWrappers: localFileWrappers
       .filter(({ name }) => !staticNames.has(name) && !collectionNames.has(name))
-      .slice(0, MAX_NAMES_PER_RUN)
+      .slice(0, MAX_NAMES_PER_RUN),
+    ...(pythonHelperModules.length ? { pythonHelperModules } : {})
   }
 }
 
@@ -1241,7 +1291,17 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.kernelEpochId,
         run.runtimeId,
         run.script,
-        run.fileEvidence?.checksum
+        run.fileEvidence?.checksum,
+        run.helperEvidenceStatus,
+        run.helperModules?.map(
+          ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
+            helperId,
+            sourceDigest,
+            [...exports].sort(),
+            interfaceRevision,
+            registeredGeneration
+          ]
+        )
       ])
     )
     .digest('hex')
@@ -1327,7 +1387,17 @@ const projectSourceFileAccessContext = (
         ? {
             // Code before an exception may already have modified a module. The
             // projection keeps only tainted identities at this unsafe boundary.
-            facts: run.status === 'completed' ? cached.facts : unknownFacts('execution-incomplete'),
+            facts:
+              run.status === 'completed'
+                ? cached.facts
+                : {
+                    ...cached.facts,
+                    state: 'unknown',
+                    reasons: [
+                      ...(cached.facts.state === 'unknown' ? cached.facts.reasons : []),
+                      'execution-incomplete'
+                    ]
+                  },
             fileContext
           }
         : undefined
@@ -1360,12 +1430,14 @@ const projectionGroupChecksum = (checksums: readonly string[]): string =>
   createHash('sha256').update(JSON.stringify(checksums)).digest('hex')
 
 const projectionGroupKey = ({ run }: AnalyzedNotebookRun): string =>
-  run.kernelEpochId && (run.kernelKind === 'python' || run.kernelKind === 'r')
+  run.kernelEpochId &&
+  (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl')
     ? JSON.stringify([run.kernelKind, run.environment ?? '', run.kernelEpochId])
     : JSON.stringify(['run', run.runId])
 
 const projectionRuntimeKey = ({ run }: AnalyzedNotebookRun): string | undefined =>
-  run.kernelEpochId && (run.kernelKind === 'python' || run.kernelKind === 'r')
+  run.kernelEpochId &&
+  (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl')
     ? JSON.stringify([run.kernelKind, run.environment ?? ''])
     : undefined
 
@@ -1588,7 +1660,32 @@ class NotebookDependencyAnalyzer {
         { runs, sidecar }
       )
     }
-    const context = projectSourceFileAccessContext(runs, sidecar, request)
+    let context = projectSourceFileAccessContext(runs, sidecar, request)
+    if (request.includeManagedEnvironment && request.language !== 'r') {
+      const currentIndex = runs.findIndex((run) => run.runId === request.currentRunId)
+      const preceding = (currentIndex < 0 ? runs : runs.slice(0, currentIndex)).filter(
+        (run) => isSourceFileAccessContextRun(run, request) && run.kernelDispatched !== false
+      )
+      let managedEnvironmentSafe = true
+      for (const run of preceding) {
+        const facts = sidecar.runs[run.runId]?.facts
+        if (
+          !facts ||
+          (facts.state === 'unknown' &&
+            facts.reasons.some(
+              (reason) => !['external-state', 'control-flow', 'function-scope'].includes(reason)
+            )) ||
+          !(await managedEnvironmentIsReadOnly(request.language, run.script))
+        ) {
+          managedEnvironmentSafe = false
+          break
+        }
+      }
+      context = {
+        ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
+        managedEnvironmentSafe
+      }
+    }
     return ['r', 'python'].includes(request.language)
       ? serializedFileContext(
           this.options.storageRoot,
@@ -1659,7 +1756,8 @@ class NotebookDependencyAnalyzer {
       NotebookDependencyInterpreter | undefined
     >()
     for (const run of runsToAnalyze) {
-      if (run.kernelKind !== 'python' && run.kernelKind !== 'r') continue
+      if (run.kernelKind !== 'python' && run.kernelKind !== 'r' && run.kernelKind !== 'repl')
+        continue
       const checksum = checksumFor(run)
       if (
         attemptedRunIds.has(run.runId) ||
@@ -1668,7 +1766,7 @@ class NotebookDependencyAnalyzer {
       ) {
         continue
       }
-      if (!this.options.analyze) {
+      if (!this.options.analyze || run.kernelKind === 'repl') {
         const key = `in-process:${run.kernelKind}`
         const group = missingByInterpreter.get(key) ?? { runs: [] }
         group.runs.push(run)
@@ -1728,9 +1826,9 @@ class NotebookDependencyAnalyzer {
     )
     if (pending.length === 0) return false
     const language = pending[0]?.kernelKind
-    if (language !== 'python' && language !== 'r') return false
+    if (language !== 'python' && language !== 'r' && language !== 'repl') return false
     const externalFacts =
-      this.options.analyze && interpreter
+      language !== 'repl' && this.options.analyze && interpreter
         ? await this.options.analyze(
             interpreter,
             language,
@@ -1757,24 +1855,153 @@ class NotebookDependencyAnalyzer {
           run.runId,
           priorContext
         )
+      const helperContextKey = (module: { source: string; exports: readonly string[] }): string =>
+        JSON.stringify([module.source, [...module.exports].sort()])
+      const helperEvidenceKey = (module: {
+        helperId: string
+        sourceDigest: string
+        exports: readonly string[]
+        interfaceRevision: string
+        registeredGeneration: string
+      }): string =>
+        JSON.stringify([
+          module.helperId,
+          module.sourceDigest,
+          [...module.exports].sort(),
+          module.interfaceRevision,
+          module.registeredGeneration
+        ])
+      const priorRunIndex = sessionRuns.findIndex((candidate) => candidate.runId === run.runId)
+      const priorHelperEvidence = new Set(
+        sessionRuns
+          .slice(0, priorRunIndex < 0 ? sessionRuns.length : priorRunIndex)
+          .filter(
+            (previous) =>
+              previous.kernelKind === language &&
+              (previous.environment ?? '') === (run.environment ?? '') &&
+              previous.kernelEpochId === run.kernelEpochId &&
+              (previous.status === 'completed' || previous.kernelDispatched !== false)
+          )
+          .flatMap((previous) => {
+            const cached = sidecar.runs[previous.runId]
+            return (previous.helperModules ?? [])
+              .filter((module) => {
+                if (previous.status === 'completed') return true
+                // Sticky metadata does not prove a fresh load after a dispatched failure.
+                // Retry only bindings whose analyzed source remained available and unmodified.
+                const retained = cached?.fileContext?.pythonHelperModules ?? []
+                return !(
+                  cachedAnalysisIsReusable(cached, checksumFor(previous)) &&
+                  cached?.facts.state === 'available' &&
+                  retained.some(
+                    (candidate) => helperContextKey(candidate) === helperContextKey(module)
+                  )
+                )
+              })
+              .map(helperEvidenceKey)
+          })
+      )
+      let helperEvidenceIncomplete =
+        run.helperEvidenceStatus?.state === 'incomplete' ||
+        !helperReplayWithinBudget(run.helperModules ?? [])
+      const projectedHelperModules = helperEvidenceIncomplete
+        ? []
+        : (priorContext?.pythonHelperModules ?? [])
+      const projectedHelperKeys = new Set(projectedHelperModules.map(helperContextKey))
+      const currentHelperModules =
+        language === 'python' && !helperEvidenceIncomplete ? (run.helperModules ?? []) : []
+      const helperModules = [
+        ...projectedHelperModules,
+        ...currentHelperModules
+          .filter(
+            (module) =>
+              projectedHelperKeys.has(helperContextKey(module)) ||
+              !priorHelperEvidence.has(helperEvidenceKey(module))
+          )
+          .map(({ source, exports }) => ({ source, exports: [...exports] }))
+      ].filter(
+        (module, index, modules) =>
+          modules.findIndex(
+            (candidate) => helperContextKey(candidate) === helperContextKey(module)
+          ) === index
+      )
+      helperEvidenceIncomplete ||= !helperReplayWithinBudget(helperModules)
+      const contextWithoutHelpers = priorContext
+        ? { ...priorContext }
+        : { staticStrings: [], staticCollections: [], localFileWrappers: [] }
+      delete contextWithoutHelpers.pythonHelperModules
+      const analysisContext =
+        helperModules.length > 0 || helperEvidenceIncomplete
+          ? {
+              ...contextWithoutHelpers,
+              ...(helperModules.length && !helperEvidenceIncomplete
+                ? { pythonHelperModules: helperModules }
+                : {})
+            }
+          : contextWithoutHelpers
       const analysis = externalFacts
         ? {
             facts: externalFacts[index] ?? unknownFacts('analysis-unavailable'),
             fileAccess: (language === 'python'
-              ? await analyzePythonFileAccesses([run.script], priorContext)
-              : await analyzeRFileAccesses([run.script], priorContext))[0]
+              ? await analyzePythonFileAccesses([run.script], analysisContext)
+              : await analyzeRFileAccesses([run.script], analysisContext))[0]
           }
-        : await (language === 'python' ? analyzePythonNotebookSource : analyzeRNotebookSource)(
-            run.script,
-            priorContext
-          )
+        : await (
+            language === 'repl'
+              ? analyzeReplNotebookSource
+              : language === 'python'
+                ? analyzePythonNotebookSource
+                : analyzeRNotebookSource
+          )(run.script, analysisContext)
       const normalizedFacts = normalizeFacts(analysis.facts)
+      const persistedFacts = helperEvidenceIncomplete
+        ? {
+            ...normalizedFacts,
+            state: 'unknown' as const,
+            reasons: [
+              ...(normalizedFacts.state === 'unknown' ? normalizedFacts.reasons : []),
+              'execution-incomplete'
+            ]
+          }
+        : normalizedFacts
       const fileAccess = analysis.fileAccess
-      const fileContext = fileAccess?.context
+      const invalidatedNames = new Set([
+        ...(persistedFacts.definedNames ?? []),
+        ...(persistedFacts.conditionallyDefinedNames ?? []),
+        ...(persistedFacts.mutatedNames ?? []),
+        ...(persistedFacts.possiblyMutatedNames ?? []),
+        ...(persistedFacts.receiverCalls ?? [])
+          .filter(({ kind }) => kind === 'mutating')
+          .map(({ receiver }) => receiver),
+        ...(persistedFacts.memberWrites ?? []).map(({ receiver }) => receiver)
+      ])
+      const persistedHelperModules =
+        run.kernelKind === 'python'
+          ? (analysisContext?.pythonHelperModules ?? [])
+              .filter((module) => !module.exports.some((name) => invalidatedNames.has(name)))
+              .filter((module) => module.source.length > 0 && module.source.length <= 512 * 1024)
+              .slice(0, 32)
+          : []
+      const fileContext =
+        fileAccess?.context || persistedHelperModules.length > 0
+          ? {
+              ...(fileAccess?.context ?? {
+                staticStrings: [],
+                staticCollections: [],
+                localFileWrappers: []
+              })
+            }
+          : undefined
+      if (fileContext) {
+        // The visitor returns its input helper context. Replace it even when filtering
+        // removed every export, so later retries cannot revive those stale bindings.
+        delete fileContext.pythonHelperModules
+        if (persistedHelperModules.length) fileContext.pythonHelperModules = persistedHelperModules
+      }
       sidecar.runs[run.runId] = {
         checksum: checksumFor(run),
-        facts: normalizedFacts,
-        ...(fileContext ? { fileContext: boundedFileContext(fileContext, normalizedFacts) } : {})
+        facts: persistedFacts,
+        ...(fileContext ? { fileContext: boundedFileContext(fileContext, persistedFacts) } : {})
       }
     }
     return true

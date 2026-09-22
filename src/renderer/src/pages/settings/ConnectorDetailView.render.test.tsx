@@ -1,3 +1,4 @@
+import { openResourceMainSwitch } from './test-utils'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -123,6 +124,15 @@ const blockSegment = (method: string): HTMLButtonElement | null => {
 }
 
 describe('ConnectorDetailView', () => {
+  it('labels the linked users as Connector availability', async () => {
+    await act(async () => {
+      root.render(<ConnectorDetailView id="ensembl" onOpenSpecialist={vi.fn()} />)
+    })
+    const trigger = container.querySelector('[data-slot="skill-usage-agents-trigger"]')
+    expect(trigger?.getAttribute('aria-label')).toContain('Connector')
+    expect(trigger?.getAttribute('data-resource-kind')).toBe('connector')
+  })
+
   it('shows translated descriptions for the new DOI tools while retaining exact permission identities', async () => {
     const method = 'crossref_get_updates'
     const literature: ConnectorDetail = {
@@ -258,7 +268,10 @@ describe('ConnectorDetailView', () => {
 
     expect(document.body.textContent).toContain('Ensembl')
     expect(document.body.textContent).toContain('Availability')
-    expect(document.body.textContent).toContain('Shared with Main')
+    expect(document.body.textContent).toContain(
+      'Control access separately for Main Agent and each Specialist.'
+    )
+    expect(openResourceMainSwitch('Ensembl')).not.toBeNull()
     expect(document.body.textContent).toContain('Genomics Reviewer')
     expect(document.body.textContent).toContain('lookup_gene')
     expect(document.body.textContent).toContain('list_species')
@@ -301,12 +314,11 @@ describe('ConnectorDetailView', () => {
   it('toggles the connector from the header switch and skip-approvals row', async () => {
     await render()
 
-    const switches = document.body.querySelectorAll<HTMLButtonElement>('[role="switch"]')
-    // First switch is the header enable toggle; second is the skip-approvals toggle.
-    act(() => switches[0]?.click())
+    const skipApprovals = document.body.querySelector<HTMLButtonElement>('[role="switch"]')
+    const main = openResourceMainSwitch('Ensembl')
+    act(() => main?.click())
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenCalledWith('ensembl', false)
-
-    act(() => switches[1]?.click())
+    act(() => skipApprovals?.click())
     expect(useSettingsStore.getState().setConnectorAutoAllow).toHaveBeenCalledWith('ensembl', true)
   })
 
@@ -356,12 +368,12 @@ describe('ConnectorDetailView', () => {
     await render()
 
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      openResourceMainSwitch('Ensembl')?.click()
       await Promise.resolve()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not save this setting. The previous value was restored.'
+      'Could not update resource access. Refresh and try again.'
     )
   })
 
@@ -385,11 +397,10 @@ describe('ConnectorDetailView', () => {
     })
     await render()
 
-    const header = (): HTMLButtonElement =>
-      document.body.querySelectorAll<HTMLButtonElement>('[role="switch"]')[0]
+    const header = (): HTMLButtonElement => openResourceMainSwitch('Ensembl')!
 
     expect(header().getAttribute('aria-checked')).toBe('true')
-    act(() => header().click())
+    await act(async () => header().click())
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenLastCalledWith(
       'ensembl',
       false
@@ -405,7 +416,7 @@ describe('ConnectorDetailView', () => {
     // The header now reflects OFF, and clicking re-enables (would still send `false` if it read the
     // stale detail).
     expect(header().getAttribute('aria-checked')).toBe('false')
-    act(() => header().click())
+    await act(async () => header().click())
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenLastCalledWith(
       'ensembl',
       true

@@ -80,7 +80,9 @@ const {
   const sendAppContinuation = vi.fn().mockResolvedValue(undefined)
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
   const AcpRuntimeMock = vi.fn().mockImplementation(function (options: AcpRuntimeOptions) {
+    let turnSequence = 0
     return {
+      connect: vi.fn().mockResolvedValue({}),
       createSession,
       cancelPrompt,
       compactSession,
@@ -102,6 +104,13 @@ const {
       sendPrompt: (request: AcpPromptRequest, promptAttemptId?: string) => {
         const prompting = sendPrompt(request, promptAttemptId)
         return Promise.resolve(prompting).then((result) => {
+          // The production runtime publishes the exact prompt start once the Session turn is
+          // admitted; interactive admission acknowledges nothing before that point.
+          options.callbacks?.onPromptStarted?.(
+            request.sessionId,
+            `turn-${++turnSequence}`,
+            promptAttemptId
+          )
           options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
           return result
         })
@@ -1509,6 +1518,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
         {
           sessionId: 'session-1',
           text: 'Plot the curve',
+          permissionPrompts: 'none',
           suppressUserMessage: true,
           continuation: {
             kind: 'specialist-handoff',
@@ -1524,6 +1534,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     expect(trackPrompt).toHaveBeenCalledWith({
       sessionId: 'session-1',
       text: 'Plot the curve',
+      permissionPrompts: undefined,
       continuation: undefined,
       suppressUserMessage: undefined,
       turnIntent: undefined,
@@ -1533,6 +1544,7 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
       expect.objectContaining({
         sessionId: 'session-1',
         text: 'Plot the curve',
+        permissionPrompts: undefined,
         continuation: undefined,
         suppressUserMessage: undefined
       }),

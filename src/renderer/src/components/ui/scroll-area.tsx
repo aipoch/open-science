@@ -16,7 +16,7 @@ function ScrollArea({
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
-      className={cn('relative', className)}
+      className={cn('scrollbar-auto-hide relative', className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
@@ -28,7 +28,9 @@ function ScrollArea({
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      {/* Keep Radix's outer hover Presence mounted for keyboard focus. Its nested Auto
+          scrollbar still checks overflow; the Thumb has a separate, unset forceMount prop. */}
+      <ScrollBar forceMount />
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

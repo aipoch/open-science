@@ -188,6 +188,7 @@ import type {
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import type { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import type { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 import { composeAcpRuntimeProviderSessionOwners } from './runtime-provider-session-composition'
@@ -218,6 +219,8 @@ export type AcpRuntimeCallbacks = {
 }
 
 type AcpRuntimeOptions = {
+  classifySkills?: import('../../shared/classification').ClassifySkills
+  classifyReadingRoute?: import('../../shared/classification').ClassifyReadingRoute
   hasPendingCredentialRequest?: (sessionId: string) => boolean
   appVersion: string
   defaultCwd: string
@@ -243,6 +246,7 @@ type AcpRuntimeOptions = {
     systemPromptAppends: string[]
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
+  runtimeSessions?: RuntimeSessionOwner
   uploads?: AcpRuntimeUploadOptions
   // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
@@ -1008,6 +1012,11 @@ class AcpRuntime {
     })
   }
 
+  getPermissionPrompts(sessionId: string): 'none' | undefined {
+    const interaction = this.sessionInteractions.current(sessionId)
+    return interaction?.kind === 'prompt' ? interaction.permissionPrompts : undefined
+  }
+
   callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
     return this.sessionPlanWorkflow.call(input)
   }
@@ -1734,7 +1743,8 @@ class AcpRuntime {
   async sendPrompt(
     request: AcpPromptRequest,
     promptAttemptId?: string,
-    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
+    onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>,
+    runtimeReviewOwner: 'task' | 'renderer' = 'renderer'
   ): Promise<PromptResponse> {
     if (
       request.referencedArtifacts?.some(
@@ -1749,7 +1759,8 @@ class AcpRuntime {
         request,
         {
           kind: 'user',
-          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+          ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
+          runtimeReviewOwner
         },
         onPromptAdmitted
       )
@@ -1787,7 +1798,8 @@ class AcpRuntime {
   async sendAppContinuation(
     request: AcpPromptRequest,
     promptAttemptId?: string,
-    planDelivery?: Readonly<{ projectId: string; commandId: string }>
+    planDelivery?: Readonly<{ projectId: string; commandId: string }>,
+    delegatedMessageId?: string
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
@@ -1795,7 +1807,8 @@ class AcpRuntime {
       this.runPromptTurn(request, {
         kind: 'app-continuation',
         ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
-        ...(planDelivery ? { planDelivery } : {})
+        ...(planDelivery ? { planDelivery } : {}),
+        ...(delegatedMessageId ? { delegatedMessageId } : {})
       })
     )
   }
@@ -1803,7 +1816,11 @@ class AcpRuntime {
   private runPromptTurn(
     request: AcpPromptRequest,
     intent:
-      | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+      | Readonly<{
+          kind: 'user'
+          promptAttemptId?: string
+          runtimeReviewOwner?: 'task' | 'renderer'
+        }>
       | Readonly<{
           kind: 'application'
           attribution: MessageAttribution
@@ -1813,6 +1830,7 @@ class AcpRuntime {
           kind: 'app-continuation'
           promptAttemptId?: string
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
+          delegatedMessageId?: string
         }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
@@ -1830,12 +1848,14 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    const cancelPromptRequest = this.promptTurnWorkflow.captureCancellation(request.sessionId)
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
     const cancelPlanInteraction = this.sessionPlanWorkflow.capturePromptCancellation(
       request.sessionId
     )
-    const interactionInFlight = this.sessionInteractions.current(request.sessionId) !== undefined
+    const interactionInFlight =
+      this.sessionInteractions.has(request.sessionId) || !!cancelPromptRequest
     const durablePermission = this.durablePermissionContinuations?.get(request.sessionId)
     if (durablePermission) durablePermission.cancellationRequested = true
     const continuationWasPending = this.appContinuations.get(request.sessionId) !== undefined
@@ -1880,6 +1900,19 @@ class AcpRuntime {
     }
 
     let cancellationAccepted = false
+    const onAccepted = (): void => {
+      cancellationAccepted = true
+      cancelPromptRequest?.()
+      cancelPlanInteraction()
+      this.cancelPermissionFlowForSession(request.sessionId)
+      this.pushEvent({
+        kind: 'system',
+        level: 'warning',
+        sessionId: request.sessionId,
+        title: 'Prompt cancellation requested'
+      })
+      this.emitState()
+    }
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
         sessionId: request.sessionId,
@@ -1887,18 +1920,7 @@ class AcpRuntime {
           connection.agent.notify(acp.methods.agent.session.cancel, {
             sessionId: activeSession.sessionId
           }),
-        onAccepted: () => {
-          cancellationAccepted = true
-          cancelPlanInteraction()
-          this.cancelPermissionFlowForSession(request.sessionId)
-          this.pushEvent({
-            kind: 'system',
-            level: 'warning',
-            sessionId: request.sessionId,
-            title: 'Prompt cancellation requested'
-          })
-          this.emitState()
-        },
+        onAccepted,
         onTimeout: () => {
           this.pushEvent({
             kind: 'error',
@@ -1910,6 +1932,8 @@ class AcpRuntime {
           void this.disconnect()
         }
       })
+    } else if (cancelPromptRequest) {
+      onAccepted()
     }
     if (cancellationAccepted) {
       await this.settleCancelledDurablePermissionContinuation(request.sessionId)
@@ -1961,6 +1985,9 @@ class AcpRuntime {
         request: {
           sessionId: permissionRequest.sessionId,
           text: PERMISSION_DENIED_CONTINUATION_TEXT,
+          ...(promptInteraction.permissionPrompts
+            ? { permissionPrompts: promptInteraction.permissionPrompts }
+            : {}),
           ...(promptInteraction.memoryEnabled !== undefined
             ? { memoryEnabled: promptInteraction.memoryEnabled }
             : {}),
@@ -2210,7 +2237,19 @@ class AcpRuntime {
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
           request: continuation,
-          condition: 'always'
+          condition: 'always',
+          onUnaccepted: async () => {
+            const promptMessageId = resolution.request.durable?.promptMessageId
+            if (!promptMessageId) return
+            await this.options.runtimeSessions?.flush(resolution.request.sessionId, promptMessageId)
+            await this.durableContinuationContext.rearmElicitation({
+              projectId: this.sessionEnvironment.projectId(resolution.request.sessionId),
+              sessionId: resolution.request.sessionId,
+              promptMessageId,
+              requestId: resolution.request.requestId,
+              toolCallId: resolution.request.toolCallId
+            })
+          }
         })
         this.schedulePendingAppContinuation(resolution.request.sessionId)
       }
@@ -2223,6 +2262,7 @@ class AcpRuntime {
     const request = sanitizeAgentUserChoiceRequest(input)
     if (!request) throw new Error('Invalid user choice request.')
     if (!this.activeSessionFor(request.sessionId)) return { action: 'cancelled' }
+    if (this.getPermissionPrompts(request.sessionId) === 'none') return { action: 'cancelled' }
 
     const pendingChoice = this.elicitationOwner
       .getPendingRequests()
@@ -2258,6 +2298,12 @@ class AcpRuntime {
       })
       const appended = this.elicitationOwner.appendDetached(pendingChoice.requestId, fields)
       if (!appended) return { action: 'cancelled' }
+      if (appended.durable?.promptMessageId) {
+        await this.options.runtimeSessions?.flush(
+          request.sessionId,
+          appended.durable.promptMessageId
+        )
+      }
       return { action: 'pending' }
     }
 
@@ -2313,6 +2359,11 @@ class AcpRuntime {
     )
 
     if (!pending) return { action: 'cancelled' }
+    // The tool must not acknowledge a durable question while its only copy is in the
+    // streaming batch. A restart immediately after the tool returns must retain the card.
+    if (pending.durable?.promptMessageId) {
+      await this.options.runtimeSessions?.flush(request.sessionId, pending.durable.promptMessageId)
+    }
     const referencedSessions = this.handoffContinuity.copyReferencedSessions(request.sessionId)
     if (
       promptInteraction?.kind === 'prompt' &&
@@ -2666,6 +2717,7 @@ class AcpRuntime {
   }
 
   private parkArtifactPublicationContinuation(input: {
+    permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
     provenanceContext?: AcpPromptRequest['provenanceContext']
     files: readonly NotebookWorkingFile[]
@@ -2678,6 +2730,7 @@ class AcpRuntime {
       request: {
         sessionId: input.sessionId,
         text: artifactPublicationContinuationText(input.files, toolName),
+        permissionPrompts: input.permissionPrompts,
         suppressUserMessage: true,
         ...(input.provenanceContext ? { provenanceContext: input.provenanceContext } : {})
       }
@@ -2715,6 +2768,19 @@ class AcpRuntime {
       })
       this.emitState()
     } finally {
+      if (continuation.onUnaccepted) {
+        try {
+          await continuation.onUnaccepted()
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not restore the unanswered question',
+            text: errorMessage(error)
+          })
+        }
+      }
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
       const durablePlan = this.durablePlanDeliveries?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)

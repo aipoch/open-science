@@ -39,6 +39,7 @@ import type {
   RunNotebookCellRequest,
   ShellRuntimeBinding
 } from '../../shared/notebook'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { publishUserFile } from '../user-file-publisher'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
 import {
@@ -259,6 +260,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
+  // Callback to fetch currently granted external folder roots. Production wires the
+  // GrantedLocalRootsRepository; tests can inject an in-memory list or omit for empty-list default.
+  getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
   // Immutable shell capability selected before execution. Later switching creates a fresh service /
   // capability; an in-flight Run never re-reads Settings.
   shellRuntimeBinding?: ShellRuntimeBinding
@@ -725,13 +729,14 @@ class NotebookRuntimeService {
           ...(interpreter ? { interpreter } : {})
         }),
       sourceFileAccessContext: (session, run) =>
-        (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+        (run.kernelKind === 'python' || run.kernelKind === 'r' || run.kernelKind === 'repl') &&
         run.kernelEpochId &&
         this.dependencyAnalyzer.sourceFileAccessContext
           ? this.dependencyAnalyzer.sourceFileAccessContext({
               projectId: session.projectId,
               sessionId: session.sessionId,
               currentRunId: run.runId,
+              includeManagedEnvironment: true,
               language: run.kernelKind,
               environment: run.environment,
               kernelEpochId: run.kernelEpochId
@@ -748,7 +753,8 @@ class NotebookRuntimeService {
           options.processSandbox,
           this.shellProcessOwnership
         ),
-      shellConcurrencyLimit: options.shellConcurrencyLimit
+      shellConcurrencyLimit: options.shellConcurrencyLimit,
+      getGrantedLocalRoots: options.getGrantedLocalRoots
     })
   }
 

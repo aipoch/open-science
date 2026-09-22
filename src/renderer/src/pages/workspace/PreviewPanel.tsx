@@ -61,10 +61,12 @@ type PreviewPanelSurfaceProps = PreviewInteractionPort & {
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
 const PreviewActiveContent = ({
   item,
+  isActive = true,
   restoredPlanResponder,
   ...annotationPort
 }: {
   item: PreviewItem | undefined
+  isActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
 } & PreviewAnnotationPort): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -81,7 +83,13 @@ const PreviewActiveContent = ({
     return <SideChatWorkbenchContent item={item} />
 
   if (item.type === 'tool') {
-    return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
+    return (
+      <PreviewToolContent
+        item={item}
+        isActive={isActive}
+        restoredPlanResponder={restoredPlanResponder}
+      />
+    )
   }
 
   if (item.type === 'source') return <SourceWebPreview item={item} />
@@ -415,7 +423,15 @@ const PreviewTabBar = ({
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
 }): React.JSX.Element => {
-  const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
+  const tabListFadeRef = useHorizontalScrollFade<HTMLDivElement>()
+  const tabListRef = useRef<HTMLDivElement | null>(null)
+  const attachTabListRef = useCallback(
+    (node: HTMLDivElement | null): void => {
+      tabListRef.current = node
+      tabListFadeRef(node)
+    },
+    [tabListFadeRef]
+  )
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
   const { t } = useTranslation()
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -490,7 +506,7 @@ const PreviewTabBar = ({
 
   return (
     <div
-      ref={tabListRef}
+      ref={attachTabListRef}
       role="tablist"
       aria-label={t('Open previews')}
       aria-orientation="horizontal"
@@ -753,10 +769,14 @@ const PreviewToolPanel = ({
             ? dialogPanelClassName(
                 'z-[56] flex h-[90vh] w-[90vw] max-w-none min-h-0 flex-col overflow-hidden overscroll-contain p-0'
               )
-            : 'h-full min-h-0 w-full overflow-y-auto'
+            : 'scrollbar-auto-hide h-full min-h-0 w-full overflow-y-auto'
         }
       >
-        <PreviewActiveContent item={item} restoredPlanResponder={restoredPlanResponder} />
+        <PreviewActiveContent
+          item={item}
+          isActive={isActive}
+          restoredPlanResponder={restoredPlanResponder}
+        />
       </section>
     </>
   )

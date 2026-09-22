@@ -632,6 +632,7 @@ const MemoryList = ({
               })}
               <button
                 type="button"
+                data-settings-anchor="memory.new-category"
                 disabled={customCount >= MEMORY_CUSTOM_CATEGORY_LIMIT}
                 className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                 onClick={() => onNavigate({ kind: 'create' })}

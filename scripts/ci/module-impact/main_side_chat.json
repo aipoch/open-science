@@ -7,7 +7,8 @@
     "src/main/side-chat/main-prompt-relay.test.ts",
     "src/main/side-chat/main-prompt-relay.ts",
     "src/main/side-chat/runtime-owner.test.ts",
-    "src/main/side-chat/runtime-owner.ts"
+    "src/main/side-chat/runtime-owner.ts",
+    "src/main/side-chat/session-lifetime.test.ts"
   ],
   "interfacePaths": [
     "src/main/side-chat/host-message-mcp-server.ts",
@@ -21,7 +22,8 @@
       "src/main/side-chat/host-message-mcp-server.test.ts",
       "src/main/side-chat/ipc.test.ts",
       "src/main/side-chat/main-prompt-relay.test.ts",
-      "src/main/side-chat/runtime-owner.test.ts"
+      "src/main/side-chat/runtime-owner.test.ts",
+      "src/main/side-chat/session-lifetime.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

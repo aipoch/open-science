@@ -13,6 +13,16 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('installs bulk browser revocation on every renderer with caller authorization in the owner', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'remoteAccess.revokeBrowsers'
+      )
+    ).toMatchObject({
+      surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' }
+    })
+    expect(WEB_INVOKE_CHANNELS['remoteAccess.revokeBrowsers']).toBe('remote-access:revoke-browsers')
+  })
   it('registers all four local model methods across the intended surfaces', () => {
     const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
     expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([
@@ -482,6 +492,8 @@ describe('renderer contract catalog', () => {
       'bookmarks.list',
       'bookmarks.resolvePdfSource',
       'bookmarks.updateNote',
+      'lifecycle.claimRuntimeWriter',
+      'literature.cancelPdfImport',
       'literature.citationStyles',
       'literature.completeMetadata',
       'literature.exportRecord',
@@ -505,6 +517,12 @@ describe('renderer contract catalog', () => {
       'memory.snapshot',
       'memory.updateCategory',
       'memory.updateEntry',
+      'pdfAnnotations.cancelImport',
+      'pdfAnnotations.create',
+      'pdfAnnotations.delete',
+      'pdfAnnotations.importNative',
+      'pdfAnnotations.list',
+      'pdfAnnotations.update',
       'pdfStructure.cancel',
       'pdfStructure.clearCache',
       'pdfStructure.parse',
@@ -518,12 +536,15 @@ describe('renderer contract catalog', () => {
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
+      'sessions.cancelDiagnostics',
       'sessions.deleteSession',
       'sessions.editDetails',
+      'sessions.exportDiagnostics',
       'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
       'sessions.fork',
       'sessions.importPackage',
+      'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.packageOperation',
       'sessions.setDelegationPolicy',
@@ -548,6 +569,8 @@ describe('renderer contract catalog', () => {
       'bookmarks:list',
       'bookmarks:resolve-pdf-source',
       'bookmarks:update-note',
+      'lifecycle:claim-runtime-writer',
+      'literature:cancel-pdf-import',
       'literature:citation-styles',
       'literature:complete-metadata',
       'literature:export-record',
@@ -571,6 +594,12 @@ describe('renderer contract catalog', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-annotations:cancel-import',
+      'pdf-annotations:create',
+      'pdf-annotations:delete',
+      'pdf-annotations:import-native',
+      'pdf-annotations:list',
+      'pdf-annotations:update',
       'pdf-structure:cancel',
       'pdf-structure:clear-cache',
       'pdf-structure:parse',
@@ -584,12 +613,15 @@ describe('renderer contract catalog', () => {
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'sessions:cancel-diagnostics',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-diagnostics',
       'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
       'sessions:fork',
       'sessions:import-package',
+      'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
       'sessions:set-delegation-policy',

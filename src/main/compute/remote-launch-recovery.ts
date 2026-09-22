@@ -1,4 +1,8 @@
-import { classifyConnectionFailure, type ComputeConnectionLease } from './connection-broker'
+import {
+  isConnectionStdoutTruncated,
+  classifyConnectionFailure,
+  type ComputeConnectionLease
+} from './connection-broker'
 import { quoteRemotePath } from './remote-path-security'
 
 import type { ComputeJob } from '../../shared/compute'
@@ -73,8 +77,7 @@ const buildRecoveryProbe = (workdir: string): string => {
     'workdir=$RECOVERY_EXPECTED_CWD',
     ...remoteJobPidOwnershipFunctionLines(),
     `case "$RECOVERY_PID" in '' ) echo cwd_match:0 ;; *[!0-9]*) echo cwd_match:unknown ;; *)`,
-    '  if ! kill -0 "$RECOVERY_PID" 2>/dev/null; then echo cwd_match:0',
-    '  else job_pid_is_owned "$RECOVERY_PID"; case $? in 0) echo cwd_match:1 ;; 1) echo cwd_match:0 ;; *) echo cwd_match:unknown ;; esac; fi',
+    '  job_pid_is_owned "$RECOVERY_PID"; case $? in 0) echo cwd_match:1 ;; 1|3) echo cwd_match:0 ;; *) echo cwd_match:unknown ;; esac',
     ';; esac',
     `RECOVERY_STARTED_AT=$(stat -c %Y ${quotedPidFile} 2>/dev/null || stat -f %m ${quotedPidFile} 2>/dev/null || true)`,
     `printf 'started_at:%s\n' "$RECOVERY_STARTED_AT"`
@@ -92,7 +95,7 @@ export const probeRemoteLaunch = async (
   })
   const connectionFailure = classifyConnectionFailure(result, false)
   if (connectionFailure) throw connectionFailure
-  if (result.exitCode !== 0 || result.truncated) return { kind: 'ambiguous' }
+  if (result.exitCode !== 0 || isConnectionStdoutTruncated(result)) return { kind: 'ambiguous' }
 
   const lines = result.stdout.trimEnd().split('\n')
   if ((lines.length !== 5 && lines.length !== 6) || lines[0] !== RECOVERY_PROTOCOL) {

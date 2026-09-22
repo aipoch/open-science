@@ -1,3 +1,6 @@
+import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
+import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
+import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
 import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
 import { PdfElementAgentReader } from './literature/pdf-structure/agent-reader'
@@ -37,6 +40,8 @@ import { registerApplicationCommandElectronAdapter } from './application-command
 import { isPathInsideWorkspace } from './acp/workspace-path'
 import { BookmarkRepository } from './bookmarks/repository'
 import { BookmarkService } from './bookmarks/service'
+import { PdfAnnotationRepository } from './pdf-annotations/repository'
+import { PdfAnnotationService } from './pdf-annotations/service'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 import type { JobSummary } from '../shared/compute'
@@ -66,7 +71,8 @@ import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
-  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
+  MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID,
+  MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
 import { parseLiteratureAttachmentVersionReference } from '../shared/literature'
 
@@ -176,7 +182,7 @@ import {
   buildConnectorCredentialRequestBroadcast,
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
-import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
+import { createLogger, diagnosticErrorFields, errorLogFields, getLogFilePath } from './logger'
 import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
 import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
@@ -301,6 +307,7 @@ import { linkPdfContextWithCapability } from './session-persistence/pdf-context-
 import { LiteratureDocumentReader } from './literature/document-reader'
 import { SessionDeletionOwner } from './session-deletion/owner'
 import { buildSessionDetailsUserPrompt, createSessionDetailsOwner } from './session-details/owner'
+import { selectSessionDetailsStartupCandidates } from './session-details/startup-catalog'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL } from './settings/ipc'
 import { createCoreElectronSurfaces } from './ipc-surfaces/core'
@@ -613,7 +620,7 @@ const createApplicationModules = async (
   const notebookPolicyLog = createLogger('notebook:policy')
   const shutdownNotebooksBeforePolicyChange = async (
     trigger: 'ca-bundle' | 'granted-roots'
-  ): Promise<void> => {
+  ): Promise<{ reaped: boolean }> => {
     const operation = startDiagnosticOperation(notebookPolicyLog, {
       operation: 'notebook-policy-shutdown',
       fields: { trigger }
@@ -626,6 +633,7 @@ const createApplicationModules = async (
     try {
       const result = await notebookPolicyLifecycle.current.shutdownAll()
       operation.complete({ reaped: result.reaped })
+      return result
     } catch (error) {
       operation.fail(error)
       throw error
@@ -757,7 +765,9 @@ const createApplicationModules = async (
       applyPackageMirror: async () => {
         await notebookNetworkSandbox.updateTrustBundle()
       },
-      beforePackageMirrorCaBundleChange: () => shutdownNotebooksBeforePolicyChange('ca-bundle'),
+      beforePackageMirrorCaBundleChange: async () => {
+        await shutdownNotebooksBeforePolicyChange('ca-bundle')
+      },
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
@@ -866,7 +876,26 @@ const createApplicationModules = async (
 
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
-  const uploadRepository = createDefaultUploadRepository()
+  const pdfUploadImporter: { current?: PdfAnnotationService } = {}
+  const uploadRepository = createDefaultUploadRepository((projectId, sessionId, attachments) => {
+    for (const attachment of attachments) {
+      if (!attachment.versionId || !attachment.originalName.toLowerCase().endsWith('.pdf')) continue
+      // Enrichment starts after publication. Do not await it while the upload caller still owns
+      // the Session mutation barrier; the annotation service acquires that barrier itself.
+      void pdfUploadImporter.current
+        ?.importNative({
+          operationId: crypto.randomUUID(),
+          projectId,
+          sessionId,
+          sourceKind: 'upload-version',
+          sourceFileId: attachment.id,
+          versionId: attachment.versionId
+        })
+        .catch((error) =>
+          storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
+        )
+    }
+  })
   await runDataRootStartupRecovery(() => uploadRepository.recoverStagingUploads(), {
     reportFailure: (error) => {
       // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
@@ -1136,6 +1165,22 @@ const createApplicationModules = async (
       })
     }
   }
+  const sessionDiagnosticsDesktop = await modules.add(undefined, () => {
+    const owner = createSessionDiagnosticsDesktop({
+      createWorker: createDiagnosticsWorker,
+      resolveSources: () => ({
+        dataRoot: resolveDataRoot(),
+        configRoot: resolveConfigRoot(),
+        logPath: getLogFilePath(),
+        appVersion: app.getVersion()
+      }),
+      chooseDestination: async (defaultName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+        return result.canceled ? undefined : result.filePath
+      }
+    })
+    return { name: 'session-diagnostics', capability: owner, dispose: () => owner.close() }
+  })
   const projectRepository = createDefaultProjectRepository()
   const sessionPackageDesktopLifecycle = {
     close: async (): Promise<void> => undefined,
@@ -1481,6 +1526,13 @@ const createApplicationModules = async (
         })
         return
       }
+      if (owner === 'runtime-transcript') {
+        broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+          session,
+          originClientId: MAIN_RUNTIME_TRANSCRIPT_LIFECYCLE_CLIENT_ID
+        })
+        return
+      }
       delegatedActivity.recordSession(session)
       broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
         session,
@@ -1524,6 +1576,39 @@ const createApplicationModules = async (
       }
     }
   })
+  const pdfAnnotationTagEvents: { notify?: () => Promise<void> } = {}
+  const pdfAnnotationRepository = new PdfAnnotationRepository(
+    () => getProjectDbClient(resolveConfigRoot()),
+    async (event, tagsChanged) => {
+      if (event) applicationEvents.publish('pdf-annotations:changed', event)
+      if (tagsChanged) await pdfAnnotationTagEvents.notify?.()
+    }
+  )
+  const pdfAnnotationService = new PdfAnnotationService({
+    literature: literatureAttachmentAuthority,
+    repository: pdfAnnotationRepository,
+    sessions: sessionRepository,
+    runWithSessionAuthority: (projectId, sessionId, operation) =>
+      sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, operation),
+    resolveSessionPdfVersion: (request) =>
+      sessionPdfSourceResolver.resolveVersion({
+        projectId: request.projectId,
+        sourceKind: request.sourceKind,
+        sourceVersionId: request.versionId,
+        expectedSourceFileId: request.sourceFileId
+      }),
+    onNativeImportProgress: (progress) =>
+      applicationEvents.publish('pdf-annotations:import-progress', progress)
+  })
+  pdfUploadImporter.current = pdfAnnotationService
+  await modules.add(undefined, () => ({
+    name: 'pdf-native-annotation-imports',
+    capability: undefined,
+    dispose: async () => {
+      pdfUploadImporter.current = undefined
+      await pdfAnnotationService.dispose()
+    }
+  }))
   const sessionPdfContextOwner = new SessionPdfContextOwner({
     sources: sessionPdfSourceResolver,
     pendingUploads: {
@@ -1602,14 +1687,7 @@ const createApplicationModules = async (
         return runtime.hasPendingSideChatInteraction(parentSessionId) ? 'waiting' : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
-    },
-    appendRelay: ({ projectId, parentSessionId, sideChatId, relay }) =>
-      sessionPersistenceCoordinator.appendSideChatRelay({
-        projectId,
-        sessionId: parentSessionId,
-        sideChatId,
-        relay
-      })
+    }
   })
   const mainPromptSideChatRelay = createMainPromptSideChatRelay({
     relay: sideChatRelay,
@@ -1842,6 +1920,9 @@ const createApplicationModules = async (
     sessionLoader: sessionPersistenceCoordinator
   })
   const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
+  // Consume only during composition, before client adapters are installed. Keep just details
+  // recovery candidates, not a long-lived cache of every historical transcript.
+  let startupSessionDetails: LoadAllSessionsResult['sessions'] | undefined
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
   let wslSetupSessionsReconciliation: Promise<void> | undefined
   const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
@@ -2008,6 +2089,7 @@ const createApplicationModules = async (
       translate,
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
       processSandbox: notebookNetworkSandbox,
+      getGrantedLocalRoots: () => grantedRootsRepository.list(),
       onBackgroundRunTerminal: (source) =>
         backgroundResultDelivery.enqueue(source).then(() => undefined),
       onBackgroundRunAdmitted: (source) =>
@@ -2071,6 +2153,8 @@ const createApplicationModules = async (
       listConnectors: () => settingsService.listConnectors(),
       listSpecialists: async () =>
         (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer'),
+      listPdfAnnotations: async () =>
+        (await getProjectDbClient(configRoot)).pdfAnnotation.findMany({ select: { id: true } }),
       listLiteratureItems: async () => {
         const database = await getProjectDbClient(configRoot)
         return database.literatureItem.findMany({
@@ -2078,8 +2162,10 @@ const createApplicationModules = async (
         })
       }
     }),
-    applicationEvents
+    applicationEvents,
+    (request) => pdfAnnotationService.setTagAssignment(request)
   )
+  pdfAnnotationTagEvents.notify = () => tagService.notifyAssignmentsChanged()
   const memoryService = new MemoryService(
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
@@ -2132,7 +2218,10 @@ const createApplicationModules = async (
   const literaturePdfImporter = new LiteraturePdfImporter({
     uploads: uploadRepository,
     content: contentRepository,
-    catalog: literatureCatalog
+    catalog: literatureCatalog,
+    annotations: pdfAnnotationRepository,
+    onNativeImportProgress: (progress) =>
+      applicationEvents.publish('pdf-annotations:import-progress', progress)
   })
   const literaturePdfAcquisition = new AgentPdfAcquisition({
     catalog: literatureCatalog,
@@ -2761,6 +2850,7 @@ const createApplicationModules = async (
     current?: ReturnType<typeof createProductionDelegatedWorkComposition>
   } = {}
   const delegatedWork = createProductionDelegatedWorkComposition({
+    resolvePermissionPrompts: (sessionId) => runtimeRef.current?.getPermissionPrompts(sessionId),
     dataRoot: resolveDataRoot(),
     resolveExecutionModel: async (session) => {
       if (!session.agentFrameworkId) {
@@ -2949,12 +3039,6 @@ const createApplicationModules = async (
                     agentConfiguration: toSessionAgentConfiguration(agentTarget)
                   })
                 }
-                const started = await delivery.startDispatch()
-                if (started !== 'started') {
-                  throw new DelegateMessageParkedError(
-                    'Parent message dispatch fence was not acquired.'
-                  )
-                }
                 if (!runtime.hasLiveSession(latest.projectId, latest.id) || agentTarget) {
                   await runtime.resumeSession({
                     sessionId: latest.id,
@@ -2981,7 +3065,14 @@ const createApplicationModules = async (
                     ...(agentTarget ? { agentTarget } : {})
                   })
                 }
-              }
+                const started = await delivery.startDispatch()
+                if (started !== 'started') {
+                  throw new DelegateMessageParkedError(
+                    'Parent message dispatch fence was not acquired.'
+                  )
+                }
+              },
+              delivery.messageId
             )
           }
         )
@@ -3371,6 +3462,11 @@ const createApplicationModules = async (
       initializationBarrier: initialConnectorSkillsReady,
       specialistService,
       sessionPersistenceCoordinator,
+      finalizeRuntimeArtifacts: async (request) => {
+        const handlers = artifactHandlersRef.current
+        if (!handlers) throw new Error('Artifact finalization is not initialized.')
+        return handlers.finalizeRunArtifacts(request)
+      },
       literatureReader: literatureDocumentReader,
       pdfElementReader,
       literatureAttachments: literatureAttachmentAuthority,
@@ -3382,6 +3478,8 @@ const createApplicationModules = async (
         credentialRequestBroker.hasPendingForSession(sessionId),
       imageInputCompatibility,
       memory: memoryService,
+      classifySkills: settingsService.classification.selectSkills,
+      classifyReadingRoute: settingsService.classification.selectReadingRoute,
       auxiliaryUsage: {
         projectIdForSession: (sessionId) =>
           sessionPersistenceCoordinator.sessionProjectId(sessionId),
@@ -3462,20 +3560,6 @@ const createApplicationModules = async (
       relay: sideChatRelay,
       deliverRelay: (parentSessionId, queued) =>
         mainPromptSideChatRelay.tryInject(parentSessionId, queued),
-      persistence: {
-        save: ({ projectId, parentSessionId, sideChat }) =>
-          sessionPersistenceCoordinator.saveSideChatProjection({
-            projectId,
-            sessionId: parentSessionId,
-            sideChat
-          }),
-        clear: ({ projectId, parentSessionId, sideChatId }) =>
-          sessionPersistenceCoordinator.clearSideChat({
-            projectId,
-            sessionId: parentSessionId,
-            sideChatId
-          })
-      },
       recordUsage: recordAuxiliaryUsage,
       onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     } satisfies ConstructorParameters<typeof SideChatRuntimeOwner>[0],
@@ -3511,20 +3595,14 @@ const createApplicationModules = async (
       }
     }
   })
-  try {
-    const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
-    sideChatRuntime.hydrate(persistedSideChats.sideChats)
-    sideChatRelay.hydrate(persistedSideChats.relays)
-    await sideChatRuntime.sweepStaleProfiles(
-      new Set(persistedSideChats.sideChats.map(({ sideChat }) => sideChat.id)),
-      persistedSideChats.isComplete
-    )
-  } catch (error) {
-    sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
-  }
+  // Side chats and undelivered advisories belong to this application run only. Never scan
+  // Session JSON to recover them. Profile cleanup is independent of startup readiness.
+  void sideChatRuntime.sweepStaleProfiles().catch((error) => {
+    sideChatLog.warn('temporary Side chat profile cleanup failed', diagnosticErrorFields(error))
+  })
   composition.phase('side-chat')
   // Start the JobPoller wired to the shared broadcaster only after Project runtime quiescence and
-  // Side Chat recovery are available. Queue startup loads the Session catalog, which may first need
+  // Side Chat ownership are available. Queue startup loads the Session catalog, which may first need
   // to finish a pending Project deletion through those owners before restoring concurrency limits.
   await modules.add(
     {
@@ -3561,6 +3639,7 @@ const createApplicationModules = async (
         name: 'compute-job-runtime',
         capability: undefined,
         start: async () => {
+          composition.phase('compute-file-evidence')
           try {
             const owners = await jobRepository.listOwners()
             const jobs = (
@@ -3604,6 +3683,7 @@ const createApplicationModules = async (
               diagnosticErrorFields(error)
             )
           }
+          composition.phase('compute-result-delivery')
           try {
             await computeJobResultDelivery.takeOver(
               await computeIpcModule.handlers.jobsList({ nonTerminal: true })
@@ -3624,14 +3704,19 @@ const createApplicationModules = async (
           }
           // Catalog hydration also restores non-Compute projections and enabled Host selections.
           // Keep those startup effects, but never make dispatch depend on catalog completeness.
+          composition.phase('session-catalog')
           await Promise.all([
             jobPoller.start(),
-            loadAllSessions().catch((error) => {
-              createLogger('session-persistence').warn(
-                'Startup Session hydration failed',
-                errorLogFields(error)
-              )
-            })
+            loadAllSessions()
+              .then((catalog) => {
+                startupSessionDetails = selectSessionDetailsStartupCandidates(catalog)
+              })
+              .catch((error) => {
+                createLogger('session-persistence').warn(
+                  'Startup Session hydration failed',
+                  errorLogFields(error)
+                )
+              })
           ])
         },
         disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
@@ -3639,6 +3724,7 @@ const createApplicationModules = async (
       }
     }
   )
+  composition.phase('compute-runtime-ready')
   // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
   // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
   // durable barrier restoration above still runs early enough to block admission during startup.
@@ -3735,7 +3821,11 @@ const createApplicationModules = async (
     createSessionWorkflow,
     taskNotifications,
     archiveCoordinator,
-    sessionRepository,
+    {
+      loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
+      prepareRuntimeResume: (projectId, sessionId) =>
+        sessionPersistenceCoordinator.prepareRuntimeResume(projectId, sessionId)
+    },
     (sessionId) => {
       if (sideChatRuntime.hasForParent(sessionId)) {
         throw new Error('Close Side chat before saving this conversation as a Skill.')
@@ -4194,7 +4284,11 @@ const createApplicationModules = async (
             .catch((error) =>
               log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
             )
-          await owner.start()
+          composition.phase('session-details-recovery')
+          const candidates = startupSessionDetails
+          startupSessionDetails = undefined
+          await owner.start(candidates)
+          composition.phase('session-details-ready')
         },
         dispose: async () => {
           await owner.shutdown()
@@ -4471,6 +4565,29 @@ const createApplicationModules = async (
     )
   )
   const artifactHandlers = createArtifactHandlers(artifactRepository, artifactRunRegistry, {
+    onPublished: (artifacts) => {
+      for (const artifact of artifacts) {
+        if (
+          !artifact.projectId ||
+          !artifact.artifactId ||
+          !artifact.versionId ||
+          !(artifact.mimeType === 'application/pdf' || artifact.name.toLowerCase().endsWith('.pdf'))
+        )
+          continue
+        void pdfAnnotationService
+          .importNative({
+            operationId: crypto.randomUUID(),
+            projectId: artifact.projectId,
+            sessionId: artifact.sessionId,
+            sourceKind: 'artifact-version',
+            sourceFileId: artifact.artifactId,
+            versionId: artifact.versionId
+          })
+          .catch((error) =>
+            storageLog.warn('Native PDF annotation import failed', errorLogFields(error))
+          )
+      }
+    },
     provenance: artifactProvenanceRepository,
     openLatestManagedFile: (request) =>
       managedFileVersionService.openLatest({
@@ -4527,8 +4644,14 @@ const createApplicationModules = async (
         )
     }
   })
+  const runtimeWriter = new RuntimeWriterOwner(undefined, undefined, (clientId) => {
+    if (!clientId.startsWith('electron:')) return undefined
+    const sender = webContents.fromId(Number(clientId.slice('electron:'.length)))
+    return Boolean(sender && !sender.isDestroyed() && !sender.isCrashed())
+  })
   surfaceAdapters.push(
     createSessionPersistenceElectronSurface({
+      runtimeWriter,
       sessionPersistenceBackend,
       reviewRepository,
       sessionPersistenceHandlers,
@@ -4641,6 +4764,18 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     pagedContentResolver: createReviewerElectronPagedContentResolver(previewResources),
     resolveSessionAgentTarget,
+    // Reviewer reads transcripts but never owns them. Injecting the composed owner keeps those
+    // reads on its scheduler and projection instead of a second SessionRepository over the same
+    // tree, whose corrupt-file recovery would rename live files outside this write lane.
+    sessionReader: {
+      loadSession: (projectId: string, sessionId: string) =>
+        sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId),
+      findSessionById: async (sessionId: string) => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+        if (!projectId) return undefined
+        return sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
+      }
+    },
     saveSessionAgentConfiguration: (
       session: PersistedChatSession,
       configuration: SessionAgentConfiguration
@@ -4676,6 +4811,7 @@ const createApplicationModules = async (
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
     specialist: specialistApplicationOwner,
     bookmarks: bookmarkService,
+    pdfAnnotations: pdfAnnotationService,
     acp: {
       runtime,
       workflows: acpHandlerWorkflows,
@@ -4851,7 +4987,8 @@ const createApplicationModules = async (
       exportRecord: (request) => literatureCatalog.exportRecord(request),
       get: (itemId) => literatureCatalog.get(itemId),
       sources: (itemId) => literatureCatalog.sources(itemId),
-      importPdf: (request) => literaturePdfImporter.import(request),
+      importPdf: (request, signal) => literaturePdfImporter.import(request, signal),
+      cancelPdfImport: (request) => literaturePdfImporter.cancelImport(request.operationId),
       importRecords: async (request) => {
         const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
           request.content
@@ -4893,8 +5030,15 @@ const createApplicationModules = async (
       clearAll: () => memoryService.clearAll()
     },
     dataContent: {
+      runtimeWriter,
       artifacts: artifactHandlers,
       electron: {
+        inspectSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.inspect(invocation.args[0]),
+        exportSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.export(invocation.args[0]),
+        cancelSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.cancel(invocation.args[0]),
         sessionPackageOperation: async (invocation) =>
           sessionPackageDesktop.respond(invocation.args[0]),
         forkSession: (invocation) =>

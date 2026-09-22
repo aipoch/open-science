@@ -116,6 +116,7 @@ const resourceTypeLabel = (
   if (value === 'catalog.skill') return t('Skills')
   if (value === 'catalog.connector') return t('Connectors')
   if (value === 'literature.item') return t('References')
+  if (value === 'pdf.annotation') return t('PDF annotations')
   return t('Specialists')
 }
 
@@ -364,6 +365,7 @@ const TagsList = ({
   const { t } = useTranslation()
   const tags = useTagStore((state) => state.tags)
   const assignments = useTagStore((state) => state.assignments)
+  const pdfAnnotations = useTagStore((state) => state.pdfAnnotations)
   const status = useTagStore((state) => state.status)
   const error = useTagStore((state) => state.error)
   const deleteTag = useTagStore((state) => state.delete)
@@ -436,6 +438,12 @@ const TagsList = ({
   )
 
   const catalogLoads = {
+    'pdf.annotation': {
+      status: status === 'idle' ? 'loading' : status,
+      retry: () => {
+        void loadTags()
+      }
+    },
     'catalog.skill': useResourceCatalogLoad(loadSkills, skillsLoaded),
     'catalog.connector': useResourceCatalogLoad(loadConnectors, connectorsLoaded),
     'catalog.specialist': useResourceCatalogLoad(
@@ -542,9 +550,15 @@ const TagsList = ({
           title: specialist.displayName ?? specialist.name,
           subtitle: specialist.description.trim() || undefined
         })),
+      ...(pdfAnnotations ?? []).map((annotation) => ({
+        resourceType: 'pdf.annotation' as const,
+        resourceId: annotation.id,
+        title: annotation.name,
+        subtitle: annotation.note || t('Notes & Annotations')
+      })),
       ...literatureResources
     ],
-    [connectors, customServers, literatureResources, skills, specialistItems]
+    [connectors, customServers, literatureResources, skills, specialistItems, pdfAnnotations, t]
   )
   const resourcesByKey = new Map(
     resources.map((resource) => [`${resource.resourceType}:${resource.resourceId}`, resource])
@@ -568,7 +582,8 @@ const TagsList = ({
     'catalog.skill',
     'catalog.connector',
     'catalog.specialist',
-    'literature.item'
+    'literature.item',
+    'pdf.annotation'
   ]
   const typeCounts = new Map(
     resourceTypes.map((resourceType) => [
@@ -728,7 +743,7 @@ const TagsList = ({
             />
           }
           action={
-            <Button type="button" size="sm" onClick={onCreate}>
+            <Button type="button" size="sm" data-settings-anchor="tags.new" onClick={onCreate}>
               <Plus className="size-4" aria-hidden="true" />
               {t('New Tag')}
             </Button>
@@ -936,6 +951,9 @@ const TagsList = ({
                       <SelectItem value="literature.item">
                         {t('References')} ({typeCounts.get('literature.item') ?? 0})
                       </SelectItem>
+                      <SelectItem value="pdf.annotation">
+                        {t('PDF annotations')} ({typeCounts.get('pdf.annotation') ?? 0})
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -984,7 +1002,8 @@ const TagsList = ({
                           ? ScrollText
                           : resourceType === 'catalog.connector'
                             ? ConnectorsNavIcon
-                            : resourceType === 'literature.item'
+                            : resourceType === 'literature.item' ||
+                                resourceType === 'pdf.annotation'
                               ? BookOpenText
                               : Users
                       return (

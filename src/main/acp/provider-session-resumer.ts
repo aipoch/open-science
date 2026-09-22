@@ -614,6 +614,7 @@ export class AcpProviderSessionResumer {
         aggregate.setSpecialistPrefix(specialistProjection.identity?.prefix || undefined)
         aggregate.setSpecialistId(specialistId)
         capability.commit(request.sessionId)
+        capability.registerBridgeMcpSession?.(request.sessionId, resumedProviderSessionId)
         capability = undefined
         provisionalSession = undefined
         identity.release()

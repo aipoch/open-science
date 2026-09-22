@@ -61,6 +61,9 @@ export type ElicitationProjection = {
   draftAnswers?: ElicitationAnswer[]
   answers?: ElicitationAnswer[]
   respondedAt?: number
+  // Retain the decision until the provider acknowledges its continuation. Process loss or
+  // failed admission re-presents the question with its saved answer for an explicit retry.
+  continuationPending?: true
 }
 
 export type PendingElicitationRequest = {
@@ -683,6 +686,11 @@ export const sanitizeElicitationProjection = (
     ...(durable ? { durable } : {}),
     ...(state === 'pending' && draftAnswers && draftAnswers.length > 0 ? { draftAnswers } : {}),
     ...(answers && answers.length > 0 ? { answers } : {}),
-    ...(respondedAt !== undefined ? { respondedAt } : {})
+    ...(respondedAt !== undefined ? { respondedAt } : {}),
+    ...(durable &&
+    value.continuationPending === true &&
+    (state === 'answered' || state === 'declined')
+      ? { continuationPending: true as const }
+      : {})
   }
 }

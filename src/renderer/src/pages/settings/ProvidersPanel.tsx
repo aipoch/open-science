@@ -2,7 +2,6 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { Notice } from '@/components/notice'
 import type { TFunction } from 'i18next'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
@@ -38,7 +37,12 @@ import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
 import { ScenarioModelList } from './ScenarioModelList'
-import { SettingsField, SettingsRow, SettingsSection } from './SettingsLayout'
+import {
+  SettingsField,
+  SettingsRow,
+  SettingsSection,
+  SettingsListAddAction
+} from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
 import { localizeProviderResourceMessage } from './validation-message'
@@ -494,6 +498,7 @@ const ProvidersPanel = ({
           scenario model selectors below. The Model field needs at least one provider; the effort
           control is always visible. */}
       <SettingsSection
+        data-settings-anchor="model.main"
         title={t('Main model')}
         aria-label={t('Main model')}
         description={
@@ -580,14 +585,9 @@ const ProvidersPanel = ({
         ) : null}
         {/* The add action lives with the list: a dashed ghost row appended after the last provider,
             matching the Available-group placeholder treatment. */}
-        <button
-          type="button"
-          onClick={onCreateProvider}
-          className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground"
-        >
-          <Plus className="size-4" aria-hidden="true" />
+        <SettingsListAddAction data-settings-anchor="model.add-provider" onClick={onCreateProvider}>
           {t('Add provider')}
-        </button>
+        </SettingsListAddAction>
       </SettingsSection>
       {/* The Claude subscription's sign-in modal collects the pasted token. Closing it (without a
           successful paste) is a no-op for the store — the token only lands if the user confirms. */}

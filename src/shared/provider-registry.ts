@@ -187,7 +187,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
   {
     id: 'xai',
     label: 'xAI (Grok)',
-    // xAI documents four selectable effort values for Grok 4.6. Models with a different capability
+    // xAI documents four selectable effort values for Grok 4.6 and 4.7. Models with a different capability
     // override this default below; models without a documented effort control stay unsupported.
     reasoningEffort: 'low-medium-high-xhigh',
     // xAI serves OpenAI-compatible Chat Completions and native Responses from the same versioned
@@ -201,6 +201,8 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // audio, and video generation models, so exposing refresh would pollute the chat-model picker.
     // Experimental Grok 4.20 beta variants are intentionally omitted from the stable default list.
     models: [
+      // https://docs.x.ai/developers/grok-4-7
+      { id: 'grok-4.7', contextWindow: 500_000 },
       { id: 'grok-4.6', contextWindow: 500_000 },
       { id: 'grok-4.5', contextWindow: 500_000 },
       {
@@ -552,35 +554,50 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       }
     ],
     models: [
+      { id: 'step-5-preview', contextWindow: 1_000_000 },
       { id: 'step-3.7-flash', contextWindow: 262_144 },
       { id: 'step-3.5-flash', contextWindow: 262_144 }
     ],
-    // step-3.7-flash is multimodal (vision); step-3.5-flash is text-only.
-    multimodal: { multimodalModels: ['step-3.7-flash'] }
+    // Step 5 Preview and step-3.7-flash are multimodal; step-3.5-flash is text-only.
+    multimodal: { multimodalModels: ['step-5-preview', 'step-3.7-flash'] }
   },
   {
     id: 'stepplan',
     label: 'Step Plan',
     reasoningEffort: 'low-medium-high',
-    // StepFun's Step Plan is a quota-based subscription (platform.stepfun.com/plan-subscribe) that
-    // routes under `/step_plan` on the mainland-China host: Anthropic /v1/messages and the
-    // OpenAI-compatible /v1/chat/completions. `baseUrl` is the `/step_plan` root the Anthropic client
-    // appends /v1/messages to; `openaiBaseUrl` is the /step_plan/v1 base clients append
-    // /chat/completions to. Quota plans ship a fixed catalog and expose no live model list.
+    // StepFun's Step Plan is a quota-based subscription that routes under `/step_plan` on both the
+    // mainland-China and overseas hosts: Anthropic /v1/messages and the OpenAI-compatible
+    // /v1/chat/completions. Keep China first so historical providers without a region continue to
+    // resolve to the former `.com` endpoint. Quota plans ship a fixed catalog and expose no live model
+    // list.
     apiEndpoints: ['anthropic', 'openai'],
-    baseUrl: 'https://api.stepfun.com/step_plan',
-    openaiBaseUrl: 'https://api.stepfun.com/step_plan/v1',
-    apiKeyUrl: 'https://platform.stepfun.com/plan-subscribe',
+    regions: [
+      {
+        id: 'china',
+        label: 'China',
+        baseUrl: 'https://api.stepfun.com/step_plan',
+        openaiBaseUrl: 'https://api.stepfun.com/step_plan/v1',
+        apiKeyUrl: 'https://platform.stepfun.com/plan-subscribe'
+      },
+      {
+        id: 'global',
+        label: 'Global',
+        baseUrl: 'https://api.stepfun.ai/step_plan',
+        openaiBaseUrl: 'https://api.stepfun.ai/step_plan/v1',
+        apiKeyUrl: 'https://platform.stepfun.ai/plan-subscribe'
+      }
+    ],
     // step-router-v1 auto-switches between deepseek-v4-pro and step-3.7-flash; step-3.5-flash-2603 is
-    // the high-frequency-agent build. step-3.7-flash leads as the recommended flagship default.
+    // the high-frequency-agent build. Step 5 Preview leads as the recommended flagship default.
     models: [
+      { id: 'step-5-preview', contextWindow: 1_000_000 },
       { id: 'step-3.7-flash', contextWindow: 262_144 },
       { id: 'step-3.5-flash', contextWindow: 262_144 },
       { id: 'step-3.5-flash-2603', contextWindow: 262_144, reasoningEffort: 'low-high' },
       { id: 'step-router-v1', contextWindow: 262_144 }
     ],
-    // Only the step-3.7-flash flagship is multimodal (vision); the agent/code builds are text-only.
-    multimodal: { multimodalModels: ['step-3.7-flash'] }
+    // Step 5 Preview and step-3.7-flash are multimodal; the agent/code builds are text-only.
+    multimodal: { multimodalModels: ['step-5-preview', 'step-3.7-flash'] }
   },
   {
     id: 'xiaomimimo',

@@ -42,7 +42,13 @@
     "src/shared/side-chat.ts",
     "src/shared/source-preview.ts",
     "src/shared/wsl2-preview-manifest.ts",
-    "src/shared/session-branch-source.ts"
+    "src/shared/session-branch-source.ts",
+    "src/shared/runtime-message-identity.ts",
+    "src/shared/runtime-session-projection.test.ts",
+    "src/shared/runtime-session-projection.ts",
+    "src/shared/session-conversation-command.test.ts",
+    "src/shared/session-conversation-command.ts",
+    "src/shared/runtime-session-admission.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -73,7 +79,11 @@
     "src/shared/side-chat.ts",
     "src/shared/source-preview.ts",
     "src/shared/wsl2-preview-manifest.ts",
-    "src/shared/session-branch-source.ts"
+    "src/shared/session-branch-source.ts",
+    "src/shared/runtime-message-identity.ts",
+    "src/shared/runtime-session-projection.ts",
+    "src/shared/session-conversation-command.ts",
+    "src/shared/runtime-session-admission.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -90,7 +100,9 @@
       "src/shared/session-configuration.test.ts",
       "src/shared/session-history-replay.test.ts",
       "src/shared/session-package.test.ts",
-      "src/shared/session-persistence.test.ts"
+      "src/shared/session-persistence.test.ts",
+      "src/shared/runtime-session-projection.test.ts",
+      "src/shared/session-conversation-command.test.ts"
     ],
     "contract": [],
     "consumer": []

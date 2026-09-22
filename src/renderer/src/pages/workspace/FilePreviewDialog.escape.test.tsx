@@ -79,6 +79,23 @@ afterEach(() => {
 })
 
 describe('FilePreviewDialog Escape dismissal', () => {
+  it('opens with no control focused so the first Escape closes the dialog', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<FilePreviewDialog item={item} onClose={onClose} />))
+
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[data-slot="file-preview-dialog"]')
+    )
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('closes the artifact preview when Escape is pressed from its content', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(<FilePreviewDialog item={item} onClose={onClose} />))

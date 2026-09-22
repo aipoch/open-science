@@ -228,3 +228,16 @@ export const isProviderPromptError = (error: unknown): boolean => {
 
   return isProviderNotFound(error, raw, extractUpstreamDetail(raw))
 }
+
+// OpenCode reports a provider-side Session that no longer exists as a generic JSON-RPC Internal
+// error with a machine-readable service marker. This is distinct from provider/MCP failures and can
+// be recovered by replacing the lost provider Session while keeping the app Session and transcript.
+export const isOpenCodeSessionServiceFailure = (error: unknown): boolean => {
+  if (errorCode(error) !== -32603) return false
+  if (typeof error !== 'object' || error === null) return false
+
+  const data = (error as { data?: unknown }).data
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return false
+
+  return (data as { service?: unknown }).service === 'session'
+}

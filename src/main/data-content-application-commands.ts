@@ -1,3 +1,5 @@
+import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
+import { runtimeWriterClaimContract, type RuntimeWriterLease } from '../shared/runtime-writer'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -6,7 +8,7 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import type { ApplicationEventMap, ApplicationEventPublisher } from './application-events'
-import type { ArtifactHandlers } from './artifacts/ipc'
+import { artifactFinalizationFailureResult, type ArtifactHandlers } from './artifacts/ipc'
 import {
   ArtifactFinalizationProofError,
   ArtifactOwnershipPersistenceRaceError
@@ -25,6 +27,8 @@ import {
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
 import * as SessionPackage from '../shared/session-package'
+import type * as SessionDiagnostics from '../shared/session-diagnostics'
+import { sessionDiagnosticCommandContracts } from '../shared/session-diagnostics-contracts'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
@@ -136,6 +140,13 @@ type InvocationOwner<Owner> = Readonly<{
 // T2h0 injects this adapter; it resolves native window/progress targets without putting Electron
 // objects in transport-neutral application invocations.
 type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
+  inspectSessionDiagnostics: (
+    request: SessionDiagnostics.SessionDiagnosticRequest
+  ) => Promise<SessionDiagnostics.SessionDiagnosticInspection>
+  exportSessionDiagnostics: (
+    request: SessionDiagnostics.SessionDiagnosticExportRequest
+  ) => Promise<SessionDiagnostics.SessionDiagnosticExportResult>
+  cancelSessionDiagnostics: (request: { operationId: string }) => Promise<void>
   forkSession: (
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageRequest | null>
@@ -188,6 +199,7 @@ type UploadApplicationCommandOwner = InvocationOwner<{
 type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Result>
 
 type DataContentApplicationCommandDependencies = Readonly<{
+  runtimeWriter?: RuntimeWriterOwner
   artifacts: ArtifactHandlers
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
@@ -250,6 +262,11 @@ const dataContentApplicationCommands = Object.freeze({
     'artifacts:resolve-version-descriptors',
     'resolveVersionDescriptors'
   ),
+  runtimeWriterClaim: defineApplicationCommand<
+    'lifecycle:claim-runtime-writer',
+    readonly [],
+    RuntimeWriterLease
+  >('lifecycle:claim-runtime-writer', runtimeWriterClaimContract),
   lifecycleClientId: defineApplicationCommand<'lifecycle:client-id', readonly [], string>(
     'lifecycle:client-id'
   ),
@@ -357,6 +374,21 @@ const dataContentApplicationCommands = Object.freeze({
   sessionExportConversation: electronCommand(
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
+  ),
+  sessionInspectDiagnostics: electronCommand(
+    'sessions:inspect-diagnostics',
+    'inspectSessionDiagnostics',
+    sessionDiagnosticCommandContracts.inspect
+  ),
+  sessionExportDiagnostics: electronCommand(
+    'sessions:export-diagnostics',
+    'exportSessionDiagnostics',
+    sessionDiagnosticCommandContracts.export
+  ),
+  sessionCancelDiagnostics: electronCommand(
+    'sessions:cancel-diagnostics',
+    'cancelSessionDiagnostics',
+    sessionDiagnosticCommandContracts.cancel
   ),
   sessionFork: electronCommand(
     'sessions:fork',
@@ -496,7 +528,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactResolveVersionDescriptors
   ] as const),
   defineApplicationCommandGroup('lifecycle', [
-    dataContentApplicationCommands.lifecycleClientId
+    dataContentApplicationCommands.lifecycleClientId,
+    dataContentApplicationCommands.runtimeWriterClaim
   ] as const),
   defineApplicationCommandGroup('preview', [
     dataContentApplicationCommands.previewDelete,
@@ -535,6 +568,9 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
+    dataContentApplicationCommands.sessionInspectDiagnostics,
+    dataContentApplicationCommands.sessionExportDiagnostics,
+    dataContentApplicationCommands.sessionCancelDiagnostics,
     dataContentApplicationCommands.sessionFork,
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
@@ -632,6 +668,7 @@ const registerDataContentApplicationCommands = (
   dependencies: DataContentApplicationCommandDependencies
 ): ApplicationCommandInstallation => {
   const scope = registrar.createScope()
+  const runtimeWriter = dependencies.runtimeWriter ?? new RuntimeWriterOwner()
 
   try {
     scope.registerGroup(dataContentApplicationCommandGroups[0], {
@@ -642,6 +679,8 @@ const registerDataContentApplicationCommands = (
             artifacts: await dependencies.artifacts.finalizeRunArtifacts(args[0])
           }
         } catch (error) {
+          const executionFailure = artifactFinalizationFailureResult(error)
+          if (executionFailure) return executionFailure
           if (error instanceof ArtifactOwnershipPersistenceRaceError) {
             return {
               ok: false as const,
@@ -684,6 +723,8 @@ const registerDataContentApplicationCommands = (
         dependencies.artifacts.resolveVersionDescriptors(args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[1], {
+      'lifecycle:claim-runtime-writer': ({ callerContext }) =>
+        runtimeWriter.claim(callerContext.lifecycleClientId),
       'lifecycle:client-id': ({ callerContext }) => callerContext.lifecycleClientId
     })
     scope.registerGroup(dataContentApplicationCommandGroups[2], {
@@ -805,6 +846,27 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.exportConversationFromInvokingWindow(invocation)
       },
+      'sessions:inspect-diagnostics': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionInspectDiagnostics.name
+        )
+        return dependencies.electron.inspectSessionDiagnostics(invocation)
+      },
+      'sessions:export-diagnostics': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionExportDiagnostics.name
+        )
+        return dependencies.electron.exportSessionDiagnostics(invocation)
+      },
+      'sessions:cancel-diagnostics': (invocation) => {
+        assertElectronCaller(
+          invocation,
+          dataContentApplicationCommands.sessionCancelDiagnostics.name
+        )
+        return dependencies.electron.cancelSessionDiagnostics(invocation)
+      },
       'sessions:fork': (invocation) => {
         assertElectronCaller(invocation, dataContentApplicationCommands.sessionFork.name)
         return dependencies.electron.forkSession(invocation)
@@ -886,7 +948,14 @@ const registerDataContentApplicationCommands = (
         ),
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(() =>
+        const writerToken = invocation.args[1]?.runtimeWriterToken
+        const withRuntimeWriterWrite = <T>(run: () => Promise<T>): Promise<T> =>
+          dependencies.withDataRootWrite(() =>
+            writerToken === undefined
+              ? run()
+              : runtimeWriter.commit(originClientId, writerToken, run)
+          )
+        return withRuntimeWriterWrite(() =>
           preserveSessionSizeLimitCode(async () => {
             let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
             try {

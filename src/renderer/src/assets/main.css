@@ -152,8 +152,32 @@
   user-select: none;
 }
 
+/* Marking mode advertises text selection across the page, including whitespace. */
+[data-pdf-cursor-mode='text-annotation'],
+[data-pdf-cursor-mode='text-annotation'] .pdf-text-layer .endOfContent {
+  cursor: text;
+}
+
+[data-pdf-cursor-mode='text-annotation'] [data-pdf-annotation-marker] {
+  cursor: pointer;
+}
+
 .pdf-text-layer.selecting .endOfContent {
   top: 0;
+}
+
+/* Annotation controls sit after the text layer in DOM order. Hitting them during native
+   selection moves the endpoint past the page text, reversing backward drags. Let an active
+   text drag pass through overlays across this viewer; :active ends on release, so ordinary
+   annotation clicks and keyboard access remain available without another gesture state. */
+[data-pdf-cursor-mode]:has(.pdf-text-layer:active)
+  :is(
+    [data-pdf-bookmark-highlight],
+    [data-pdf-evidence-highlight],
+    [data-pdf-annotation-marker],
+    [data-pdf-area-remove]
+  ) {
+  pointer-events: none;
 }
 
 /* Full-document find uses the browser Highlight API over PDF.js' text mapping. */
@@ -516,6 +540,27 @@
       both;
   }
 
+  /* Settings quick-search jump target: a --primary ring held off the content by an offset gap,
+     with scroll breathing room. The animation holds the ring, then fades it to transparent in the
+     last 200ms; JS only needs the removal timer afterwards. */
+  .settings-search-highlight {
+    border-radius: 8px;
+    outline: 2px solid var(--primary);
+    outline-offset: 4px;
+    scroll-margin-block: 16px;
+    animation: settings-search-highlight-out 1600ms ease-out forwards;
+  }
+
+  @keyframes settings-search-highlight-out {
+    0%,
+    87.5% {
+      outline-color: var(--primary);
+    }
+    100% {
+      outline-color: transparent;
+    }
+  }
+
   .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='added']),
   .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='added']) {
     color: var(--diff-added-foreground);
@@ -578,6 +623,82 @@
       hsl(var(--always-black)) calc(100% - 2.5rem),
       transparent
     );
+  }
+
+  /* Keep scrollbars available without letting idle tracks compete with the content. */
+  .scrollbar-auto-hide {
+    scrollbar-color: transparent transparent;
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-auto-hide:hover,
+  .scrollbar-auto-hide:focus-within {
+    scrollbar-color: color-mix(in srgb, var(--border) 72%, transparent) transparent;
+  }
+
+  .scrollbar-auto-hide::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-auto-hide::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-auto-hide::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 9999px;
+    background: transparent;
+    background-clip: padding-box;
+  }
+
+  .scrollbar-auto-hide:hover::-webkit-scrollbar-thumb,
+  .scrollbar-auto-hide:focus-within::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--border) 72%, transparent);
+  }
+
+  /* The transcript already has explicit scroll-to-end affordances; keep its native bar out of view. */
+  .scrollbar-message,
+  .scrollbar-message:hover,
+  .scrollbar-message:focus-within {
+    scrollbar-color: transparent transparent;
+  }
+
+  .scrollbar-message::-webkit-scrollbar-thumb,
+  .scrollbar-message:hover::-webkit-scrollbar-thumb,
+  .scrollbar-message:focus-within::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+
+  .scrollbar-auto-hide > [data-slot='scroll-area-scrollbar'] {
+    transition: opacity 160ms ease;
+  }
+
+  .scrollbar-auto-hide > [data-slot='scroll-area-scrollbar'][data-state='hidden'] {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .scrollbar-auto-hide:focus-within > [data-slot='scroll-area-scrollbar'][data-state='hidden'] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Include hybrid devices: a mouse can be primary while a touchscreen is also available. */
+  @media (hover: none), (any-pointer: coarse) {
+    .scrollbar-auto-hide:not(.scrollbar-message) {
+      scrollbar-color: color-mix(in srgb, var(--border) 60%, transparent) transparent;
+    }
+
+    /* ScrollBar's forceMount does not force its Thumb: Radix's separate Thumb Presence
+       still requires hasThumb, so a mounted thumb remains an overflow signal. */
+    .scrollbar-auto-hide:not(.scrollbar-message)
+      > [data-slot='scroll-area-scrollbar'][data-state='hidden']:has(
+        [data-slot='scroll-area-thumb']
+      ) {
+      opacity: 0.65;
+      pointer-events: auto;
+    }
   }
 
   /*

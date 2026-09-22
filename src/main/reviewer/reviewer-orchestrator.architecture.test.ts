@@ -547,6 +547,8 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
         consumer: [
+          'src/main/session-persistence/runtime-session-owner.test.ts',
+          'src/main/session-plan/adversarial-session-plan.test.ts',
           'packages/open-science/cli.test.ts',
           'src/main/notebook/local-rpc-notebook-adapter.test.ts',
           'src/renderer/src/lib/acp/workspace-events.test.ts',
@@ -816,7 +818,14 @@ describe('Reviewer orchestrator architecture', () => {
           'src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx',
           'src/main/settings/provider-runtime-health-owner.test.ts',
           'src/renderer/src/lib/session-persistence/session-persistence.test.ts',
-          'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+          'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+          'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+          'src/main/artifacts/resumed-finalization-ownership.test.ts',
+          'src/main/pdf-annotations/repository.integration.test.ts',
+          'src/main/pdf-annotations/service.test.ts',
+          'src/main/session-package/ro-crate.integration.test.ts',
+          'src/main/session-package/ro-crate.test.ts',
+          'src/main/settings/codex-bridge-tools.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

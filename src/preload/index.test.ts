@@ -66,6 +66,9 @@ type PreloadApi = {
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
+    inspectDiagnostics: (request: unknown) => unknown
+    exportDiagnostics: (request: unknown) => unknown
+    cancelDiagnostics: (request: unknown) => unknown
     onFlushAborted: (
       listener: (event?: { reason: 'conflict' | 'renderer-failed' }) => void
     ) => unknown
@@ -368,7 +371,9 @@ describe('preload bridge — public surface inventory', () => {
       'handoff.list',
       'handoff.onChanged',
       'handoff.retry',
+      'lifecycle.claimRuntimeWriter',
       'lifecycle.getClientId',
+      'literature.cancelPdfImport',
       'literature.citationStyles',
       'literature.completeMetadata',
       'literature.exportRecord',
@@ -461,6 +466,14 @@ describe('preload bridge — public surface inventory', () => {
       'officePreview.onState',
       'officePreview.open',
       'officePreview.reportState',
+      'pdfAnnotations.cancelImport',
+      'pdfAnnotations.create',
+      'pdfAnnotations.delete',
+      'pdfAnnotations.importNative',
+      'pdfAnnotations.list',
+      'pdfAnnotations.onChanged',
+      'pdfAnnotations.onImportProgress',
+      'pdfAnnotations.update',
       'pdfStructure.cancel',
       'pdfStructure.clearCache',
       'pdfStructure.parse',
@@ -507,6 +520,7 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.probe',
       'remoteAccess.reject',
       'remoteAccess.revokeBrowser',
+      'remoteAccess.revokeBrowsers',
       'remoteAccess.setMode',
       'reviewer.abortFixLoop',
       'reviewer.getForSession',
@@ -533,13 +547,16 @@ describe('preload bridge — public surface inventory', () => {
       'saveManagedFile',
       'saveProjectArtifacts',
       'saveSessionArtifacts',
+      'sessions.cancelDiagnostics',
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportConversation',
+      'sessions.exportDiagnostics',
       'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
       'sessions.fork',
       'sessions.importPackage',
+      'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.list',
       'sessions.loadAll',
@@ -584,6 +601,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.disconnectDeviceCredential',
       'settings.exportCustomServerTemplate',
       'settings.exportSkill',
+      'settings.getClassification',
       'settings.getConnectorDetail',
       'settings.getGitHubTokenStatus',
       'settings.getLocalShellRuntimePreference',
@@ -691,10 +709,12 @@ describe('preload bridge — public surface inventory', () => {
       'settings.startSkillMarketplaceBatch',
       'settings.stopSkillMarketplaceBatch',
       'settings.switchLocalShellToPowerShell',
+      'settings.testClassification',
       'settings.uninstallClaude',
       'settings.uninstallCodeBuddy',
       'settings.uninstallCodex',
       'settings.uninstallOpencode',
+      'settings.updateClassification',
       'settings.updateCustomServer',
       'settings.updateDeviceCredential',
       'settings.updateSkill',
@@ -1281,6 +1301,9 @@ const sampleEditSessionDetails = {
   title: 'Edited',
   description: 'Description'
 }
+const sampleDiagnostics = { projectId: 'p-1', sessionId: 's-1', operationId: 'diagnostic-1' }
+const sampleDiagnosticExport = { ...sampleDiagnostics, selectedItems: ['session', 'log:main.log'] }
+const sampleDiagnosticCancel = { operationId: 'diagnostic-1' }
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleConversationExport = {
   projectId: 'p-1',
@@ -1436,6 +1459,24 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.exportConversation(sampleConversationExport),
     channel: 'sessions:export-conversation',
     args: [sampleConversationExport]
+  },
+  {
+    name: 'sessions.inspectDiagnostics → sessions:inspect-diagnostics',
+    invoke: (a) => a.sessions.inspectDiagnostics(sampleDiagnostics),
+    channel: 'sessions:inspect-diagnostics',
+    args: [sampleDiagnostics]
+  },
+  {
+    name: 'sessions.exportDiagnostics → sessions:export-diagnostics',
+    invoke: (a) => a.sessions.exportDiagnostics(sampleDiagnosticExport),
+    channel: 'sessions:export-diagnostics',
+    args: [sampleDiagnosticExport]
+  },
+  {
+    name: 'sessions.cancelDiagnostics → sessions:cancel-diagnostics',
+    invoke: (a) => a.sessions.cancelDiagnostics(sampleDiagnosticCancel),
+    channel: 'sessions:cancel-diagnostics',
+    args: [sampleDiagnosticCancel]
   },
   // agent-framework / opencode settings additions
   {

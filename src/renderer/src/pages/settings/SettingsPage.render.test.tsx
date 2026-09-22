@@ -1,3 +1,5 @@
+import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
+import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 // @vitest-environment jsdom
 import { act, createRef, Profiler, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -23,6 +25,20 @@ import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+
+vi.mock('../workspace/FilePreviewDialog', () => ({
+  FilePreviewDialog: ({
+    item,
+    onClose
+  }: {
+    item: { name: string; path: string }
+    onClose: () => void
+  }) => (
+    <div role="dialog" aria-label={item.name} data-preview-path={item.path}>
+      <button onClick={onClose}>Close tagged PDF</button>
+    </div>
+  )
+}))
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -477,6 +493,7 @@ const installCustomProviderSnapshot = (): ProviderView => {
 
 describe('SettingsPage layout', () => {
   it('retains model tab DOM across model routes and navigation Back', async () => {
+    window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
     window.api.localModels = {
       getSnapshot: vi.fn().mockResolvedValue({
         availability: 'notInstalled',
@@ -654,6 +671,138 @@ describe('SettingsPage layout', () => {
     })
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it.each(['literature', 'project', 'missing', 'location-unavailable'] as const)(
+    'opens a tagged PDF annotation at its saved location (%s)',
+    async (kind) => {
+      const annotation: PdfAnnotation = {
+        id: 'marked-1',
+        version: 1,
+        origin: 'user',
+        kind: 'page-note',
+        note: 'Review methods',
+        tagIds: ['tag-favorite'],
+        ...(kind === 'project'
+          ? { projectId: 'project-a', sessionId: 'session-a' }
+          : { literatureVersionId: 'pdf-version' }),
+        target: {
+          source: {
+            kind: kind === 'project' ? 'upload-version' : 'literature-attachment-version',
+            ...(kind === 'project' ? { projectId: 'project-a', sessionId: 'session-a' } : {}),
+            sourceFileId: 'pdf-file',
+            versionId: 'pdf-version',
+            checksum: 'a'.repeat(64),
+            name: 'Tagged.pdf',
+            path:
+              kind === 'project'
+                ? 'upload-version:project-a/session-a/pdf-version'
+                : 'literature-attachment-version:pdf-version'
+          },
+          selector: { kind: 'page-note', pageNumber: 3, pageRotation: 0, coordinateVersion: 1 }
+        },
+        createdAt: '2026-09-20T00:00:00.000Z',
+        updatedAt: '2026-09-20T00:00:00.000Z'
+      }
+      vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+        revision: 20,
+        tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+        assignments: [
+          {
+            tagId: 'tag-favorite',
+            resourceType: 'pdf.annotation',
+            resourceId: annotation.id,
+            createdAt: 1
+          }
+        ],
+        pdfAnnotations: [
+          {
+            id: annotation.id,
+            name: 'Tagged.pdf',
+            note: 'Review methods',
+            versionId: 'pdf-version',
+            ...(kind === 'project'
+              ? { projectId: 'project-a', sessionId: 'session-a' }
+              : { literatureItemId: 'paper-1' })
+          }
+        ]
+      })
+      const list = vi.fn().mockResolvedValue({
+        items: kind === 'missing' ? [] : [annotation],
+        total: kind === 'missing' ? 0 : 1
+      })
+      window.api.pdfAnnotations = { list } as unknown as Window['api']['pdfAnnotations']
+      const openLibrary = vi
+        .spyOn(useNavigationStore.getState(), 'openLiteratureItem')
+        .mockImplementation((_id, _origin, _annotation, done) => done?.())
+      const openSession = vi
+        .spyOn(useNavigationStore.getState(), 'openSession')
+        .mockImplementation((_project, _session, _origin, done) => {
+          done?.()
+          return true
+        })
+      const reveal = vi
+        .spyOn(annotationReveal, 'requestPdfAnnotationReveal')
+        .mockResolvedValue(kind === 'location-unavailable' ? 'locator-unsupported' : 'revealed')
+      try {
+        const onClose = vi.fn()
+        await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+        await act(async () => navButton('Tags')?.click())
+        await waitFor(() =>
+          expect(document.body.querySelector('[data-slot="tag-resource-row"]')).not.toBeNull()
+        )
+        await act(async () =>
+          (
+            document.body.querySelector('[data-slot="tag-resource-row"]') as HTMLButtonElement
+          ).click()
+        )
+        expect(list).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: annotation.id,
+            limit: 1,
+            ...(kind === 'project'
+              ? { projectId: 'project-a' }
+              : { literatureVersionId: 'pdf-version' })
+          })
+        )
+        expect(openLibrary).not.toHaveBeenCalled()
+        expect(openSession).not.toHaveBeenCalled()
+        expect(onClose).not.toHaveBeenCalled()
+        if (kind !== 'missing') {
+          await waitFor(() =>
+            expect(reveal).toHaveBeenCalledWith(
+              annotation,
+              expect.objectContaining({ activatePreview: false })
+            )
+          )
+          expect(
+            document.querySelector('[data-preview-path]')?.getAttribute('data-preview-path')
+          ).toBe(annotation.target.source.path)
+          if (kind === 'location-unavailable') {
+            expect(document.body.textContent).toContain(
+              'The exact annotation location could not be found.'
+            )
+          }
+          await act(async () => {
+            Array.from(document.querySelectorAll('button'))
+              .find((button) => button.textContent === 'Close tagged PDF')
+              ?.click()
+          })
+          expect(document.querySelector('[data-preview-path]')).toBeNull()
+          expect(document.body.querySelector('[data-slot="tag-resource-row"]')).not.toBeNull()
+          expect(onClose).not.toHaveBeenCalled()
+        } else {
+          expect(onClose).not.toHaveBeenCalled()
+          expect(document.body.textContent).toContain(
+            'PDF annotations are unavailable for this source.'
+          )
+        }
+      } finally {
+        openLibrary.mockRestore()
+        openSession.mockRestore()
+        reveal.mockRestore()
+      }
+    }
+  )
 
   it('opens a resource Tag through Settings history and returns to the catalog with Back', async () => {
     vi.mocked(window.api.tags.snapshot).mockResolvedValue({
@@ -1056,6 +1205,30 @@ describe('SettingsPage layout', () => {
 
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
+  })
+
+  it('jumps from settings search to in-place Skill selection after retiring Manage', async () => {
+    // jsdom has no scrolling layout; keep the real search navigation and focus behavior.
+    Element.prototype.scrollIntoView = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+    await act(async () => {
+      fireEvent.change(search, { target: { value: 'Manage skills' } })
+      search.focus()
+    })
+    await act(async () => fireEvent.keyDown(search, { key: 'Enter' }))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Manage skills')
+    const select = document.activeElement?.querySelector<HTMLButtonElement>(
+      '[aria-label="Select multiple in Featured"]'
+    )
+    expect(select).not.toBeNull()
+    await act(async () => select!.click())
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
   it('keeps the dialog open when Escape closes the global search results', async () => {
@@ -3816,29 +3989,24 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
-  it('opens Connector management through the shared breadcrumb and returns to the catalog', async () => {
+  it('selects Connectors in their category without leaving the catalog', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Connectors')?.click())
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+        .click()
     )
-    expect(manage).toBeDefined()
-    await act(async () => manage?.click())
-    expect(document.body.textContent).toContain('Manage connectors')
-    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).not.toBeNull()
-    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')
-    expect(
-      layout
-        ?.closest('[data-slot="settings-content-scroll"]')
-        ?.firstElementChild?.classList.contains('h-full')
-    ).toBe(true)
-    expect(document.body.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
-    const crumb = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Back to connectors"]'
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Chemistry"]')!.click()
     )
-    expect(crumb).not.toBeNull()
-    await act(async () => crumb?.click())
-    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Back to connectors"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')!.click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
     expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
   })
 
@@ -3857,24 +4025,17 @@ describe('SettingsPage layout', () => {
     const onClose = vi.fn()
     await act(async () => root.render(<SettingsPage open onClose={onClose} />))
     await act(async () => navButton('Skills')?.click())
-    const clickText = async (label: string): Promise<void> => {
-      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (item) => item.textContent?.trim() === label
-      )!
-      expect(button).toBeDefined()
-      await act(async () => button.click())
-    }
-    await clickText('Manage')
-    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')!
-    expect(
-      layout
-        .closest('[data-slot="settings-content-scroll"]')
-        ?.firstElementChild?.classList.contains('h-full')
-    ).toBe(true)
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Personal"]')!
+        .click()
+    )
     await act(async () =>
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
     )
-    await clickText('Delete…')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Delete selected"]')!.click()
+    )
     const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
     expect(document.activeElement).toBe(title)
     await act(async () =>
@@ -3884,7 +4045,9 @@ describe('SettingsPage layout', () => {
     )
     expect(onClose).not.toHaveBeenCalled()
     expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
-    expect(document.activeElement).toBe(document.body.querySelector('[data-batch-delete-trigger]'))
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[aria-label="Delete selected"]')
+    )
   })
 
   it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {
@@ -4063,29 +4226,27 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="skill-marketplace"]')).toBeNull()
   })
 
-  it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-
+  it('selects Featured Skills in place while keeping deletion unavailable', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Skills')?.click())
-    await act(async () => {
-      await Promise.resolve()
-    })
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+        .click()
     )
-    await act(async () => manage?.click())
-
-    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')
-    expect(crumb).not.toBeNull()
-    expect(document.body.textContent).toContain('Manage skills')
-    expect(document.body.textContent).toContain('Featured Skills are not changed.')
-    expect(document.body.textContent).not.toContain('Alpha')
-
-    await act(async () => crumb?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
+    )
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
     expect(document.body.textContent).toContain('Alpha')
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Finish selection in Featured"]')!
+        .click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
   })
 
   it('opens directly on a skill detail when the store has a pending skill', async () => {
@@ -4268,109 +4429,147 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
   })
 
-  it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-usage',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
-      revision: 1
+  it.each(['usage', 'access'])(
+    'navigates from a Skill %s popover to Specialist Settings and back',
+    async (entry) => {
+      const researcher: SpecialistView = {
+        id: 'spc-usage',
+        name: 'RESEARCHER',
+        displayName: 'Researcher',
+        description: 'Conducts systematic literature reviews.',
+        systemPrompt: 'You are a literature review specialist.',
+        iconKey: 'search',
+        colorKey: 'blue',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        items: [{ kind: 'custom', ...researcher }],
+        integrity: { status: 'ok' }
+      })
+      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+      useSettingsStore.getState().openSettingsToSkill('alpha')
+
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      await act(async () => {
+        if (entry === 'access') {
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
+          )
+        } else {
+          fireEvent.focus(
+            document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
+          )
+        }
+      })
+      await act(async () => {
+        fireEvent.click(
+          document.body.querySelector<HTMLElement>(
+            '[aria-label="Open Researcher in Specialist Settings"]'
+          )!
+        )
+      })
+
+      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+      })
+      expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.textContent).toContain('Test Author')
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSkill('alpha')
+  )
 
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
+  it.each(['usage', 'access', 'detail access'])(
+    'navigates from a Connector %s popover to Specialist Settings and back',
+    async (entry) => {
+      const researcher: SpecialistView = {
+        id: 'spc-connector-usage',
+        name: 'RESEARCHER',
+        displayName: 'Researcher',
+        description: 'Conducts systematic literature reviews.',
+        systemPrompt: 'You are a literature review specialist.',
+        iconKey: 'search',
+        colorKey: 'blue',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
+        revision: 1
+      }
+      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        items: [{ kind: 'custom', ...researcher }],
+        integrity: { status: 'ok' }
+      })
+      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+      window.api.settings.getConnectorDetail = vi.fn().mockResolvedValue({
+        id: 'chemistry',
+        name: 'chemistry',
+        displayName: 'Chemistry',
+        description: 'Small-molecule chemistry via PubChem.',
+        sources: ['PubChem'],
+        requiresNcbi: false,
+        enabled: true,
+        autoAllow: false,
+        tools: []
+      })
+      useSettingsStore.getState().openSettingsToPanel('connectors')
 
-    await act(async () => {
-      fireEvent.focus(
-        document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
-      )
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>(
-          '[aria-label="Open Researcher in Specialist Settings"]'
-        )!
-      )
-    })
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
 
-    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+      if (entry === 'detail access') {
+        await act(async () =>
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[aria-label="View details for Chemistry"]')!
+          )
+        )
+      }
+      await act(async () => {
+        if (entry === 'usage') {
+          fireEvent.focus(
+            document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!
+          )
+        } else {
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
+          )
+        }
+      })
+      await act(async () => {
+        fireEvent.click(
+          document.body.querySelector<HTMLElement>(
+            '[aria-label="Open Researcher in Specialist Settings"]'
+          )!
+        )
+      })
 
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Test Author')
-  })
+      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
 
-  it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-connector-usage',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
-      revision: 1
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+      })
+      expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.textContent).toContain('Chemistry')
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToPanel('connectors')
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    await act(async () => {
-      fireEvent.focus(document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!)
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>(
-          '[aria-label="Open Researcher in Specialist Settings"]'
-        )!
-      )
-    })
-
-    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
-
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Chemistry')
-  })
+  )
 
   it('routes connector capability rows to detail or edit by server kind', async () => {
     const researcher: SpecialistView = {
@@ -4468,9 +4667,14 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(document.body.textContent).toContain('Specialists')
-    expect(document.body.textContent).toContain('Researcher')
-    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Manage access for Chemistry"]')!
+        .click()
+    )
+    const researcherSwitch = document.body.querySelector('[role="switch"][aria-label="Researcher"]')
+    expect(researcherSwitch?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => fireEvent.keyDown(researcherSwitch!, { key: 'Escape' }))
 
     // Back to the editor (capability tabs reset to Skills on remount), then a
     // custom server lands on its edit page.

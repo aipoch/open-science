@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，�
 
 AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.30.2 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.30.2 是一个以稳定性为主的版本：Windows 上的 R 运行时得以可靠恢复（conda 启动、可执行文件解析、内核恢复与已验证的 pip 入口点），Notebook 同回合输入可以正确重放，审阅者的修改在关联反馈之间保留上下文。文献导入将 PubMed 作者姓氏与名字缩写区分开并检查撤稿关系，连接器收紧了 Ensembl、VEP、Reactome、UCSC 与 gnomAD 的行为，DeepSeek V4.1 Flash 也加入了模型目录。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.32.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.32.0 让 PDF 证据可以长期留存，也让产物导出具备互操作性：持久的批注与每个文件各自的文档笔记本会把文字样式、区域标记、笔记、评论、颜色和标签跟随到所属的文件版本，可导出为带批注的 PDF 或 Markdown/CSV 而不改动源文件字节；已验证的产物版本现在可以连同其确切输入一起打包为完整的 RO-Crate 归档。序列与组学工作新增异步 NCBI BLAST 搜索、附带原始提交文件的 ENA 运行检索、PRIDE 项目文件列表，以及按基因或物种发现 UniProt 蛋白质。借助经过验证的镜像源，本地 PDF 解析模型的安装不再依赖单一下载源；能力选择可以指向自定义的自托管分类服务；无人值守的 CLI 运行也可以被禁止等待人类应答。启动与长对话因批量化的恢复、延后的 Markdown 处理和更少的观察器开销而更快。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

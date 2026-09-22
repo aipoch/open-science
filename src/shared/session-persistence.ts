@@ -788,6 +788,18 @@ export type EditSessionDetailsRequest = EditSessionDetailsRequestBase &
     | Readonly<{ expectedTitle?: never; expectedDescription?: never }>
   )
 
+// Main-owned proof linking an execution Segment to its immutable originating prompt.
+// Historical entries remain available for delayed Artifact finalization after restart.
+export type PersistedRuntimeSessionAdmission = {
+  executionId: string
+  promptMessageId: string
+  promptRuntimeSegmentId: string
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+}
+
 export type PersistedChatSession = {
   // Imported history has no execution authority. Absence preserves existing local Session behavior.
   packageOrigin?: import('./session-package').SessionPackageOrigin
@@ -883,6 +895,16 @@ export type PersistedChatSession = {
   // Main-owned witness for the latest terminal Task Run whose Session projection was committed.
   // Historical files omit it; Task Run recovery then fails closed.
   taskRunCommitId?: string
+  // Once adopted, runtime transcript/Artifact writes belong to Main. Renderer saves carry only
+  // preferences and explicit user commands; this marker is never caller-authoritative.
+  runtimeTranscriptOwner?: 'main'
+  runtimeTranscriptReviewOwner?: {
+    promptMessageId: string
+    owner: 'task' | 'renderer'
+  }
+  runtimeTranscriptLastRun?: PersistedActiveRun
+  runtimeConversationCommandIds?: string[]
+  runtimeSessionAdmissions?: PersistedRuntimeSessionAdmission[]
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery
@@ -1016,7 +1038,9 @@ export type SessionConflictRebaseField =
   | 'pinned'
 
 export type SaveSessionOptions = {
+  runtimeWriterToken?: string
   conflictRebaseFields?: SessionConflictRebaseField[]
+  conversationCommands?: import('./session-conversation-command').SessionConversationCommand[]
 }
 
 export const MAX_PERSISTED_SESSION_BYTES = 256 * 1024 * 1024
@@ -2987,6 +3011,7 @@ const isPermissionAuthorityBoundToActivePrompt = (
 type RestorablePermissionToolAuthority = Readonly<{
   permission: SessionPermissionRuntimeContext
   activity: PersistedBranchActivity
+  flatActivity: PersistedToolActivity
 }>
 
 const resolveRestorablePermissionToolAuthority = (
@@ -3015,13 +3040,14 @@ const resolveRestorablePermissionToolAuthority = (
     !flatActivity ||
     !visibleActivity ||
     activity.promptMessageId !== permission.originatingPromptMessageId ||
-    flatActivity.promptMessageId !== permission.originatingPromptMessageId ||
+    (flatActivity.promptMessageId !== permission.originatingPromptMessageId &&
+      !(session.runtimeTranscriptOwner === 'main' && flatActivity.promptMessageId === undefined)) ||
     (activity.status !== 'pending' && activity.status !== 'in_progress') ||
     (flatActivity.status !== 'pending' && flatActivity.status !== 'in_progress')
   ) {
     return undefined
   }
-  return { permission, activity }
+  return { permission, activity, flatActivity }
 }
 
 const hasRestorablePermissionWait = (session: PersistedChatSession): boolean =>
@@ -3061,6 +3087,75 @@ const markInterruptedPrompt = (
 
 const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefined =>
   [...messages].reverse().find((message) => message.role === 'user')?.id
+
+// An answered app-owned question is not delivered until the provider acknowledges the next
+// prompt. Keep recovery manual (as for restored permission decisions): never replay work on startup.
+export const rearmUnacceptedElicitationContinuations = (
+  session: PersistedChatSession,
+  promptMessageId?: string,
+  question?: { requestId: string; toolCallId: string }
+): PersistedChatSession => {
+  if (session.runtimeTranscriptOwner !== 'main' || !session.conversationGraph) return session
+  const graph = session.conversationGraph
+  const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
+  const promptId = promptMessageId ?? latestUserMessageId(session.messages)
+  if (!promptId || promptId !== latestUserMessageId(session.messages)) return session
+  if (session.activeRun && session.activeRun.promptMessageId !== promptId) return session
+  const recoverable = new Set(
+    graph.activities
+      .filter(
+        (activity) =>
+          activity.agentFrameId === frame?.id &&
+          activity.messageBranchId === frame?.activeBranchId &&
+          activity.promptMessageId === promptId &&
+          activity.elicitation?.durable?.kind === 'agent-user-choice' &&
+          activity.elicitation.continuationPending === true &&
+          (!question ||
+            (activity.id === question.toolCallId &&
+              activity.elicitation.durable.requestId === question.requestId))
+      )
+      .map(({ id }) => id)
+  )
+  if (recoverable.size === 0) return session
+  const rearm = <T extends PersistedToolActivity>(activity: T): T => {
+    if (!recoverable.has(activity.id) || !activity.elicitation) return activity
+    const {
+      continuationPending: _pending,
+      respondedAt: _respondedAt,
+      ...elicitation
+    } = activity.elicitation
+    void _pending
+    void _respondedAt
+    return {
+      ...activity,
+      status: 'in_progress',
+      elicitation: {
+        ...elicitation,
+        state: 'pending',
+        ...(elicitation.answers?.length ? { draftAnswers: elicitation.answers } : {})
+      }
+    }
+  }
+  return {
+    ...session,
+    status: 'waiting-for-user',
+    activeRun: undefined,
+    error: undefined,
+    errorReportable: undefined,
+    resumeRecovery: undefined,
+    messages: session.messages.map((message) =>
+      message.id === promptId ? { ...message, interrupted: undefined } : message
+    ),
+    activities: session.activities?.map(rearm),
+    conversationGraph: {
+      ...graph,
+      messages: graph.messages.map((message) =>
+        message.id === promptId ? { ...message, interrupted: undefined } : message
+      ),
+      activities: graph.activities.map(rearm)
+    }
+  }
+}
 
 // Rehydrates durable waits and converts runtime-only work into recoverable states after restart.
 const recoverInterruptedPermissionAfterRestore = (
@@ -3437,8 +3532,10 @@ const normalizeActivityAfterRestore = (
   const closesOpenActivity =
     (activity.status === 'pending' || activity.status === 'in_progress') &&
     !activity.elicitation?.durable &&
-    (activity.id !== permissionAuthority?.activity.id ||
-      activity.promptMessageId !== permissionAuthority.permission.originatingPromptMessageId)
+    // The resolver already validated these exact graph/flat projections. Main intentionally
+    // omits the graph-owned prompt identity from its flat presentation.
+    activity !== permissionAuthority?.activity &&
+    activity !== permissionAuthority?.flatActivity
   const closesOpenNotebookActivity = closesOpenActivity && isPersistedNotebookRunActivity(activity)
   const normalized: PersistedToolActivity = {
     ...activity,
@@ -4476,6 +4573,61 @@ const sanitizeSession = (
 
   if (activeRun) sanitized.activeRun = activeRun
   if (taskRunCommitId) sanitized.taskRunCommitId = taskRunCommitId
+  if (session.runtimeTranscriptOwner === 'main') {
+    sanitized.runtimeTranscriptOwner = 'main'
+    const reviewOwner = session.runtimeTranscriptReviewOwner
+    if (
+      isRecord(reviewOwner) &&
+      typeof reviewOwner.promptMessageId === 'string' &&
+      reviewOwner.promptMessageId.length > 0 &&
+      reviewOwner.promptMessageId.length <= 256 &&
+      (reviewOwner.owner === 'task' || reviewOwner.owner === 'renderer')
+    ) {
+      sanitized.runtimeTranscriptReviewOwner = {
+        promptMessageId: reviewOwner.promptMessageId,
+        owner: reviewOwner.owner
+      }
+    }
+    sanitized.runtimeTranscriptLastRun = sanitizeActiveRun(session.runtimeTranscriptLastRun)
+    if (Array.isArray(session.runtimeSessionAdmissions)) {
+      const admissions = new Map<string, PersistedRuntimeSessionAdmission>()
+      const conflicts = new Set<string>()
+      const keys = [
+        'executionId',
+        'promptMessageId',
+        'promptRuntimeSegmentId',
+        'rootFrameId',
+        'agentFrameId',
+        'messageBranchId',
+        'runtimeSegmentId'
+      ] as const
+      for (const value of session.runtimeSessionAdmissions) {
+        if (
+          !isRecord(value) ||
+          !keys.every(
+            (key) =>
+              typeof value[key] === 'string' && value[key].length > 0 && value[key].length <= 256
+          )
+        )
+          continue
+        const admission = Object.fromEntries(
+          keys.map((key) => [key, value[key]])
+        ) as PersistedRuntimeSessionAdmission
+        const previous = admissions.get(admission.executionId)
+        if (previous && keys.some((key) => previous[key] !== admission[key]))
+          conflicts.add(admission.executionId)
+        admissions.set(admission.executionId, admission)
+      }
+      sanitized.runtimeSessionAdmissions = [...admissions.values()].filter(
+        ({ executionId }) => !conflicts.has(executionId)
+      )
+    }
+    if (Array.isArray(session.runtimeConversationCommandIds)) {
+      sanitized.runtimeConversationCommandIds = session.runtimeConversationCommandIds
+        .filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256)
+        .slice(-256)
+    }
+  }
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
   if (session.packageOrigin !== undefined) {
@@ -4637,6 +4789,7 @@ const sanitizeSession = (
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
   if (!options.preserveRuntimeState) {
+    sanitized = rearmUnacceptedElicitationContinuations(sanitized)
     sanitized = normalizeSessionAfterRestore(sanitized, { reconcileCompletedRecovery: true })
   }
   if (!options.preserveRuntimeState) {

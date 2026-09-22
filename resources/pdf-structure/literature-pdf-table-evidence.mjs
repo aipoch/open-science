@@ -35,6 +35,7 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   const sourceText = pageItems.map((item) => item.text).join(' ')
   const cropText = [...table.grid.flat(), ...(table.unassigned ?? [])].join(' ')
   const compactText = cropText.replace(/\s/g, '')
+  const words = (text) => (text.trim() ? text.trim().split(/\s+/).length : 0)
   if (
     /\bAuthor contributions\b/i.test(sourceText) &&
     table.grid.every((row) => row.length === 2) &&
@@ -43,6 +44,35 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   )
     return false
   const measurement = (text) => /^[-+−]?\d+(?:\.\d+)?(?:\s*\([^)]*\))?$/.test(text.trim())
+  const hasMeasurement = table.grid.some((row) => row.some(measurement))
+  // Quoted callouts are frequently boxed like a small two-column table. Keep
+  // them in the source document unless a real table caption or measurement
+  // column provides explicit structure evidence.
+  const quotedRows = table.grid.filter((row) => /^[“”"']/.test((row[0] ?? '').trim()))
+  if (
+    !caption &&
+    !hasMeasurement &&
+    table.grid.length <= 4 &&
+    table.grid.every((row) => row.length <= 2) &&
+    quotedRows.length > 0 &&
+    words(table.grid.flat().join(' ')) >= 6
+  )
+    return false
+  // Article title/author blocks can align into two detector columns and may
+  // contain a journal year or page range. They have no table caption and no
+  // measured data, so discard the structural false positive.
+  if (
+    !caption &&
+    !hasMeasurement &&
+    table.grid.every((row) => row.length <= 2) &&
+    /\b(?:Department|University|Institute)\b/i.test(
+      [...table.grid.flat(), ...(table.unassigned ?? [])].join(' ')
+    ) &&
+    /(?:©|\b(?:19|20)\d{2}\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+[–-]\d+)/u.test(
+      [...table.grid.flat(), ...(table.unassigned ?? [])].join(' ')
+    )
+  )
+    return false
   if (table.cropRect && table.grid.every((r) => r.length <= 2 && !r.some(measurement))) {
     const [left, top, right, bottom] = table.cropRect
     const prose = pageItems.filter(
@@ -533,7 +563,6 @@ export function hasTableEvidence(table, caption, pageItems = []) {
   // Parallel prose columns also produce confident multi-column predictions. A crop cutting
   // through paragraph text, with long prose in most cells of most rows, lacks row evidence.
   // Keep captioned tables and tables with short row labels/numeric or sequence values.
-  const words = (text) => (text.trim() ? text.trim().split(/\s+/).length : 0)
   if (
     (table.unassigned ?? []).some((text) => /^abbreviations\s*:?$/i.test(text.trim())) &&
     table.grid.length >= 3 &&
@@ -686,6 +715,22 @@ export function hasTableEvidence(table, caption, pageItems = []) {
     })
     if (crossed.length >= 2 && crossed.length >= lines.length * 0.6) return false
   }
+  // A detector can split a long paragraph into one populated cell per row
+  // while leaving the neighboring model column empty. Without a caption or
+  // measured values this is unstructured page prose, not a table.
+  if (
+    !caption &&
+    table.issues.includes('text-crosses-crop-boundary') &&
+    table.grid.length >= 8 &&
+    table.grid.filter((row) => row.filter((text) => text.trim()).length === 1).length >=
+      table.grid.length * 0.75 &&
+    table.grid.filter(
+      (row) => row.filter((text) => text.trim()).length === 1 && words(row.join(' ')) >= 4
+    ).length >=
+      table.grid.length * 0.75 &&
+    !table.grid.some((row) => row.some(measurement))
+  )
+    return false
   const proseRecords = table.grid.filter((row) => row.filter((text) => text.trim()).length >= 2)
   const dividedProse =
     proseRecords.length >= 2 &&

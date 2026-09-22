@@ -115,8 +115,46 @@ function writePermissions(document) {
 }
 
 const stableChecks = {
-  '.github/workflows/pr-gate.yml': { jobId: 'gate', name: 'PR Gate' },
-  '.github/workflows/ci-integrity.yml': { jobId: 'integrity', name: 'CI Integrity' }
+  '.github/workflows/pr-gate.yml': {
+    jobId: 'gate',
+    name: 'PR Gate',
+    pullRequestTrigger: 'pull_request'
+  },
+  '.github/workflows/ci-integrity.yml': {
+    jobId: 'integrity',
+    name: 'CI Integrity',
+    pullRequestTrigger: 'pull_request_target'
+  }
+}
+
+function workflowTriggers(document) {
+  if (!document || typeof document !== 'object' || Array.isArray(document)) return {}
+  const triggers = document.on
+  if (typeof triggers === 'string') return { [triggers]: null }
+  if (Array.isArray(triggers)) {
+    return Object.fromEntries(triggers.filter((t) => typeof t === 'string').map((t) => [t, null]))
+  }
+  return triggers && typeof triggers === 'object' ? triggers : {}
+}
+
+function triggerTypes(trigger) {
+  if (!trigger || typeof trigger !== 'object' || Array.isArray(trigger)) return []
+  const types = trigger.types
+  if (typeof types === 'string') return [types]
+  return Array.isArray(types) ? types : []
+}
+
+function missingRequiredTriggers(document, { pullRequestTrigger }) {
+  const triggers = workflowTriggers(document)
+  const missing = []
+  if (!Object.hasOwn(triggers, pullRequestTrigger)) missing.push(pullRequestTrigger)
+  if (
+    !Object.hasOwn(triggers, 'merge_group') ||
+    !triggerTypes(triggers.merge_group).includes('checks_requested')
+  ) {
+    missing.push('merge_group (types: checks_requested)')
+  }
+  return missing
 }
 
 function isWorkflowPath(path) {
@@ -264,6 +302,16 @@ export function checkCiIntegrityChanges(files) {
         rule: 'stable-required-check',
         message: `Required job must remain ${stableCheck.jobId} with name ${stableCheck.name}`
       })
+    }
+    if (stableCheck) {
+      const missing = missingRequiredTriggers(document, stableCheck)
+      if (missing.length > 0) {
+        violations.push({
+          path: file.path,
+          rule: 'required-check-triggers',
+          message: `Required workflow must keep its triggers: ${missing.join(', ')}`
+        })
+      }
     }
   }
 

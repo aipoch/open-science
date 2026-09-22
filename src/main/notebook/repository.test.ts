@@ -12,6 +12,7 @@ import {
 } from './repository'
 import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
 import { getNotebookInputRoot } from './input-staging'
+import { digestNotebookHelperSource } from './helper-evidence'
 
 let storageRoot: string | undefined
 
@@ -45,6 +46,54 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('preserves valid history with more than 32 loaded helper modules', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const helperModules = Array.from({ length: 33 }, (_, index) => {
+      const source = `def reader_${index}():\n    return 1`
+      return {
+        helperId: `helper-${index}`,
+        skillIdentity: 'skill://readers',
+        packageOrigin: 'test',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: [`reader_${index}`],
+        source,
+        sourceDigest: digestNotebookHelperSource(source)
+      }
+    })
+    await repository.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: admittedRun({
+        status: 'completed',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      })
+    })
+    const filePath = join(document.notebookSessionRoot, 'run.json')
+    const before = await readFile(filePath, 'utf8')
+    const reopened = new NotebookRunRepository(root)
+    expect(await reopened.readSessionRuns(projectId, sessionId)).toEqual([
+      expect.objectContaining({
+        runId: 'run-1',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      })
+    ])
+    expect(await readFile(filePath, 'utf8')).toBe(before)
+  })
+
   it('resolves a provisional root Frame without reading it as a child Frame lane', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
@@ -903,6 +952,32 @@ describe('notebook run repository', () => {
     await expect(
       new NotebookRunRepository(root).readSessionDocuments(projectId, sessionId)
     ).resolves.toEqual([expect.objectContaining({ projectId, sessionId })])
+  })
+
+  it.each([
+    ['helper modules', { helperModules: {} }],
+    ['helper evidence status', { helperEvidenceStatus: { state: 'unknown' } }]
+  ])('rejects a run with malformed persisted %s', async (_label, malformedRun) => {
+    const root = await createStorageRoot()
+    const projectId = 'default-project'
+    const sessionId = 'session-1'
+    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+    const repository = new NotebookRunRepository(root)
+    const document = await repository.loadOrCreate({
+      projectId,
+      sessionId,
+      workspaceCwd: '/workspace',
+      lane
+    })
+    await repository.appendRun({ projectId, sessionId, lane, run: admittedRun() })
+    const filePath = join(document.notebookSessionRoot, 'run.json')
+    const persisted = JSON.parse(await readFile(filePath, 'utf8')) as {
+      runs: Array<Record<string, unknown>>
+    }
+    persisted.runs[0] = { ...persisted.runs[0], ...malformedRun }
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
+
+    await expect(repository.readSessionRuns(projectId, sessionId)).resolves.toEqual([])
   })
 
   it('does not treat an unversioned Notebook document as registered legacy data', async () => {

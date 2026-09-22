@@ -1102,3 +1102,34 @@ describe('TagsPanel', () => {
     expect(handle.releasePointerCapture).toHaveBeenCalledWith(1)
   })
 })
+
+it('includes PDF annotations in global Tag resources and routes them to their owner', async () => {
+  const onOpenResource = vi.fn()
+  useTagStore.setState({
+    assignments: [
+      { tagId: 'tag-favorite', resourceType: 'pdf.annotation', resourceId: 'a1', createdAt: 1 }
+    ],
+    pdfAnnotations: [
+      {
+        id: 'a1',
+        projectId: 'p1',
+        sessionId: 's1',
+        name: 'Methods.pdf',
+        note: 'Check the sample size'
+      }
+    ]
+  })
+  await act(async () =>
+    root.render(
+      <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={onOpenResource} />
+    )
+  )
+  expect(container.textContent).toContain('PDF annotations (1)')
+  const row = container.querySelector<HTMLButtonElement>('[data-slot="tag-resource-row"]')!
+  expect(row.textContent).toContain('Methods.pdf')
+  expect(row.textContent).toContain('Check the sample size')
+  act(() => row.click())
+  expect(onOpenResource).toHaveBeenCalledWith(
+    expect.objectContaining({ resourceType: 'pdf.annotation', resourceId: 'a1' })
+  )
+})

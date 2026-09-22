@@ -437,7 +437,8 @@ const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefi
 }
 
 const canReceiveFocus = (root: HTMLElement): boolean =>
-  root.getAttribute('contenteditable') === 'true' && root.closest('[hidden]') === null
+  root.getAttribute('contenteditable') === 'true' &&
+  root.closest('[hidden], [inert], [aria-hidden="true"]') === null
 
 // A contenteditable composer driven by a pure ComposerDoc model. External doc changes flow into the
 // DOM via applyDocToDom; user edits flow out via domToDoc. A `/` mention trigger mounts a skill popup.
@@ -569,6 +570,8 @@ export const ComposerEditor = ({
     }
   }, [caretRequest, doc, focusRequest])
 
+  // Consume each request once, including while a blocking interaction covers the composer.
+  // Removing the blocker must not replay focus and open a mobile software keyboard.
   useLayoutEffect(() => {
     const root = editorRef.current
     if (root && focusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)

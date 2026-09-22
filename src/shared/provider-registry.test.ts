@@ -339,7 +339,7 @@ describe('provider registry', () => {
   it('exposes the first catalog entry as the default model', () => {
     expect(defaultVendorModel('openai')).toBe('gpt-5.6-sol')
     expect(defaultVendorModel('anthropic')).toBe('claude-opus-5')
-    expect(defaultVendorModel('xai')).toBe('grok-4.6')
+    expect(defaultVendorModel('xai')).toBe('grok-4.7')
     expect(defaultVendorModel('zhipu')).toBe('glm-5.3')
   })
 
@@ -373,6 +373,10 @@ describe('provider registry', () => {
       slots: ['low', 'high', 'max', 'max', 'max']
     })
     expect(resolveVendorModelReasoningEffort('stepfun', 'step-3.7-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('stepfun', 'step-5-preview')).toEqual({
       supported: true,
       slots: ['low', 'medium', 'high', 'high', 'high']
     })
@@ -698,7 +702,24 @@ describe('provider registry', () => {
     // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
     // hidden and expose only the curated language-model catalog.
     expect(resolveVendorModelsUrl('xai')).toBeUndefined()
-    expect(defaultVendorModel('xai')).toBe('grok-4.6')
+    expect(defaultVendorModel('xai')).toBe('grok-4.7')
+  })
+
+  it('exposes Grok 4.7 with its documented capabilities and keeps existing xAI models', () => {
+    expect(getOfficialVendorModelIds('xai')).toEqual([
+      'grok-4.7',
+      'grok-4.6',
+      'grok-4.5',
+      'grok-4.3',
+      'grok-build-0.1'
+    ])
+    expect(resolveModelContextWindow('xai', 'grok-4.7')).toBe(500_000)
+    expect(isVendorModelMultimodal('xai', 'grok-4.7')).toBe(true)
+    expect(resolveVendorModelApiEndpoints('xai', 'grok-4.7')).toEqual(['openai', 'responses'])
+    expect(resolveVendorModelReasoningEffort('xai', 'grok-4.7')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'xhigh']
+    })
   })
 
   it('routes Apodex core models through Messages and Chat Completions', () => {
@@ -739,7 +760,9 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('stepfun', 'china')).toBe(
       'https://platform.stepfun.com/interface-key'
     )
-    expect(defaultVendorModel('stepfun')).toBe('step-3.7-flash')
+    expect(defaultVendorModel('stepfun')).toBe('step-5-preview')
+    expect(resolveModelContextWindow('stepfun', 'step-5-preview')).toBe(1_000_000)
+    expect(isVendorModelResponsesSupported('stepfun', 'step-5-preview')).toBe(true)
   })
 
   it('routes Bailian Responses only for the documented Qwen models', () => {
@@ -876,15 +899,24 @@ describe('provider registry', () => {
     expect(resolveModelContextWindow('bailianplan', 'qwen3.8-max-preview')).toBe(983_616)
   })
 
-  it('routes Step Plan over Anthropic and OpenAI under /step_plan, no live model list', () => {
+  it('routes Step Plan over Anthropic and OpenAI in China and globally, no live model list', () => {
     expect(resolveVendorApiEndpoints('stepplan')).toEqual(['anthropic', 'openai'])
-    expect(vendorHasRegions('stepplan')).toBe(false)
+    expect(vendorHasRegions('stepplan')).toBe(true)
     expect(resolveVendorBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan')
     expect(resolveVendorOpenAiBaseUrl('stepplan')).toBe('https://api.stepfun.com/step_plan/v1')
+    expect(resolveVendorBaseUrl('stepplan', 'global')).toBe('https://api.stepfun.ai/step_plan')
+    expect(resolveVendorOpenAiBaseUrl('stepplan', 'global')).toBe(
+      'https://api.stepfun.ai/step_plan/v1'
+    )
     // Quota-based plan: fixed catalog, no "refresh from vendor" endpoint.
     expect(resolveVendorModelsUrl('stepplan')).toBeUndefined()
     expect(resolveVendorApiKeyUrl('stepplan')).toBe('https://platform.stepfun.com/plan-subscribe')
-    expect(defaultVendorModel('stepplan')).toBe('step-3.7-flash')
+    expect(resolveVendorApiKeyUrl('stepplan', 'global')).toBe(
+      'https://platform.stepfun.ai/plan-subscribe'
+    )
+    expect(defaultVendorModel('stepplan')).toBe('step-5-preview')
+    expect(resolveModelContextWindow('stepplan', 'step-5-preview')).toBe(1_000_000)
+    expect(isVendorModelResponsesSupported('stepplan', 'step-5-preview')).toBe(false)
   })
 
   it('resolves the key-console URL, preferring the selected region', () => {
@@ -1019,9 +1051,11 @@ describe('provider registry', () => {
       )
     })
 
-    it('returns true only for the StepFun multimodal flash model', () => {
+    it('returns true for StepFun multimodal models only', () => {
+      expect(isVendorModelMultimodal('stepfun', 'step-5-preview')).toBe(true)
       expect(isVendorModelMultimodal('stepfun', 'step-3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal('stepfun', 'step-3.5-flash')).toBe(false)
+      expect(isVendorModelMultimodal('stepplan', 'step-5-preview')).toBe(true)
       expect(isVendorModelMultimodal('stepplan', 'step-3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal('stepplan', 'step-3.5-flash-2603')).toBe(false)
       expect(isVendorModelMultimodal('stepplan', 'step-router-v1')).toBe(false)

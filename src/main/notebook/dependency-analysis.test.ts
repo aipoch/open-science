@@ -1191,6 +1191,54 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     ).resolves.toEqual(first)
   })
 
+  it('invalidates cached facts when helper identity metadata changes', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-helper-checksum-'))
+    temporaryRoots.push(storageRoot)
+    const helper = {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("input.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+    const runs = [
+      {
+        ...run('run-1', 'helper', 'data = read_inputs()', 1),
+        helperModules: [helper],
+        helperEvidenceStatus: { state: 'complete' as const }
+      }
+    ]
+    const repository = { readSessionRuns: vi.fn(async () => runs) }
+    const facts = {
+      state: 'available' as const,
+      definedNames: ['data'],
+      usedNames: ['read_inputs'],
+      mutatedNames: []
+    }
+    const firstAnalyze = vi.fn(async () => [facts])
+    await new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository,
+      analyze: firstAnalyze
+    }).project({ projectId: 'default-project', sessionId: 'session-1' })
+    expect(firstAnalyze).toHaveBeenCalledOnce()
+
+    runs[0] = {
+      ...runs[0],
+      helperModules: [{ ...helper, registeredGeneration: 'generation-2' }]
+    }
+    const secondAnalyze = vi.fn(async () => [facts])
+    await new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository,
+      analyze: secondAnalyze
+    }).project({ projectId: 'default-project', sessionId: 'session-1' })
+    expect(secondAnalyze).toHaveBeenCalledOnce()
+  })
+
   it('does not let a blocked session delay dependency projection for another session', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-projection-queue-'))
     temporaryRoots.push(storageRoot)

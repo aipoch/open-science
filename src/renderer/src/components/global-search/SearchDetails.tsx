@@ -63,6 +63,7 @@ export const SearchDetails = ({
   const locale = resolveLocaleFromTags([i18n.resolvedLanguage ?? i18n.language])
   const contentRef = useRef<HTMLDivElement>(null)
   const [tab, setTab] = useState('content')
+  const [relatedRequested, setRelatedRequested] = useState(false)
   const [previewDialog, setPreviewDialog] = useState<PreviewFileItem>()
   useLayoutEffect(() => {
     onPreviewOpenChange(Boolean(previewDialog))
@@ -84,7 +85,7 @@ export const SearchDetails = ({
   const initialStatus =
     result.kind === 'sessions' ||
     (result.kind === 'messages' && result.item.contentTruncated) ||
-    (result.kind === 'library' && !('item' in result.item))
+    (result.kind === 'library' && 'itemCount' in result.item)
       ? 'loading'
       : 'idle'
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>(initialStatus)
@@ -93,6 +94,7 @@ export const SearchDetails = ({
   if (loadedIdentity !== identity) {
     setLoadedIdentity(identity)
     setTab('content')
+    setRelatedRequested(false)
     setFiles([])
     setPapers([])
     setHasMoreRecentItems(false)
@@ -117,7 +119,15 @@ export const SearchDetails = ({
       : result.kind === 'library' && 'item' in result.item
         ? literaturePreviewItem(result.item)
         : undefined
-  const isCollection = result.kind === 'library' && !('item' in result.item)
+  const isCollection = result.kind === 'library' && 'itemCount' in result.item
+  const annotation =
+    result.kind === 'library' && 'annotation' in result.item ? result.item.annotation : undefined
+  const quote =
+    annotation?.target.selector.kind === 'text'
+      ? annotation.target.selector.exact
+      : annotation?.target.selector.kind === 'region'
+        ? annotation.target.selector.text
+        : undefined
   const recentSessions =
     result.kind === 'projects'
       ? sessions
@@ -166,24 +176,6 @@ export const SearchDetails = ({
         .catch(() => {
           if (active) setFileCountUnavailable(true)
         })
-      void window.api.projectFiles
-        .searchArtifacts({
-          primaryProjectIds: [result.item.id],
-          otherProjectIds: [],
-          source: 'all',
-          sort: 'recent',
-          primaryLimit: 10,
-          otherLimit: 0
-        })
-        .then((page) => {
-          if (active) {
-            setFiles(page.primary.items)
-            setHasMoreRecentItems(page.primary.totalCount > 10)
-          }
-        })
-        .catch(() => {
-          if (active) setFiles([])
-        })
     } else if (result.kind === 'sessions') {
       void window.api.projectFiles
         .searchArtifacts({
@@ -209,30 +201,7 @@ export const SearchDetails = ({
             setFileCountUnavailable(true)
           }
         })
-    } else if (result.kind === 'library' && 'item' in result.item) {
-      const itemId = result.item.id
-      async function loadCollections(): Promise<void> {
-        try {
-          const names: string[] = []
-          let offset: number | undefined
-          do {
-            const page = await window.api.literature.search({
-              scope: 'collections',
-              itemId,
-              limit: 100,
-              offset
-            })
-            if (!active) return
-            for (const entry of page.entries) if ('name' in entry) names.push(entry.name)
-            offset = page.nextOffset
-          } while (offset !== undefined)
-          setCollectionNames(names.join(', ') || t('None'))
-        } catch {
-          if (active) setCollectionNames(t('Some results are unavailable.'))
-        }
-      }
-      void loadCollections()
-    } else if (result.kind === 'library' && !('item' in result.item)) {
+    } else if (result.kind === 'library' && 'itemCount' in result.item) {
       void readLiteratureSelectionPage(
         {
           scope: 'library',
@@ -261,8 +230,70 @@ export const SearchDetails = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity])
 
+  // Once visited, keep this selected result's related data across tab changes.
+  const needsRelated =
+    (result.kind === 'projects' && tab === 'files') ||
+    (result.kind === 'library' && 'item' in result.item && tab === 'details')
+  if (loadedIdentity === identity && needsRelated && !relatedRequested) {
+    setRelatedRequested(true)
+    if (result.kind === 'projects') setStatus('loading')
+  }
+  useEffect(() => {
+    if (!relatedRequested) return
+    let active = true
+    if (result.kind === 'projects') {
+      void window.api.projectFiles
+        .searchArtifacts({
+          primaryProjectIds: [result.item.id],
+          otherProjectIds: [],
+          source: 'all',
+          sort: 'recent',
+          primaryLimit: 10,
+          otherLimit: 0
+        })
+        .then((page) => {
+          if (active) {
+            setStatus('idle')
+            setFiles(page.primary.items)
+            setHasMoreRecentItems(page.primary.totalCount > 10)
+          }
+        })
+        .catch(() => {
+          if (active) setStatus('error')
+        })
+    } else if (result.kind === 'library' && 'item' in result.item) {
+      const itemId = result.item.id
+      async function loadCollections(): Promise<void> {
+        try {
+          const names: string[] = []
+          let offset: number | undefined
+          do {
+            const page = await window.api.literature.search({
+              scope: 'collections',
+              itemId,
+              limit: 100,
+              offset
+            })
+            if (!active) return
+            for (const entry of page.entries) if ('name' in entry) names.push(entry.name)
+            offset = page.nextOffset
+          } while (offset !== undefined)
+          setCollectionNames(names.join(', ') || t('None'))
+        } catch {
+          if (active) setCollectionNames(t('Some results are unavailable.'))
+        }
+      }
+      void loadCollections()
+    }
+    return () => {
+      active = false
+    }
+    // Selection changes retire the previous read; tab revisits keep its result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity, relatedRequested])
+
   const tabs =
-    result.kind === 'messages'
+    result.kind === 'messages' || annotation
       ? []
       : [
           {
@@ -273,9 +304,11 @@ export const SearchDetails = ({
                 : result.kind === 'sessions'
                   ? t('Recent files')
                   : result.kind === 'library'
-                    ? isCollection
-                      ? t('Recent literature')
-                      : t('Abstract')
+                    ? 'annotation' in result.item
+                      ? t('Notes & Annotations')
+                      : isCollection
+                        ? t('Recent literature')
+                        : t('Abstract')
                     : t('Content preview')
           },
           ...(result.kind === 'projects' ? [{ id: 'files', label: t('Recent files') }] : []),
@@ -302,9 +335,11 @@ export const SearchDetails = ({
         : result.kind === 'sessions'
           ? t('Open session')
           : result.kind === 'library'
-            ? isCollection
-              ? t('Open collection')
-              : t('Open literature')
+            ? 'annotation' in result.item
+              ? t('Show annotation source')
+              : isCollection
+                ? t('Open collection')
+                : t('Open literature')
             : t('Open full screen preview')
   // Match artifact tiles while keeping preview and source navigation owned by the search panel.
   const renderFiles = (): React.JSX.Element => (
@@ -433,7 +468,11 @@ export const SearchDetails = ({
           </dl>
         )
       case 'library':
-        return 'item' in result.item ? (
+        return 'annotation' in result.item ? (
+          <p className="search-detail-abstract">
+            <SearchHighlight text={result.item.annotation.target.source.name} query={query} />
+          </p>
+        ) : 'item' in result.item ? (
           <dl className="search-details-metadata">
             <dt>{t('Title')}</dt>
             <dd>{result.item.item.title}</dd>
@@ -534,7 +573,7 @@ export const SearchDetails = ({
       >
         {result.kind === 'messages' ? (
           (!result.item.contentTruncated || completeMessage !== undefined) && (
-            <SearchContentHighlight query={query} className="search-message-content">
+            <SearchContentHighlight key={identity} query={query} className="search-message-content">
               <AgentMarkdown
                 content={result.item.contentTruncated ? completeMessage! : result.item.content}
               />
@@ -591,6 +630,30 @@ export const SearchDetails = ({
               <p className="search-recent-limit">{t('Only the 10 most recent items are shown')}</p>
             )}
           </>
+        ) : annotation ? (
+          <div className="space-y-5 text-sm leading-relaxed">
+            {annotation.note && (
+              <section aria-label={t('Notes')}>
+                <h4 className="mb-2 text-xs font-medium text-muted-foreground">{t('Notes')}</h4>
+                <p className="whitespace-pre-wrap break-words">
+                  <SearchHighlight text={annotation.note} query={query} />
+                </p>
+              </section>
+            )}
+            {quote && (
+              <section aria-label={t('Quoted text')}>
+                <h4 className="mb-2 text-xs font-medium text-muted-foreground">
+                  {t('Quoted text')}
+                </h4>
+                <blockquote className="whitespace-pre-wrap break-words border-l-2 border-primary/40 pl-3 text-muted-foreground">
+                  <SearchHighlight text={quote} query={query} />
+                </blockquote>
+              </section>
+            )}
+            {!annotation.note && !quote && annotation.kind === 'area' && (
+              <p className="text-muted-foreground">{t('Selected area')}</p>
+            )}
+          </div>
         ) : result.kind === 'library' && 'item' in result.item ? (
           <p className="search-detail-abstract">
             <SearchHighlight
@@ -616,12 +679,12 @@ export const SearchDetails = ({
             )}
           </div>
         )}
-        {tab === 'content' && status === 'loading' && (
+        {tab === (result.kind === 'projects' ? 'files' : 'content') && status === 'loading' && (
           <div role="status" className="flex justify-center py-8">
             <LoaderCircle className="size-5 animate-spin" aria-label={t('Loading…')} />
           </div>
         )}
-        {tab === 'content' && status === 'error' && (
+        {tab === (result.kind === 'projects' ? 'files' : 'content') && status === 'error' && (
           <ErrorNotice
             title={
               result.kind === 'messages'

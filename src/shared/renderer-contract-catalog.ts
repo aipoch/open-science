@@ -1,3 +1,17 @@
+import type {
+  SessionDiagnosticRequest,
+  SessionDiagnosticInspection,
+  SessionDiagnosticExportRequest,
+  SessionDiagnosticExportResult
+} from './session-diagnostics'
+import type {
+  ClassificationSnapshot,
+  ClassificationMutation,
+  ClassificationMutationResult,
+  ClassificationProbe,
+  ClassificationProbeResult
+} from './classification'
+import type { PdfAnnotationsChangedEvent } from './pdf-annotations'
 import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type {
   SkillMarketplaceCatalog,
@@ -321,6 +335,19 @@ import type {
   UpdateBookmarkNoteRequest
 } from './bookmarks'
 import type {
+  CreatePdfAnnotationRequest,
+  DeletePdfAnnotationRequest,
+  DeletePdfAnnotationResult,
+  ListPdfAnnotationsRequest,
+  PdfAnnotation,
+  PdfAnnotationListResult,
+  PdfNativeAnnotationCancelRequest,
+  PdfNativeAnnotationImportProgress,
+  PdfNativeAnnotationImportRequest,
+  PdfNativeAnnotationImportResult,
+  UpdatePdfAnnotationRequest
+} from './pdf-annotations'
+import type {
   LiteratureCatalogCommand,
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchPage,
@@ -336,6 +363,7 @@ import type {
   LiteratureItemInput,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
+  LiteraturePdfCancelImportRequest,
   LiteraturePdfImportReceipt,
   LiteraturePdfImportRequest,
   LiteratureRecordImportRequest,
@@ -538,6 +566,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
+  RevokeRemoteBrowsersRequest,
   SetRemoteAccessModeRequest
 } from './remote-access'
 import type {
@@ -1224,6 +1253,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'handoff-lifecycle:retry',
     ELECTRON
   ]),
+  'lifecycle.claimRuntimeWriter': callable<
+    () => Promise<import('./runtime-writer').RuntimeWriterLease>
+  >()('lifecycle', [
+    'lifecycle:claim-runtime-writer',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'lifecycle.getClientId': callable<() => Promise<string>>()('lifecycle', ['lifecycle:client-id']),
   'locale.initialize': callable<
     (request: InitializeLocalePreferenceRequest) => Promise<LocalePreferenceSnapshot>
@@ -1314,6 +1352,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.importPdf': callable<
     (request: LiteraturePdfImportRequest) => Promise<LiteraturePdfImportReceipt>
   >()('literature', ['literature:import-pdf', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.cancelPdfImport': callable<
+    (request: LiteraturePdfCancelImportRequest) => Promise<{ cancelled: boolean }>
+  >()('literature', ['literature:cancel-pdf-import', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.importRecords': callable<
     (request: LiteratureRecordImportRequest) => Promise<LiteratureRecordImportResult>
   >()('literature', ['literature:import-records', WEB, undefined, undefined, RUNTIME_VALIDATED]),
@@ -1728,6 +1769,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'remoteAccess.revokeBrowser': callable<
     (request: RevokeRemoteBrowserRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:revoke-browser']),
+  'remoteAccess.revokeBrowsers': callable<
+    (request: RevokeRemoteBrowsersRequest) => Promise<RemoteAccessSnapshot>
+  >()('remote-access', ['remote-access:revoke-browsers']),
   'remoteAccess.setMode': callable<
     (request: SetRemoteAccessModeRequest) => Promise<RemoteAccessSnapshot>
   >()('remote-access', ['remote-access:set-mode', ELECTRON]),
@@ -1837,6 +1881,28 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.exportConversation': callable<
     (request: ExportConversationRequest) => Promise<ExportConversationResult>
   >()('sessions', ['sessions:export-conversation', MAPPED_ELECTRON]),
+  'sessions.inspectDiagnostics': callable<
+    (request: SessionDiagnosticRequest) => Promise<SessionDiagnosticInspection>
+  >()('sessions', [
+    'sessions:inspect-diagnostics',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.exportDiagnostics': callable<
+    (request: SessionDiagnosticExportRequest) => Promise<SessionDiagnosticExportResult>
+  >()('sessions', [
+    'sessions:export-diagnostics',
+    MAPPED_ELECTRON,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessions.cancelDiagnostics': callable<(request: { operationId: string }) => Promise<void>>()(
+    'sessions',
+    ['sessions:cancel-diagnostics', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'sessions.fork': callable<
     (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
   >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
@@ -2288,6 +2354,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'settings.setNcbiCredentials': callable<
     (request: SetNcbiCredentialsRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-ncbi-credentials']),
+  'settings.getClassification': callable<() => Promise<ClassificationSnapshot>>()('settings', [
+    'settings:get-classification',
+    LOCAL
+  ]),
+  'settings.updateClassification': callable<
+    (request: ClassificationMutation) => Promise<ClassificationMutationResult>
+  >()('settings', ['settings:update-classification', LOCAL]),
+  'settings.testClassification': callable<
+    (request: ClassificationProbe) => Promise<ClassificationProbeResult>
+  >()('settings', ['settings:test-classification', LOCAL]),
   'settings.setOpenAlexCredential': callable<
     (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-openalex-credential', LOCAL]),
@@ -2656,6 +2732,42 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'bookmarks',
     ['bookmarks:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
+  'pdfAnnotations.list': callable<
+    (request: ListPdfAnnotationsRequest) => Promise<PdfAnnotationListResult>
+  >()('pdf-annotations', ['pdf-annotations:list', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.create': callable<
+    (request: CreatePdfAnnotationRequest) => Promise<PdfAnnotation>
+  >()('pdf-annotations', ['pdf-annotations:create', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.update': callable<
+    (request: UpdatePdfAnnotationRequest) => Promise<PdfAnnotation>
+  >()('pdf-annotations', ['pdf-annotations:update', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.delete': callable<
+    (request: DeletePdfAnnotationRequest) => Promise<DeletePdfAnnotationResult>
+  >()('pdf-annotations', ['pdf-annotations:delete', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'pdfAnnotations.importNative': callable<
+    (request: PdfNativeAnnotationImportRequest) => Promise<PdfNativeAnnotationImportResult>
+  >()('pdf-annotations', [
+    'pdf-annotations:import-native',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfAnnotations.cancelImport': callable<
+    (request: PdfNativeAnnotationCancelRequest) => Promise<{ cancelled: boolean }>
+  >()('pdf-annotations', [
+    'pdf-annotations:cancel-import',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfAnnotations.onChanged': callable<
+    (listener: AcpListener<PdfAnnotationsChangedEvent>) => RemoveListener
+  >()('pdf-annotations', ['pdf-annotations:changed', EVENT]),
+  'pdfAnnotations.onImportProgress': callable<
+    (listener: AcpListener<PdfNativeAnnotationImportProgress>) => RemoveListener
+  >()('pdf-annotations', ['pdf-annotations:import-progress', EVENT]),
   'tags.create': callable<(request: CreateTagRequest) => Promise<TagSnapshot>>()('tags', [
     'tags:create',
     WEB,

@@ -4,8 +4,12 @@
     "src/main/connectors/descriptors/genes-proteins.ts",
     "src/main/connectors/descriptors/genes-reactome.test.ts",
     "src/main/connectors/descriptors/genes-reactome.ts",
+    "src/main/connectors/descriptors/genes-gprofiler.test.ts",
+    "src/main/connectors/descriptors/genes-gprofiler.ts",
     "src/main/connectors/descriptors/genes.test.ts",
-    "src/main/connectors/descriptors/genes.ts"
+    "src/main/connectors/descriptors/genes.ts",
+    "src/main/connectors/descriptors/genes-uniprot-mapping.test.ts",
+    "src/main/connectors/descriptors/genes-uniprot-mapping.ts"
   ],
   "interfacePaths": ["src/main/connectors/descriptors/genes.ts"],
   "consumerModules": [],
@@ -13,7 +17,9 @@
     "owner": [
       "src/main/connectors/descriptors/genes-proteins.test.ts",
       "src/main/connectors/descriptors/genes-reactome.test.ts",
-      "src/main/connectors/descriptors/genes.test.ts"
+      "src/main/connectors/descriptors/genes-gprofiler.test.ts",
+      "src/main/connectors/descriptors/genes.test.ts",
+      "src/main/connectors/descriptors/genes-uniprot-mapping.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

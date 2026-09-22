@@ -10,10 +10,20 @@ import type { Bookmark } from '../../../../../shared/bookmarks'
 import { requestBookmarkReveal } from '../annotations/annotation-reveal'
 import { useBookmarks } from './bookmark-context'
 
-const bookmarkQuote = (bookmark: Bookmark, pdfRegionLabel: (page: number) => string): string => {
+const bookmarkQuote = (
+  bookmark: Bookmark,
+  pdfRegionLabel: (page: number) => string,
+  documentNoteLabel: string
+): string => {
   if (bookmark.target.kind === 'text') return bookmark.target.quote
   if (bookmark.target.selector.kind === 'text') return bookmark.target.selector.exact
-  return bookmark.target.selector.text ?? pdfRegionLabel(bookmark.target.selector.pageNumber)
+  if (bookmark.target.selector.kind === 'region') {
+    return bookmark.target.selector.text ?? pdfRegionLabel(bookmark.target.selector.pageNumber)
+  }
+  if (bookmark.target.selector.kind === 'page-note') {
+    return pdfRegionLabel(bookmark.target.selector.pageNumber)
+  }
+  return documentNoteLabel
 }
 
 const sourceLabel = (bookmark: Bookmark, agentMessage: string, sessionItem: string): string => {
@@ -138,105 +148,112 @@ const BookmarksPopover = (): React.JSX.Element | null => {
             </p>
           ) : bookmarks.length > 0 ? (
             <ol className="max-h-80 overflow-y-auto overscroll-contain">
-              {bookmarks.map((bookmark) => (
-                <li
-                  key={bookmark.id}
-                  className="group rounded-md px-1.5 py-1 hover:bg-muted/50 focus-within:bg-muted/50"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <BookmarkIcon
-                      className="size-3 shrink-0 text-status-warning-foreground/65"
-                      strokeWidth={1.5}
-                      aria-hidden="true"
-                    />
-                    <button
-                      type="button"
-                      title={sourceLabel(bookmark, t('Agent message'), t('Session activity'))}
-                      disabled={pendingId === bookmark.id}
-                      onClick={() => void revealBookmark(bookmark)}
-                      className="flex min-w-0 flex-1 items-baseline gap-2 rounded-sm text-left text-[11px] leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <span className="max-w-[55%] truncate font-mono text-muted-foreground">
-                        {bookmarkQuote(bookmark, (page) =>
-                          t('PDF region on page {{page}}', { page })
-                        )}
-                      </span>
-                      {bookmark.note ? (
-                        <>
-                          <span className="text-muted-foreground/60" aria-hidden="true">
-                            —
-                          </span>
-                          <span className="truncate text-foreground/85">{bookmark.note}</span>
-                        </>
-                      ) : null}
-                    </button>
-                    <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/65">
-                      <button
-                        type="button"
-                        aria-label={t('Show bookmark source')}
-                        disabled={pendingId === bookmark.id}
-                        onClick={() => void revealBookmark(bookmark)}
-                        className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <ArrowUpRight className="size-3" strokeWidth={1.5} aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={t('Edit bookmark note')}
-                        disabled={!available || pendingId === bookmark.id}
-                        className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => {
-                          setEditingId(bookmark.id)
-                          setEditingNote(bookmark.note)
-                          setOperationError(undefined)
-                        }}
-                      >
-                        <Pencil className="size-3" strokeWidth={1.5} aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={t('Delete bookmark')}
-                        disabled={!available || pendingId === bookmark.id}
-                        className="grid size-5 place-items-center rounded hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                        onClick={() => void deleteBookmark(bookmark.id)}
-                      >
-                        <Trash2 className="size-3" strokeWidth={1.5} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
-                  {editingId === bookmark.id ? (
-                    <div className="ml-5 mt-1 space-y-1.5 pb-1">
-                      <Textarea
-                        aria-label={t('Bookmark note')}
-                        className="min-h-[60px] resize-none rounded-md px-2 py-1.5 text-xs md:text-xs"
-                        autoFocus
-                        value={editingNote}
-                        maxLength={2_000}
-                        disabled={pendingId === bookmark.id}
-                        onChange={(event) => setEditingNote(event.target.value)}
+              {bookmarks.map((bookmark) => {
+                const canReveal =
+                  bookmark.target.kind !== 'pdf' ||
+                  bookmark.target.selector.kind !== 'document-note'
+                return (
+                  <li
+                    key={bookmark.id}
+                    className="group rounded-md px-1.5 py-1 hover:bg-muted/50 focus-within:bg-muted/50"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <BookmarkIcon
+                        className="size-3 shrink-0 text-status-warning-foreground/65"
+                        strokeWidth={1.5}
+                        aria-hidden="true"
                       />
-                      <div className="flex justify-end gap-1">
-                        <Button
+                      <button
+                        type="button"
+                        title={sourceLabel(bookmark, t('Agent message'), t('Session activity'))}
+                        disabled={!canReveal || pendingId === bookmark.id}
+                        onClick={canReveal ? () => void revealBookmark(bookmark) : undefined}
+                        className="flex min-w-0 flex-1 items-baseline gap-2 rounded-sm text-left text-[11px] leading-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <span className="max-w-[55%] truncate font-mono text-muted-foreground">
+                          {bookmarkQuote(
+                            bookmark,
+                            (page) => t('PDF region on page {{page}}', { page }),
+                            t('Document note')
+                          )}
+                        </span>
+                        {bookmark.note ? (
+                          <>
+                            <span className="text-muted-foreground/60" aria-hidden="true">
+                              —
+                            </span>
+                            <span className="truncate text-foreground/85">{bookmark.note}</span>
+                          </>
+                        ) : null}
+                      </button>
+                      <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/65">
+                        <button
                           type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditingId(undefined)}
+                          aria-label={t('Show bookmark source')}
+                          disabled={!canReveal || pendingId === bookmark.id}
+                          onClick={canReveal ? () => void revealBookmark(bookmark) : undefined}
+                          className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
-                          {t('Cancel')}
-                        </Button>
-                        <Button
+                          <ArrowUpRight className="size-3" strokeWidth={1.5} aria-hidden="true" />
+                        </button>
+                        <button
                           type="button"
-                          size="sm"
-                          disabled={pendingId === bookmark.id}
-                          onClick={() => void saveNote()}
+                          aria-label={t('Edit bookmark note')}
+                          disabled={!available || pendingId === bookmark.id}
+                          className="grid size-5 place-items-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => {
+                            setEditingId(bookmark.id)
+                            setEditingNote(bookmark.note)
+                            setOperationError(undefined)
+                          }}
                         >
-                          {t('Save')}
-                        </Button>
+                          <Pencil className="size-3" strokeWidth={1.5} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={t('Delete bookmark')}
+                          disabled={!available || pendingId === bookmark.id}
+                          className="grid size-5 place-items-center rounded hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          onClick={() => void deleteBookmark(bookmark.id)}
+                        >
+                          <Trash2 className="size-3" strokeWidth={1.5} aria-hidden="true" />
+                        </button>
                       </div>
                     </div>
-                  ) : null}
-                </li>
-              ))}
+                    {editingId === bookmark.id ? (
+                      <div className="ml-5 mt-1 space-y-1.5 pb-1">
+                        <Textarea
+                          aria-label={t('Bookmark note')}
+                          className="min-h-[60px] resize-none rounded-md px-2 py-1.5 text-xs md:text-xs"
+                          autoFocus
+                          value={editingNote}
+                          maxLength={2_000}
+                          disabled={pendingId === bookmark.id}
+                          onChange={(event) => setEditingNote(event.target.value)}
+                        />
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingId(undefined)}
+                          >
+                            {t('Cancel')}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={pendingId === bookmark.id}
+                            onClick={() => void saveNote()}
+                          >
+                            {t('Save')}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
             </ol>
           ) : null}
           {operationError ? (

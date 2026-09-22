@@ -43,6 +43,7 @@ type WorkingFileObservationRequest = {
   cwd?: string
   code?: string
   language?: NotebookLanguage
+  kind?: 'python' | 'r' | 'repl'
   fileEvidenceStorageRoot?: string
   fileEvidenceRoot?: string
   fileEvidenceStoragePrefix?: string
@@ -215,6 +216,16 @@ type EvidenceWorkerReconcileRequest = EvidenceWorkerBlobPoolBinding & {
     storageKey: string
   }>
 }
+type EvidenceWorkerProjectReconcileRequest = {
+  operation: 'reconcile-compute-project'
+  expectedRootIdentity: FileIdentity
+  projectName: string
+  sessions: Array<{
+    sessionName: string
+    retained: EvidenceWorkerReconcileRequest['retained']
+    deferredActivityIds: string[]
+  }>
+}
 type EvidenceWorkerLegacyNotebookReconcileRequest = EvidenceWorkerBlobPoolBinding & {
   operation: 'reconcile-legacy-notebook'
   expectedRootIdentity: FileIdentity
@@ -250,6 +261,7 @@ type EvidenceWorkerRequest =
   | EvidenceWorkerRecoverPublishedRequest
   | EvidenceWorkerCompleteRequest
   | EvidenceWorkerReconcileRequest
+  | EvidenceWorkerProjectReconcileRequest
   | EvidenceWorkerLegacyNotebookReconcileRequest
   | EvidenceWorkerCleanupRequest
   | EvidenceWorkerDeleteProjectRequest
@@ -912,9 +924,37 @@ type ComputeJobFileEvidenceRecord = Pick<
   | 'harvested_at'
 >
 
+// Bound process lifetime and request size without splitting a Session's complete retention set.
+// An individually oversized Session keeps the same worker limit as the original per-Session path.
+export function* batchComputeProjectEvidenceRequests(
+  request: EvidenceWorkerProjectReconcileRequest
+): Generator<EvidenceWorkerProjectReconcileRequest> {
+  const maxSessions = 64
+  const targetBytes = 4 * 1024 * 1024
+  const emptyRequest = { ...request, sessions: [] }
+  const wrapperBytes = Buffer.byteLength(JSON.stringify(emptyRequest))
+  let sessions: EvidenceWorkerProjectReconcileRequest['sessions'] = []
+  let bytes = wrapperBytes
+  for (const session of request.sessions) {
+    const sessionBytes = Buffer.byteLength(JSON.stringify(session))
+    if (
+      sessions.length > 0 &&
+      (sessions.length >= maxSessions || bytes + 1 + sessionBytes > targetBytes)
+    ) {
+      yield { ...request, sessions }
+      sessions = []
+      bytes = wrapperBytes
+    }
+    bytes += sessionBytes + (sessions.length > 0 ? 1 : 0)
+    sessions.push(session)
+  }
+  if (sessions.length > 0) yield { ...request, sessions }
+}
+
 const reconcileComputeJobFileEvidence = async (
   storageRoot: string,
-  jobs: readonly ComputeJobFileEvidenceRecord[]
+  jobs: readonly ComputeJobFileEvidenceRecord[],
+  worker: typeof runEvidenceWorker = runEvidenceWorker
 ): Promise<{ removedStagingEntries: number; removedActivityEntries: number }> => {
   const sessions = new Map<
     string,
@@ -967,8 +1007,7 @@ const reconcileComputeJobFileEvidence = async (
     }
   }
 
-  let removedStagingEntries = 0
-  let removedActivityEntries = 0
+  const projects = new Map<string, EvidenceWorkerProjectReconcileRequest['sessions']>()
   for (const { location, jobs: sessionJobs } of sessions.values()) {
     const retained: EvidenceWorkerReconcileRequest['retained'] = []
     const deferredActivityIds: string[] = []
@@ -1001,14 +1040,30 @@ const reconcileComputeJobFileEvidence = async (
         if (mayStillPublishEvidence) deferredActivityIds.push(job.job_id)
       }
     }
-    const result = await reconcileEvidenceReceipts(
-      location,
-      retained,
-      ['notebook-run'],
-      deferredActivityIds
-    )
-    removedStagingEntries += result.removedStagingEntries
-    removedActivityEntries += result.removedActivityEntries
+    const [, projectName, sessionName] = location.storageKeyPrefix.split('/')
+    const projectSessions = projects.get(projectName) ?? []
+    projectSessions.push({ sessionName, retained, deferredActivityIds })
+    projects.set(projectName, projectSessions)
+  }
+
+  // Bounded Project batches amortize worker startup while preserving the evidence mutation queue.
+  // Each batch sweeps only unlinked blobs; hardlinks in later Sessions keep their evidence alive.
+  let removedStagingEntries = 0
+  let removedActivityEntries = 0
+  for (const [projectName, projectSessions] of projects) {
+    for (const request of batchComputeProjectEvidenceRequests({
+      operation: 'reconcile-compute-project',
+      expectedRootIdentity: root.identity,
+      projectName,
+      sessions: projectSessions
+    })) {
+      const result = await runSerializedEvidenceWorker(worker, root.path, request)
+      if (!('removedStagingEntries' in result)) {
+        throw new Error('File-evidence Project reconciliation returned an invalid result.')
+      }
+      removedStagingEntries += result.removedStagingEntries
+      removedActivityEntries += result.removedActivityEntries
+    }
   }
   return { removedStagingEntries, removedActivityEntries }
 }
@@ -1506,17 +1561,25 @@ const prepareSourceFileAccess = async (
   request: WorkingFileObservationRequest
 ): Promise<WorkingFileObservationRequest['sourceFileAccess']> => {
   if (request.code === undefined) return undefined
+  const context = request.sourceFileAccessContext
+  const managedEnvironment = context?.managedEnvironmentSafe
+    ? {
+        OPEN_SCIENCE_NOTEBOOK_DIR: resolve(request.notebookSessionRoot),
+        OPEN_SCIENCE_NOTEBOOK_DATA_DIR: resolve(request.dataRoot),
+        OPEN_SCIENCE_HANDOFF_DIR: join(resolve(request.notebookSessionRoot), 'handoff')
+      }
+    : undefined
   const analysis = await analyzeNotebookSourceFileAccess(
-    request.language ?? 'python',
+    request.kind === 'repl' ? 'repl' : (request.language ?? 'python'),
     request.code,
-    request.sourceFileAccessContext
+    context ? { ...context, managedEnvironment } : undefined
   )
   const sessionRoot = resolve(request.notebookSessionRoot)
   const executionRoot = resolve(request.cwd ?? request.dataRoot)
   let outsideReadRoots = false
   let outsideWriteRoots = false
   const normalizePath = (path: string): string | undefined => {
-    if (/^[a-z][a-z\d+.-]*:/iu.test(path)) {
+    if (!isAbsolute(path) && /^[a-z][a-z\d+.-]*:/iu.test(path)) {
       return undefined
     }
     const absolute = resolve(executionRoot, path)
@@ -1562,7 +1625,7 @@ const prepareSourceFileAccess = async (
   }
   reportNotebookFileAnalysis(
     request.runId,
-    request.language ?? 'python',
+    request.kind === 'repl' ? 'repl' : (request.language ?? 'python'),
     result,
     Boolean(request.sourceFileAccessContext)
   )

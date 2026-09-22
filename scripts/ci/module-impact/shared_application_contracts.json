@@ -40,6 +40,7 @@
     "src/shared/literature-search-text.ts",
     "src/shared/literature.test.ts",
     "src/shared/literature.ts",
+    "src/shared/literature-attachment-reference.ts",
     "src/shared/local-fs.test.ts",
     "src/shared/local-fs.ts",
     "src/shared/local-models.ts",
@@ -121,7 +122,11 @@
     "src/shared/window-controls.test.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
-    "src/shared/config-root.ts"
+    "src/shared/config-root.ts",
+    "src/shared/classification.ts",
+    "src/shared/runtime-writer.ts",
+    "src/shared/pdf-annotations.ts",
+    "src/shared/pdf-annotations.test.ts"
   ],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",
@@ -154,6 +159,7 @@
     "src/shared/literature-save.ts",
     "src/shared/literature-search-text.ts",
     "src/shared/literature.ts",
+    "src/shared/literature-attachment-reference.ts",
     "src/shared/local-fs.ts",
     "src/shared/local-models.ts",
     "src/shared/locale.ts",
@@ -206,7 +212,9 @@
     "src/shared/web-rpc-contract.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
-    "src/shared/config-root.ts"
+    "src/shared/config-root.ts",
+    "src/shared/runtime-writer.ts",
+    "src/shared/pdf-annotations.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -249,7 +257,8 @@
       "src/shared/tool-detail-sanitizer.test.ts",
       "src/shared/update.test.ts",
       "src/shared/web-rpc-contract.test.ts",
-      "src/shared/window-controls.test.ts"
+      "src/shared/window-controls.test.ts",
+      "src/shared/pdf-annotations.test.ts"
     ],
     "contract": [],
     "consumer": []

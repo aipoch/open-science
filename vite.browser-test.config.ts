@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
@@ -9,7 +10,14 @@ const fixtureRoot = resolve('e2e/browser/fixture')
 export default defineConfig({
   root: fixtureRoot,
   resolve: {
-    alias: { '@': resolve('src/renderer/src'), '@renderer': resolve('src/renderer/src') }
+    alias: {
+      // The decoder's browser entry requires document; its default/worker entry is DOM-free.
+      'decode-named-character-reference': createRequire(import.meta.url).resolve(
+        'decode-named-character-reference'
+      ),
+      '@': resolve('src/renderer/src'),
+      '@renderer': resolve('src/renderer/src')
+    }
   },
   plugins: [react(), tailwindcss()],
   build: {

@@ -3,9 +3,10 @@ name: Windows Full Test
 # Preserve complete real-Windows coverage after merge without adding its runtime to ordinary PRs or
 # blocking a stable release. The native Notebook sandbox lifecycle runs once per batch, outside the
 # sharded suite, and remains available as a focused workflow dry-run.
+# Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '47 18 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '47 16 * * *' # UTC; overnight in Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
@@ -37,29 +38,22 @@ jobs:
     name: Check for untested main changes
     runs-on: ubuntu-latest
     outputs:
-      should_test: ${{ steps.decide.outputs.should_test }}
+      should_test: ${{ steps.decide.outputs.should_run }}
     steps:
+      - name: Checkout skip check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/skip-unchanged-scheduled
+          sparse-checkout-cone-mode: false
+      # A successful manual `full` run of the same head also counts as coverage.
       - name: Check for untested main changes
         id: decide
+        uses: ./.github/actions/skip-unchanged-scheduled
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch always runs the selected ref."
-            exit 0
-          fi
-
-          last_successful_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/windows-full-test.yml/runs?branch=main&event=schedule&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
-          if [[ "$last_successful_sha" == "$GITHUB_SHA" ]]; then
-            echo "should_test=false" >> "$GITHUB_OUTPUT"
-            echo "Windows full coverage already passed for $GITHUB_SHA."
-          else
-            echo "should_test=true" >> "$GITHUB_OUTPUT"
-            echo "Latest successful Windows full coverage is ${last_successful_sha:-unavailable}; testing $GITHUB_SHA."
-          fi
+          GH_TOKEN: ${{ github.token }}
+        with:
+          workflow-file: windows-full-test.yml
 
   windows_dependencies:
     name: Prepare Windows test dependencies
@@ -99,7 +93,7 @@ jobs:
           if-no-files-found: error
 
   windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/5)
+    name: Windows full test (${{ matrix.shard }}/8)
     needs: [plan, windows_dependencies]
     if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
     runs-on: windows-latest
@@ -109,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5]') }}
+        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -136,12 +130,11 @@ jobs:
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. The Windows sequencer keeps modules in five fixed groups:
-        # packages/versions, storage, runtimes, research content, and remaining application/tooling.
-        # Five shards keep a still-progressing serial suite inside
-        # the 60-minute job timeout after checkout and npm ci. GitHub annotations keep the failing
-        # test visible if the job is later cancelled.
-        run: npm test -- --shard=${{ matrix.shard }}/5 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
+        # tests still fail at that bound. The Windows sequencer keeps modules in eight fixed groups
+        # (see scripts/ci/windows-test-sequencer.ts) sized from measured run durations so each
+        # serial shard finishes inside the 60-minute job timeout after checkout and npm ci.
+        # GitHub annotations keep the failing test visible if the job is later cancelled.
+        run: npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
         shell: bash
@@ -166,6 +159,7 @@ jobs:
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
+          src/main/notebook/python-command.test.ts
           src/main/notebook/kernel-executor.test.ts
           src/main/notebook/windows-repl-termination.integration.test.ts
           src/main/notebook/kernel-startup-retry.integration.test.ts
@@ -299,3 +293,40 @@ jobs:
             test-results/
             .scratch/notebook-lifecycle-e2e/evidence/
           retention-days: 5
+
+  # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
+  report:
+    name: Report scheduled outcome
+    needs: [plan, windows_dependencies, windows_full_test, notebook_sandbox, notebook_mutation]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout-cone-mode: false
+      - name: Open, refresh, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        with:
+          script: |
+            const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github,
+              repo: context.repo,
+              workflowFile: 'windows-full-test.yml',
+              workflowName: context.workflow,
+              runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              headSha: context.sha,
+              conclusion: process.env.CONCLUSION,
+              log: core.info
+            })

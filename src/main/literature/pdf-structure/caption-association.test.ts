@@ -401,6 +401,12 @@ it.each([
   ['lowercase Roman numeral from small capitals', 'table ii. Results'],
   ['Chinese table', '\u8868 2\uff1a\u7ed3\u679c']
 ])('recognizes table caption format: %s', (_, text) => expect(captionKind(text)).toBe('table'))
+it.each([
+  'Figure 5 summarizes the coefficient of variation across cases.',
+  'Table 2 describes the cohort.'
+])('does not classify an inline result sentence as a caption: %s', (text) =>
+  expect(captionKind(text)).toBeUndefined()
+)
 it('does not truncate a continuous long legend or absorb the next caption', () => {
   const lines = Array.from({ length: 25 }, (_, i) => ({
     text: i ? `Legend line ${i}` : 'Figure S1. Results',
@@ -449,6 +455,27 @@ it('keeps a figure above its caption when a recognized table lies below it', () 
     [[85, 440, 250, 480]]
   )
   expect(result.rect).toEqual([60, 200, 480, 400])
+})
+it('joins segmented vector boxes for a flowchart caption', () => {
+  const flowchart = {
+    pageNumber: 4,
+    width: 612,
+    height: 792,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: 'Start', x: 385, y: 560, width: 30, height: 8 },
+      { text: 'Continue', x: 385, y: 610, width: 50, height: 8 }
+    ],
+    graphicsBounds: Array.from({ length: 12 }, (_, index) => ({
+      kind: 'path',
+      normalizedRect: [0.62, 0.7 + index * 0.01, 0.8, 0.705 + index * 0.01]
+    }))
+  }
+  const [result] = associateFigures(flowchart, [
+    { page: 4, lines: ['Figure 1. Flowchart.'], rect: [315, 726, 391, 736] }
+  ])
+  expect(result.rect).toEqual([379.44, 554.4, 489.6, expect.closeTo(645.48, 0.001)])
 })
 it.each([
   [
@@ -1521,6 +1548,22 @@ it('associates a top-aligned marginal title on either side of a table', () => {
       associateTableCaptions(page, tables, [{ ...caption, rect: [475, 180, 590, 205] }])[0].caption
     ).toBeUndefined()
   }
+})
+
+it('keeps a caption in the neighboring column away from a side-by-side table', () => {
+  const page = { pageNumber: 3, height: 810, lines: [] }
+  const tables = [{ rect: [43, 232, 304, 310] }, { rect: [307, 282, 511, 360] }]
+  const captions = [
+    { page: 3, lines: ['Table 2. Surgical procedures'], rect: [51, 209, 161, 219] },
+    {
+      page: 3,
+      lines: ['Table 5. VAS pain scores on coughing'],
+      rect: [312, 249, 561, 269]
+    }
+  ]
+  expect(
+    associateTableCaptions(page, tables, captions).map((m: { caption: unknown }) => m.caption)
+  ).toEqual(captions)
 })
 
 it('stops a caption at a segmented native border overlapping the next glyph box slightly', () => {

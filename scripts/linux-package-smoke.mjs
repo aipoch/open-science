@@ -18,6 +18,10 @@ import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs
 const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x86_64\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
 const STARTUP_TIMEOUT_MS = 60_000
+const REQUIRED_LINUX_PRISMA_ENGINES = [
+  'libquery_engine-debian-openssl-3.0.x.so.node',
+  'libquery_engine-rhel-openssl-3.0.x.so.node'
+]
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -124,19 +128,31 @@ const assertPackagedResources = async (
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')
   )
-  if (nativeEngines.length !== 1) {
-    throw new Error(`Packaged Linux must contain exactly one Prisma engine in ${prismaRoot}.`)
-  }
-  if (!/query_engine-.+\.so\.node$/.test(nativeEngines[0])) {
-    throw new Error(`Packaged Linux Prisma engine is incompatible: ${nativeEngines[0]}.`)
+  const missingEngines = REQUIRED_LINUX_PRISMA_ENGINES.filter(
+    (name) => !nativeEngines.includes(name)
+  )
+  const unexpectedEngines = nativeEngines.filter(
+    (name) => !REQUIRED_LINUX_PRISMA_ENGINES.includes(name)
+  )
+  if (missingEngines.length > 0 || unexpectedEngines.length > 0) {
+    throw new Error(
+      `Packaged Linux must contain Prisma engines ${REQUIRED_LINUX_PRISMA_ENGINES.join(', ')}; ` +
+        `found ${nativeEngines.join(', ') || 'none'} in ${prismaRoot}.`
+    )
   }
 }
 
 const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  const child = spawn(executable, ['--open-science-headless', '--serve=0', '--no-sandbox'], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
+  // Headless packaged launches have no Secret Service desktop, so OS credential mode fails closed;
+  // the file backend is the supported headless mode on Linux (matching the CLI smoke launch).
+  const child = spawn(
+    executable,
+    ['--open-science-headless', '--serve=0', '--no-sandbox', '--credential-store=file'],
+    {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
+  )
   let output = ''
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')

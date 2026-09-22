@@ -399,8 +399,21 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
-- Transform motion is limited to dialogs, sheets, collapsible content, subtle button feedback, and the tab selection indicators described below, and must respect `motion-reduce`.
+- Transform motion is limited to dialogs, sheets, collapsible content, anchored annotation controls, subtle button feedback, and the tab selection indicators described below, and must respect `motion-reduce`.
+- Annotation controls group navigation, marking, region actions and history with quiet dividers. Their anchored panels enter over 160ms with opacity and a 6px translation away from the trigger, and exit over 100ms without scaling their content. Mark type and color controls use compact square rows under group labels; the disclosure chevron rotates with the open state. The split annotation button applies the current type/color on the left and opens its palette on right-side hover (120ms intent, 180ms leave grace) or click; the disclosure half uses stronger hover shading. Hover opening preserves document focus, while click/keyboard opening retains normal popover focus behavior. Selection actions appear with a 3px offset only on entry; scroll-driven positioning stays immediate. Reduced motion uses a 100ms entry / 75ms exit opacity fade. Hover, selection and focus feedback remains immediate.
 - Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`, and the full-canvas startup logo is capped at 30 drawn frames per second.
+
+### PDF reading and annotations
+
+- Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels.
+- Empty Notes shows a short explanation and a return-to-PDF action; an unavailable source shows a status instead of an empty panel.
+- Literature annotations belong to the exact PDF attachment version and appear in both Library and project previews. Upload/artifact annotations remain conversation-scoped. Both use the shared tag catalog.
+- Active text marking uses the I-beam cursor across the document; area selection uses a crosshair, and comment buttons retain a pointer. Escape dismisses the inner popup or exits the active tool before closing a containing preview dialog.
+- Notes uses shared selects, inputs, tags, and annotation colors. Only the explicit source action navigates to the PDF; clicking the card does not. The source action preserves the draft when returning from the PDF. Filters retain the edited card until Save or Cancel.
+- Search and filters start collapsed. The action toolbar stays on one row at narrow widths by hiding optional labels. Page and mark type lead each card; provenance is secondary, quotes have a line limit, and tags stay within one row with overflow access and removal on hover or keyboard focus.
+- Import progress includes a loading indicator, cancellation, and unsupported-type counts. A durable import receipt prevents deleted native annotations from returning on reopen; preview and export replace only the original objects listed in that receipt, retaining unsupported objects.
+- Reading-position lookup uses ordered page placeholders without scanning every page geometry; memoized page canvases avoid unrelated toolbar renders, and note keystrokes remain local to the editor.
+- Unavailable area actions remain focusable and hoverable with `aria-disabled`, a reason tooltip, and guarded activation. A Library preview without a conversation explains how to enable sending an area to Agent.
 
 ## Component Guidelines
 
@@ -485,7 +498,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Keep the 16px bordered card for floating recovery and region-level failures that replace content or need a distinct recovery group. Startup blockers retain the full-page layout. Do not choose a card solely because the semantic level is error. Input validation stays beside its input.
 - Inline notices stretch within their available content area without combining a forced full width with external horizontal margins. Flex text columns must grow where they own the remaining row width. Icons stay beside the first text line at narrow widths; long diagnostics wrap without hiding text. Actions may move below the summary. Cards with horizontal margins must use automatic width or a padded parent.
 - Semantic `level` values are `info`, `warning` and `error`: info uses an information icon with status-info color, warning a triangle with status-warning color, and error a circle alert with status-failure color. Keep body text neutral for readability; level does not create business state or choose a live-region role. Existing teal/amber/red caller props map to these presentation levels.
-- Titles, description/content, actions and diagnostics are optional sections of the same component. Compact errors and Notebook provisioning failures compose ErrorNotice; narrow cards place trailing actions below the summary. Technical errors remain scrollable and fully selectable, with existing recovery callbacks.
+- Titles, description/content, actions and diagnostics are optional sections of the same component. Notices with description or content place actions below the summary so explanations retain the full available text width; title-only notices may keep trailing actions on the same row when space permits. Compact errors and Notebook provisioning failures compose ErrorNotice; narrow cards place trailing actions below the summary. Technical errors remain scrollable and fully selectable, with existing recovery callbacks.
 - Warning text, badges and confirmation icons use the status-warning token family in both themes. Unrelated amber chart series and favorite stars retain their own palette.
 - Title-only ActionToast feedback and Undo snackbars share noticeCapsuleClassName and reuse the shared surface colors and controls with a compact 24px-radius capsule, 8px vertical padding and vertically centered content. Short ActionToast and Undo text stays on one line with an ellipsis when it overflows. Keep the full text in the DOM and native hover title. Existing business action buttons remain visible; messages without a business action do not gain one. Do not add an expand/collapse row to a capsule. Title-only ActionToast capsules fit their content up to 24rem or the viewport minus 24px; the shared stack centers them horizontally without stretching them. The viewport-wide stack reserves space below the cards for a natural shadow fade; nested Undo wrappers do not clip shadows.
 - Arrow anchoring, event icons, timers, unread state, receipt expiry, recovery and dismissal remain with each existing owner. Embedded cards have no floating shadow; floating notices retain shadow-dialog, except Undo capsules use the lighter shadow-menu. Undo enters with a 4px upward offset and 180ms fade, exits over 140ms, and skips motion under reduced-motion preferences. The notice stack does not own business state.
@@ -563,6 +576,23 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 - Desktop Session previews wait 300ms on the first hover, then switch immediately within a browsing burst. Allow 300ms to cross into the card and reset the first-hover delay 300ms after closing. Load details only when the preview opens through the existing branch-aware owner.
 - Interactive Session previews use non-modal Popover, with explicit ArrowRight entry from the row to rename, Escape dismissal, and focus restoration. Tab retains natural row/action traversal. Finishing a keyboard rename returns focus to its title control; deliberate blur navigation keeps its chosen focus. Editing and pending saves protect the active Session against hover replacement; Enter/blur commits and Escape cancels through the existing rename flow.
+
+### Session information
+
+The upper-right pin toggles the current Session through the shared Session controller, moving it into or out of the sidebar’s pinned section. Its pressed state follows the Session store; it stays disabled until Session persistence is ready.
+
+- The conversation header's Session number and title open a click- and keyboard-accessible,
+  non-modal information Popover. Limit the header trigger to 320px (or the available width),
+  truncate its title on one line, and expose the full title on hover. Show the current Session number at the right of the card title,
+  keeping the number fully visible. Keep the title on one line with ellipsis and the description
+  to at most two lines. Use the shared semantic surface, rounded-xl and shadow-menu, with a
+  viewport-bounded width of 360px.
+- Order the card as title/description, optional source Session, created/updated local timestamps,
+  current-branch message count with Assistant subtotal, unique Session Artifact count, then Edit
+  session. Counts exclude hidden control messages; loading values are unavailable, never false zeros.
+- Reuse the existing Session editor and its save/conflict handling. Opening it dismisses the card;
+  closing it restores focus to the persistent header trigger. Source navigation uses the existing
+  navigation owner; unavailable sources retain their recorded identity without a misleading link.
 
 ### Message Center
 

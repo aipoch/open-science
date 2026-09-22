@@ -17,7 +17,9 @@
     "src/main/settings/service.connectors.test.ts",
     "src/main/settings/service.providers.test.ts",
     "src/main/settings/service.test.ts",
-    "src/main/settings/settings-snapshot-commit-owner.test.ts"
+    "src/main/settings/settings-snapshot-commit-owner.test.ts",
+    "src/main/settings/classification-settings.ts",
+    "src/main/settings/classification-settings.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/service.ts",
@@ -38,7 +40,8 @@
       "src/main/settings/network-proxy-settings.test.ts",
       "src/main/settings/service.test.ts",
       "src/main/settings/service.providers.test.ts",
-      "src/main/settings/service.connectors.test.ts"
+      "src/main/settings/service.connectors.test.ts",
+      "src/main/settings/classification-settings.test.ts"
     ],
     "contract": [
       "src/main/settings/application-commands.test.ts",

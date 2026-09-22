@@ -156,8 +156,11 @@
       "src/main/connectors/descriptors/genes-ontology.test.ts",
       "src/main/connectors/descriptors/genes-proteins.test.ts",
       "src/main/connectors/descriptors/genes-reactome.test.ts",
+      "src/main/connectors/descriptors/genes-gprofiler.test.ts",
       "src/main/connectors/descriptors/genes.test.ts",
+      "src/main/connectors/descriptors/genes-uniprot-mapping.test.ts",
       "src/main/connectors/descriptors/genomes-ensembl.test.ts",
+      "src/main/connectors/descriptors/genomes-reference.test.ts",
       "src/main/connectors/descriptors/genomes-ucsc.test.ts",
       "src/main/connectors/descriptors/genomes.test.ts",
       "src/main/connectors/descriptors/human-genetics.test.ts",
@@ -185,6 +188,7 @@
       "src/main/connectors/descriptors/variants-dbsnp.test.ts",
       "src/main/connectors/descriptors/variants-gnomad.test.ts",
       "src/main/connectors/descriptors/variants.test.ts",
+      "src/main/connectors/descriptors/zenodo.test.ts",
       "src/main/connectors/descriptors/zinc.test.ts",
       "src/main/delegation/production-composition.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
@@ -256,6 +260,7 @@
       "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
+      "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/session-plan/plan-service.test.ts",
       "src/main/session-plan/production-plan-service.test.ts",
       "src/main/settings/agent-runtime-manager.test.ts",
@@ -300,7 +305,9 @@
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/probe-logging.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/connectors/descriptors/omics-ena.test.ts",
+      "src/main/connectors/descriptors/genomes-blast.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

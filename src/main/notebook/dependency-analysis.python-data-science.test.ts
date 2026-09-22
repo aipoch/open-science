@@ -57,6 +57,15 @@ it.each([
   })
 })
 
+it('analyzes a recorded helper module when a later cell invokes it', async () => {
+  const helper = `import pandas as pd\ndef read_inputs():\n    return pd.read_csv("inputs/patients.csv")`
+  const script = 'frame = read_inputs()\nframe.to_csv("summary.csv", index=False)'
+  const [facts] = await analyzePythonSources([`${helper}\n${script}`])
+  expect(facts.state).toBe('available')
+  expect(facts.definedNames).toEqual(expect.arrayContaining(['read_inputs', 'frame']))
+  expect(facts.receiverCalls?.some(({ receiver }) => receiver === 'read_inputs')).toBe(true)
+})
+
 it.each(['ffill', 'bfill'])(
   'distinguishes %s mutation options from read-only filling',
   async (method) => {

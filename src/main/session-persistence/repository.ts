@@ -1,3 +1,4 @@
+import { SessionProjectionAfterCommitError } from './save-session'
 import { packageOriginSchema } from '../../shared/session-package'
 import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute-policy'
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
@@ -800,6 +801,10 @@ class SessionRepository {
     ).session
   }
 
+  hasLiveRuntimeSession(projectId: string, sessionId: string): boolean {
+    return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+  }
+
   // Terminal mutations must distinguish absence from a transient/non-ENOENT read failure. Treating
   // both as undefined could unlink the JSON before Upload cleanup has observed its final authority.
   async loadSessionWithDiagnostics(
@@ -1147,7 +1152,12 @@ class SessionRepository {
         sessionId: session.id
       })
     } else {
-      await this.projection?.commitSave(durableSession)
+      try {
+        await this.projection?.commitSave(durableSession)
+      } catch (error) {
+        this.sessionRevisions.set(key, durableSession.revision!)
+        throw new SessionProjectionAfterCommitError(durableSession, error)
+      }
     }
     this.sessionRevisions.set(key, durableSession.revision!)
     return durableSession
@@ -2014,8 +2024,8 @@ class SessionRepository {
     const decoded = decodeSessionFile(JSON.parse(contents) as unknown, {
       preserveLegacyUploadPaths: true,
       preserveRuntimeState:
-        preserveRuntimeState === true
-          ? true
+        preserveRuntimeState !== undefined
+          ? preserveRuntimeState
           : (sessionId) =>
               this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
               this.dependencies.hasLiveRuntimeSession(projectId, sessionId)

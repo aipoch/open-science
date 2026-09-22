@@ -51,6 +51,41 @@ afterEach(async () => {
 })
 
 describe('OpenScienceClient', () => {
+  it.each([false, true])(
+    'requires unattended capability before submitting work (supported=%s)',
+    async (supported) => {
+      const fetch = vi.fn(
+        async (url: string) =>
+          new Response(
+            JSON.stringify(
+              url.endsWith('/api/bootstrap')
+                ? { taskCapabilities: supported ? ['permission-prompts-none'] : [] }
+                : { data: { id: 'run-1', status: 'running' } }
+            ),
+            { status: 200 }
+          )
+      )
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'test',
+        fetch
+      })
+      const result = client.startRun({
+        project: 'project-1',
+        prompt: 'test',
+        permissionPrompts: 'none'
+      })
+      if (supported) {
+        await expect(result).resolves.toMatchObject({ id: 'run-1' })
+        expect(fetch).toHaveBeenCalledTimes(2)
+        expect(fetch.mock.calls[1][0]).toMatch(/\/api\/v1\/runs$/)
+      } else {
+        await expect(result).rejects.toMatchObject({ code: 'unsupported_capability' })
+        expect(fetch).toHaveBeenCalledTimes(1)
+      }
+    }
+  )
+
   it('pins the SDK method inventory including Connector management', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [

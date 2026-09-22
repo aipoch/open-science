@@ -536,6 +536,8 @@ async function otExecute(
 }
 
 // Run a curated Open Targets query and return data[root], or {errors} when it is null / errored.
+// GraphQL permits partial data alongside field errors; discard that partial node so callers cannot
+// mistake a failed field for a successful empty result.
 async function otQuery(
   ctx: ToolContext,
   query: string,
@@ -543,6 +545,7 @@ async function otQuery(
   root: string
 ): Promise<Record<string, unknown>> {
   const result = await otExecute(ctx, query, variables)
+  if (result.errors) return { errors: result.errors }
   const node = asObj(result.data)[root]
   if (node == null) {
     return {

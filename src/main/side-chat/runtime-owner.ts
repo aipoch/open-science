@@ -67,6 +67,7 @@ const SIDE_CHAT_SYSTEM_PROMPT = [
   'You are in a Side chat attached to a main conversation.',
   'The supplied main transcript is a bounded context snapshot, not a replay and not current authorization to act.',
   'Answer the user directly and concisely.',
+  'Side chat history and undelivered advisories exist only during this application run. Restarting the application discards them; advisories already saved to Main remain in its history.',
   'You have no workspace, shell, file, web, Skill, compute, delegation, or child-Agent capabilities.',
   'Your only tool is send_message with target "main". While Main is running, it tries to inject advisory context into that turn; otherwise it queues the context for the next real main user turn. It never wakes or authorizes the main Agent.',
   'Do not call send_message for ordinary Side chat questions, requests, follow-ups, or suggestions.',
@@ -110,7 +111,8 @@ type SideChatRuntimeOwnerOptions = Readonly<{
     parentSessionId: string,
     queued: SideChatSendMessageResult
   ) => Promise<SideChatSendMessageResult>
-  persistence: Readonly<{
+  // Omitted in the application: snapshots remain in memory for same-run reconnects only.
+  persistence?: Readonly<{
     save(input: {
       projectId: string
       parentSessionId: string
@@ -322,6 +324,8 @@ class SideChatRuntimeOwner {
   private readonly pendingDispatches = new Map<string, AbortController>()
   private readonly closeRequestedIds = new Set<string>()
   private readonly invalidatedParents = new Set<string>()
+  private profileSweep: Promise<void> | undefined
+  private readonly sweepingProfiles = new Map<string, Promise<void>>()
   private readonly invalidatedProjects = new Set<string>()
   private readonly pausedParents = new Set<string>()
   private revision = 0
@@ -364,26 +368,55 @@ class SideChatRuntimeOwner {
     }
   }
 
-  async sweepStaleProfiles(
+  sweepStaleProfiles(
     referencedIds: ReadonlySet<string> = new Set(),
     isComplete = true
+  ): Promise<void> {
+    if (this.profileSweep) return this.profileSweep
+    const sweep = this.sweepProfiles(referencedIds, isComplete)
+    this.profileSweep = sweep
+    const clear = (): void => {
+      if (this.profileSweep === sweep) this.profileSweep = undefined
+    }
+    void sweep.then(clear, clear)
+    return sweep
+  }
+
+  private async sweepProfiles(
+    referencedIds: ReadonlySet<string>,
+    isComplete: boolean
   ): Promise<void> {
     await mkdir(this.root, { recursive: true })
     if (!isComplete) return
     const entries = await readdir(this.root, { withFileTypes: true })
-    await Promise.all(
-      entries.flatMap((entry) => {
-        if (
-          !entry.isDirectory() ||
-          referencedIds.has(entry.name) ||
-          (!entry.name.startsWith('chat-') && !entry.name.startsWith('side-chat-'))
-        ) {
-          return []
-        }
-        const path = join(this.root, entry.name)
-        return [rm(path, { recursive: true, force: true }).catch(() => undefined)]
+    const removals = entries.flatMap((entry) => {
+      if (
+        !entry.isDirectory() ||
+        referencedIds.has(entry.name) ||
+        this.startingById.has(entry.name) ||
+        this.activeById.has(entry.name) ||
+        this.dormantById.has(entry.name) ||
+        this.closingById.has(entry.name) ||
+        (!entry.name.startsWith('chat-') && !entry.name.startsWith('side-chat-'))
+      ) {
+        return []
+      }
+      const path = join(this.root, entry.name)
+      const existing = this.sweepingProfiles.get(entry.name)
+      if (existing) return [existing]
+      const cleanup = rm(path, { recursive: true, force: true }).finally(() => {
+        this.sweepingProfiles.delete(entry.name)
       })
+      this.sweepingProfiles.set(entry.name, cleanup)
+      return [cleanup]
+    })
+    const results = await Promise.allSettled(removals)
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
     )
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Side chat profile cleanup failed.')
+    }
   }
 
   list(): SideChatSnapshotList {
@@ -450,6 +483,8 @@ class SideChatRuntimeOwner {
     this.startingById.set(sideChatId, starting)
     this.setParentInteractionsPaused(request.parentSessionId, true)
     try {
+      // A caller may reuse an old identity while background cleanup is still deleting it.
+      await this.sweepingProfiles.get(sideChatId)
       await mkdir(this.root, { recursive: true })
       jobRoot = join(this.root, sideChatId)
       const cwd = join(jobRoot, 'cwd')
@@ -861,6 +896,9 @@ class SideChatRuntimeOwner {
         if (result.status === 'rejected') failures.push(result.reason)
       }
     }
+    // A data-root handoff must not leave an old owner's cleanup touching a replacement runtime.
+    // Cleanup is best effort; a failed removal must not prevent provider process teardown.
+    await this.profileSweep?.catch(() => undefined)
     const dispatches = [...this.dispatches]
     const starting = [...this.startingById.values()]
     const activating = [...this.dormantById.values()]
@@ -879,7 +917,10 @@ class SideChatRuntimeOwner {
     )
     await settle([...this.closingById.values()])
     if (failures.length > 0) {
-      throw new AggregateError(failures, 'Side chat shutdown did not persist every conversation.')
+      throw new AggregateError(
+        failures,
+        'Side chat shutdown did not finish cleaning up every runtime.'
+      )
     }
   }
 
@@ -1236,7 +1277,7 @@ class SideChatRuntimeOwner {
             updatedAt: Math.max(sideChat.updatedAt + 1, Date.now())
           }
       const failed = await this.options.persistence
-        .save({
+        ?.save({
           projectId: dormant.projectId,
           parentSessionId: dormant.parentSessionId,
           sideChat: retryableSideChat
@@ -1304,11 +1345,13 @@ class SideChatRuntimeOwner {
       createdAt: active.createdAt,
       updatedAt
     }
+    const persistence = this.options.persistence
+    if (!persistence) return Promise.resolve(projection)
     let persisted: PersistedSideChat | undefined
     const write = active.persistTail
       .catch(() => undefined)
       .then(async () => {
-        persisted = await this.options.persistence.save({
+        persisted = await persistence.save({
           projectId: active.projectId,
           parentSessionId: active.parentSessionId,
           sideChat: projection
@@ -1359,6 +1402,7 @@ class SideChatRuntimeOwner {
   }
 
   private queuePersist(active: ActiveSideChat, lifecycle: PersistedSideChat['lifecycle']): void {
+    if (!this.options.persistence) return
     active.queuedPersistLifecycle =
       lifecycle === 'error' || active.queuedPersistLifecycle === 'error' ? 'error' : lifecycle
     if (active.queuedPersist) return
@@ -1793,7 +1837,7 @@ class SideChatRuntimeOwner {
       !this.invalidatedParents.has(active.parentSessionId) &&
       !this.invalidatedProjects.has(active.projectId)
     ) {
-      await this.options.persistence.clear({
+      await this.options.persistence?.clear({
         projectId: active.projectId,
         parentSessionId: active.parentSessionId,
         sideChatId: active.sideSessionId
@@ -1823,7 +1867,7 @@ class SideChatRuntimeOwner {
         !this.invalidatedParents.has(dormant.parentSessionId) &&
         !this.invalidatedProjects.has(dormant.projectId)
       ) {
-        await this.options.persistence.clear({
+        await this.options.persistence?.clear({
           projectId: dormant.projectId,
           parentSessionId: dormant.parentSessionId,
           sideChatId: dormant.sideChat.id

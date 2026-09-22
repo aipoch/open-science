@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { resolve } from 'path'
 import { nativeLocaleAssets } from './scripts/native-locale-assets'
 import { defineConfig } from 'electron-vite'
@@ -52,6 +53,10 @@ export default defineConfig(({ command }) => ({
     optimizeDeps: { force: true },
     resolve: {
       alias: {
+        // The decoder's browser entry requires document; its default/worker entry is DOM-free.
+        'decode-named-character-reference': createRequire(import.meta.url).resolve(
+          'decode-named-character-reference'
+        ),
         '@': resolve('src/renderer/src'),
         '@renderer': resolve('src/renderer/src')
       }

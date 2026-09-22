@@ -1,3 +1,4 @@
+import { useResourceSelection, useStickyResourceFilters } from './use-resource-selection'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { connectorDescription } from './connector-copy'
@@ -13,7 +14,7 @@ import {
   Download,
   FileUp,
   Globe,
-  ListChecks,
+  ChevronRight,
   Pencil,
   Plus,
   Terminal,
@@ -54,20 +55,25 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ConnectorGlyph } from './connector-icons'
-import { SettingsLoadNotice, SettingsToggle } from './SettingsLayout'
+import { SettingsLoadNotice } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { specialistsUsingConnector, type SpecialistUsage } from './specialist-resource-scope'
 import { ResourceTagBadges, ResourceTagMenu, TagFilter } from './ResourceTagControls'
 import { SkillUsageAgents } from './SkillUsageAgents'
+import { ResourceAssignmentControls } from './ResourceAssignmentControls'
+import {
+  ResourceCategorySelection,
+  ResourceSelectionBar,
+  ResourceSelectionCheckbox
+} from './ResourceCatalogSelection'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
-import { cannotEnableCustomServer, requiresSignInBeforeEnable } from './connector-enablement'
+import { cannotEnableCustomServer } from './connector-enablement'
 import { localizeCredentialError } from './credential-error-message'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the catalog list.
 export type ConnectorsView =
   | { kind: 'list' }
-  | { kind: 'manage' }
   | { kind: 'detail'; id: string }
   | {
       kind: 'add'
@@ -134,6 +140,46 @@ export function ConnectorsPanel({
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
 
+  const { panelRef, filterRef } = useStickyResourceFilters()
+  const selection = useResourceSelection({
+    resources: [
+      ...connectors.map((connector) => ({
+        id: connector.id,
+        name: connector.name,
+        displayName: connector.displayName,
+        kind: 'connector' as const,
+        group: connector.group ?? 'featured',
+        mainEnabled: connector.enabled
+      })),
+      ...customServers.map((server) => ({
+        id: server.id,
+        name: server.name,
+        displayName: server.displayName,
+        kind: 'connector' as const,
+        group: 'custom',
+        mainEnabled: server.enabled,
+        deletable: true
+      }))
+    ],
+    onSetMain: async (id, enabled) => {
+      if (useSettingsStore.getState().customServers.some((server) => server.id === id))
+        await setCustomServerEnabled(id, enabled)
+      else await setConnectorEnabled(id, enabled)
+    },
+    onDelete: async (id) => {
+      if (!useSettingsStore.getState().customServers.some((server) => server.id === id))
+        throw new Error('Connector unavailable')
+      await removeCustomServer(id)
+    },
+    onRetryCleanup: async (id) => {
+      const snapshot = await window.api.settings.listConnectors()
+      // Retry only the removal journal, never a surviving or recreated configuration.
+      if (snapshot.customServers.some((server) => server.id === id)) return false
+      if (snapshot.reservedCustomServerIds?.includes(id)) await removeCustomServer(id)
+      return true
+    }
+  })
+
   const [filter, setFilter] = useState<GroupFilter>('all')
   const [specialistFilter, setSpecialistFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
@@ -161,6 +207,7 @@ export function ConnectorsPanel({
     connectorsLoaded ? 'ready' : 'loading'
   )
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [accessError, setAccessError] = useState(false)
   const loadRequestRef = useRef(0)
   const removalCheckSequence = useRef(0)
   const removalCheckInFlight = useRef<number | undefined>(undefined)
@@ -315,15 +362,6 @@ export function ConnectorsPanel({
     }
   }
 
-  const saveToggle = async (command: () => Promise<void>): Promise<void> => {
-    setOperationError(null)
-    try {
-      await command()
-    } catch {
-      setOperationError(t('Could not save this setting. The previous value was restored.'))
-    }
-  }
-
   const requestRemoval = async (server: CustomServerView): Promise<void> => {
     if (removalCheckInFlight.current !== undefined) return
     const requestId = ++removalCheckSequence.current
@@ -394,24 +432,32 @@ export function ConnectorsPanel({
     const expanded = !collapsed[groupKey]
 
     return (
-      <div>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => setCollapsed((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }))}
-          className="flex w-full flex-col items-start gap-0.5 text-left"
-        >
-          <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-            {label}
-            <ChevronDown
-              className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
-                expanded ? '' : '-rotate-90'
-              }`}
-              aria-hidden="true"
-            />
-          </span>
-          <span className="text-xs text-muted-foreground">{subtitle}</span>
-        </button>
+      <div data-slot="connectors-source-group" data-source={groupKey}>
+        <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setCollapsed((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }))}
+            className="flex w-full flex-col items-start gap-0.5 text-left rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
+              {label}
+              <ChevronDown
+                className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+                  expanded ? '' : '-rotate-90'
+                }`}
+                aria-hidden="true"
+              />
+            </span>
+            <span className="text-xs text-muted-foreground">{subtitle}</span>
+          </button>
+          <ResourceCategorySelection
+            selection={selection}
+            group={groupKey}
+            label={label}
+            ids={rows.map(({ resource }) => resource.id)}
+          />
+        </div>
 
         {expanded ? (
           rows.length > 0 ? (
@@ -421,69 +467,110 @@ export function ConnectorsPanel({
                   <li
                     key={connector.id}
                     data-slot="settings-list-row"
-                    className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
+                    className="-mx-2 flex items-center gap-2"
                   >
-                    <ConnectorGlyph size={24} />
-                    <div className="min-w-0 flex-1">
-                      <button
-                        type="button"
-                        onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
-                        className="block w-full min-w-0 text-left"
-                      >
-                        <span className="block truncate text-sm text-foreground">
-                          {connector.displayName}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {connectorDescription(connector, t)}
-                        </span>
-                      </button>
-                      <div
-                        className="mt-0.5 flex min-w-0 items-center gap-2"
-                        data-connector-metadata={connector.id}
-                      >
-                        {connector.enabled || usages.length > 0 ? (
-                          <span className="inline-flex shrink-0 items-center gap-1">
-                            <span
-                              data-slot="skill-usage-agents-label"
-                              className="text-xs text-muted-foreground"
-                            >
-                              {t('Used by')}
-                            </span>
-                            <SkillUsageAgents
-                              resourceKind="Connector"
-                              mainEnabled={connector.enabled}
-                              usages={usages}
-                              onOpenSpecialist={onOpenSpecialist}
-                            />
+                    <ResourceSelectionCheckbox
+                      selection={selection}
+                      resource={{
+                        id: connector.id,
+                        name: connector.displayName,
+                        kind: 'connector',
+                        group: groupKey,
+                        mainEnabled: connector.enabled
+                      }}
+                    />
+                    <div
+                      data-slot="resource-row-content"
+                      onClick={(event) => {
+                        // Keep nested controls and portal events out of row navigation.
+                        // Row styles preserve pointer hits on disabled buttons instead of passing through.
+                        const target = event.target
+                        if (
+                          event.defaultPrevented ||
+                          !(target instanceof Element) ||
+                          !event.currentTarget.contains(target) ||
+                          target.closest('button, a, input, select, textarea, [role="button"]')
+                        )
+                          return
+                        onNavigate({ kind: 'detail', id: connector.id })
+                      }}
+                      className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 hover:bg-muted/50 focus-within:bg-muted/50"
+                    >
+                      <ConnectorGlyph size={24} />
+                      <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                          className="block w-full min-w-0 text-left"
+                        >
+                          <span className="block truncate text-sm text-foreground">
+                            {connector.displayName}
                           </span>
-                        ) : null}
-                        <ResourceTagBadges
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {connectorDescription(connector, t)}
+                          </span>
+                        </button>
+                        <div
+                          className="mt-0.5 flex min-w-0 items-center gap-2"
+                          data-connector-metadata={connector.id}
+                        >
+                          {connector.enabled || usages.length > 0 ? (
+                            <span className="inline-flex shrink-0 items-center gap-1">
+                              <span
+                                data-slot="skill-usage-agents-label"
+                                className="text-xs text-muted-foreground"
+                              >
+                                {t('Used by')}
+                              </span>
+                              <SkillUsageAgents
+                                resourceKind="Connector"
+                                mainEnabled={connector.enabled}
+                                usages={usages}
+                                onOpenSpecialist={onOpenSpecialist}
+                              />
+                            </span>
+                          ) : null}
+                          <ResourceTagBadges
+                            reference={{
+                              resourceType: 'catalog.connector',
+                              resourceId: connector.id
+                            }}
+                            onOpenTag={onOpenTag}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <ResourceTagMenu
                           reference={{
                             resourceType: 'catalog.connector',
                             resourceId: connector.id
                           }}
-                          onOpenTag={onOpenTag}
                         />
+                        <ResourceAssignmentControls
+                          onOpenSpecialist={onOpenSpecialist}
+                          resource={{
+                            id: connector.id,
+                            name: connector.name,
+                            displayName: connector.displayName,
+                            kind: 'connector',
+                            group: groupKey,
+                            mainEnabled: connector.enabled
+                          }}
+                          disabled={selection.locked}
+                          onErrorChange={setAccessError}
+                          onSetMain={(enabled) => setConnectorEnabled(connector.id, enabled)}
+                        />
+                        <button
+                          type="button"
+                          aria-label={t('View details for {{name}}', {
+                            name: connector.displayName
+                          })}
+                          onClick={() => onNavigate({ kind: 'detail', id: connector.id })}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
+                        >
+                          <ChevronRight className="size-4" aria-hidden="true" />
+                        </button>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <ResourceTagMenu
-                        reference={{ resourceType: 'catalog.connector', resourceId: connector.id }}
-                      />
-                      <SettingsToggle
-                        enabled={connector.enabled}
-                        aria-label={t('Toggle {{name}}', { name: connector.displayName })}
-                        title={
-                          connector.enabled
-                            ? t('Available to Main Agent')
-                            : t('Unavailable to Main Agent')
-                        }
-                        onToggle={() =>
-                          void saveToggle(async () => {
-                            await setConnectorEnabled(connector.id, !connector.enabled)
-                          })
-                        }
-                      />
                     </div>
                   </li>
                 )
@@ -513,7 +600,7 @@ export function ConnectorsPanel({
   }
 
   return (
-    <div className="p-5">
+    <div ref={panelRef} className="p-5">
       {catalogState === 'error' ? (
         <SettingsLoadNotice
           state="error"
@@ -534,13 +621,9 @@ export function ConnectorsPanel({
           </Badge>
         </h3>
         <div data-slot="connectors-action-bar" className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
-            <ListChecks data-icon="inline-start" aria-hidden="true" />
-            {t('Manage')}
-          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="shrink-0">
+              <Button variant="outline" className="shrink-0" data-settings-anchor="connectors.add">
                 <Plus data-icon="inline-start" aria-hidden="true" />
                 {t('Add connector')}
                 <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -585,8 +668,9 @@ export function ConnectorsPanel({
         </div>
       </div>
       <div
+        ref={filterRef}
         data-slot="connectors-filter-bar"
-        className="mb-4 flex flex-wrap items-center gap-2"
+        className="sticky top-0 z-20 -mx-5 mb-2 flex flex-wrap items-center gap-2 border-b border-border/60 bg-card px-5 py-3"
         data-testid="connectors-toolbar"
       >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
@@ -647,6 +731,15 @@ export function ConnectorsPanel({
             }}
           />
         ) : null}
+        {accessError ? (
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="amber"
+            className="mb-3"
+            description={t('Could not update resource access. Refresh and try again.')}
+          />
+        ) : null}
         {operationError ? (
           <ErrorNotice
             inline
@@ -679,24 +772,32 @@ export function ConnectorsPanel({
           : null}
 
         {showCustom ? (
-          <div>
-            <button
-              type="button"
-              aria-expanded={customExpanded}
-              onClick={() => setCollapsed((prev) => ({ ...prev, custom: !prev.custom }))}
-              className="flex w-full flex-col items-start gap-0.5 text-left"
-            >
-              <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-                {t('Custom')}
-                <ChevronDown
-                  className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
-                    customExpanded ? '' : '-rotate-90'
-                  }`}
-                  aria-hidden="true"
-                />
-              </span>
-              <span className="text-xs text-muted-foreground">{t('Connectors you added')}</span>
-            </button>
+          <div data-slot="connectors-source-group" data-source="custom">
+            <div className="sticky top-[var(--resource-filter-height,0px)] z-10 -mx-5 flex items-center justify-between gap-3 bg-card px-5 py-2">
+              <button
+                type="button"
+                aria-expanded={customExpanded}
+                onClick={() => setCollapsed((prev) => ({ ...prev, custom: !prev.custom }))}
+                className="flex w-full flex-col items-start gap-0.5 text-left rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
+                  {t('Custom')}
+                  <ChevronDown
+                    className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+                      customExpanded ? '' : '-rotate-90'
+                    }`}
+                    aria-hidden="true"
+                  />
+                </span>
+                <span className="text-xs text-muted-foreground">{t('Connectors you added')}</span>
+              </button>
+              <ResourceCategorySelection
+                selection={selection}
+                group="custom"
+                label={t('Custom')}
+                ids={visibleCustomServers.map(({ resource }) => resource.id)}
+              />
+            </div>
 
             {customExpanded ? (
               visibleCustomServers.length > 0 ? (
@@ -706,182 +807,212 @@ export function ConnectorsPanel({
                       <li
                         key={server.id}
                         data-slot="settings-list-row"
-                        className="flex min-h-14 flex-wrap items-center gap-2 py-2.5"
+                        className="-mx-2 flex items-center gap-2"
                       >
-                        <ConnectorGlyph size={24} />
-                        <div className="min-w-0 flex-1">
-                          <button
-                            type="button"
-                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                            className="block w-full min-w-0 text-left"
-                          >
-                            <span className="block truncate text-sm text-foreground">
-                              {server.displayName}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {server.name}
-                              {server.description ? ` · ${server.description}` : ''}
-                            </span>
-                          </button>
-                          <div
-                            className="mt-0.5 flex min-w-0 items-center gap-2"
-                            data-connector-metadata={server.id}
-                          >
-                            <span
-                              className={`shrink-0 text-xs ${
-                                server.availability &&
-                                !server.checking &&
-                                !retryingIds.has(server.id)
-                                  ? 'text-destructive'
-                                  : 'text-muted-foreground'
-                              }`}
-                            >
-                              {retryingIds.has(server.id)
-                                ? t('Checking…')
-                                : server.checking
-                                  ? t('Checking…')
-                                  : server.availability === 'unavailable'
-                                    ? t('Unavailable')
-                                    : server.availability === 'credential_unavailable'
-                                      ? t('Credentials unavailable')
-                                      : server.availability === 'unauthenticated'
-                                        ? t('Sign-in required')
-                                        : server.enabled
-                                          ? t('Connected')
-                                          : t('Disabled')}
-                            </span>
-                            {server.enabled || usages.length > 0 ? (
-                              <span className="inline-flex shrink-0 items-center gap-1">
-                                <span
-                                  data-slot="skill-usage-agents-label"
-                                  className="text-xs text-muted-foreground"
-                                >
-                                  {t('Used by')}
-                                </span>
-                                <SkillUsageAgents
-                                  resourceKind="Connector"
-                                  mainEnabled={server.enabled}
-                                  usages={usages}
-                                  onOpenSpecialist={onOpenSpecialist}
-                                />
-                              </span>
-                            ) : null}
-                            <ResourceTagBadges
-                              reference={{
-                                resourceType: 'catalog.connector',
-                                resourceId: server.id
-                              }}
-                              onOpenTag={onOpenTag}
-                            />
-                          </div>
-                        </div>
-                        {server.availability === 'unavailable' && server.enabled ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={retryingIds.has(server.id)}
-                            onClick={() => void retry(server.id)}
-                          >
-                            {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
-                          </Button>
-                        ) : null}
-                        {(server.availability === 'unauthenticated' && !server.oauth) ||
-                        server.availability === 'credential_unavailable' ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onNavigate({ kind: 'edit', id: server.id })}
-                          >
-                            {t('Configure')}
-                          </Button>
-                        ) : null}
-                        {server.oauth && server.availability !== 'credential_unavailable' ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={
-                              server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                                ? 'outline'
-                                : 'default'
-                            }
-                            onClick={() =>
-                              server.oauth?.hasTokens && server.availability !== 'unauthenticated'
-                                ? setOAuthConnectionServer(server)
-                                : setOAuthSignInServer(server)
-                            }
-                          >
-                            {server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                              ? t('Connected')
-                              : server.availability === 'unauthenticated'
-                                ? t('Retry')
-                                : t('Sign in')}
-                          </Button>
-                        ) : null}
-                        <ResourceTagMenu
-                          reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
+                        <ResourceSelectionCheckbox
+                          selection={selection}
+                          resource={{
+                            id: server.id,
+                            name: server.displayName,
+                            kind: 'connector',
+                            group: 'custom',
+                            mainEnabled: server.enabled
+                          }}
                         />
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                        <div
+                          data-slot="resource-row-content"
+                          onClick={(event) => {
+                            // Keep nested controls and portal events out of row navigation.
+                            // Row styles preserve pointer hits on disabled buttons instead of passing through.
+                            const target = event.target
+                            if (
+                              event.defaultPrevented ||
+                              !(target instanceof Element) ||
+                              !event.currentTarget.contains(target) ||
+                              target.closest('button, a, input, select, textarea, [role="button"]')
+                            )
+                              return
+                            onNavigate({ kind: 'edit', id: server.id })
+                          }}
+                          className="group/row [&_button:disabled]:pointer-events-auto cursor-pointer flex min-w-0 flex-1 min-h-14 flex-wrap items-center gap-2 rounded-lg px-2 py-2.5 hover:bg-muted/50 focus-within:bg-muted/50"
+                        >
+                          <ConnectorGlyph size={24} />
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                              className="block w-full min-w-0 text-left"
+                            >
+                              <span className="block truncate text-sm text-foreground">
+                                {server.displayName}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {server.name}
+                                {server.description ? ` · ${server.description}` : ''}
+                              </span>
+                            </button>
+                            <div
+                              className="mt-0.5 flex min-w-0 items-center gap-2"
+                              data-connector-metadata={server.id}
+                            >
+                              <span
+                                className={`shrink-0 text-xs ${
+                                  server.availability &&
+                                  !server.checking &&
+                                  !retryingIds.has(server.id)
+                                    ? 'text-destructive'
+                                    : 'text-muted-foreground'
+                                }`}
+                              >
+                                {retryingIds.has(server.id)
+                                  ? t('Checking…')
+                                  : server.checking
+                                    ? t('Checking…')
+                                    : server.availability === 'unavailable'
+                                      ? t('Unavailable')
+                                      : server.availability === 'credential_unavailable'
+                                        ? t('Credentials unavailable')
+                                        : server.availability === 'unauthenticated'
+                                          ? t('Sign-in required')
+                                          : server.enabled
+                                            ? t('Connected')
+                                            : t('Disabled')}
+                              </span>
+                              {server.enabled || usages.length > 0 ? (
+                                <span className="inline-flex shrink-0 items-center gap-1">
+                                  <span
+                                    data-slot="skill-usage-agents-label"
+                                    className="text-xs text-muted-foreground"
+                                  >
+                                    {t('Used by')}
+                                  </span>
+                                  <SkillUsageAgents
+                                    resourceKind="Connector"
+                                    mainEnabled={server.enabled}
+                                    usages={usages}
+                                    onOpenSpecialist={onOpenSpecialist}
+                                  />
+                                </span>
+                              ) : null}
+                              <ResourceTagBadges
+                                reference={{
+                                  resourceType: 'catalog.connector',
+                                  resourceId: server.id
+                                }}
+                                onOpenTag={onOpenTag}
+                              />
+                            </div>
+                          </div>
+                          {server.availability === 'unavailable' && server.enabled ? (
                             <Button
                               type="button"
-                              variant="ghost"
-                              size="icon"
-                              aria-label={t('Actions for {{name}}', { name: server.displayName })}
+                              size="sm"
+                              variant="outline"
+                              disabled={retryingIds.has(server.id)}
+                              onClick={() => void retry(server.id)}
                             >
-                              <ChevronDown aria-hidden="true" />
+                              {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="gap-2 text-xs"
-                              onSelect={() => onNavigate({ kind: 'export', id: server.id })}
+                          ) : null}
+                          {(server.availability === 'unauthenticated' && !server.oauth) ||
+                          server.availability === 'credential_unavailable' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
                             >
-                              <Download className="size-3.5" aria-hidden="true" />
-                              {t('Export')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2 text-xs"
-                              onSelect={() => onNavigate({ kind: 'edit', id: server.id })}
+                              {t('Configure')}
+                            </Button>
+                          ) : null}
+                          {server.oauth && server.availability !== 'credential_unavailable' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={
+                                server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                                  ? 'outline'
+                                  : 'default'
+                              }
+                              onClick={() =>
+                                server.oauth?.hasTokens && server.availability !== 'unauthenticated'
+                                  ? setOAuthConnectionServer(server)
+                                  : setOAuthSignInServer(server)
+                              }
                             >
-                              <Pencil className="size-3.5" aria-hidden="true" />
-                              {t('Edit')}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="gap-2 text-xs text-destructive"
-                              onSelect={() => void requestRemoval(server)}
-                            >
-                              <Trash2 className="size-3.5" aria-hidden="true" />
-                              {t('Remove')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <SettingsToggle
-                            enabled={server.enabled}
-                            aria-label={t('Toggle {{name}}', { name: server.displayName })}
-                            aria-disabled={cannotEnableCustomServer(server) || undefined}
-                            className={
-                              cannotEnableCustomServer(server)
-                                ? 'cursor-not-allowed opacity-50'
-                                : undefined
-                            }
-                            title={
-                              requiresSignInBeforeEnable(server)
-                                ? t('Sign in before enabling this Connector')
-                                : server.enabled
-                                  ? t('Available to Main Agent')
-                                  : t('Unavailable to Main Agent')
-                            }
-                            onToggle={() => {
-                              if (cannotEnableCustomServer(server)) return
-                              void saveToggle(async () => {
-                                await setCustomServerEnabled(server.id, !server.enabled)
-                              })
-                            }}
+                              {server.oauth.hasTokens && server.availability !== 'unauthenticated'
+                                ? t('Connected')
+                                : server.availability === 'unauthenticated'
+                                  ? t('Retry')
+                                  : t('Sign in')}
+                            </Button>
+                          ) : null}
+                          <ResourceTagMenu
+                            reference={{ resourceType: 'catalog.connector', resourceId: server.id }}
                           />
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t('Actions for {{name}}', { name: server.displayName })}
+                              >
+                                <ChevronDown aria-hidden="true" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                className="gap-2 text-xs"
+                                onSelect={() => onNavigate({ kind: 'export', id: server.id })}
+                              >
+                                <Download className="size-3.5" aria-hidden="true" />
+                                {t('Export')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2 text-xs"
+                                onSelect={() => onNavigate({ kind: 'edit', id: server.id })}
+                              >
+                                <Pencil className="size-3.5" aria-hidden="true" />
+                                {t('Edit')}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="gap-2 text-xs text-destructive"
+                                onSelect={() => void requestRemoval(server)}
+                              >
+                                <Trash2 className="size-3.5" aria-hidden="true" />
+                                {t('Remove')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <ResourceAssignmentControls
+                              onOpenSpecialist={onOpenSpecialist}
+                              resource={{
+                                id: server.id,
+                                name: server.name,
+                                displayName: server.displayName,
+                                kind: 'connector',
+                                group: 'custom',
+                                mainEnabled: server.enabled
+                              }}
+                              disabled={selection.locked}
+                              onErrorChange={setAccessError}
+                              mainBlocked={cannotEnableCustomServer(server)}
+                              onSetMain={(enabled) => setCustomServerEnabled(server.id, enabled)}
+                            />
+                            <button
+                              type="button"
+                              aria-label={t('View details for {{name}}', {
+                                name: server.displayName
+                              })}
+                              onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100"
+                            >
+                              <ChevronRight className="size-4" aria-hidden="true" />
+                            </button>
+                          </div>
                         </div>
                       </li>
                     )
@@ -897,6 +1028,14 @@ export function ConnectorsPanel({
         ) : null}
       </div>
 
+      <ResourceSelectionBar
+        selection={selection}
+        visibleIds={[
+          ...(showFeatured ? featuredConnectors.map(({ resource }) => resource.id) : []),
+          ...(showDirectory ? directoryConnectors.map(({ resource }) => resource.id) : []),
+          ...(showCustom ? visibleCustomServers.map(({ resource }) => resource.id) : [])
+        ]}
+      />
       <AlertDialog.Root
         open={removal !== null}
         onOpenChange={(open) => {

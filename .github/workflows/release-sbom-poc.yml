@@ -1,0 +1,129 @@
+name: Release SBOM PoC
+
+# Advisory measurement of whether an SBOM generated from the final notarized macOS ZIP exposes
+# representative shipped components. It never fails a Release, changes one, or publishes an
+# attestation. A push-path trigger exercises the PoC once when this workflow or its validator
+# changes; future stable releases run it automatically. Manual dispatch remains available only for
+# a bounded rerun of a stable tag.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Stable release tag published by the caller
+        required: true
+        type: string
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-sbom-poc.yml'
+      - 'scripts/ci/validate-release-sbom.mjs'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag to rescan; defaults to the latest stable release
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sbom-poc-${{ github.event.release.tag_name || inputs.tag || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  sbom-poc:
+    name: macOS arm64 final-archive coverage
+    if: ${{ github.event_name != 'release' || github.event.release.prerelease == false }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Resolve stable release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$REQUESTED_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 \
+              --json tagName --jq '.[0].tagName')"
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "SBOM PoC requires a stable vMAJOR.MINOR.PATCH tag: $tag" >&2
+            exit 1
+          fi
+          gh release view "$tag" --json isDraft,isPrerelease \
+            --jq 'select(.isDraft == false and .isPrerelease == false) | true' \
+            | grep -qx true
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download final macOS arm64 archive
+        id: artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir release-asset
+          gh release download "$RELEASE_TAG" --dir release-asset --pattern '*-mac-arm64.zip'
+          mapfile -t archives < <(find release-asset -maxdepth 1 -type f -name '*-mac-arm64.zip')
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "Expected one macOS arm64 ZIP for $RELEASE_TAG, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          echo "path=${archives[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SPDX SBOM from final archive
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          file: ${{ steps.artifact.outputs.path }}
+          format: spdx-json
+          output-file: release-sbom.spdx.json
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+          syft-version: v1.52.0
+
+      - name: Validate representative packaged-component coverage
+        shell: bash
+        env:
+          ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/validate-release-sbom.mjs \
+            --sbom release-sbom.spdx.json \
+            --artifact "$ARTIFACT_PATH" \
+            --tag "$RELEASE_TAG" \
+            --output release-sbom-coverage.json \
+            | tee release-sbom-coverage.md
+          cat release-sbom-coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload PoC evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-sbom-poc-${{ steps.release.outputs.tag || github.run_id }}
+          path: |
+            release-sbom.spdx.json
+            release-sbom-coverage.json
+            release-sbom-coverage.md
+          retention-days: 7
+          if-no-files-found: warn

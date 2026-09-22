@@ -225,7 +225,10 @@ describe('application database (integration)', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_classification_usage',
+        '0043_pdf_annotations',
+        '0044_artifact_hidden'
       ]
     })
 
@@ -1296,7 +1299,10 @@ describe('application database (integration)', () => {
         '0038_literature_search_text',
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
-        '0041_bookmarks'
+        '0041_bookmarks',
+        '0042_classification_usage',
+        '0043_pdf_annotations',
+        '0044_artifact_hidden'
       ]
     })
 

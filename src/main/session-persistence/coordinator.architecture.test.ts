@@ -456,6 +456,7 @@ describe('Session persistence coordinator architecture', () => {
         'loadSessionForContinuation',
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
+        'mutateRuntimeSession',
         'mutateSessionComputeHostAccess',
         'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
@@ -464,6 +465,7 @@ describe('Session persistence coordinator architecture', () => {
         'withUnreferencedLiteratureAttachment',
         'withLiteratureAttachmentRemoval',
         'readSessionRuntimeContext',
+        'readSessionSnapshot',
         'recoverInterruptedDelegatedWork',
         'replaceSessionMetadata',
         'repairProjectFiles',
@@ -483,6 +485,7 @@ describe('Session persistence coordinator architecture', () => {
         'settleMessage',
         'settleTaskCompletion',
         'bindTaskSession',
+        'prepareRuntimeResume',
         'admitTaskTurn',
         'stageTaskCompletion',
         'startAttemptRuntime',
@@ -709,10 +712,12 @@ describe('Session persistence coordinator architecture', () => {
         'containsMessageOnActiveBranch',
         'failTaskRun',
         'loadSessionForContinuation',
+        'mutateRuntimeSession',
         'mutateSessionComputeHostAccess',
         'mutateSessionDetailsAuthority',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
+        'readSessionSnapshot',
         'reserveSessionExport',
         'retryArtifactFinalization',
         'runSessionMutation',
@@ -722,6 +727,7 @@ describe('Session persistence coordinator architecture', () => {
         'setSessionComputeConcurrencyLimit',
         'settleTaskCompletion',
         'bindTaskSession',
+        'prepareRuntimeResume',
         'admitTaskTurn',
         'stageTaskCompletion',
         'setSessionDelegationPolicy',
@@ -797,7 +803,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(46)
+    expect(expectedSchedulerRoute.size).toBe(49)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')
@@ -931,6 +937,7 @@ describe('Session persistence coordinator architecture', () => {
         'invalidateBindingTopology',
         'markMetadataIncomplete',
         'metadataSnapshot',
+        'mutateRuntimeSession',
         'patchRuntimeContext',
         'pruneEnabledComputeHosts',
         'readRuntimeContext',
@@ -947,6 +954,7 @@ describe('Session persistence coordinator architecture', () => {
         'setEnabledComputeHosts',
         'settleTaskCompletion',
         'bindTaskSession',
+        'prepareRuntimeResume',
         'admitTaskTurn',
         'stageTaskCompletion',
         'updateSessionConfiguration'
@@ -1052,6 +1060,7 @@ describe('Session persistence coordinator architecture', () => {
       settleMessage: ['delegatedWorkOwner.settleMessage'],
       settleTaskCompletion: ['stateOwner.settleTaskCompletion'],
       bindTaskSession: ['stateOwner.bindTaskSession'],
+      prepareRuntimeResume: ['stateOwner.prepareRuntimeResume'],
       admitTaskTurn: ['stateOwner.admitTaskTurn'],
       stageTaskCompletion: ['stateOwner.stageTaskCompletion'],
       startMessageDispatch: ['delegatedWorkOwner.startMessageDispatch'],
@@ -1178,7 +1187,14 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/session-data-paths.ts',
       'src/main/session-persistence/session-update-publication.ts',
       'src/main/session-persistence/task-admission.ts',
-      'src/main/session-persistence/usage-regressions.test.ts'
+      'src/main/session-persistence/usage-regressions.test.ts',
+      'src/main/session-persistence/runtime-authority.test.ts',
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-persistence/runtime-session-owner.ts',
+      'src/main/session-persistence/runtime-writer.test.ts',
+      'src/main/session-persistence/runtime-writer.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1203,7 +1219,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-lookup.ts',
       'src/main/session-persistence/session-data-paths.ts',
       'src/main/session-persistence/state-owner.ts',
-      'src/main/session-persistence/task-admission.ts'
+      'src/main/session-persistence/task-admission.ts',
+      'src/main/session-persistence/runtime-session-owner.ts',
+      'src/main/session-persistence/runtime-writer.ts'
     ])
     expect(sessionPersistence.consumerModules).toEqual(['project_lifecycle'])
     expect(sessionPersistence.testFiles.owner).toEqual([
@@ -1230,7 +1248,12 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/revision-conflict.test.ts',
       'src/main/session-persistence/runtime-lookup.test.ts',
       'src/main/session-persistence/save-session.test.ts',
-      'src/main/session-persistence/usage-regressions.test.ts'
+      'src/main/session-persistence/usage-regressions.test.ts',
+      'src/main/session-persistence/runtime-authority.test.ts',
+      'src/main/session-persistence/runtime-session-owner.test.ts',
+      'src/main/session-persistence/runtime-writer.test.ts',
+      'src/main/session-persistence/runtime-resume-recovery.test.ts',
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
@@ -1241,6 +1264,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/shared/renderer-contract-catalog.test.ts'
     ])
     expect(sessionPersistence.testFiles.consumer).toEqual([
+      'src/renderer/src/lib/acp/runtime-observer.test.ts',
+      'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
+      'src/main/session-plan/adversarial-session-plan.test.ts',
       'src/main/delegation/durable-delegated-work.test.ts',
       'src/main/delegation/session-record-adapter.test.ts',
       'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
@@ -1318,6 +1344,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/artifacts/artifact-provenance-graph.test.ts',
       'src/main/artifacts/artifact-reproducibility-execution.test.ts',
       'src/main/artifacts/artifact-reproducibility-export.test.ts',
+      'src/main/artifacts/ro-crate-export.test.ts',
       'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.test.ts',
       'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
@@ -1577,6 +1604,7 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/workflows/connectors-diagnostic.test.ts',
       'src/main/side-chat/ipc.test.ts',
       'src/main/side-chat/runtime-owner.test.ts',
+      'src/main/side-chat/session-lifetime.test.ts',
       'src/main/skills/conversation-import.test.ts',
       'src/main/skills/registered-helper-catalog.test.ts',
       'src/main/specialist/application-commands.test.ts',
@@ -1627,7 +1655,21 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/storage/brand-location.test.ts',
       'src/main/session-plan/plan-legacy-compatibility.test.ts',
       'src/main/session-plan/plan-context-file.shell.integration.test.ts',
-      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts'
+      'src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts',
+      'src/main/session-details/startup-catalog.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
+      'src/main/artifacts/resumed-finalization-ownership.test.ts',
+      'src/main/compute/cancellation-runtime.integration.test.ts',
+      'src/main/pdf-annotations/repository.integration.test.ts',
+      'src/main/pdf-annotations/service.test.ts',
+      'src/main/session-package/ro-crate.integration.test.ts',
+      'src/main/session-package/ro-crate.test.ts',
+      'src/main/settings/codex-bridge-tools.test.ts',
+      'src/main/settings/backend-route-planner.test.ts',
+      'src/main/settings/claude-provider-configuration.integration.test.ts',
+      'src/main/settings/provider-runtime-health-owner.test.ts',
+      'src/main/settings/provider-transport-owner.test.ts',
+      'src/main/settings/session-details-model-owner.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

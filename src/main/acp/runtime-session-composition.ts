@@ -160,7 +160,14 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
   )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,
-    options.permissionWait?.onSessionUpdated
+    options.permissionWait?.onSessionUpdated,
+    options.runtimeSessions
+      ? (candidate) =>
+          options.runtimeSessions!.preparePermissionTranscript(
+            candidate.request,
+            candidate.promptMessageId!
+          )
+      : undefined
   )
   const permissionContext = new AcpPermissionContext({
     emitPermissionRequest: (request) => publication.publishPermissionRequest(request),
@@ -190,11 +197,14 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         return scope?.kind === 'prompt'
           ? {
               sequence: scope.sequence,
+              permissionPrompts: scope.permissionPrompts,
               promptMessageId: scope.promptMessageId,
               isCancellationAccepted: () => base.sessionInteractions.isCancellationAccepted(scope)
             }
           : undefined
       },
+      permissionPromptsForSession: (sessionId) =>
+        base.sessionInteractions.permissionPromptsForSession(sessionId),
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
@@ -228,6 +238,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         .lookup(request.sessionId)
         ?.aggregate.snapshot().frameworkId
       if (state === 'resolved' && frameworkId !== 'codebuddy') return
+      const interaction = base.sessionInteractions.current(request.sessionId)
+      const unattended = interaction?.kind === 'prompt' && interaction.permissionPrompts === 'none'
       publication.pushEvent({
         kind: 'tool',
         level: 'info',
@@ -237,6 +249,11 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         title: request.title,
         providerToolName: request.providerToolName ?? request.mcpIdentity,
         rawInput: request.rawInput,
+        ...(state === 'rejected' && unattended
+          ? {
+              text: 'Permission denied: no human approver is available for this execution. Do not retry this request.'
+            }
+          : {}),
         status:
           state === 'rejected'
             ? 'completed'
@@ -313,6 +330,10 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId,
       reviewerFrameworkForSession: (sessionId) =>
         reviewerSessions.contextFor(sessionId)?.frameworkId,
+      permissionPromptsForSession: (sessionId) => {
+        const interaction = base.sessionInteractions.current(sessionId)
+        return interaction?.kind === 'prompt' ? interaction.permissionPrompts : undefined
+      },
       promptMessageIdForSession: (sessionId) => {
         const interaction = base.sessionInteractions.current(sessionId)
         return interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined

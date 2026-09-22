@@ -23,6 +23,7 @@ import { RESEARCH_RESOURCES_TOOLS } from './descriptors/research-resources'
 import { RNA_TOOLS } from './descriptors/rna'
 import { STRUCTURES_TOOLS } from './descriptors/structures'
 import { VARIANTS_TOOLS } from './descriptors/variants'
+import { ZENODO_TOOLS } from './descriptors/zenodo'
 import { ZINC_TOOLS } from './descriptors/zinc'
 import type { ToolDescriptor } from './types'
 
@@ -50,6 +51,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...RNA_TOOLS,
   ...STRUCTURES_TOOLS,
   ...VARIANTS_TOOLS,
+  ...ZENODO_TOOLS,
   ...ZINC_TOOLS
 ]
 

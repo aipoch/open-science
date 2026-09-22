@@ -3,9 +3,10 @@ name: Package Smoke
 # Blocking native-package certification. Each matrix leg downloads the exact artifact produced by
 # build.yml, so a failed smoke can be retried without rebuilding or re-signing any package.
 #
-# Manual dispatch dry-runs reuse this exact workflow:
-# - setup_only=true, platform_name=all: matrix resolution only (the Nightly unfiltered path)
-# - install_only=true, platform_name=macos-x64: matrix resolution plus npm ci, no artifacts
+# Manual dispatch dry-runs reuse this exact workflow. The dispatch defaults (setup_only=false,
+# install_only=true, platform_name=macos-x64) resolve the matrix and run npm ci on one platform with
+# no artifacts; set setup_only=true with platform_name=all to exercise only the Nightly unfiltered
+# matrix resolution.
 on:
   workflow_call:
     inputs:
@@ -56,11 +57,14 @@ jobs:
   setup:
     name: Resolve smoke matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - id: set
         name: Resolve platform include list
@@ -81,6 +85,8 @@ jobs:
     steps:
       - name: Checkout certification tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -116,6 +122,7 @@ jobs:
           npx vitest run scripts/deb-cli-launcher.test.ts
           trap 'sudo apt-get remove --yes open-science || true' EXIT
           sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
+          sudo apt-get update
           sudo apt-get install --yes ./dist/*.deb
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \

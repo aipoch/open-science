@@ -48,6 +48,8 @@ export const readCredentialCiphertexts = (options: {
     }
     collectRef(document.githubTokenRef)
     for (const provider of list(document.providers)) collectRef(record(provider).keyRef)
+    for (const service of list(record(document.classification).services))
+      collectRef(record(service).keyRef)
     const connectors = record(document.connectors)
     collectRef(connectors.ncbiApiKeyRef)
     collectRef(connectors.openAlexApiKeyRef)

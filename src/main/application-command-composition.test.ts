@@ -105,6 +105,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     memory: EMPTY_OWNER,
     literature: EMPTY_OWNER,
     bookmarks: EMPTY_OWNER,
+    pdfAnnotations: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -243,6 +244,8 @@ describe('application command composition', () => {
       'bookmarks:list',
       'bookmarks:resolve-pdf-source',
       'bookmarks:update-note',
+      'lifecycle:claim-runtime-writer',
+      'literature:cancel-pdf-import',
       'literature:citation-styles',
       'literature:complete-metadata',
       'literature:export-record',
@@ -266,6 +269,12 @@ describe('application command composition', () => {
       'memory:snapshot',
       'memory:update-category',
       'memory:update-entry',
+      'pdf-annotations:cancel-import',
+      'pdf-annotations:create',
+      'pdf-annotations:delete',
+      'pdf-annotations:import-native',
+      'pdf-annotations:list',
+      'pdf-annotations:update',
       'pdf-structure:cancel',
       'pdf-structure:clear-cache',
       'pdf-structure:parse',
@@ -279,12 +288,15 @@ describe('application command composition', () => {
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'sessions:cancel-diagnostics',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-diagnostics',
       'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
       'sessions:fork',
       'sessions:import-package',
+      'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
       'sessions:set-delegation-policy',
@@ -429,7 +441,8 @@ describe('application command composition', () => {
       disable: vi.fn(),
       approve: vi.fn(),
       reject: vi.fn(),
-      revoke: vi.fn()
+      revoke: vi.fn(),
+      revokeBrowsers: vi.fn(async () => snapshot)
     }
     const replacementSnapshot = vi.fn(() =>
       Object.freeze({ ...snapshot, mode: 'remoteit' as const, enabled: true, lifecycle: 'running' })
@@ -446,6 +459,19 @@ describe('application command composition', () => {
       composition.remoteWeb.invoke('remote-access:get-snapshot', invocation('remote'))
     ).resolves.toBe(snapshot)
     expect(firstSnapshot).toHaveBeenCalledOnce()
+    const batch = { browserIds: ['first', 'second'] }
+    await expect(
+      composition.remoteWeb.invoke('remote-access:revoke-browsers', {
+        ...invocation('remote'),
+        callerContext: createCallerContext({
+          ...invocation('remote').callerContext,
+          authorities: ['manage-remote-pairing']
+        }),
+        args: [batch]
+      })
+    ).resolves.toBe(snapshot)
+    expect(firstOwner.revokeBrowsers).toHaveBeenCalledExactlyOnceWith(batch.browserIds, false, true)
+
     expect(() => composition.bindRemoteAccess(replacementOwner as never)).toThrow(
       'Remote Access command owner is already bound.'
     )

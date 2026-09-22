@@ -93,6 +93,21 @@ export function Fixture(): React.JSX.Element {
           data-testid="inline-retry"
           primaryButton={{ label: 'Retry', onClick: () => setActions(actions + 1) }}
         />
+        <Notice
+          inline
+          role="note"
+          content={<p>Review the affected conversations before checking the saved files again.</p>}
+          data-testid="inline-content"
+          primaryButton={{
+            label: 'Recheck saved conversations',
+            onClick: () => setActions(actions + 1)
+          }}
+        />
+        <Notice
+          title="Saved"
+          data-testid="title-only"
+          primaryButton={{ label: 'Undo', onClick: () => setActions(actions + 1) }}
+        />
         <output data-testid="actions">{actions}</output>
       </main>
     )

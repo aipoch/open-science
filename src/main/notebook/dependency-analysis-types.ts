@@ -94,7 +94,17 @@ type NotebookFileCallEffectSummary = Pick<NotebookFileCallEffect, 'kind' | 'inpu
   dependencyNames: string[]
 }
 
+type NotebookPythonHelperModule = {
+  source: string
+  exports: string[]
+}
+
 type NotebookSourceFileAccessContext = {
+  // Live analysis only; these fields are deliberately omitted from the sidecar.
+  managedEnvironment?: Readonly<Record<string, string>>
+  managedEnvironmentSafe?: boolean
+  replContainerNames?: string[]
+  replNamespaceUncertain?: boolean
   staticStrings: Array<{ name: string; value: string }>
   staticCollections: Array<{
     name: string
@@ -127,6 +137,9 @@ type NotebookSourceFileAccessContext = {
   verifiedSerializedValues?: NotebookSerializedValue[]
   // Transient reference identities for Python collections; rebuilt from same-epoch facts.
   staticCollectionAliases?: Array<{ target: string; source: string }>
+  // Recorded helper source is bounded identity evidence used to analyze later exported calls. It
+  // is parsed in an isolated scope and is never executed or treated as a name whitelist.
+  pythonHelperModules?: NotebookPythonHelperModule[]
 }
 
 // Only source-proven value categories. These descriptors contain no serialized contents.
@@ -249,7 +262,8 @@ type NotebookSourceFileAccessContextRequest = {
   projectId: string
   sessionId: string
   currentRunId: string
-  language: 'python' | 'r'
+  includeManagedEnvironment?: boolean
+  language: 'python' | 'r' | 'repl'
   environment?: string
   kernelEpochId: string
 }
@@ -268,6 +282,8 @@ type NotebookSourceFileWriteScope = {
 type NotebookSourceFileAccessExtraction = {
   reads: string[]
   writes: string[]
+  // Transient names whose recorded helper bodies were actually replayed for this source.
+  replayedHelperNames?: string[]
   writeScopes?: NotebookSourceFileWriteScope[]
   unresolvedReads: boolean
   unresolvedWrites: boolean
@@ -300,6 +316,7 @@ export type {
   NotebookDependencyTypeBinding,
   NotebookDependencyTypeSummary,
   NotebookFileCallEffectSummary,
+  NotebookPythonHelperModule,
   NotebookRunDependencyFacts,
   NotebookSourceFileAccessAnalysis,
   NotebookSourceFileAccessContext,

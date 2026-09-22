@@ -1,9 +1,10 @@
 name: Build
 
-# Reusable build workflow: packages the app for macOS (arm64 + x64) and Linux, each on its own
-# native runner, and uploads the installers as pipeline artifacts. Called by release.yml (stable,
-# on tag) and nightly.yml (rolling prerelease, on push to main) so the build matrix lives in one
-# place. Publishing is done by the caller, not here.
+# Reusable build workflow: packages the app for macOS (arm64 + x64), Linux, and Windows, each on its
+# own native runner, and uploads the installers as pipeline artifacts. Callers: release.yml (stable,
+# on tag), nightly.yml (rolling prerelease, on schedule + dispatch), notarize-dryrun.yml (mac only),
+# signpath-test.yml (windows only), and performance-package-dryrun.yml (macos-arm64 only), so the
+# build matrix lives in one place. Publishing is done by the caller, not here.
 #
 # `npm ci` on each runner installs the native binaries it needs (claude-agent-sdk optional package,
 # Prisma query engine). macOS uses native ARM64 and Intel macOS 26 runners so packaging does not
@@ -41,6 +42,17 @@ on:
           Used by the Nightly macos-x64 packaging dry-run; release/nightly leave it empty.
         type: string
         default: ''
+
+# Builds only read the repo and upload run artifacts; every publish step lives in the caller.
+permissions:
+  contents: read
+
+# Keyed by caller workflow + ref so Nightly and Release never queue behind each other. Packaging
+# must not be cancelled mid-run (signing keychains, half-written artifacts), so duplicates queue.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Run static checks beside sharded portable tests and the native package matrix. The reusable
   # workflow still fails when this job fails, so every caller's publish boundary remains fail closed
@@ -50,9 +62,12 @@ jobs:
     # Skipped by the notarization dry-run (skip_verify), which only needs a signed mac build.
     if: ${{ !inputs.skip_verify }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -229,6 +244,7 @@ jobs:
     if: ${{ !inputs.verify_only }}
     name: Resolve platform matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
@@ -273,6 +289,9 @@ jobs:
     # workflow's result, so release/nightly callers cannot reach publish if verification fails.
     if: ${{ needs.setup.result == 'success' }}
     runs-on: ${{ matrix.os }}
+    # Observed packaging legs: macOS 6–16 min (Intel renderer build is the slow one), Linux/Windows
+    # 6–12 min. Generous ceilings still stop a hung electron-builder well before the 6 h default.
+    timeout-minutes: ${{ matrix.platform == 'mac' && 45 || 30 }}
     strategy:
       # Don't let one platform's failure cancel the others.
       fail-fast: false
@@ -285,6 +304,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -311,8 +332,8 @@ jobs:
           OPEN_SCIENCE_ENV_CDN_BASE: https://statics.aipoch.com/open-science
         run: node scripts/verify-runtime-bundle.mjs "${{ matrix.subdir }}"
 
-      # The schema's binaryTargets generates Prisma engines for several platforms; keep only the one
-      # this build ships so each installer stays lean. Fails loudly if the expected engine is missing.
+      # Keep the engines this platform ships: Linux needs both Debian and RHEL OpenSSL 3 engines
+      # for the portable AppImage; macOS/Windows keep one. Fail if no matching engine was generated.
       # The glob is `*query_engine-*` (not `libquery_engine-*`) so it also matches Windows' engine,
       # which is named `query_engine-windows.dll.node` without the `lib` prefix.
       - name: Prune foreign Prisma engines

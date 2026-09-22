@@ -7,11 +7,14 @@ const CURRENT_PAGE_INTENT =
 const FULL_DOCUMENT_INTENT =
   /全文|全篇|整篇|整份|整(?:个|份)(?:文档|论文|文章)|通读|概述(?:一下)?(?:这|本|该)?(?:篇)?(?:论文|文章|文献)|解读(?:一下)?(?:这|本|该)?(?:篇)?(?:论文|文章|文献)|总结(?:一下)?(?:这|本|该)?篇?(?:论文|文章|文献)|(?:梳理|分析|提炼|系统(?:性)?解读)(?:一下)?(?:这|本|该)?(?:篇|项)?(?:论文|文章|文献|研究)(?:的)?[^。！？\n]{0,36}(?:核心贡献|研究问题|方法|实验|结果|结论|局限)|whole (?:paper|document|article)|entire (?:paper|document|article)|full (?:paper|document|article)|summari[sz]e .*(?:paper|document|article)|(?:overview|interpretation) of (?:this|the) (?:paper|document|article)|read (?:this|the) (?:whole|entire) (?:paper|document|article)|(?:analy[sz]e|synthesi[sz]e|explain|walk me through) (?:this|the) (?:paper|document|article)[^.?!\n]{0,48}(?:contributions?|methods?|experiments?|results?|limitations?|conclusions?)/i
 
+export const hasCurrentPageIntent = (text: string): boolean => CURRENT_PAGE_INTENT.test(text)
+export const hasFullDocumentIntent = (text: string): boolean => FULL_DOCUMENT_INTENT.test(text)
+
 export const resolvePdfPreparationScope = (
   text: string,
   readingPosition: PdfReadingPosition | undefined
 ): PdfPreparationScope => {
-  if (FULL_DOCUMENT_INTENT.test(text)) return 'full-document'
-  if (readingPosition && CURRENT_PAGE_INTENT.test(text)) return 'current-page'
+  if (hasFullDocumentIntent(text)) return 'full-document'
+  if (readingPosition && hasCurrentPageIntent(text)) return 'current-page'
   return 'auto'
 }

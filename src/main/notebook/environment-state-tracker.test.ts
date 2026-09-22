@@ -2127,6 +2127,135 @@ describe('EnvironmentStateTracker', () => {
     })
   })
 
+  it('retries a successful R mutation when Windows inventory visibility lags the installer', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-r-visibility-lag-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.4.3', packages: [] })
+      // The package transaction has completed, but the first R inventory read still sees the
+      // pre-transaction library while Windows finishes publishing the linked package metadata.
+      .mockResolvedValueOnce({ runtimeVersion: '4.4.3', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '4.4.3',
+        packages: [
+          {
+            name: 'english',
+            version: '1.2.6',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            libraryScope: 'environment',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      platform: 'win32',
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: 'Rscript.exe',
+      args: []
+    }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-r-visibility-lag',
+      operation: 'install',
+      packages: ['english']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-r-visibility-lag',
+      operation: 'install',
+      packages: ['english'],
+      result: 'success',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: ['r-english'],
+          status: 'succeeded',
+          mutationRisk: 'confirmed'
+        }
+      ]
+    })
+    const inspection = await tracker.inspectPackages(rTarget, ['english'])
+
+    expect(verification).toMatchObject({ result: 'success' })
+    expect(verification.unsatisfiedPackages).toBeUndefined()
+    expect(inspection).toMatchObject({
+      inventory: { source: 'cache-reused' },
+      packages: [{ requested: 'english', status: 'installed', version: '1.2.6' }]
+    })
+    expect(inspectInstalled).toHaveBeenCalledTimes(3)
+  })
+
+  it('publishes the newer partial R inventory when the retry still cannot verify the request', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-r-partial-visibility-'))
+    const inspectInstalled = vi
+      .fn()
+      .mockResolvedValueOnce({ runtimeVersion: '4.4.3', packages: [] })
+      .mockResolvedValueOnce({ runtimeVersion: '4.4.3', packages: [] })
+      .mockResolvedValueOnce({
+        runtimeVersion: '4.4.3',
+        packages: [
+          {
+            name: 'scales',
+            version: '1.4.0',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            libraryScope: 'environment',
+            evidenceSources: ['r-installed-packages']
+          }
+        ]
+      })
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      platform: 'win32',
+      inspectInstalled,
+      captureFingerprint: vi.fn().mockResolvedValue('stable-r')
+    })
+    const rTarget = {
+      language: 'r' as const,
+      environmentName: 'default-r',
+      runtimeSource: 'managed' as const,
+      command: 'Rscript.exe',
+      args: []
+    }
+
+    await tracker.markPackageMutationDirty(rTarget, {
+      operationId: 'operation-r-partial-visibility',
+      operation: 'install',
+      packages: ['english']
+    })
+    const verification = await tracker.refreshAfterPackageMutation(rTarget, {
+      operationId: 'operation-r-partial-visibility',
+      operation: 'install',
+      packages: ['english'],
+      result: 'success',
+      attempts: [
+        {
+          groupOrdinal: 0,
+          installer: 'conda',
+          packages: ['r-english'],
+          status: 'succeeded',
+          mutationRisk: 'confirmed'
+        }
+      ]
+    })
+    const inspection = await tracker.inspectPackages(rTarget, ['scales'])
+
+    expect(verification).toMatchObject({ result: 'failure', unsatisfiedPackages: ['english'] })
+    expect(inspection).toMatchObject({
+      inventory: { source: 'cache-reused' },
+      packages: [{ requested: 'scales', status: 'installed', version: '1.4.0' }]
+    })
+    expect(inspectInstalled).toHaveBeenCalledTimes(3)
+  })
+
   it('bounds byte-heavy completed operation history by serialized size', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'open-science-env-log-bytes-'))
     const maxBytes = 2_500
@@ -2229,6 +2358,15 @@ describe('EnvironmentStateTracker', () => {
         operation: 'install',
         packages: requested,
         result: 'success',
+        attempts: [
+          {
+            groupOrdinal: 0,
+            installer: 'conda',
+            packages: requested.map((packageName) => `r-${packageName}`),
+            status: 'succeeded',
+            mutationRisk: 'confirmed'
+          }
+        ],
         source: { type: 'bioconductor', version: '3.20' }
       })
       const capture = await tracker.captureCompletedRun(rTarget)

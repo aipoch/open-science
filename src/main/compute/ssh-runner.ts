@@ -48,6 +48,8 @@ export interface SshRunner {
     stdout: string
     stderr: string
     truncated: boolean
+    stdoutTruncated?: boolean
+    stderrTruncated?: boolean
     timedOut: boolean
   }>
 }
@@ -256,6 +258,8 @@ export class SystemSshRunner implements SshRunner {
     stdout: string
     stderr: string
     truncated: boolean
+    stdoutTruncated?: boolean
+    stderrTruncated?: boolean
     timedOut: boolean
   }> {
     const maxBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
@@ -344,6 +348,8 @@ export class SystemSshRunner implements SshRunner {
           stdout: spawnError ? '' : stdoutBuf.toString(),
           stderr: spawnError ? spawnError.message : stderrBuf.toString(),
           truncated: spawnError ? false : stdoutBuf.wasTruncated() || stderrBuf.wasTruncated(),
+          stdoutTruncated: spawnError ? false : stdoutBuf.wasTruncated(),
+          stderrTruncated: spawnError ? false : stderrBuf.wasTruncated(),
           timedOut
         })
       }

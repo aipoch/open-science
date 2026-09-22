@@ -1,5 +1,6 @@
 import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import { DelegatedProcessOwnership } from './process-ownership'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -100,10 +101,14 @@ const makeRuntimeCopyRemovable = async (path: string): Promise<void> => {
 
 const createProductionDelegatedFrameworkRuntime = (
   options: ProductionFrameworkRuntimeOptions
-): ProductionDelegatedFrameworks =>
-  createProductionDelegatedFrameworks({
+): ProductionDelegatedFrameworks => {
+  let standaloneOwnership: DelegatedProcessOwnership | undefined
+  return createProductionDelegatedFrameworks({
     capacity: options.capacity,
-    async certify(session) {
+    async certify(session, suppliedOwnership) {
+      const ownership =
+        suppliedOwnership ??
+        (standaloneOwnership ??= new DelegatedProcessOwnership(options.dataRoot))
       const frameworkId = session.agentFrameworkId
       if (!frameworkId) throw new Error('Delegated Work Session has no framework identity.')
       const preparedAttempts = new Map<
@@ -117,13 +122,15 @@ const createProductionDelegatedFrameworkRuntime = (
       // The exact provider/model is validated by admission's model resolver. This certification hook
       // must not read the process-wide Active model, which may differ from the originating Session.
       const assertProviderAvailable = async (): Promise<void> => undefined
-      const prepare = async (
+      const prepareScope = async (
         input: DelegateExecutionInput
       ): Promise<PreparedProductionFrameworkScope> => {
+        const permissionPrompts = input.permissionPrompts
         if (!input.workspaceCwd) throw new Error('Delegated Attempt has no prepared Frame cwd.')
         if (!input.executionModel) {
           throw new Error('Delegated Attempt has no admitted model snapshot.')
         }
+        ownership.assertClear({ ...input.session, frameId: input.frameId })
         const resolveAdmitted = options.runtime.settingsService.resolveAdmittedSubagentBackend
         if (!input.executionBackend && !resolveAdmitted) {
           throw new Error('Admitted delegated backend resolution is unavailable.')
@@ -254,6 +261,7 @@ const createProductionDelegatedFrameworkRuntime = (
             }
           }
           const capability = await options.notebookRpcServer().issueDelegatedNotebookConnection({
+            permissionPrompts,
             projectId: input.session.projectId,
             sessionId: input.session.sessionId,
             rootFrameId: graph.rootFrameId,
@@ -291,6 +299,7 @@ const createProductionDelegatedFrameworkRuntime = (
             frameworkId,
             runtimeConstructionIsProcessFree:
               frameworkId === 'claude-code' || frameworkId === 'opencode',
+            permissionPrompts,
             permissionProfile:
               options.resolvePermissionProfile?.(input.session.sessionId) ??
               durable.permissionProfile ??
@@ -299,11 +308,16 @@ const createProductionDelegatedFrameworkRuntime = (
             ...(input.artifactCurrentRunFile
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
+            async confirmProcessCleanup() {
+              await ownership.recover({ ...input.session, attemptId: input.attemptId }, true)
+              ownership.assertClear({ ...input.session, attemptId: input.attemptId })
+            },
             async releaseResources() {
               preparedAttempts.delete(input.attemptId)
               if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
             },
             async disposeResources() {
+              ownership.assertClear({ ...input.session, attemptId: input.attemptId })
               // Port ownership also outlives a possibly surviving or still-starting child.
               openCodeRuntime?.dispose()
               try {
@@ -315,7 +329,25 @@ const createProductionDelegatedFrameworkRuntime = (
               }
             }
           }
-          if (delegatedSpawn) return { ...base, spawn: delegatedSpawn }
+          if (delegatedSpawn)
+            return {
+              ...base,
+              spawn: {
+                ...delegatedSpawn,
+                spawnProcess: (command, args, spawnOptions) =>
+                  ownership.spawn(
+                    {
+                      ...input.session,
+                      frameId: input.frameId,
+                      attemptId: input.attemptId,
+                      frameworkId
+                    },
+                    command,
+                    args,
+                    spawnOptions
+                  )
+              }
+            }
           if (frameworkId === 'claude-code') {
             return { ...base, sessionSetup: sessionSetup(runtimeBackend) }
           }
@@ -338,6 +370,10 @@ const createProductionDelegatedFrameworkRuntime = (
           throw error
         }
       }
+      const prepare = (input: DelegateExecutionInput): Promise<PreparedProductionFrameworkScope> =>
+        ownership.withWorkspace({ ...input.session, frameId: input.frameId }, () =>
+          prepareScope(input)
+        )
       const createRuntime = (
         scope: PreparedProductionFrameworkScope,
         callbacks: AcpDelegateExecutionCallbacks,
@@ -345,10 +381,40 @@ const createProductionDelegatedFrameworkRuntime = (
       ): ReturnType<typeof createAcpRuntime> => {
         const owned = preparedAttempts.get(scope.executionId)
         if (!owned) throw new Error('Delegated runtime scope is unavailable.')
+        let initialProcess = agentProcess
+        const backend = withDelegatedChildContext(owned.backend)
+        const spawnOwned = (): ChildProcessWithoutNullStreams => {
+          if (initialProcess) {
+            const process = initialProcess
+            initialProcess = undefined
+            return process
+          }
+          return backend.framework.spawn({
+            ...(scope.spawn ?? {
+              executablePath: backend.executablePath,
+              args: backend.args ?? [],
+              env: backend.env,
+              proxyEnvironmentMode: backend.proxyEnvironmentMode
+            }),
+            spawnProcess: (command, args, spawnOptions) =>
+              ownership.spawn(
+                {
+                  projectId: scope.provenance.projectId,
+                  sessionId: scope.provenance.sessionId,
+                  frameId: scope.provenance.agentFrameId,
+                  attemptId: scope.executionId,
+                  frameworkId
+                },
+                command,
+                args,
+                spawnOptions
+              )
+          })
+        }
         return createAcpRuntime({
           ...options.runtime,
           notebookRpcServer: options.notebookRpcServer(),
-          fixedBackend: withDelegatedChildContext(owned.backend),
+          fixedBackend: backend,
           preparedSkills: owned.preparedSkills,
           runtimeCallbacks: callbacks,
           delegatedNotebookConnection: owned.connection,
@@ -359,7 +425,7 @@ const createProductionDelegatedFrameworkRuntime = (
           ...(scope.artifactCurrentRunFile
             ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
             : {}),
-          ...(agentProcess ? { spawnAgent: () => agentProcess } : {})
+          spawnAgent: spawnOwned
         })
       }
 
@@ -371,6 +437,7 @@ const createProductionDelegatedFrameworkRuntime = (
       }
     }
   })
+}
 
 export {
   createProductionDelegatedFrameworkRuntime,

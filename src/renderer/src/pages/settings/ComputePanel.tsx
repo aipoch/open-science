@@ -173,6 +173,7 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
           type="button"
           variant="outline"
           className="shrink-0"
+          data-settings-anchor="compute.add-host"
           onClick={() => onNavigate({ kind: 'add' })}
         >
           <Plus className="size-4" aria-hidden="true" />

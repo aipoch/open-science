@@ -20,6 +20,7 @@ export function resolveTableCellMerges({
 }) {
   if (!recordGrid?.completeSpans) {
     recoverCategoricalGroupSpans({ proposals, baseCells, items, rows, headerRows, repairs })
+    recoverSummaryStatisticStubs({ proposals, baseCells, items, rows, headerRows, repairs })
     recoverThresholdSectionSpans({ proposals, baseCells, items, rows, headerRows, repairs })
     recoverCountPairSummaries({ proposals, baseCells, items, rows, rules, repairs })
     recoverRepeatedArmHeaders({ proposals, baseCells, items, rows, rules, repairs })
@@ -1021,6 +1022,60 @@ function recoverClosedStatisticSpans({ proposals, baseCells, items, rows, rules,
   }
 }
 
+// Repeated Mean/Median/IQR/Range blocks share one centered, possibly wrapped
+// variable label. Require every statistic and paired value before merging stubs.
+function recoverSummaryStatisticStubs({ proposals, baseCells, items, rows, headerRows, repairs }) {
+  const width = Math.max(...baseCells.map((c) => c.column)) + 1
+  if (width !== 5) return
+  const owned = (r, c) => {
+    const slot = baseCells.find((s) => s.row === r && s.column === c)
+    return slot ? items.filter((i) => i.horizontal && inside(slot.rect, i)) : []
+  }
+  const text = (r, c) =>
+    owned(r, c)
+      .map((i) => i.text)
+      .join('')
+      .replace(/\s/g, '')
+  const header = headerRows.find((r) => /^Statisticalmeasures$/i.test(text(r, 1)))
+  if (header === undefined || (rows.length - header - 1) % 4) return
+  const blocks = []
+  for (let r = header + 1; r < rows.length; r += 4) {
+    if (
+      ['Mean', 'Median', 'IQR', 'Range'].some((label, n) => text(r + n, 1) !== label) ||
+      [0, 1, 2, 3].some((n) =>
+        [2, 3].some((c) => !/^[<>≤≥−+-]?(?:\d|\.\d)[\d.,–−+/-]*$/.test(text(r + n, c)))
+      )
+    )
+      return
+    const slots = baseCells.filter((s) => s.column === 0 && s.row >= r && s.row < r + 4)
+    const rect = union(slots)
+    const label = items
+      .filter((i) => i.horizontal && inside(rect, i))
+      .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+    if (
+      !label.length ||
+      !/\p{L}/u.test(label.map((i) => i.text).join('')) ||
+      label.some((i) => !/^[\p{L}\s()+/−-]+$/u.test(i.text))
+    )
+      return
+    const bounds = union(label),
+      height = Math.max(...label.map((i) => i.height))
+    if (
+      bounds[3] - bounds[1] > height * 2.8 ||
+      Math.abs(bounds[1] + bounds[3] - rect[1] - rect[3]) > height * 2 ||
+      label.some((i, n) => n && i.baseline - label[n - 1].baseline > height * 1.6)
+    )
+      return
+    blocks.push(slots)
+  }
+  if (blocks.length < 3) return
+  for (const slots of blocks) {
+    removeOverlappingMergeProposals(proposals, slots)
+    proposals.push({ slots, origin: 'text-supported-study-span' })
+  }
+  repairs.push('source-cell-span-reconciled')
+}
+
 // A categorical block repeats complete count/percentage records under one
 // top-aligned label. Blank value cells are not sufficient evidence for a span.
 function recoverCategoricalGroupSpans({ proposals, baseCells, items, rows, headerRows, repairs }) {
@@ -1211,7 +1266,17 @@ export function reconcileUnresolvedTableSpans({
             c.text === last.text &&
             cells.filter((v) => v.row === c.row && v.column > 0 && /^\d+$/.test(v.text)).length >= 2
         ).length >= 2
-      if (numeric || ruled || sampleHeading) {
+      // Complete source-rebuilt records own their stubs independently, even
+      // where a model span crosses a section or two labelled follow-up rows.
+      const rebuiltRecords =
+        rows.filter((r) => r.origin === 'source-text' && r.numericRecord).length >= 6 &&
+        unique.every(
+          (c) =>
+            c.column === 0 &&
+            rows[c.row].origin === 'source-text' &&
+            (rows[c.row].numericRecord || rows[c.row].section)
+        )
+      if (numeric || ruled || sampleHeading || rebuiltRecords) {
         repairs.push('source-separated-model-span-discarded')
         continue
       }

@@ -27,6 +27,16 @@ describe('Web RPC contract', () => {
     expect(WEB_RPC_UNAVAILABLE_CHANNELS.every((channel) => !isWebRpcChannel(channel))).toBe(true)
   })
 
+  it.each([
+    'sessions:inspect-diagnostics',
+    'sessions:export-diagnostics',
+    'sessions:cancel-diagnostics'
+  ])('keeps native diagnostic command %s outside Web RPC', (channel) => {
+    expect(WEB_RPC_UNAVAILABLE_CHANNELS).toContain(channel)
+    expect(WEB_RPC_ALLOWED_CHANNELS).not.toContain(channel)
+    expect(isWebRpcChannel(channel)).toBe(false)
+  })
+
   it('uses the generated event interface as its positive event allowlist', () => {
     const preloadEvents = [...new Set(Object.values(WEB_EVENT_CHANNELS))].sort()
     expect(preloadEvents.every(isWebRpcEventChannel)).toBe(true)
