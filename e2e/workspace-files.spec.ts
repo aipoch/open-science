@@ -350,6 +350,7 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
 }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
+  await app.setMainWindowSize(1024, 720)
   expect(page.url()).toMatch(/^file:/)
   await page.evaluate(async () => {
     const settings = await window.api.settings.upsertProvider({
@@ -380,11 +381,27 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
   const images = page.locator(
     '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
   )
+  // Offscreen figures stay as placeholders until they approach the viewport.
+  // Visit each figure so this also verifies decoding on smaller Windows windows.
+  for (const index of [1, 2, 3]) {
+    await page
+      .getByText(`Synthetic figure ${index}. This image contains generated geometry only.`, {
+        exact: true
+      })
+      .scrollIntoViewIfNeeded()
+    const image = page.getByRole('img', { name: `Sanitized message figure ${index}`, exact: true })
+    await image.scrollIntoViewIfNeeded()
+    await expect
+      .poll(() =>
+        image.evaluate((img: HTMLImageElement) => ({
+          complete: img.complete,
+          width: img.naturalWidth,
+          height: img.naturalHeight
+        }))
+      )
+      .toEqual({ complete: true, width: 1024, height: 1024 })
+  }
   await expect(images).toHaveCount(3)
-  await images.last().scrollIntoViewIfNeeded()
-  await expect
-    .poll(() => images.last().evaluate((img: HTMLImageElement) => img.naturalWidth))
-    .toBe(1024)
   await expect(page.getByTestId('message-completion-live-region')).toContainText(
     'Response completed.'
   )

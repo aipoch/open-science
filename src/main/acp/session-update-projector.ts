@@ -389,6 +389,9 @@ class AcpSessionUpdateProjector {
       if (!routing.reconnectPending) {
         effects.push(deepFreeze({ kind: 'context-refresh' as const, sessionId: routed.sessionId }))
       }
+      for (const prefixEvent of outputPrefix) {
+        effects.push(deepFreeze({ kind: 'visible-event' as const, event: prefixEvent }))
+      }
       if (appOwnedUserChoiceTool) return Object.freeze(effects)
       if (event.kind === 'tool' && event.status === 'failed') {
         const canonicalTool = event.providerToolName
@@ -404,7 +407,7 @@ class AcpSessionUpdateProjector {
           })
         )
       }
-      for (const visibleEvent of [...outputPrefix, ...(assistantVisibleEvents ?? [event])]) {
+      for (const visibleEvent of assistantVisibleEvents ?? [event]) {
         if (
           (visibleEvent.kind === 'message' || visibleEvent.kind === 'thought') &&
           !visibleEvent.text

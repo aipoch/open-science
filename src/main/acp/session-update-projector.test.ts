@@ -128,6 +128,43 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it.each(['opencode', 'codebuddy'] as const)(
+    'publishes pending %s text before hiding an app-owned user-choice tool',
+    (framework) => {
+      const projector = createProjector()
+      const routing: TestRouting = {
+        framework,
+        model: 'provider/MiniMax-M3',
+        eventId: 'prefix',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+      projector.route(
+        {
+          sessionId: 'session-one',
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '<thi' } }
+        },
+        routing
+      )
+      const effects = projector.route(
+        {
+          sessionId: 'session-one',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'choice',
+            title: 'open_science_notebook_ask_user_question',
+            status: 'pending'
+          }
+        },
+        { ...routing, eventId: 'tool' }
+      )
+      expect(effects.filter((e) => e.kind === 'visible-event').map((e) => e.event)).toMatchObject([
+        { kind: 'message', text: '<thi' }
+      ])
+    }
+  )
+
   it('segments CodeBuddy thought identities when tools split a reused provider message', () => {
     const projector = createProjector()
     const routing: TestRouting = {
