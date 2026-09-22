@@ -6544,6 +6544,12 @@
     "The selected file already exists. Choose a new filename.": "Выбранный файл уже существует. Укажите новое имя файла.",
     "Diagnostic operation timed out.": "Время ожидания операции диагностики истекло.",
     "Temporary diagnostic files could not be fully removed.": "Не удалось полностью удалить временные файлы диагностики.",
-    "Choose a new .tar.gz file.": "Выберите новый файл .tar.gz."
+    "Choose a new .tar.gz file.": "Выберите новый файл .tar.gz.",
+    "Browse Zotero collections and subcollections.": "Просмотр коллекций и подколлекций Zotero.",
+    "Search saved references by phrase, tag or item type.": "Поиск сохранённых источников по фразе, тегу или типу записи.",
+    "Read bibliographic metadata for a Zotero item.": "Чтение библиографических метаданных записи Zotero.",
+    "Read child notes and attachment metadata.": "Чтение дочерних заметок и метаданных вложений.",
+    "Public Zotero libraries, collections, notes and attachment metadata.": "Публичные библиотеки Zotero, коллекции, заметки и метаданные вложений.",
+    "List public Zotero groups.": "Показать публичные группы Zotero."
   }
 }

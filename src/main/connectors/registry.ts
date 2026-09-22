@@ -26,6 +26,7 @@ import { STRUCTURES_TOOLS } from './descriptors/structures'
 import { VARIANTS_TOOLS } from './descriptors/variants'
 import { ZENODO_TOOLS } from './descriptors/zenodo'
 import { ZINC_TOOLS } from './descriptors/zinc'
+import { ZOTERO_TOOLS } from './descriptors/zotero'
 import type { ToolDescriptor } from './types'
 
 const ALL_TOOLS: ToolDescriptor[] = [
@@ -54,7 +55,8 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...STRUCTURES_TOOLS,
   ...VARIANTS_TOOLS,
   ...ZENODO_TOOLS,
-  ...ZINC_TOOLS
+  ...ZINC_TOOLS,
+  ...ZOTERO_TOOLS
 ]
 
 const inputSchemaCompiler = new Ajv2020({

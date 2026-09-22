@@ -287,3 +287,14 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('errors are preserved in messages as "[code] message"')
   })
 })
+
+it('generated Zotero Skill describes public access and supported tools', () => {
+  const doc = renderSkillDoc('zotero')
+  expect(doc).toContain('online library anonymously')
+  expect(doc).toContain('zotero_get_item_children')
+  expect(doc).not.toContain('zotero_export_items')
+  expect(doc).not.toContain('Settings > Credentials > Zotero')
+  expect(doc).toContain('next_start')
+  expect(doc).toContain('library_version (string or null if unavailable)')
+  expect(doc).toContain('Missing versions, including on group listings, cannot establish')
+})

@@ -1,3 +1,8 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { syncConnectorSkillDocs } from './provision'
+import { renderSkillDoc } from './skill-doc'
 import { describe, it, expect, vi } from 'vitest'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
@@ -6,6 +11,8 @@ import { CredentialRequestBroker } from './credential-request-broker'
 import { McpClientManager, McpToolCallError } from './custom-mcp'
 import type { SpecialistView } from '../../shared/specialist'
 import type { CustomMcpServerConfig } from './custom-mcp'
+import { selectEnabledCustomServers } from './custom-mcp'
+import type { StoredCustomMcpServer } from '../settings/types'
 
 const internal = { origin: 'internal' as const }
 
@@ -13,6 +20,93 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it.each([
+    { id: 'legacy-zotero-id', name: 'zotero' },
+    { id: 'zotero', name: 'legacy-zotero' }
+  ])('keeps a legacy Zotero identity conflict unavailable: %j', async (identity) => {
+    const legacy: StoredCustomMcpServer = {
+      ...identity,
+      displayName: 'Existing Zotero MCP',
+      transport: 'stdio',
+      command: 'zotero-mcp',
+      enabled: true
+    }
+    const replacement = { ...legacy, id: 'zotero-lab-id', name: 'zotero-lab' }
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: ['zotero', replacement.name],
+      disabledConnectorIds: [] as string[],
+      customMcpServers: [legacy, replacement]
+    }
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => new Response('[]'))
+    const listTools = vi.fn().mockResolvedValue([{ name: 'legacy_search' }])
+    const call = vi.fn().mockResolvedValue({ source: 'custom' })
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      mcpClientManager: { listTools, call },
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined
+    })
+
+    // Existing identities are preserved, but neither discovery nor dispatch may use them.
+    for (const disabled of [false, true]) {
+      settings.disabledConnectorIds = disabled ? ['zotero'] : []
+      expect(selectEnabledCustomServers(settings)).toEqual([replacement])
+      await expect(svc.call(legacy.name, 'legacy_search', {}, internal)).rejects.toThrow(
+        identity.name === 'zotero' ? 'unknown tool: zotero/legacy_search' : 'connector_unavailable'
+      )
+    }
+    expect(listTools).not.toHaveBeenCalled()
+    expect(call).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+
+    settings.disabledConnectorIds = []
+    await expect(
+      svc.call('zotero', 'zotero_list_groups', { user_id: '123' }, internal)
+    ).resolves.toMatchObject({ records: [] })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(call).not.toHaveBeenCalled()
+
+    // Recreating the custom server with a distinct ID and route restores its own tool path.
+    await expect(svc.call(replacement.name, 'legacy_search', {}, internal)).resolves.toEqual({
+      source: 'custom'
+    })
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({ id: replacement.id, name: replacement.name }),
+      'legacy_search',
+      {}
+    )
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('dispatches public Zotero reads anonymously and preserves policy and schema gates', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => new Response('[]', { headers: { 'Total-Results': '0' } }))
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      blockedToolIds: [] as string[]
+    }
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined
+    })
+    await expect(
+      svc.call('zotero', 'zotero_list_groups', { user_id: '123' }, internal)
+    ).resolves.toMatchObject({ records: [] })
+    expect(fetchImpl.mock.calls[0]![1]!.headers).not.toHaveProperty('Zotero-API-Key')
+    await expect(
+      svc.call('zotero', 'zotero_list_groups', { user_id: '../keys' }, internal)
+    ).rejects.toThrow('invalid_arguments')
+    settings.blockedToolIds.push('zotero/zotero_list_groups')
+    await expect(
+      svc.call('zotero', 'zotero_list_groups', { user_id: '123' }, internal)
+    ).rejects.toThrow('tool blocked by policy')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
     const fetchImpl = vi
       .fn()
@@ -2668,4 +2762,25 @@ describe('ConnectorService specialist capability gate', () => {
       'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open-Science before retrying.'
     )
   })
+})
+
+it('replaces legacy Zotero guidance and preserves a custom Skill under a distinct route', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'zotero-skill-upgrade-'))
+  const legacy = join(dir, 'mcp-zotero', 'SKILL.md')
+  const replacement = join(dir, 'mcp-zotero-lab', 'SKILL.md')
+  try {
+    await mkdir(join(dir, 'mcp-zotero'))
+    await mkdir(join(dir, 'mcp-zotero-lab'))
+    await writeFile(legacy, 'legacy custom Zotero guidance')
+    await writeFile(replacement, 'replacement custom Zotero guidance')
+    await syncConnectorSkillDocs(dir, ['zotero'])
+    expect(await readFile(legacy, 'utf8')).toBe(renderSkillDoc('zotero'))
+    expect(await readFile(replacement, 'utf8')).toBe('replacement custom Zotero guidance')
+
+    await syncConnectorSkillDocs(dir, [])
+    await expect(readFile(legacy, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(replacement, 'utf8')).toBe('replacement custom Zotero guidance')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

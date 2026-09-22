@@ -1,6 +1,7 @@
 import type { ConnectorCredentials, ToolContext, ToolDescriptor } from './types'
 import { abortableDelay } from './abortable-delay'
 import { CONNECTOR_RETRYABLE_STATUS, connectorRetryDelay } from './request-policy'
+import { ZoteroRequestPolicy } from './zotero-request-policy'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_TOTAL_TIMEOUT_MS = 120_000
@@ -59,6 +60,7 @@ export class ParserEngine {
   private readonly maxResponseBytes: number
   private readonly retries: number
   private readonly backoffMs: number
+  private readonly zoteroRequests = new ZoteroRequestPolicy()
 
   constructor(opts?: {
     fetchImpl?: typeof fetch
@@ -107,6 +109,7 @@ export class ParserEngine {
     })
     const execute = async (): Promise<unknown> => {
       const ctx = this.makeContext(
+        descriptor.connector,
         credentials,
         callSignal,
         deadline,
@@ -138,6 +141,7 @@ export class ParserEngine {
   }
 
   private makeContext(
+    connector: string,
     credentials: ConnectorCredentials,
     signal: AbortSignal,
     deadline: number,
@@ -150,7 +154,10 @@ export class ParserEngine {
       retries = this.retries,
       allowHttpStatuses: readonly number[] = []
     ): Promise<{ response: Response; bodyText?: string }> => {
+      const zotero = this.zoteroRequests.matches(connector, url) ? this.zoteroRequests : undefined
+      const requestInit = zotero?.requestInit()
       for (let attempt = 0; ; attempt++) {
+        if (zotero) await zotero.wait(deadline, signal)
         signal.throwIfAborted()
         const controller = new AbortController()
         let idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -172,9 +179,16 @@ export class ParserEngine {
           armTimeout()
           res = await this.fetchImpl(url, {
             ...init,
-            headers: { accept, 'user-agent': USER_AGENT, ...init?.headers },
+            ...requestInit,
+            headers: {
+              accept,
+              'user-agent': USER_AGENT,
+              ...init?.headers,
+              ...requestInit?.headers
+            },
             signal: requestSignal
           })
+          zotero?.observe(res)
           if ((res.ok || allowHttpStatuses.includes(res.status)) && res.body) {
             const reader = res.body.getReader()
             // Native fetch observes abort too; explicitly cancel injected/independent streams.
@@ -255,7 +269,9 @@ export class ParserEngine {
           retryable && retryAfter
             ? ` Retry after ${Math.ceil(delay / 1_000)}s.${insufficientBudget ? ' The remaining call budget cannot accommodate this wait.' : ''}`
             : ''
-        throw new Error(`HTTP ${res.status} for ${redactUrl(url)}.${retryHint}`)
+        throw new Error(
+          `HTTP ${res.status} for ${redactUrl(url)}.${retryHint}${zotero?.errorHint(res.status) ?? ''}`
+        )
       }
     }
     return {

@@ -1,5 +1,5 @@
 import { Script } from 'node:vm'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, type Mock } from 'vitest'
 import {
   getConnectorTools,
   getDescriptor,
@@ -7,6 +7,7 @@ import {
   ALL_CONNECTOR_IDS
 } from './registry'
 import { CONNECTOR_CATALOG } from './catalog'
+import { ParserEngine } from './engine'
 
 describe('registry + catalog', () => {
   it('resolves a tool by connector+method', () => {
@@ -298,5 +299,81 @@ describe('UniProt discovery input contract', () => {
     const minimal = { gene: 'TP53' }
     validateToolArguments(search, minimal)
     expect(minimal).toEqual({ gene: 'TP53' })
+  })
+})
+
+describe('Zotero argument contracts', () => {
+  const library = { library_type: 'group', library_id: '12345' }
+  const groupsTool = getDescriptor('zotero', 'zotero_list_groups')!
+  const response = (body: unknown, headers: Record<string, string> = {}): Response =>
+    new Response(JSON.stringify(body), { headers })
+  const fixture = (
+    body: unknown,
+    headers: Record<string, string> = {}
+  ): {
+    fetchImpl: Mock<typeof fetch>
+    call: (method: string, args: Record<string, unknown>) => Promise<unknown>
+  } => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(body, headers))
+    const engine = new ParserEngine({ fetchImpl, retries: 0 })
+    const call = (method: string, args: Record<string, unknown>): Promise<unknown> =>
+      engine.call(getDescriptor('zotero', method)!, args, {})
+    return { fetchImpl, call }
+  }
+  it.each([
+    ['zotero_list_groups', { user_id: '123' }],
+    ['zotero_list_collections', library],
+    ['zotero_search_items', library],
+    ['zotero_get_item_children', { ...library, item_key: 'ITEM2345' }]
+  ])('accepts and follows %s continuation beyond one million records', async (method, args) => {
+    const tool = getDescriptor('zotero', method)!
+    const firstArgs = { ...args, start: 1000000, limit: 1 }
+    validateToolArguments(tool, firstArgs)
+    const f = fixture([{ key: 'ITEM2345' }], { 'Total-Results': '1000002' })
+    const first = (await f.call(method, firstArgs)) as { next_start: number }
+    expect(first.next_start).toBe(1000001)
+    const nextArgs = { ...firstArgs, start: first.next_start }
+    expect(() => validateToolArguments(tool, nextArgs)).not.toThrow()
+    f.fetchImpl.mockResolvedValue(response([{ key: 'NEXT2345' }], { 'Total-Results': '1000002' }))
+    expect(await f.call(method, nextArgs)).toMatchObject({ next_start: null })
+    expect(new URL(String(f.fetchImpl.mock.calls[1]![0])).searchParams.get('start')).toBe('1000001')
+  })
+  it('accepts the last safe continuation when totals are absent', async () => {
+    const f = fixture([{ id: 1 }])
+    const args = { user_id: '123', start: Number.MAX_SAFE_INTEGER - 1, limit: 1 }
+    const result = (await f.call('zotero_list_groups', args)) as { next_start: number }
+    expect(result.next_start).toBe(Number.MAX_SAFE_INTEGER)
+    expect(() =>
+      validateToolArguments(groupsTool, { ...args, start: result.next_start })
+    ).not.toThrow()
+  })
+  it('fails explicitly instead of returning an unsafe continuation or a false end', async () => {
+    const args = { user_id: '123', start: Number.MAX_SAFE_INTEGER, limit: 1 }
+    validateToolArguments(groupsTool, args)
+    await expect(fixture([{ id: 1 }]).call('zotero_list_groups', args)).rejects.toThrow(
+      'pagination exceeds the supported offset range'
+    )
+    expect(() =>
+      validateToolArguments(groupsTool, { ...args, start: Number.MAX_SAFE_INTEGER + 1 })
+    ).toThrow('invalid_arguments')
+  })
+  it.each([
+    { library_id: '../keys/secret' },
+    { library_id: 123 },
+    { library_type: 'other' },
+    { limit: 101 },
+    { start: -1 },
+    { api_key: 'secret' },
+    { collection_key: '../x' }
+  ])('rejects invalid library queries: %j', (override) => {
+    expect(() =>
+      validateToolArguments(getDescriptor('zotero', 'zotero_search_items')!, {
+        ...library,
+        ...override
+      })
+    ).toThrow('invalid_arguments')
+  })
+  it('does not register citation export', () => {
+    expect(getDescriptor('zotero', 'zotero_export_items')).toBeUndefined()
   })
 })

@@ -6083,6 +6083,12 @@
     "The selected file already exists. Choose a new filename.": "選択したファイルは既に存在します。別のファイル名を指定してください。",
     "Diagnostic operation timed out.": "診断処理がタイムアウトしました。",
     "Temporary diagnostic files could not be fully removed.": "一時診断ファイルを完全に削除できませんでした。",
-    "Choose a new .tar.gz file.": "新しい .tar.gz ファイルを選択してください。"
+    "Choose a new .tar.gz file.": "新しい .tar.gz ファイルを選択してください。",
+    "Browse Zotero collections and subcollections.": "Zotero のコレクションとサブコレクションを閲覧します。",
+    "Search saved references by phrase, tag or item type.": "フレーズ、タグ、アイテムの種類で保存済み文献を検索します。",
+    "Read bibliographic metadata for a Zotero item.": "Zotero アイテムの書誌メタデータを読み取ります。",
+    "Read child notes and attachment metadata.": "子ノートと添付ファイルのメタデータを読み取ります。",
+    "Public Zotero libraries, collections, notes and attachment metadata.": "Zotero の公開ライブラリ、コレクション、ノート、添付ファイルのメタデータ。",
+    "List public Zotero groups.": "Zotero の公開グループを一覧表示する。"
   }
 }

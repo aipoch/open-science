@@ -6241,6 +6241,12 @@
     "The selected file already exists. Choose a new filename.": "Die ausgewählte Datei ist bereits vorhanden. Wählen Sie einen neuen Dateinamen.",
     "Diagnostic operation timed out.": "Zeitüberschreitung beim Diagnosevorgang.",
     "Temporary diagnostic files could not be fully removed.": "Temporäre Diagnosedateien konnten nicht vollständig entfernt werden.",
-    "Choose a new .tar.gz file.": "Wählen Sie eine neue .tar.gz-Datei."
+    "Choose a new .tar.gz file.": "Wählen Sie eine neue .tar.gz-Datei.",
+    "Browse Zotero collections and subcollections.": "Zotero-Sammlungen und Untersammlungen durchsuchen.",
+    "Search saved references by phrase, tag or item type.": "Gespeicherte Literatur nach Ausdruck, Tag oder Eintragstyp suchen.",
+    "Read bibliographic metadata for a Zotero item.": "Bibliografische Metadaten eines Zotero-Eintrags lesen.",
+    "Read child notes and attachment metadata.": "Zugehörige Notizen und Metadaten der Anhänge lesen.",
+    "Public Zotero libraries, collections, notes and attachment metadata.": "Öffentliche Zotero-Bibliotheken, Sammlungen, Notizen und Anhangsmetadaten.",
+    "List public Zotero groups.": "Öffentliche Zotero-Gruppen auflisten."
   }
 }

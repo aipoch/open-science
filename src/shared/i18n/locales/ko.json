@@ -6081,6 +6081,12 @@
     "The selected file already exists. Choose a new filename.": "선택한 파일이 이미 있습니다. 새 파일 이름을 지정하세요.",
     "Diagnostic operation timed out.": "진단 작업 시간이 초과되었습니다.",
     "Temporary diagnostic files could not be fully removed.": "임시 진단 파일을 완전히 삭제하지 못했습니다.",
-    "Choose a new .tar.gz file.": "새 .tar.gz 파일을 선택하세요."
+    "Choose a new .tar.gz file.": "새 .tar.gz 파일을 선택하세요.",
+    "Browse Zotero collections and subcollections.": "Zotero 컬렉션과 하위 컬렉션을 탐색합니다.",
+    "Search saved references by phrase, tag or item type.": "구문, 태그 또는 항목 유형으로 저장된 참고문헌을 검색합니다.",
+    "Read bibliographic metadata for a Zotero item.": "Zotero 항목의 서지 메타데이터를 읽습니다.",
+    "Read child notes and attachment metadata.": "하위 노트와 첨부 파일 메타데이터를 읽습니다.",
+    "Public Zotero libraries, collections, notes and attachment metadata.": "Zotero 공개 라이브러리, 컬렉션, 노트 및 첨부 파일 메타데이터.",
+    "List public Zotero groups.": "공개 Zotero 그룹을 나열합니다."
   }
 }

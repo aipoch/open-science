@@ -6083,6 +6083,12 @@
     "The selected file already exists. Choose a new filename.": "所选文件已存在，请使用新的文件名。",
     "Diagnostic operation timed out.": "诊断操作超时。",
     "Temporary diagnostic files could not be fully removed.": "无法完全删除临时诊断文件。",
-    "Choose a new .tar.gz file.": "请选择新的 .tar.gz 文件。"
+    "Choose a new .tar.gz file.": "请选择新的 .tar.gz 文件。",
+    "Browse Zotero collections and subcollections.": "浏览 Zotero 分类和子分类。",
+    "Search saved references by phrase, tag or item type.": "按短语、标签或条目类型搜索已保存的文献。",
+    "Read bibliographic metadata for a Zotero item.": "读取 Zotero 条目的文献元数据。",
+    "Read child notes and attachment metadata.": "读取子笔记和附件元数据。",
+    "Public Zotero libraries, collections, notes and attachment metadata.": "Zotero 公开文献库、分类、笔记和附件元数据。",
+    "List public Zotero groups.": "列出公开的 Zotero 群组。"
   }
 }

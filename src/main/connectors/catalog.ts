@@ -20,6 +20,16 @@ export type ConnectorMeta = {
 // Static connector metadata for the settings UI (tool lists come from the registry).
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'zotero',
+    displayName: 'Zotero',
+    description: 'Public Zotero libraries, collections, notes and attachment metadata.',
+    useWhen:
+      'Use when reading a public Zotero user or group library: list public groups and collections, search references by phrase, tag or item type, and read bibliographic metadata, publicly accessible notes and attachment metadata. Supply the numeric user or group ID, not a username. This connector reads the online library anonymously. Private-library authentication, citation export, attachment downloads and library writes are not supported.',
+    sources: ['Zotero'],
+    termsUrl: 'https://www.zotero.org/support/terms/terms_of_service',
+    requiresNcbi: false
+  },
+  {
     id: 'chemistry',
     displayName: 'Chemistry',
     description: 'Small-molecule chemistry via PubChem, ChEBI, Rhea and BindingDB.',

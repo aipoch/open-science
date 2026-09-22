@@ -6083,6 +6083,12 @@
     "The selected file already exists. Choose a new filename.": "所選檔案已存在，請使用新的檔案名稱。",
     "Diagnostic operation timed out.": "診斷操作逾時。",
     "Temporary diagnostic files could not be fully removed.": "無法完全刪除暫存診斷檔案。",
-    "Choose a new .tar.gz file.": "請選擇新的 .tar.gz 檔案。"
+    "Choose a new .tar.gz file.": "請選擇新的 .tar.gz 檔案。",
+    "Browse Zotero collections and subcollections.": "瀏覽 Zotero 分類與子分類。",
+    "Search saved references by phrase, tag or item type.": "依片語、標籤或項目類型搜尋已儲存的文獻。",
+    "Read bibliographic metadata for a Zotero item.": "讀取 Zotero 項目的文獻中繼資料。",
+    "Read child notes and attachment metadata.": "讀取子筆記與附件中繼資料。",
+    "Public Zotero libraries, collections, notes and attachment metadata.": "Zotero 公開文獻庫、分類、筆記與附件中繼資料。",
+    "List public Zotero groups.": "列出公開的 Zotero 群組。"
   }
 }

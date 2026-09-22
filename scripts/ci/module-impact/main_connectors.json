@@ -38,7 +38,10 @@
     "src/main/connectors/service.ts",
     "src/main/connectors/skill-doc.test.ts",
     "src/main/connectors/skill-doc.ts",
-    "src/main/connectors/types.ts"
+    "src/main/connectors/types.ts",
+    "src/main/connectors/zotero-request-policy.ts",
+    "src/main/connectors/descriptors/zotero.ts",
+    "src/main/connectors/descriptors/zotero.test.ts"
   ],
   "interfacePaths": [
     "src/main/connectors/abortable-delay.ts",
@@ -77,7 +80,8 @@
       "src/main/connectors/request-policy.test.ts",
       "src/main/connectors/runtime-settings-projection.test.ts",
       "src/main/connectors/service.test.ts",
-      "src/main/connectors/skill-doc.test.ts"
+      "src/main/connectors/skill-doc.test.ts",
+      "src/main/connectors/descriptors/zotero.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
