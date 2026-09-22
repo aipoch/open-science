@@ -28,7 +28,7 @@ const NotificationRecovery = ({
   surface: Surface
   className?: string
   reset: () => void
-}): React.JSX.Element => {
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [retrying, setRetrying] = useState(false)
