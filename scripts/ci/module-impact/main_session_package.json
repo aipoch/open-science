@@ -46,7 +46,9 @@
     "src/main/session-package/fork.test.ts",
     "src/main/session-package/ro-crate.ts",
     "src/main/session-package/ro-crate.test.ts",
-    "src/main/session-package/ro-crate.integration.test.ts"
+    "src/main/session-package/ro-crate.integration.test.ts",
+    "src/main/session-package/sensitive-content.ts",
+    "src/main/session-package/sensitive-content.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -79,7 +81,8 @@
       "src/main/session-package/fork-session.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-package/ro-crate.test.ts",
-      "src/main/session-package/ro-crate.integration.test.ts"
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/sensitive-content.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

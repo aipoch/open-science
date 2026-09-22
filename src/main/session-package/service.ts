@@ -83,7 +83,12 @@ import {
   isNotebookInputCopy
 } from './selection'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { redactSensitiveText, isSensitiveDiagnosticKey } from '../../shared/diagnostic-redaction'
+import { isSensitiveDiagnosticKey } from '../../shared/diagnostic-redaction'
+import {
+  findSensitivePackageText,
+  isPrivatePackageValue,
+  PackageSensitiveContentError
+} from './sensitive-content'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
 import { defaultFileDurability } from '../storage/file-durability'
 import { writeDurableJsonFile } from '../storage/durable-json-file'
@@ -237,33 +242,37 @@ const exportRelevantSession = (session: PersistedChatSession): PersistedChatSess
 
 // Recognizers stop export; they never silently rewrite research text. File preview is still
 // necessary: arbitrary binary research data cannot be certified free of private information.
-function* inspectShareable(value: unknown): Generator<number> {
+function* inspectShareable(value: unknown, location: string): Generator<number> {
   if (typeof value === 'string') {
-    if (redactSensitiveText(value) !== value)
-      throw new Error('Sensitive content detected. Remove it before exporting the Session package.')
+    const match = findSensitivePackageText(value)
+    if (match) throw new PackageSensitiveContentError(`${location} @${match.offset}`, match.rule)
     yield value.length + 1
   } else if (Array.isArray(value)) {
     yield 1
-    for (const item of value) yield* inspectShareable(item)
+    for (const [index, item] of value.entries())
+      yield* inspectShareable(item, `${location}[${index}]`)
   } else if (value && typeof value === 'object') {
     yield 1
-    for (const [key, item] of Object.entries(value)) {
-      if (isSensitiveDiagnosticKey(key) && typeof item === 'string' && item.trim())
-        throw new Error(
-          'Sensitive content detected. Remove it before exporting the Session package.'
-        )
+    for (const [index, [key, item]] of Object.entries(value).entries()) {
+      const child = `${location}[entry ${index}]`
+      if (isSensitiveDiagnosticKey(key) && typeof item === 'string' && isPrivatePackageValue(item))
+        throw new PackageSensitiveContentError(child, 'field')
       yield key.length
-      yield* inspectShareable(item)
+      yield* inspectShareable(item, child)
     }
   } else {
     yield 1
   }
 }
 
-const assertShareable = async (value: unknown, signal?: AbortSignal): Promise<void> => {
+const assertShareable = async (
+  value: unknown,
+  signal?: AbortSignal,
+  location = 'metadata'
+): Promise<void> => {
   signal?.throwIfAborted()
   let work = 0
-  for (const units of inspectShareable(value)) {
+  for (const units of inspectShareable(value, location)) {
     work += units
     // Budget UTF-16 code units and visited nodes, not physical I/O. Keep each value whole:
     // splitting recognizer input could miss credentials, so one large string remains atomic.
@@ -275,45 +284,62 @@ const assertShareable = async (value: unknown, signal?: AbortSignal): Promise<vo
   }
 }
 
-const assertShareableFile = async (path: string, signal?: AbortSignal): Promise<void> => {
-  // Evidence blobs often have no extension. Only apply text recognizers to valid UTF-8
-  // without NUL bytes; compressed/binary bytes are not credential text. This does not
-  // certify binary payloads (or archive members) free of private information.
-  const decoder = new TextDecoder('utf-8', { fatal: true })
+const assertShareableFile = async (
+  path: string,
+  signal?: AbortSignal,
+  location = 'file'
+): Promise<void> => {
+  // Classify actual bytes, including extensionless evidence. UTF-16 is text when identified
+  // by its BOM. PDF is a container even when all its bytes happen to be valid UTF-8.
+  // Binary/archived content is not certified free of private information.
+  let decoder: TextDecoder | undefined
   let tail = ''
-  let sensitiveError: unknown
-  for await (const chunk of createReadStream(path, {
-    highWaterMark: 64 * 1024,
-    signal
-  })) {
+  let offset = 0
+  let sensitiveError: PackageSensitiveContentError | undefined
+  const inspect = (decoded: string, complete: boolean): void => {
+    const text = tail + decoded
+    if (!sensitiveError) {
+      const match = findSensitivePackageText(text, complete)
+      if (match)
+        sensitiveError = new PackageSensitiveContentError(
+          `${location} @${offset - tail.length + match.offset}`,
+          match.rule
+        )
+    }
+    offset += decoded.length
+    tail = text.slice(-8192)
+  }
+  for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024, signal })) {
     await paceFileIo(chunk.length, signal)
     signal?.throwIfAborted()
-    if (chunk.includes(0)) return
+    if (!decoder) {
+      if (chunk.subarray(0, 5).toString('ascii') === '%PDF-') return
+      const encoding =
+        chunk[0] === 0xff && chunk[1] === 0xfe
+          ? 'utf-16le'
+          : chunk[0] === 0xfe && chunk[1] === 0xff
+            ? 'utf-16be'
+            : 'utf-8'
+      decoder = new TextDecoder(encoding, { fatal: true })
+    }
     let decoded: string
     try {
       decoded = decoder.decode(chunk, { stream: true })
     } catch {
       return
     }
-    // A text-like prefix is not enough: finish classifying the file before rejecting it.
-    // Once matched, retain only the error and keep decoding with bounded memory.
-    if (!sensitiveError) {
-      const text = tail + decoded
-      try {
-        await assertShareable(text, signal)
-      } catch (error) {
-        signal?.throwIfAborted()
-        sensitiveError = error
-      }
-      tail = text.slice(-8192)
-    }
+    if (decoded.includes('\0')) return
+    // Do not reject a text-like prefix before the remainder has been classified.
+    inspect(decoded, false)
   }
   signal?.throwIfAborted()
+  let final = ''
   try {
-    decoder.decode()
+    final = decoder?.decode() ?? ''
   } catch {
     return
   }
+  inspect(final, true)
   if (sensitiveError) throw sensitiveError
 }
 
@@ -468,7 +494,7 @@ export class SessionPackageService {
       const manifest = await validatePackageDirectory(source, this.signal)
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
-      if (!options.consumeSnapshot) await assertShareable(manifest, this.signal)
+      if (!options.consumeSnapshot) await assertShareable(manifest, this.signal, 'manifest.json')
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
       const forwardedSession = withoutPrivateAuthority(
@@ -481,7 +507,8 @@ export class SessionPackageService {
             ) as PersistedChatSession)
           : sourceSession
       )
-      if (!options.consumeSnapshot) await assertShareable(forwardedSession, this.signal)
+      if (!options.consumeSnapshot)
+        await assertShareable(forwardedSession, this.signal, 'session.json')
       // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
       // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
       const forwardedSessionJson =
@@ -489,7 +516,7 @@ export class SessionPackageService {
           ? JSON.stringify({ version: 2, session: forwardedSession })
           : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
-      if (!options.consumeSnapshot) await assertShareable(records, this.signal)
+      if (!options.consumeSnapshot) await assertShareable(records, this.signal, 'records.json')
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
       const notebooks = await Promise.all(
         manifest.inventory
@@ -584,7 +611,11 @@ export class SessionPackageService {
               continue
             }
             if (!options.consumeSnapshot)
-              await assertShareableFile(join(source, entry.path), this.signal)
+              await assertShareableFile(
+                join(source, entry.path),
+                this.signal,
+                entry.storageKey ?? entry.path
+              )
             await copyFileWithinBudget(
               join(source, entry.path),
               join(staging, entry.path),
@@ -750,7 +781,7 @@ export class SessionPackageService {
     if (excludedKeys.size !== excludedFiles.length)
       throw new Error('Invalid package content selection.')
     validateExcludedFiles(records, excludedFiles)
-    if (!options.consumeSnapshot) await assertShareable(sharedSession, this.signal)
+    if (!options.consumeSnapshot) await assertShareable(sharedSession, this.signal, 'session.json')
     const directory = await mkdtemp(
       join(
         options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
@@ -759,7 +790,7 @@ export class SessionPackageService {
     )
     return withPackageCleanup(
       async () => {
-        if (!options.consumeSnapshot) await assertShareable(records, this.signal)
+        if (!options.consumeSnapshot) await assertShareable(records, this.signal, 'records.json')
         let totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
@@ -839,7 +870,7 @@ export class SessionPackageService {
             throw new Error('The Session changed during export. Try again.')
           assertNoExcludedContentCopies(records, excludedFiles, [copied])
           if (!options.consumeSnapshot)
-            await assertShareableFile(join(directory, objectPath), this.signal)
+            await assertShareableFile(join(directory, objectPath), this.signal, storageKey)
           inventory.push({
             path: objectPath,
             kind: notebookKeys.includes(storageKey) ? 'notebook' : 'file',
