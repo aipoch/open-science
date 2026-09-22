@@ -611,10 +611,17 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     apiKeyUrl: 'https://platform.xiaomimimo.com/console/api-keys',
     modelsListUrl: 'https://api.xiaomimimo.com/v1/models',
     models: [
+      { id: 'mimo-v2.6-pro', contextWindow: 1_000_000 },
+      { id: 'mimo-v2.6-flash', contextWindow: 1_000_000 },
+      { id: 'mimo-v2.6-pro-ultraspeed', contextWindow: 1_000_000 },
       { id: 'mimo-v2.5-pro', contextWindow: 1_000_000 },
       { id: 'mimo-v2.5', contextWindow: 1_000_000 }
-    ]
-    // Xiaomi MiMo's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+    ],
+    // V2.6 supports image input on both APIs; keep capabilities scoped to the documented ids.
+    // https://mimo.mi.com/docs/en-US/news/latest/v2-6
+    multimodal: {
+      multimodalModels: ['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.6-pro-ultraspeed']
+    }
   },
   {
     id: 'sensenova',

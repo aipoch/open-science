@@ -488,8 +488,28 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/anthropic')
     expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
     expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
-    expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
+    expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.6-pro')
+    expect(getOfficialVendorModelIds('xiaomimimo')).toEqual([
+      'mimo-v2.6-pro',
+      'mimo-v2.6-flash',
+      'mimo-v2.6-pro-ultraspeed',
+      'mimo-v2.5-pro',
+      'mimo-v2.5'
+    ])
   })
+
+  it.each(['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.6-pro-ultraspeed'])(
+    'resolves Xiaomi MIMO %s capabilities',
+    (model) => {
+      expect(resolveModelContextWindow('xiaomimimo', model)).toBe(1_000_000)
+      expect(resolveVendorModelApiEndpoints('xiaomimimo', model)).toEqual(['anthropic', 'openai'])
+      expect(isVendorModelMultimodal('xiaomimimo', model)).toBe(true)
+      expect(resolveVendorModelReasoningEffort('xiaomimimo', model)).toEqual({
+        supported: true,
+        slots: ['none', 'high', 'high', 'high', 'high']
+      })
+    }
+  )
 
   it.each([undefined, 'china', 'unknown'])(
     'preserves the China endpoint for SenseNova region %s',
@@ -1026,9 +1046,10 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding-highspeed')).toBe(false)
     })
 
-    it('returns false for Xiaomi MIMO models (no vision support)', () => {
+    it('preserves Xiaomi MIMO legacy and unknown model vision defaults', () => {
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5-pro')).toBe(false)
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5')).toBe(false)
+      expect(isVendorModelMultimodal('xiaomimimo', 'mimo-unknown')).toBe(false)
     })
 
     it('enables SenseNova Flash Lite and hosted Kimi vision without enabling text-only models', () => {
