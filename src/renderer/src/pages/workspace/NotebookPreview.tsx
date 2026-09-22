@@ -4,6 +4,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject
@@ -535,7 +536,9 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
       ? state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
       : retainedSession.current
   )
-  if (isActive) retainedSession.current = session
+  useLayoutEffect(() => {
+    if (isActive) retainedSession.current = session
+  }, [isActive, session])
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewActiveItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
@@ -560,8 +563,10 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const stateReloadQueued = useRef(false)
   const isActiveRef = useRef(isActive)
   const activationGeneration = useRef(0)
-  if (isActiveRef.current !== isActive) activationGeneration.current += 1
-  isActiveRef.current = isActive
+  useLayoutEffect(() => {
+    if (isActiveRef.current !== isActive) activationGeneration.current += 1
+    isActiveRef.current = isActive
+  }, [isActive])
   const lastFocusedRunRequest = useRef<string | undefined>(undefined)
   const notebookRequest = createNotebookRequest(item.notebook)
   const notebookRequestKey = JSON.stringify(notebookRequest)
@@ -967,10 +972,21 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
     }
     const loadKey = `${selectedTarget ?? ''}:${showPrivateVariables}`
     if (namespaceLoadKey.current === loadKey) return
-    namespaceLoadKey.current = loadKey
     // A retained running snapshot must wait for the activation state read to report idle.
     namespaceRefreshQueued.current = isSelectedKernelRunning
-    if (!isSelectedKernelRunning) void loadLatestNamespace()
+    if (isSelectedKernelRunning) {
+      namespaceLoadKey.current = loadKey
+      return
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      namespaceLoadKey.current = loadKey
+      void loadLatestNamespace()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [
     activeDataLanguage,
     isActive,
