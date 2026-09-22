@@ -976,9 +976,9 @@ export class AcpSessionCapabilityOwner {
       ? [
           namespaceFor(ARTIFACT_MCP_SERVER_NAME),
           namespaceFor(NOTEBOOK_MCP_SERVER_NAME),
-          ...(capabilities.includes('skill-import')
-            ? [namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME)]
-            : []),
+          // Always claim the Skill Import namespace so a capability refresh removes any stale
+          // bridge-wide declaration; tools are still advertised only when the capability mounts.
+          namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME),
           namespaceFor(LITERATURE_LIBRARY_MCP_SERVER_NAME),
           namespaceFor(LITERATURE_MCP_SERVER_NAME)
         ]
