@@ -4,7 +4,7 @@ test('previews conflicting promotion, renames the child, then allows parent dele
   page
 }) => {
   await page.goto('/literature-recovery.html')
-  await page.getByRole('button', { name: 'Collection actions' }).click()
+  await page.getByRole('button', { name: 'More actions' }).click()
   await page.getByRole('menuitem', { name: 'Delete collection' }).click()
   const dialog = page.getByRole('alertdialog')
   await expect(dialog.getByRole('button', { name: 'Delete collection' })).toBeDisabled()
@@ -13,7 +13,7 @@ test('previews conflicting promotion, renames the child, then allows parent dele
   await editor.getByLabel('Name', { exact: true }).fill('Child review')
   await editor.getByRole('button', { name: 'Save changes' }).click()
   await expect(editor).toBeHidden()
-  await page.getByRole('button', { name: 'Collection actions' }).click()
+  await page.getByRole('button', { name: 'More actions' }).click()
   await page.getByRole('menuitem', { name: 'Delete collection' }).click()
   await expect(dialog.getByText('Child review', { exact: true })).toBeVisible()
   await dialog.getByRole('button', { name: 'Delete collection' }).click()

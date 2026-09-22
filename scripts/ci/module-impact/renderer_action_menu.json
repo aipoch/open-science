@@ -90,7 +90,8 @@
       "src/renderer/src/pages/workspace/session-action-menu.test.ts",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx",
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
     ]
   },
   "capabilityOverlays": [],

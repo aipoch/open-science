@@ -45,6 +45,19 @@ const { extractLiteraturePdfDraft, completeLiteraturePdfDraft, filePreviewRender
     filePreviewRenderCount: { value: 0 }
   }))
 
+const rowTitleRenders = vi.hoisted(() => new Map<string, number>())
+vi.mock('./LiteratureTable', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./LiteratureTable')>()
+  return {
+    ...original,
+    LiteratureTextTooltip: (props: React.ComponentProps<typeof original.LiteratureTextTooltip>) => {
+      if (props.text?.startsWith('Render fixture ') || props.text?.startsWith('Smart trial '))
+        rowTitleRenders.set(props.text, (rowTitleRenders.get(props.text) ?? 0) + 1)
+      return <original.LiteratureTextTooltip {...props} />
+    }
+  }
+})
+
 vi.mock('./literature-pdf-metadata', () => ({
   extractLiteraturePdfDraft,
   completeLiteraturePdfDraft
@@ -177,11 +190,41 @@ const createLibraryItemWithPdf = (): LiteratureItemView => ({
 
 const openMenu = async (trigger: Element): Promise<void> => {
   act(() => {
-    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    if (
+      !trigger.hasAttribute('aria-haspopup') ||
+      trigger.getAttribute('aria-haspopup') === 'dialog'
+    )
+      fireEvent.click(trigger)
+    else trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   })
   await act(async () => {
     await Promise.resolve()
   })
+  if (
+    trigger.closest('[data-slot="literature-selection-toolbar"]') &&
+    trigger.textContent?.includes('More actions')
+  ) {
+    const actions = screen.queryByRole('button', { name: 'Actions' })
+    if (actions) await openMenu(actions)
+  }
+}
+
+const selectionButton = async (name: string | RegExp): Promise<HTMLElement> => {
+  const visible = screen.queryByRole('button', { name })
+  if (visible) return visible
+  const toolbar = document.querySelector(
+    '[data-slot="literature-selection-toolbar"]'
+  ) as HTMLElement
+  fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }))
+  return screen.findByRole('button', { name })
+}
+
+const exportMenuItem = async (name: string): Promise<HTMLElement> => {
+  const item = screen.queryByRole('menuitem', { name })
+  if (item) return item
+  const exportTrigger = screen.getByRole('menuitem', { name: 'Export' })
+  fireEvent.click(exportTrigger)
+  return screen.findByRole('menuitem', { name })
 }
 
 const openReferenceDetail = async (trigger: Element): Promise<HTMLElement> => {
@@ -814,6 +857,300 @@ describe('LiteratureLibraryPage', () => {
     }
   }, 120000)
 
+  it('isolates full rows during selection and cloned IPC refreshes in a 1,029-reference library', async () => {
+    localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ order: [], visible: ['year'] })
+    )
+    let rows = Array.from({ length: 50 }, (_, i) => ({
+      ...structuredClone(libraryItem),
+      id: `render-${i}`,
+      item: { ...structuredClone(libraryItem.item), title: `Render fixture ${i}` }
+    }))
+    search.mockImplementation(async ({ scope }) =>
+      scope === 'library'
+        ? { entries: structuredClone(rows), totalCount: 1029, nextOffset: 50 }
+        : { entries: [] }
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByRole('button', { name: 'Render fixture 0' })
+    await act(async () => {})
+    rowTitleRenders.clear()
+    fireEvent.click(screen.getByLabelText('Select Render fixture 0'))
+    expect([...rowTitleRenders.values()].reduce((a, b) => a + b, 0)).toBe(0)
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect([...rowTitleRenders.values()].reduce((a, b) => a + b, 0)).toBe(0)
+    rows = rows.map((entry, i) =>
+      i === 3
+        ? {
+            ...entry,
+            item: { ...entry.item, issuedYear: 2030 },
+            metadataRevision: entry.metadataRevision + 1
+          }
+        : entry
+    )
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect([...rowTitleRenders.entries()]).toEqual([['Render fixture 3', 1]])
+    expect(screen.getByText('2030')).toBeTruthy()
+  })
+
+  it.each([false, true])(
+    'finishes accepted queued decisions after switching collections, retry: %s',
+    async (retry) => {
+      const collections = ['Alpha', 'Beta'].map((name) => ({
+        id: name,
+        name,
+        revision: 1,
+        description: '',
+        itemCount: 2,
+        createdAt: 1,
+        updatedAt: 1,
+        smart: true
+      }))
+      const rows = [0, 1].map((i) => ({
+        ...structuredClone(libraryItem),
+        id: `queue-${i}`,
+        item: { ...libraryItem.item, title: `Smart trial ${i}` },
+        smartDecision: {
+          id: `queue-${i}`,
+          title: `Smart trial ${i}`,
+          verdict: 'match',
+          decisionSource: 'ai'
+        }
+      }))
+      const view = {
+        configured: true,
+        sourceAvailable: true,
+        scope: { kind: 'library' },
+        counts: { match: 2, review: 0, 'no-match': 0, pending: 0 },
+        total: 2,
+        matches: 2,
+        pending: 0,
+        overrides: 0,
+        rows: rows.map((row) => row.smartDecision)
+      }
+      search.mockImplementation(async ({ scope }) =>
+        scope === 'collections'
+          ? { entries: collections }
+          : scope === 'library'
+            ? { entries: structuredClone(rows), totalCount: 2 }
+            : { entries: [] }
+      )
+      const completions: Array<(value: unknown) => void> = []
+      const failures: Array<(error: Error) => void> = []
+      transact.mockImplementation((command) =>
+        command.action === 'override'
+          ? new Promise((resolve, reject) => {
+              completions.push(resolve)
+              failures.push(reject)
+            })
+          : Promise.resolve({
+              kind: 'collection',
+              id: command.collectionId,
+              smart: structuredClone(view)
+            })
+      )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'Alpha' })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('button', { name: 'Smart trial 0' })
+      for (const i of [0, 1])
+        fireEvent.click(
+          within(screen.getByRole('button', { name: `Smart trial ${i}` }).closest('tr')!).getByRole(
+            'button',
+            { name: 'Exclude' }
+          )
+        )
+      await waitFor(() => expect(completions).toHaveLength(1))
+      fireEvent.click(screen.getByRole('button', { name: /^Beta/ }))
+      await screen.findAllByRole('heading', { name: 'Beta' })
+      await act(async () =>
+        completions[0]({
+          kind: 'collection',
+          id: 'Alpha',
+          smart: { ...view, counts: { ...view.counts, match: 1 } }
+        })
+      )
+      await waitFor(() => expect(completions).toHaveLength(2))
+      expect(
+        transact.mock.calls
+          .filter(([c]) => c.action === 'override')
+          .map(([c]) => [c.collectionId, c.itemId])
+      ).toEqual([
+        ['Alpha', 'queue-0'],
+        ['Alpha', 'queue-1']
+      ])
+      if (retry) {
+        await act(async () => failures[1](new Error('write unavailable')))
+        await screen.findByText('The decision could not be saved in Alpha.')
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        await waitFor(() => expect(completions).toHaveLength(3))
+        expect(
+          transact.mock.calls.filter(([c]) => c.action === 'override').at(-1)?.[0]
+        ).toMatchObject({ collectionId: 'Alpha', itemId: 'queue-1' })
+      }
+      await act(async () =>
+        completions[retry ? 2 : 1]({
+          kind: 'collection',
+          id: 'Alpha',
+          smart: { ...view, counts: { ...view.counts, match: 0 } }
+        })
+      )
+      expect(screen.getAllByRole('heading', { name: 'Beta' })).toHaveLength(2)
+      expect(within(screen.getByRole('button', { name: /^Alpha/ })).getByText('0')).toBeTruthy()
+      expect(screen.queryByText('1 selected')).toBeNull()
+    }
+  )
+
+  it.each([false, true])(
+    'keeps manual decisions row-local with refresh failure: %s',
+    async (refreshFailed) => {
+      const collection = {
+        id: 'smart-test',
+        revision: 1,
+        name: 'Smart trials',
+        description: '',
+        itemCount: 100,
+        createdAt: 1,
+        updatedAt: 1,
+        smart: true
+      }
+      const rows = Array.from({ length: 100 }, (_, i) => ({
+        ...structuredClone(libraryItem),
+        id: `smart-${i}`,
+        item: { ...libraryItem.item, title: `Smart trial ${i}` },
+        smartDecision: {
+          id: `smart-${i}`,
+          title: `Smart trial ${i}`,
+          verdict: 'match',
+          decisionSource: 'ai'
+        }
+      }))
+      const view = {
+        configured: true,
+        sourceAvailable: true,
+        scope: { kind: 'library' },
+        counts: { match: 100, review: 0, 'no-match': 0, pending: 0 },
+        total: 100,
+        matches: 100,
+        pending: 0,
+        overrides: 0,
+        rows: rows.map((row) => row.smartDecision)
+      }
+      let delayReads = false
+      let staleCollections!: (value: unknown) => void
+      let stalePanel!: (value: unknown) => void
+      search.mockImplementation(async ({ scope }) =>
+        scope === 'collections' && delayReads
+          ? new Promise((resolve) => {
+              staleCollections = resolve
+            })
+          : scope === 'collections'
+            ? { entries: [collection] }
+            : scope === 'library'
+              ? { entries: structuredClone(rows), totalCount: 100 }
+              : { entries: [] }
+      )
+      let complete!: (value: unknown) => void
+      transact.mockImplementation((command) =>
+        command.action === 'read' && delayReads
+          ? new Promise((resolve) => {
+              stalePanel = resolve
+            })
+          : command.action === 'override'
+            ? new Promise((resolve) => {
+                complete = resolve
+              })
+            : Promise.resolve({
+                kind: 'collection',
+                id: collection.id,
+                smart: structuredClone(view)
+              })
+      )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('button', { name: 'Smart trial 0' })
+      await act(async () => {})
+      const first = screen.getByRole('button', { name: 'Smart trial 0' }).closest('tr')!
+      const second = screen.getByRole('button', { name: 'Smart trial 1' }).closest('tr')!
+      delayReads = true
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'))
+      })
+      await waitFor(() => {
+        expect(staleCollections).toBeTypeOf('function')
+        expect(stalePanel).toBeTypeOf('function')
+      })
+      delayReads = false
+      rowTitleRenders.clear()
+      const exclude = within(first).getByRole('button', { name: 'Exclude' })
+      fireEvent.click(exclude)
+      fireEvent.click(exclude)
+      await waitFor(() =>
+        expect(transact.mock.calls.filter(([c]) => c.action === 'override')).toHaveLength(1)
+      )
+      expect(exclude.hasAttribute('disabled')).toBe(true)
+      expect(within(second).getByRole('button', { name: 'Exclude' }).hasAttribute('disabled')).toBe(
+        false
+      )
+      expect(
+        within(second).getByRole('button', { name: 'Re-evaluate' }).hasAttribute('disabled')
+      ).toBe(true)
+      expect([...rowTitleRenders.keys()]).toEqual(['Smart trial 0'])
+      await act(async () => {
+        complete(
+          refreshFailed
+            ? { kind: 'collection', id: collection.id, smartRefreshFailed: true }
+            : {
+                kind: 'collection',
+                id: collection.id,
+                smart: { ...view, counts: { ...view.counts, match: 99 } }
+              }
+        )
+      })
+      await waitFor(() => expect(exclude.hasAttribute('disabled')).toBe(false))
+      expect(
+        within(second).getByRole('button', { name: 'Re-evaluate' }).hasAttribute('disabled')
+      ).toBe(false)
+      await act(async () => {
+        staleCollections({ entries: [collection] })
+        stalePanel({ kind: 'collection', id: collection.id, smart: view })
+      })
+      if (refreshFailed) {
+        await screen.findByText(
+          'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
+        )
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        await waitFor(() =>
+          expect(
+            screen.queryByText(
+              'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
+            )
+          ).toBeNull()
+        )
+        expect(transact.mock.calls.filter(([c]) => c.action === 'override')).toHaveLength(1)
+      } else {
+        expect(
+          within(screen.getByRole('button', { name: /^Smart trials/ })).getByText('99')
+        ).toBeTruthy()
+      }
+      expect(screen.queryByText('1 selected')).toBeNull()
+      rowTitleRenders.clear()
+      rows.shift()
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'))
+      })
+      await waitFor(() => expect(first.isConnected).toBe(false))
+      expect([...rowTitleRenders.keys()]).toEqual([])
+      expect(second.querySelector('[data-row-number]')?.textContent).toBe('1')
+    },
+    30_000
+  )
+
   it('TB-01 keeps the real page usable when preference writes fail', async () => {
     search.mockImplementation(async ({ scope }) =>
       scope === 'library' ? { entries: [libraryItem], totalCount: 1 } : { entries: [] }
@@ -1343,8 +1680,8 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     await screen.findByRole('button', { name: 'Inbox' })
     // The persisted candidate must remain reachable without the former component's Undo state.
-    const dismissed = await screen.findByRole('button', { name: 'Dismissed' })
-    fireEvent.click(dismissed)
+    const dismissed = await screen.findByRole('tab', { name: /^Dismissed/ })
+    fireEvent.mouseDown(dismissed, { button: 0, ctrlKey: false })
     await waitFor(() =>
       expect(search).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1362,6 +1699,19 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('shows zero counts on both Inbox tabs and supports keyboard activation', async () => {
+    search.mockResolvedValue({ entries: [], totalCount: 0 })
+    render(<LiteratureLibraryPage />)
+    const pending = await screen.findByRole('tab', { name: /^Pending/ })
+    const dismissed = await screen.findByRole('tab', { name: /^Dismissed/ })
+    await within(pending).findByText('0')
+    await within(dismissed).findByText('0')
+    expect(pending.getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(dismissed, { key: 'Enter' })
+    await waitFor(() => expect(dismissed.getAttribute('aria-selected')).toBe('true'))
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(dismissed.id)
+  })
+
   it('keeps the pending badge independent of dismissed pagination and restores the selected candidates', async () => {
     const dismissed = [1, 2].map((index) => ({
       ...inboxPage.entries[0],
@@ -1377,7 +1727,10 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     const inbox = await screen.findByRole('button', { name: 'Inbox' })
     await waitFor(() => expect(within(inbox).getByText('7')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: 'Dismissed' }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /^Dismissed/ }), {
+      button: 0,
+      ctrlKey: false
+    })
     await screen.findAllByRole('button', { name: 'Restore' })
     expect(within(inbox).getByText('7')).not.toBeNull()
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
@@ -1400,7 +1753,10 @@ describe('LiteratureLibraryPage', () => {
     }))
     transact.mockRejectedValueOnce(new Error('Storage unavailable'))
     render(<LiteratureLibraryPage />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Dismissed' }))
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: /^Dismissed/ }), {
+      button: 0,
+      ctrlKey: false
+    })
     fireEvent.click(
       await screen.findByRole('button', {
         name: 'View details: Corrective Retrieval Augmented Generation'
@@ -1546,7 +1902,10 @@ describe('LiteratureLibraryPage', () => {
       const rows = mockInbox(2)
       render(<LiteratureLibraryPage />)
       await settlePage('Dismiss')
-      fireEvent.click(screen.getByRole('button', { name: 'Dismissed' }))
+      fireEvent.mouseDown(screen.getByRole('tab', { name: /^Dismissed/ }), {
+        button: 0,
+        ctrlKey: false
+      })
       const first = (await screen.findByText('Discovery 1')).closest('article')!
       await act(async () => fireEvent.click(within(first).getByRole('button', { name: 'Restore' })))
       expect(rows[0]!.state).toBe('pending')
@@ -1565,7 +1924,10 @@ describe('LiteratureLibraryPage', () => {
         row.state = 'dismissed'
       })
       render(<LiteratureLibraryPage />)
-      fireEvent.click(await screen.findByRole('button', { name: 'Dismissed' }))
+      fireEvent.mouseDown(await screen.findByRole('tab', { name: /^Dismissed/ }), {
+        button: 0,
+        ctrlKey: false
+      })
       await screen.findByText('Discovery 1')
       fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
       rows[0]!.state = 'pending'
@@ -2286,7 +2648,7 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       fireEvent.click(await screen.findByRole('button', { name: collection.name }))
       for (const description of ['First saved description', 'Second saved description']) {
-        await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+        await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
         fireEvent.click(screen.getByRole('menuitem', { name: 'Edit collection' }))
         const dialog = await screen.findByRole('dialog')
         fireEvent.change(within(dialog).getByLabelText('Description'), {
@@ -2379,7 +2741,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Screening' }))
     expect(await screen.findByText('Papers awaiting review.')).not.toBeNull()
 
-    await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+    await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit collection' }))
     dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByLabelText('Name').getAttribute('value')).toBe('Screening')
@@ -2449,13 +2811,13 @@ describe('LiteratureLibraryPage', () => {
 
       render(<LiteratureLibraryPage />)
       await screen.findByRole('heading', { name: collection.name })
-      await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
       const editCollection = screen.getByRole('menuitem', { name: 'Edit collection' })
       const deleteCollection = screen.getByRole('menuitem', { name: 'Delete collection' })
       expect(editCollection.className).toContain('gap-2')
-      expect(editCollection.firstElementChild?.className).toContain('shrink-0')
+      expect(editCollection.querySelector('svg')?.getAttribute('class')).toContain('shrink-0')
       expect(deleteCollection.className).toContain('gap-2')
-      expect(deleteCollection.firstElementChild?.className).toContain('shrink-0')
+      expect(deleteCollection.querySelector('svg')?.getAttribute('class')).toContain('shrink-0')
       fireEvent.click(deleteCollection)
 
       const alert = await screen.findByRole('alertdialog')
@@ -2512,7 +2874,7 @@ describe('LiteratureLibraryPage', () => {
     useNavigationStore.setState({ pendingLiteratureCollectionId: parent.id })
     render(<LiteratureLibraryPage />)
     await screen.findByRole('heading', { name: parent.name })
-    await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+    await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete collection' }))
     const alert = await screen.findByRole('alertdialog')
     expect(within(alert).getByText('Child collections will move to the top level.')).not.toBeNull()
@@ -2753,12 +3115,9 @@ describe('LiteratureLibraryPage', () => {
       fireEvent.click(await screen.findByLabelText('Select all references'))
       const toolbar = document.querySelector('[data-slot="literature-selection-toolbar"]')!
       expect(within(toolbar as HTMLElement).queryByRole('button', { name: action })).toBeNull()
-      fireEvent.pointerDown(
-        within(toolbar as HTMLElement).getByRole('button', { name: 'More actions' }),
-        { button: 0, ctrlKey: false }
-      )
+      await openMenu(within(toolbar as HTMLElement).getByRole('button', { name: 'More actions' }))
       fireEvent.click(await screen.findByRole('menuitem', { name: action }))
-      const dialog = await screen.findByRole('dialog')
+      const dialog = await screen.findByRole('dialog', { name: action })
       expect(within(dialog).getByRole('heading', { name: action })).not.toBeNull()
       expect(within(dialog).getByText('Reference 1')).not.toBeNull()
       expect(within(dialog).getByText('Reference 2')).not.toBeNull()
@@ -3289,7 +3648,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     fireEvent.click(await screen.findByLabelText('Select all references'))
-    fireEvent.click(screen.getByRole('button', { name: 'Read with agent' }))
+    fireEvent.click(await selectionButton('Read with agent'))
     await screen.findByText('Choose up to 3 PDFs to read together.')
     expect(await screen.findByText('No readable PDF')).not.toBeNull()
     expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(
@@ -3371,7 +3730,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     fireEvent.click(await screen.findByLabelText('Select all references'))
     fireEvent.click(screen.getByRole('button', { name: /^Select all matching references/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Read with agent' }))
+    fireEvent.click(await selectionButton('Read with agent'))
     await screen.findByLabelText('Read Last paper')
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Retrieval research' }))
@@ -7218,9 +7577,7 @@ describe('LiteratureLibraryPage', () => {
         ).toBe('true')
       } else {
         fireEvent.click(screen.getByLabelText('Select all references'))
-        expect(
-          (screen.getByRole('button', { name: 'Restore' }) as HTMLButtonElement).disabled
-        ).toBe(true)
+        expect(((await selectionButton('Restore')) as HTMLButtonElement).disabled).toBe(true)
       }
       expect(transact).not.toHaveBeenCalled()
     }
@@ -7273,7 +7630,7 @@ describe('LiteratureLibraryPage', () => {
     await screen.findByText('Reference 0')
     fireEvent.click(screen.getByLabelText('Select all references'))
     fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    fireEvent.click(await selectionButton('Restore'))
     const dialog = await screen.findByRole('alertdialog')
     expect(
       within(dialog).getByText('Can restore: 1. Merged duplicates skipped: 25.')
@@ -7441,8 +7798,8 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(
       await screen.findByLabelText('Select Corrective Retrieval Augmented Generation')
     )
-    await openMenu(screen.getByRole('button', { name: 'Export' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'BibTeX' }))
+    await openMenu(await selectionButton('Export'))
+    fireEvent.click(await exportMenuItem('BibTeX'))
 
     await waitFor(() =>
       expect(formatReferences).toHaveBeenCalledWith({
@@ -7496,11 +7853,11 @@ describe('LiteratureLibraryPage', () => {
       useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
       render(<LiteratureLibraryPage />)
       await screen.findByRole('heading', { name: 'Retrieval research' })
-      await openMenu(screen.getByTitle('More actions'))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'BibTeX' }))
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+      fireEvent.click(await exportMenuItem('BibTeX'))
       await waitFor(() => expect(formatReferences).toHaveBeenCalledTimes(Math.ceil(count / 200)))
       await waitFor(() =>
-        expect(screen.queryByText('References could not be exported.')).not.toBeNull()
+        expect(screen.queryAllByText('References could not be exported.')[0] ?? null).not.toBeNull()
       )
       expect(saveBlobFile).not.toHaveBeenCalled()
     }
@@ -7522,8 +7879,8 @@ describe('LiteratureLibraryPage', () => {
     expect(await screen.findByRole('heading', { name: 'Retrieval research' })).not.toBeNull()
     await screen.findByText('Corrective Retrieval Augmented Generation')
     expect(screen.queryByRole('button', { name: 'Export' })).toBeNull()
-    await openMenu(screen.getByTitle('More actions'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
+    await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+    fireEvent.click(await exportMenuItem('RIS'))
 
     await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
     expect(search).toHaveBeenCalledWith(
@@ -7568,8 +7925,8 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     expect(await screen.findByRole('heading', { name: collection.name })).not.toBeNull()
     await screen.findByText('Corrective Retrieval Augmented Generation')
-    await openMenu(screen.getByTitle('More actions'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'BibTeX' }))
+    await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+    fireEvent.click(await exportMenuItem('BibTeX'))
 
     await waitFor(() => expect(saveBlobFile).toHaveBeenCalledOnce())
     expect(search).toHaveBeenCalledWith(
@@ -7922,7 +8279,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByLabelText('Select all references'))
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull())
 
-    const addToCollection = screen.getByRole('button', { name: 'Add to collection' })
+    const addToCollection = await selectionButton('Add to collection')
     filePreviewRenderCount.value = 0
     fireEvent.click(addToCollection)
     const collectionPopover = document.querySelector<HTMLElement>(
@@ -7934,7 +8291,7 @@ describe('LiteratureLibraryPage', () => {
     expect(filePreviewRenderCount.value).toBe(0)
 
     fireEvent.click(addToCollection)
-    const addToProject = screen.getByRole('button', { name: 'Add to project' })
+    const addToProject = await selectionButton('Add to project')
     filePreviewRenderCount.value = 0
     fireEvent.click(addToProject)
     const projectPopover = document.querySelector<HTMLElement>(
@@ -8046,9 +8403,7 @@ describe('LiteratureLibraryPage', () => {
       fireEvent.click(screen.getByLabelText('Select all references'))
       fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 201' }))
       fireEvent.click(
-        screen.getByRole('button', {
-          name: destination === 'project' ? 'Add to project' : 'Move to collection'
-        })
+        await selectionButton(destination === 'project' ? 'Add to project' : 'Move to collection')
       )
       const popover = document.querySelector<HTMLElement>(
         destination === 'project'
@@ -8166,7 +8521,7 @@ describe('LiteratureLibraryPage', () => {
       await screen.findByText('Reference 0')
       fireEvent.click(screen.getByLabelText('Select all references'))
       fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 202' }))
-      fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }))
+      fireEvent.click(await selectionButton('Move to collection'))
       fireEvent.click(
         within(
           document.querySelector<HTMLElement>('[data-slot="literature-batch-collection-popover"]')!
@@ -8233,7 +8588,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     await screen.findByText('Reference 0')
     fireEvent.click(screen.getByLabelText('Select all references'))
-    fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }))
+    fireEvent.click(await selectionButton('Move to collection'))
     fireEvent.click(
       within(
         document.querySelector<HTMLElement>('[data-slot="literature-batch-collection-popover"]')!
@@ -8330,7 +8685,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await screen.findByText(libraryItem.item.title)
     fireEvent.click(screen.getByLabelText('Select all references'))
-    fireEvent.click(screen.getByRole('button', { name: 'Add to collection' }))
+    fireEvent.click(await selectionButton('Add to collection'))
     const popover = document.querySelector<HTMLElement>(
       '[data-slot="literature-batch-collection-popover"]'
     )!
@@ -8388,7 +8743,7 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       if (mode === 'edit') {
         await screen.findByRole('heading', { name: 'Original' })
-        await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+        await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
         fireEvent.click(screen.getByRole('menuitem', { name: 'Edit collection' }))
       } else fireEvent.click(screen.getByRole('button', { name: 'New collection' }))
       const dialog = await screen.findByRole('dialog')
@@ -8620,7 +8975,7 @@ describe('LiteratureLibraryPage', () => {
     await screen.findByText('Reference 0')
     fireEvent.click(screen.getByLabelText('Select all references'))
     fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 201' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add to collection' }))
+    fireEvent.click(await selectionButton('Add to collection'))
 
     expect(screen.getByText('No collections')).not.toBeNull()
     expect(screen.getByText('Create a collection for the selected references.')).not.toBeNull()
@@ -8696,7 +9051,7 @@ describe('LiteratureLibraryPage', () => {
     await screen.findByText('Reference 0')
     fireEvent.click(screen.getByLabelText('Select all references'))
     fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 201' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Add to project' }))
+    fireEvent.click(await selectionButton('Add to project'))
 
     const searchProjects = screen.getByLabelText('Search projects')
     const projectPopover = searchProjects.closest(
@@ -8754,9 +9109,7 @@ describe('LiteratureLibraryPage', () => {
         )
       } else if (action === 'export') {
         fireEvent.click(screen.getByLabelText('Select all references'))
-        expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(
-          true
-        )
+        expect(((await selectionButton('Export')) as HTMLButtonElement).disabled).toBe(true)
       } else if (action === 'notes') {
         expect(
           (
@@ -9026,9 +9379,9 @@ describe('LiteratureLibraryPage', () => {
     useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
     render(<LiteratureLibraryPage />)
     await screen.findByRole('heading', { name: 'Retrieval research' })
-    await openMenu(screen.getByTitle('More actions'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
-    await screen.findByText('References could not be exported.')
+    await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+    fireEvent.click(await exportMenuItem('RIS'))
+    await screen.findAllByText('References could not be exported.')
     expect(formatReferences).not.toHaveBeenCalled()
     expect(saveBlobFile).not.toHaveBeenCalled()
   })
@@ -9110,14 +9463,10 @@ describe('LiteratureLibraryPage', () => {
       useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
       render(<LiteratureLibraryPage />)
       await screen.findByRole('heading', { name: 'Retrieval research' })
-      await openMenu(screen.getByTitle('More actions'))
-      // The project heading appears before its SQLite-backed membership request settles.
-      await waitFor(() =>
-        expect(screen.getByRole('menuitem', { name: 'RIS' }).hasAttribute('data-disabled')).toBe(
-          false
-        )
-      )
-      fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
+      // Menu capabilities are captured when opened; wait for the actual page first.
+      await screen.findAllByRole('checkbox', { name: /^Select Paper / })
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+      fireEvent.click(await exportMenuItem('RIS'))
       await waitFor(() => expect(saveBlobFile).toHaveBeenCalledTimes(1), { timeout: 15000 })
       const first = new TextDecoder().decode(
         (saveBlobFile.mock.calls[0]![0] as { data: ArrayBuffer }).data
@@ -9126,12 +9475,14 @@ describe('LiteratureLibraryPage', () => {
       expect.soft(first).toContain('A moved reference')
       expect(seenPages.every((p) => p.totalCount === 101)).toBe(true)
       expect.soft(formatReferences.mock.calls[0]![0].itemIds).toContain(ids[100])
-      expect(screen.queryByText('References could not be exported.')).toBeNull()
+      expect(screen.queryAllByText('References could not be exported.')[0] ?? null).toBeNull()
       await waitFor(() =>
-        expect(screen.getByTitle('More actions').hasAttribute('disabled')).toBe(false)
+        expect(
+          screen.getAllByRole('button', { name: 'More actions' })[0].hasAttribute('disabled')
+        ).toBe(false)
       )
-      await openMenu(screen.getByTitle('More actions'))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+      fireEvent.click(await exportMenuItem('RIS'))
       await waitFor(() => expect(saveBlobFile).toHaveBeenCalledTimes(2), { timeout: 15000 })
       const control = new TextDecoder().decode(
         (saveBlobFile.mock.calls[1]![0] as { data: ArrayBuffer }).data

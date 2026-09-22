@@ -127,7 +127,10 @@
     "src/shared/classification.ts",
     "src/shared/runtime-writer.ts",
     "src/shared/pdf-annotations.ts",
-    "src/shared/pdf-annotations.test.ts"
+    "src/shared/pdf-annotations.test.ts",
+    "src/shared/literature-smart-collections.ts",
+    "src/shared/smart-collection-rule.test.ts",
+    "src/shared/smart-collection-rule.ts"
   ],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",
@@ -216,7 +219,8 @@
     "src/shared/wsl-setup.ts",
     "src/shared/config-root.ts",
     "src/shared/runtime-writer.ts",
-    "src/shared/pdf-annotations.ts"
+    "src/shared/pdf-annotations.ts",
+    "src/shared/literature-smart-collections.ts"
   ],
   "consumerModules": [],
   "testFiles": {

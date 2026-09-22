@@ -730,9 +730,74 @@ describe('LiteratureDocumentReader', () => {
       scope: 'full-document',
       document: { name: 'library-paper.pdf' }
     })
+    await expect(
+      reader.classificationEvidence({
+        attachmentId: 'attachment-1',
+        attachmentVersionId: 'attachment-version-1',
+        filename: 'library-paper.pdf',
+        sizeBytes: 42,
+        checksum,
+        query: 'retrieval evaluator'
+      })
+    ).resolves.toMatchObject({
+      coverage: 'full-text',
+      passages: [
+        expect.objectContaining({ pageStart: 1 }),
+        expect.objectContaining({ pageStart: 2 }),
+        expect.objectContaining({ pageStart: 3 })
+      ]
+    })
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
       maxChars: 24 * 1024 * 1024
     })
+  })
+
+  it('retrieves bounded passages from later pages instead of labelling a long prefix as full text', async () => {
+    vi.mocked(extractPdfText).mockResolvedValue({
+      text: Array.from(
+        { length: 24 },
+        (_, i) =>
+          `--- Page ${i + 1} ---\n${i === 22 ? 'randomized participants treatment '.repeat(100) : 'background observations '.repeat(180)}`
+      ).join('\n'),
+      pageCount: 24,
+      truncated: false
+    })
+    const sources = {
+      resolveVersion: vi.fn(async () => ({
+        sourceKind: 'literature-attachment-version' as const,
+        sourceFileId: 'attachment',
+        sourceVersionId: 'version',
+        filename: 'long.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 42,
+        checksum,
+        path: join(root, 'long.pdf')
+      }))
+    }
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sessions: { loadSessionForContinuation: vi.fn() },
+      sources
+    })
+    const result = await reader.classificationEvidence({
+      attachmentId: 'attachment',
+      attachmentVersionId: 'version',
+      filename: 'long.pdf',
+      sizeBytes: 42,
+      checksum,
+      query: 'randomized participants treatment'
+    })
+    expect(result.coverage).toBe('passages')
+    expect(result.passages.some((passage) => passage.pageStart === 23)).toBe(true)
+    expect(result.passages.length).toBeLessThanOrEqual(8)
+    expect(Buffer.byteLength(JSON.stringify(result.passages))).toBeLessThan(34000)
+    expect(sources.resolveVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version',
+        expectedSourceFileId: 'attachment'
+      })
+    )
   })
 
   it('fails closed when the active message has no linked PDF snapshot', async () => {

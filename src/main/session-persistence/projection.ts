@@ -931,23 +931,33 @@ export class SessionProjectionRepository {
 
   async usage(): Promise<SessionUsageProjection> {
     const client = await this.client()
-    const [projects, sessions, usage, auxiliaryUsage, runs, artifacts] = await client.$transaction([
-      client.project.findMany({ select: { createdAt: true } }),
-      client.session.findMany({
-        where: { deletedAtMs: null },
-        select: { id: true, createdAtMs: true }
-      }),
-      client.sessionTurnUsage.findMany({ where: { session: { deletedAtMs: null } } }),
-      client.sessionAuxiliaryTurnUsage.findMany(),
-      client.sessionRun.findMany({
-        where: { session: { deletedAtMs: null } },
-        select: { createdAtMs: true }
-      }),
-      client.sessionArtifactRef.findMany({
-        where: { session: { deletedAtMs: null } },
-        select: { artifactId: true, artifactCreatedAtMs: true }
-      })
-    ])
+    const [projects, sessions, usage, auxiliaryUsage, runs, artifacts, classificationUsage] =
+      await client.$transaction([
+        client.project.findMany({ select: { createdAt: true } }),
+        client.session.findMany({
+          where: { deletedAtMs: null },
+          select: { id: true, createdAtMs: true }
+        }),
+        client.sessionTurnUsage.findMany({ where: { session: { deletedAtMs: null } } }),
+        client.sessionAuxiliaryTurnUsage.findMany(),
+        client.sessionRun.findMany({
+          where: { session: { deletedAtMs: null } },
+          select: { createdAtMs: true }
+        }),
+        client.sessionArtifactRef.findMany({
+          where: { session: { deletedAtMs: null } },
+          select: { artifactId: true, artifactCreatedAtMs: true }
+        }),
+        client.classificationUsage.findMany({
+          select: {
+            scenario: true,
+            occurredAt: true,
+            inputTokens: true,
+            outputTokens: true,
+            usageIncomplete: true
+          }
+        })
+      ])
     const liveSessionIds = new Set(sessions.map(({ id }) => id))
     const artifactCreatedAt = new Map<string, number | undefined>()
     for (const artifact of artifacts) {
@@ -976,6 +986,9 @@ export class SessionProjectionRepository {
           liveSessionIds.has(event.sessionId)
             ? [
                 {
+                  ...(event.source === 'classification'
+                    ? { source: 'classification' as const }
+                    : {}),
                   timestamp: Number(event.completedAtMs),
                   inputTokens: Number(event.inputTokens),
                   cacheTokens: Number(event.cacheTokens),
@@ -983,7 +996,18 @@ export class SessionProjectionRepository {
                 }
               ]
             : []
-        )
+        ),
+        ...classificationUsage.map((event) => ({
+          source: event.scenario.startsWith('literature-')
+            ? ('literature-classification' as const)
+            : ('classification' as const),
+          scenario: event.scenario,
+          timestamp: event.occurredAt.getTime(),
+          inputTokens: Number(event.inputTokens ?? 0n),
+          cacheTokens: 0,
+          outputTokens: Number(event.outputTokens ?? 0n),
+          usageIncomplete: event.usageIncomplete
+        }))
       ],
       totalArtifacts: artifactCreatedAt.size
     }

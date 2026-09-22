@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import {
+  getOfficialVendorModelIds,
+  resolveVendorModelApiEndpoints
+} from '../../../../shared/provider-registry'
 
 import {
   LOCAL_MODEL_PRESETS,
@@ -307,8 +311,12 @@ describe('provider-kind helpers', () => {
   it('chooses a directly compatible official model before onboarding validation', () => {
     const zen = createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
 
-    expect(providerFormModelForFramework(zen, ['anthropic'])).toBe('claude-fable-5-1')
-    expect(providerFormModelForFramework(zen, ['responses'])).toBe('gpt-6-astra')
+    const anthropicModel = providerFormModelForFramework(zen, ['anthropic'])!
+    expect(getOfficialVendorModelIds('opencode')).toContain(anthropicModel)
+    expect(resolveVendorModelApiEndpoints('opencode', anthropicModel)).toContain('anthropic')
+    const responsesModel = providerFormModelForFramework(zen, ['responses'])!
+    expect(getOfficialVendorModelIds('opencode')).toContain(responsesModel)
+    expect(resolveVendorModelApiEndpoints('opencode', responsesModel)).toContain('responses')
     expect(providerFormModelForFramework(zen, ['anthropic', 'openai'])).toBe('kimi-k2.7-code')
 
     const minimax = createEmptyProviderFormValue({

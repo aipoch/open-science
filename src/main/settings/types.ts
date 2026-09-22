@@ -16,6 +16,7 @@ type StoredClassificationBinding = ClassificationBinding & { modelId?: string }
 export type StoredClassificationSettings = {
   revision: number
   services: StoredClassificationService[]
+  smartCollections?: ClassificationBinding
   capabilitySelection?: ClassificationBinding
   /** Read compatibility for the unreleased two-binding configuration. */
   skillSelection?: StoredClassificationBinding

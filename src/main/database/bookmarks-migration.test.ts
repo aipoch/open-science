@@ -27,7 +27,12 @@ it('installs the Bookmark table with durable ownership, JSON, and paging constra
   await expect(
     migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
   ).resolves.toMatchObject({
-    applied: ['0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations']
+    applied: [
+      '0041_bookmarks',
+      '0042_classification_usage',
+      '0043_pdf_annotations',
+      '0044_literature_smart_collections'
+    ]
   })
 
   const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(

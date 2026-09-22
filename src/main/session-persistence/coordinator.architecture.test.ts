@@ -1669,7 +1669,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/claude-provider-configuration.integration.test.ts',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/main/settings/provider-transport-owner.test.ts',
-      'src/main/settings/session-details-model-owner.test.ts'
+      'src/main/settings/session-details-model-owner.test.ts',
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/settings/classification-usage.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

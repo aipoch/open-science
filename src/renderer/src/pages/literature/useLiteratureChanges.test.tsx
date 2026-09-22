@@ -62,3 +62,81 @@ it.each(['onDeleted', 'onDeletionCleanupChanged'] as const)(
     expect(invalidate).toHaveBeenCalledOnce()
   }
 )
+
+it('coalesces collection progress across ticks and lets a full invalidation supersede it', async () => {
+  vi.useFakeTimers()
+  try {
+    let notify!: (event: { revision: number; collectionIds?: string[]; itemIds?: string[] }) => void
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          onChanged: (listener: typeof notify) => {
+            notify = listener
+            return () => {}
+          }
+        }
+      }
+    })
+    const invalidate = vi.fn()
+    const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
+    await act(async () => {
+      notify({ revision: 1, collectionIds: ['a'] })
+      await vi.advanceTimersByTimeAsync(50)
+    })
+    await act(async () => {
+      notify({ revision: 2, collectionIds: ['b'] })
+      await vi.advanceTimersByTimeAsync(50)
+    })
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith({ revision: 2, collectionIds: ['a', 'b'] })
+    await act(async () => {
+      notify({ revision: 3, collectionIds: ['a'] })
+      notify({ revision: 4, itemIds: ['paper'] })
+    })
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    expect(invalidate).toHaveBeenLastCalledWith()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    notify({ revision: 5, collectionIds: ['a'] })
+    unmount()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(invalidate).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('consumes only queued changes covered by a command refresh, preserving other and later changes', async () => {
+  vi.useFakeTimers()
+  try {
+    let notify!: (event: { revision: number; collectionIds: string[] }) => void
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          onChanged: (listener: typeof notify) => {
+            notify = listener
+            return () => {}
+          }
+        }
+      }
+    })
+    const invalidate = vi.fn()
+    const { result } = renderHook(() => useLiteratureChanges(invalidate))
+    notify({ revision: 1, collectionIds: ['a'] })
+    result.current('a')
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(invalidate).not.toHaveBeenCalled()
+    notify({ revision: 2, collectionIds: ['a', 'b'] })
+    result.current('a')
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(invalidate).toHaveBeenLastCalledWith({ revision: 2, collectionIds: ['b'] })
+    notify({ revision: 3, collectionIds: ['a'] })
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(invalidate).toHaveBeenLastCalledWith({ revision: 3, collectionIds: ['a'] })
+  } finally {
+    vi.useRealTimers()
+  }
+})

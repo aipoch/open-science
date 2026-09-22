@@ -33,6 +33,7 @@ export type ClassificationServiceView = {
 export type ClassificationSnapshot = {
   revision: number
   services: ClassificationServiceView[]
+  smartCollections?: ClassificationBinding
   capabilitySelection?: ClassificationBinding
   availableProviders: { id: string; name: string; maskedKey?: string }[]
 }
@@ -50,6 +51,7 @@ export type ClassificationMutation = { revision: number } & (
   | { kind: 'remove'; id: string }
   | {
       kind: 'bind'
+      feature?: 'capability-selection' | 'smart-collections'
       binding?: ClassificationBinding
     }
 )
@@ -77,6 +79,7 @@ export type ClassifySkills = (input: {
   text: string
   catalog: ClassificationCandidate[]
   signal: AbortSignal
+  usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>
   observeUsage?: (value: ClassificationUsage) => void
 }) => Promise<{ name: string; path: string }[] | undefined>
 
@@ -84,5 +87,87 @@ export type ClassificationReadingRoute = 'full-document' | 'auto'
 export type ClassifyReadingRoute = (input: {
   text: string
   signal?: AbortSignal
+  usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>
   observeUsage?: (value: ClassificationUsage) => void
 }) => Promise<ClassificationReadingRoute | undefined>
+
+/** A closed Literature decision. Probabilities describe the model, not verified truth. */
+export type LiteratureClassificationDecision = {
+  evidenceIndex?: number
+  verdict: 'match' | 'no-match' | 'uncertain'
+  confidence: number
+  probabilities: Record<'match' | 'no-match' | 'uncertain', number>
+  model: string
+}
+/** One actual provider request, including retries; missing measurements remain unknown. */
+export type ClassificationRequestUsage = Readonly<{
+  eventId: string
+  providerId: string
+  model: string
+  occurredAt: number
+  status: 'started' | 'completed' | 'failed' | 'interrupted'
+  inputTokens?: number
+  outputTokens?: number
+}>
+export type ClassificationUsageContext = Readonly<{
+  collectionId?: string
+  runId?: string
+  projectId?: string
+  sessionId?: string
+  scenario:
+    | 'save-validation'
+    | 'probe'
+    | 'capability-selection'
+    | 'reading-route'
+    | 'literature-live-preview'
+    | 'literature-trial'
+    | 'literature-update'
+    | 'literature-reevaluate'
+    | 'literature-automatic'
+}>
+
+export type ClassifyLiterature = (input: {
+  evidence?: {
+    coverage: string
+    passages: { pageStart: number; pageEnd: number; content: string }[]
+  }
+  description: string
+  title: string
+  abstract: string
+  signal: AbortSignal
+  usageContext?: ClassificationUsageContext
+  observeUsage?: (value: ClassificationUsage) => void
+}) => Promise<LiteratureClassificationDecision>
+
+export const classificationFailureCategories = [
+  'auth',
+  'rate-limit',
+  'timeout',
+  'network',
+  'invalid-response',
+  'configuration',
+  'service',
+  'unknown'
+] as const
+export type ClassificationFailureCategory = (typeof classificationFailureCategories)[number]
+export class ClassificationEvaluationError extends Error {
+  constructor(readonly category: ClassificationFailureCategory) {
+    super('Classification evaluation failed.')
+  }
+}
+
+export const AUTOMATIC_CLASSIFICATION_RUN_LIMIT = 200
+export const AUTOMATIC_CLASSIFICATION_DAY_LIMIT = 1000
+export const automaticClassificationPauseReasons = [
+  'run-limit',
+  'daily-limit',
+  'storage-error',
+  'interrupted'
+] as const
+export type AutomaticClassificationPauseReason =
+  (typeof automaticClassificationPauseReasons)[number]
+export class AutomaticClassificationPausedError extends Error {
+  constructor(readonly reason: AutomaticClassificationPauseReason) {
+    super('Automatic classification paused.')
+  }
+}

@@ -266,7 +266,11 @@ it('opens help on click and binds skills and connectors through one model select
   await waitFor(() =>
     expect(state.capabilitySelection).toEqual({ serviceId: 'account', modelId: 'jev-latest' })
   )
-  expect(screen.getAllByRole('combobox')).toHaveLength(1)
+  expect(screen.getAllByRole('combobox')).toHaveLength(2)
+  expect(screen.getByRole('combobox', { name: 'Smart collections' }).textContent).toContain(
+    'Not configured'
+  )
+  expect(state.smartCollections).toBeUndefined()
 })
 
 it('reuses an existing OpenRouter account without displaying or resubmitting its key', async () => {

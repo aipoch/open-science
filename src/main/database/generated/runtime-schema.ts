@@ -1039,6 +1039,110 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "expectedMetadataRevision" INTEGER NOT NULL,
     "committedMetadataRevision" INTEGER NOT NULL,
     CONSTRAINT "LiteratureMetadataCommitReceipt_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureSmartCollection" (
+    "automaticPauseReason" TEXT,
+    "evidenceMode" TEXT NOT NULL DEFAULT 'abstract',
+    "autoUpdate" BOOLEAN NOT NULL DEFAULT false,
+    "collectionId" TEXT NOT NULL PRIMARY KEY,
+    "scopeKind" TEXT NOT NULL,
+    "scopeId" TEXT,
+    "ruleRevision" INTEGER NOT NULL DEFAULT 1,
+    CONSTRAINT "LiteratureSmartCollection_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "LiteratureCollection" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartCollection_scope_check" CHECK ("scopeKind" IN ('library', 'project', 'collection') AND (("scopeKind" = 'library' AND "scopeId" IS NULL) OR ("scopeKind" != 'library' AND "scopeId" IS NOT NULL AND length(trim("scopeId")) > 0)) AND "ruleRevision" > 0),
+    CONSTRAINT "LiteratureSmartCollection_pause_check" CHECK ("automaticPauseReason" IS NULL OR "automaticPauseReason" IN ('run-limit', 'daily-limit', 'storage-error', 'interrupted'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureSmartAssessment" (
+    "evidenceJson" TEXT,
+    "collectionId" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
+    "ruleRevision" INTEGER NOT NULL,
+    "inputDigest" TEXT NOT NULL,
+    "policyKey" TEXT NOT NULL,
+    "verdict" TEXT NOT NULL,
+    "probabilitiesJson" TEXT NOT NULL DEFAULT '{}',
+    "model" TEXT NOT NULL,
+    "evaluatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("collectionId", "itemId"),
+    CONSTRAINT "LiteratureSmartAssessment_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "LiteratureSmartCollection" ("collectionId") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartAssessment_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartAssessment_decision_check" CHECK ("verdict" IN ('match', 'no-match', 'uncertain') AND "ruleRevision" > 0 AND json_valid("probabilitiesJson") AND json_type("probabilitiesJson") = 'object')
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureSmartOverride" (
+    "collectionId" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
+    "decision" TEXT NOT NULL,
+    "updatedAt" DATETIME NOT NULL,
+
+    PRIMARY KEY ("collectionId", "itemId"),
+    CONSTRAINT "LiteratureSmartOverride_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "LiteratureSmartCollection" ("collectionId") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartOverride_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartOverride_decision_check" CHECK ("decision" IN ('include', 'exclude'))
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureSmartRun" (
+    "snapshotJson" TEXT,
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "collectionId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "state" TEXT NOT NULL,
+    "ruleRevision" INTEGER NOT NULL,
+    "policyKey" TEXT NOT NULL,
+    "model" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "LiteratureSmartRun_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "LiteratureSmartCollection" ("collectionId") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartRun_collectionId_ruleRevision_fkey" FOREIGN KEY ("collectionId", "ruleRevision") REFERENCES "LiteratureSmartRuleRevision" ("collectionId", "revision") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartRun_state_check" CHECK ("kind" IN ('preview', 'refresh') AND "state" IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted') AND "ruleRevision" > 0)
+);`,
+  `CREATE TABLE IF NOT EXISTS "ClassificationUsage" (
+    "eventId" TEXT NOT NULL PRIMARY KEY,
+    "collectionId" TEXT,
+    "runId" TEXT,
+    "scenario" TEXT NOT NULL,
+    "projectId" TEXT,
+    "sessionId" TEXT,
+    "providerId" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "occurredAt" DATETIME NOT NULL,
+    "status" TEXT NOT NULL,
+    "inputTokens" BIGINT,
+    "outputTokens" BIGINT,
+    "usageIncomplete" BOOLEAN NOT NULL DEFAULT true,
+    CONSTRAINT "ClassificationUsage_values_check" CHECK (length(trim("eventId")) > 0 AND length(trim("providerId")) > 0 AND length(trim("model")) > 0
+      AND "scenario" IN ('save-validation', 'probe', 'capability-selection', 'reading-route', 'literature-live-preview', 'literature-trial', 'literature-update', 'literature-reevaluate', 'literature-automatic', 'legacy-classification')
+      AND "status" IN ('started', 'completed', 'failed', 'interrupted')
+      AND (("inputTokens" IS NULL AND "outputTokens" IS NULL AND "usageIncomplete" = true)
+        OR ("inputTokens" IS NOT NULL AND "outputTokens" IS NOT NULL AND "inputTokens" >= 0 AND "outputTokens" >= 0 AND "usageIncomplete" = false)))
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureSmartRuleRevision" (
+    "collectionId" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "description" TEXT NOT NULL,
+    "inclusionCriteria" TEXT NOT NULL,
+    "exclusionCriteria" TEXT NOT NULL,
+    "scopeKind" TEXT NOT NULL,
+    "scopeId" TEXT,
+    "evidenceMode" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("collectionId", "revision"),
+    CONSTRAINT "LiteratureSmartRuleRevision_collectionId_fkey" FOREIGN KEY ("collectionId") REFERENCES "LiteratureSmartCollection" ("collectionId") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartRuleRevision_values_check" CHECK ("revision" > 0 AND length(trim("inclusionCriteria")) > 0 AND "evidenceMode" IN ('abstract', 'full-text') AND "scopeKind" IN ('library', 'project', 'collection') AND (("scopeKind" = 'library' AND "scopeId" IS NULL) OR ("scopeKind" != 'library' AND "scopeId" IS NOT NULL)))
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureSmartRunItem" (
+    "runId" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
+    "digest" TEXT NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'pending',
+    "failure" TEXT,
+    "deferred" BOOLEAN NOT NULL DEFAULT false,
+    "resultJson" TEXT,
+    "evaluatedAt" DATETIME,
+
+    PRIMARY KEY ("runId", "itemId"),
+    CONSTRAINT "LiteratureSmartRunItem_runId_fkey" FOREIGN KEY ("runId") REFERENCES "LiteratureSmartRun" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "LiteratureSmartRunItem_values_check" CHECK ("state" IN ('pending', 'done', 'error') AND ("failure" IS NULL OR "failure" IN ('auth', 'rate-limit', 'timeout', 'network', 'invalid-response', 'configuration', 'service', 'unknown')) AND ("resultJson" IS NULL OR (json_valid("resultJson") AND json_type("resultJson") = 'object')))
 );`
 ] as const
 
@@ -1182,6 +1286,15 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sourceKind", "state", "createdAt", "id");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_sourceId_key" ON "BackgroundResultDelivery"("sourceKind", "sourceId");`,
   `CREATE INDEX IF NOT EXISTS "LiteratureMetadataCommitReceipt_itemId_idx" ON "LiteratureMetadataCommitReceipt"("itemId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureSmartAssessment_itemId_idx" ON "LiteratureSmartAssessment"("itemId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureSmartOverride_itemId_idx" ON "LiteratureSmartOverride"("itemId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureSmartRun_collectionId_createdAt_idx" ON "LiteratureSmartRun"("collectionId", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "ClassificationUsage_sessionId_idx" ON "ClassificationUsage"("sessionId");`,
+  `CREATE INDEX IF NOT EXISTS "ClassificationUsage_occurredAt_idx" ON "ClassificationUsage"("occurredAt");`,
+  `CREATE INDEX IF NOT EXISTS "ClassificationUsage_collectionId_idx" ON "ClassificationUsage"("collectionId");`,
+  `CREATE INDEX IF NOT EXISTS "ClassificationUsage_runId_idx" ON "ClassificationUsage"("runId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureSmartRunItem_runId_state_idx" ON "LiteratureSmartRunItem"("runId", "state");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureSmartRunItem_itemId_evaluatedAt_idx" ON "LiteratureSmartRunItem"("itemId", "evaluatedAt");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
@@ -1255,7 +1368,14 @@ const RUNTIME_SCHEMA_TABLES = [
   'MemoryCategory',
   'MemoryEntry',
   'BackgroundResultDelivery',
-  'LiteratureMetadataCommitReceipt'
+  'LiteratureMetadataCommitReceipt',
+  'LiteratureSmartCollection',
+  'LiteratureSmartAssessment',
+  'LiteratureSmartOverride',
+  'LiteratureSmartRun',
+  'ClassificationUsage',
+  'LiteratureSmartRuleRevision',
+  'LiteratureSmartRunItem'
 ] as const
 
 export {

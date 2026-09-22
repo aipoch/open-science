@@ -37,7 +37,8 @@ it('adds unknown verification observations without changing historical content o
       '0040_literature_collection_revision',
       '0041_bookmarks',
       '0042_classification_usage',
-      '0043_pdf_annotations'
+      '0043_pdf_annotations',
+      '0044_literature_smart_collections'
     ]
   })
   expect(await client.contentBlob.findUnique({ where: { id: 'old' } })).toMatchObject({

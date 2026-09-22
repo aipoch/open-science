@@ -114,9 +114,11 @@ jobs:
       # version segment the app/build keys off (runtime-paths.ts DEFAULT_ENV_VERSION).
       - name: Resolve bundle version
         id: ver
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
-          requested='${{ inputs.version }}'
+          requested="$REQUESTED_VERSION"
           current=$(node -e "const s=require('fs').readFileSync('src/main/notebook/runtime-paths.ts','utf8');process.stdout.write(String(s.match(/DEFAULT_ENV_VERSION\s*=\s*(\d+)/)[1]))")
           if ! [[ "$requested" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::version must be a positive integer"

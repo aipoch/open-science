@@ -61,6 +61,7 @@ export const classificationSettingsSchema = z.object({
   revision: z.number().int().nonnegative().safe(),
   services: z.array(classificationServiceSchema).max(16),
   capabilitySelection: classificationBindingSchema.optional(),
+  smartCollections: classificationBindingSchema.optional(),
   skillSelection: storedBindingSchema.optional(),
   connectorSelection: storedBindingSchema.optional()
 })
@@ -80,6 +81,7 @@ export const classificationMutationSchema = z.intersection(
     z.object({ kind: z.literal('remove'), id }),
     z.object({
       kind: z.literal('bind'),
+      feature: z.enum(['capability-selection', 'smart-collections']).optional(),
       binding: classificationBindingSchema.optional()
     })
   ])
