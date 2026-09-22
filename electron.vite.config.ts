@@ -50,7 +50,14 @@ export default defineConfig(({ command }) => ({
   },
   renderer: {
     // Regenerate lazy optimized chunks so a persisted Electron page cannot request stale hashes.
-    optimizeDeps: { force: true },
+    optimizeDeps: {
+      force: true,
+      // Bare imports reachable only through `new Worker(new URL(..., import.meta.url))` workers
+      // (markdown parser, PDF export, TIFF preview). Vite's dep scanner cannot see those workers,
+      // so without `include` the first lazy worker start re-optimizes deps and force-reloads the
+      // page mid-session in dev.
+      include: ['unified', 'remark-parse', 'remark-gfm', 'remark-math', 'pdf-lib', 'tiff']
+    },
     resolve: {
       alias: {
         // The decoder's browser entry requires document; its default/worker entry is DOM-free.
