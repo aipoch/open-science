@@ -32,6 +32,7 @@ const NotificationRecovery = ({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
   const id = useId()
   useEffect(() => {
     if (surface !== 'center') return
@@ -71,8 +72,18 @@ const NotificationRecovery = ({
             })
         }
       }}
+      dismissButton={
+        surface === 'toast'
+          ? {
+              label: t('Close'),
+              onClick: () => setDismissed(true),
+              testId: 'notification-recovery-dismiss'
+            }
+          : undefined
+      }
     />
   )
+  if (surface === 'toast' && dismissed) return null
   if (surface !== 'center') {
     return (
       <div
