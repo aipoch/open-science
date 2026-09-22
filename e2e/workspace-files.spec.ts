@@ -1,4 +1,4 @@
-import { realpath, writeFile } from 'node:fs/promises'
+import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
@@ -329,6 +329,73 @@ test.describe('Workspace dividers', () => {
       'aria-selected',
       'true'
     )
+  })
+
+  test('keeps decoded message images visible when resizing and opening their preview', async ({
+    app
+  }) => {
+    const page = app.page
+    await app.setMainWindowSize(1280, 900)
+    // Exercise the normal upload and provider publication paths using generated geometry only.
+    await page.locator('input[type="file"][multiple]').setInputFiles({
+      name: 'sanitized-performance.png',
+      mimeType: 'image/png',
+      buffer: await readFile('e2e/fixtures/sanitized-performance.png')
+    })
+    await expect(
+      page.getByRole('button', { name: 'Remove attachment sanitized-performance.png' })
+    ).toBeVisible()
+    await page
+      .getByRole('textbox', { name: 'Ask anything' })
+      .fill('Render the sanitized message images.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    const images = page.locator(
+      '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
+    )
+    await expect(images).toHaveCount(3)
+    const image = images.last()
+    await image.scrollIntoViewIfNeeded()
+    await expect
+      .poll(() =>
+        image.evaluate((element: HTMLImageElement) => ({
+          complete: element.complete,
+          width: element.naturalWidth,
+          height: element.naturalHeight
+        }))
+      )
+      .toEqual({ complete: true, width: 1024, height: 1024 })
+    await expect(image).toBeInViewport({ ratio: 0.5 })
+    for (const side of ['left', 'right'] as const) {
+      const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+      const box = (await handle.boundingBox())!
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      await page.mouse.move(x, y)
+      await expect(handle).toHaveAttribute('data-separator', /hover|focus/)
+      await page.mouse.down()
+      await page.mouse.move(x + (side === 'left' ? 60 : -60), y, { steps: 6 })
+      await expect
+        .poll(async () => Math.abs((await handle.boundingBox())!.x - box.x))
+        .toBeGreaterThan(30)
+      await expect(image).toBeInViewport({ ratio: 0.5 })
+      await page.mouse.move(x, y, { steps: 6 })
+      await page.mouse.up()
+      await expect.poll(async () => (await handle.boundingBox())!.x).toBeCloseTo(box.x, 0)
+    }
+    await image.click()
+    const modal = page.getByRole('dialog', {
+      name: 'Preview sanitized-performance.png',
+      exact: true
+    })
+    await expect(modal).toBeVisible()
+    await expect
+      .poll(() =>
+        modal.locator('img').evaluate((element: HTMLImageElement) => element.naturalWidth)
+      )
+      .toBe(1024)
+    await modal.getByRole('button', { name: 'Close preview of sanitized-performance.png' }).click()
+    await expect(modal).toBeHidden()
+    await expect(image).toBeInViewport({ ratio: 0.5 })
   })
 
   for (const side of ['left', 'right'] as const) {

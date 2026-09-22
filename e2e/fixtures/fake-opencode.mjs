@@ -1485,6 +1485,33 @@ if (process.argv.includes('--version')) {
             await delay(30)
           }
           reply = 'Runtime resource stress journey complete.'
+        } else if (prompt.includes('Render the sanitized message images.')) {
+          // The fixture is generated 1024 × 1024 geometry, with no user content or metadata.
+          const stored = await withMcpClient(
+            context.params.sessionId,
+            'open-science-artifacts',
+            async (client) =>
+              toolResult(
+                'write_artifact_file',
+                await client.callTool({
+                  name: 'write_artifact_file',
+                  arguments: {
+                    filename: 'sanitized-performance.png',
+                    mimeType: 'image/png',
+                    content: (
+                      await readFile(new URL('./sanitized-performance.png', import.meta.url))
+                    ).toString('base64'),
+                    encoding: 'base64'
+                  }
+                })
+              )
+          )
+          reply = [1, 2, 3]
+            .map(
+              (index) =>
+                `Synthetic figure ${index}. This image contains generated geometry only.\n\n![Sanitized message figure ${index}]({{artifact:${stored.artifact.artifact_id}}})`
+            )
+            .join('\n\n')
         } else if (prompt.includes(LONG_STREAM_PROMPT)) {
           // Mirror a real agent turn: text segment -> tool call -> second text segment ->
           // tool completion -> trailing segment, with separate message ids per segment.
