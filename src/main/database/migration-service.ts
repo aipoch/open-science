@@ -873,6 +873,7 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
 const LEDGER_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "_open_science_migrations" (
