@@ -269,7 +269,8 @@
     "src/main/notebook/working-file-observer.test.ts",
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/wsl-setup-powershell.integration.test.ts",
-    "src/main/notebook/wsl2-shell.integration.test.ts"
+    "src/main/notebook/wsl2-shell.integration.test.ts",
+    "src/main/notebook/file-evidence-publication.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -520,7 +521,8 @@
       "src/main/notebook/working-file-observer.performance.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
-      "src/main/notebook/wsl2-shell.integration.test.ts"
+      "src/main/notebook/wsl2-shell.integration.test.ts",
+      "src/main/notebook/file-evidence-publication.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -910,7 +912,8 @@
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
-      "src/main/literature/smart-collections.test.ts"
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

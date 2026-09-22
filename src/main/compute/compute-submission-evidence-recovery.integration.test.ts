@@ -1,11 +1,10 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeJobWorkflowOwner } from './compute-job-workflow-owner'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { dispatchJob } from './job-dispatcher'
@@ -34,14 +33,23 @@ try {
 `
 
 describe.skipIf(process.platform !== 'win32')('Compute submission evidence recovery', () => {
+  let database: Awaited<ReturnType<typeof createMigratedComputeTestDatabase>> | undefined
+
+  beforeAll(async () => {
+    // Schema migration is fixture setup; keep its disk I/O outside the receipt-recovery deadline.
+    database = await createMigratedComputeTestDatabase('compute-submission-evidence-')
+  })
+
+  afterAll(async () => {
+    await database?.dispose()
+  })
+
   it('creates no Job on persistent publication denial and submits once after the reader closes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'compute-submission-evidence-'))
-    const client = createProjectDbClient(root)
+    const { storageRoot: root, client } = database!
     let reader: ReturnType<typeof spawn> | undefined
     let readerClosed: Promise<{ code: number | null; stderr: string }> | undefined
     const releasePath = join(root, 'release-reader')
     try {
-      await migrateApplicationDatabase(client)
       const hosts = new ComputeHostRepository(async () => client)
       const jobs = new ComputeJobRepository(async () => client)
       const host = await hosts.create({ sshAlias: 'fixture-host', displayName: 'Fixture host' })
@@ -125,8 +133,6 @@ describe.skipIf(process.platform !== 'win32')('Compute submission evidence recov
     } finally {
       await writeFile(releasePath, '')
       await readerClosed
-      await client.$disconnect()
-      await rm(root, { recursive: true, force: true })
       vi.restoreAllMocks()
       vi.clearAllMocks()
     }

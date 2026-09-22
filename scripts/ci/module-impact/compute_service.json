@@ -127,7 +127,8 @@
     "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
     "src/renderer/src/lib/compute/job-analysis-trigger.test.ts",
     "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
-    "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx"
+    "src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx",
+    "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/compute/connection-broker.ts",
@@ -214,7 +215,8 @@
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm-driver-boundaries.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
-      "src/main/compute/ssh-config.test.ts"
+      "src/main/compute/ssh-config.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
     ],
     "contract": [
       "src/main/application-command-composition.test.ts",
