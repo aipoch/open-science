@@ -44,6 +44,22 @@ describe('rendered search highlights', () => {
     )
     expect(viewport.scrollTop).toBe(250)
   })
+  it('keeps retained preview matches when an ancestor detail panel is temporarily hidden', () => {
+    const view = (hidden: boolean, query: string): React.JSX.Element => (
+      <aside aria-hidden={hidden}>
+        <SearchContentHighlight query={query}>
+          <p>Verified file preview content.</p>
+          <span aria-hidden="true">Verified file preview hidden decoration.</span>
+        </SearchContentHighlight>
+      </aside>
+    )
+    const { container, rerender } = render(view(false, 'search-notes'))
+    rerender(view(true, 'Verified file preview'))
+    rerender(view(false, 'Verified file preview'))
+    expect(
+      container.querySelector('[data-search-match-count]')?.getAttribute('data-search-match-count')
+    ).toBe('1')
+  })
   it('matches across Markdown inline formatting while preserving selectable DOM', () => {
     const root = document.createElement('div')
     root.innerHTML = '<p>Historical <strong>needle</strong> in a message.</p>'

@@ -272,10 +272,13 @@ for (const area of [false, true]) {
         const note = page.getByRole('dialog', { name: 'Annotation note', exact: true })
         await expect(note).toContainText('Saved selection note')
         await page.keyboard.press('Escape')
+        // Dismissal includes an exit animation and deferred focus return. Finish it before
+        // testing a new selection and keyboard activation instead of racing that lifecycle.
+        await expect(note).toHaveCount(0)
+        await expect(marker).toBeFocused()
         await highlight.click()
         await expect(highlight).toHaveAttribute('aria-pressed', 'true')
-        await marker.focus()
-        await page.keyboard.press('Enter')
+        await marker.press('Enter')
         await expect(note).toContainText('Saved selection note')
       })
     }
