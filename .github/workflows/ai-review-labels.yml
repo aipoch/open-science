@@ -44,7 +44,7 @@ jobs:
   # Keep this job ID and its existing write scopes: CI Integrity rejects target-workflow
   # permission expansion. Classification never checks out or executes contributor code.
   apply_type_labels:
-    name: Apply PR classification labels
+    name: Apply PR type and size labels
     if: >-
       ${{ github.event_name == 'pull_request_target' &&
           (github.event.action != 'edited' || github.event.changes.title) }}
@@ -58,7 +58,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - name: Synchronize type, area, and size labels
+      - name: Synchronize type and size labels
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           github-token: ${{ github.token }}
@@ -96,13 +96,6 @@ jobs:
             const desired = new Set(typeLabels.filter(label => label.type === type).map(label => label.name));
             const complete = files.length === pr.changed_files;
             if (complete) {
-              // Renames affect both the old and new areas. GitHub paths always use POSIX separators.
-              const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
-              for (const label of catalog.filter(label => label.paths)) {
-                if (paths.some(path => label.paths.some(pattern => posix.matchesGlob(path, pattern)))) {
-                  desired.add(label.name);
-                }
-              }
               const ignored = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock', 'uv.lock']);
               const changes = files.filter(file => !ignored.has(posix.basename(file.filename)))
                 .reduce((sum, file) => sum + file.additions + file.deletions, 0);
@@ -110,9 +103,9 @@ jobs:
               desired.add(`size:${buckets.find(([limit]) => changes < limit)[1]}`);
             } else {
               // GitHub caps listFiles at 3,000. Remove stale file-derived labels, never guess.
-              core.warning('Incomplete changed-file list; clearing area/size labels until a complete run.');
+              core.warning('Incomplete changed-file list; clearing size labels until a complete run.');
             }
-            const managed = new Set(catalog.filter(label => label.type || label.paths || label.name.startsWith('size:'))
+            const managed = new Set(catalog.filter(label => label.type || label.name.startsWith('size:'))
               .map(label => label.name));
             const add = [...desired].filter(name => !currentNames.has(name));
             const remove = [...currentNames].filter(name => managed.has(name) && !desired.has(name));

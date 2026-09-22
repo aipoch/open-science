@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { execFileSync } from 'node:child_process'
 
 import { checkCiIntegrityChanges } from './ci/check-ci-integrity.mjs'
 
@@ -26,7 +25,6 @@ const catalog = JSON.parse(catalogText) as {
   color: string
   description: string
   type?: string
-  paths?: string[]
 }[]
 const syncWorkflow = load(
   readFileSync(join(process.cwd(), '.github/workflows/sync-labels.yml'), 'utf8')
@@ -95,6 +93,7 @@ function makeGithub({
         listLabelsForRepo: vi.fn(),
         getLabel: vi.fn(async ({ name }: { name: string }) => ({ data: { name } })),
         updateLabel: vi.fn(),
+        deleteLabel: vi.fn(),
         createLabel: vi.fn(async ({ name }: { name: string }) => {
           created.push(name)
         }),
@@ -126,6 +125,7 @@ type MockGithub = {
       listLabelsForRepo: MockFn
       getLabel: MockFn
       updateLabel: MockFn
+      deleteLabel: MockFn
       createLabel: MockFn
       addLabels: MockFn
       removeLabel: MockFn
@@ -338,8 +338,8 @@ describe('PR classification', () => {
       files: [{ filename: 'src/main/notebook/kernel.ts', additions: 10, deletions: 1 }]
     })
     await runJob('apply_type_labels', pullRequestContext({ title: 'docs(old): old title' }), github)
-    expect(added).toEqual([['bug', 'area:notebook', 'size:S']])
-    expect(removed).toEqual(['enhancement', 'area:ci', 'size:L'])
+    expect(added).toEqual([['bug', 'size:S']])
+    expect(removed).toEqual(['enhancement', 'size:L'])
     expect(github.rest.issues.addLabels.mock.invocationCallOrder[0]).toBeLessThan(
       github.rest.issues.removeLabel.mock.invocationCallOrder[0]
     )
@@ -399,7 +399,7 @@ describe('PR classification', () => {
     expect(added.flat()).toContain('size:L')
   })
 
-  it('classifies both paths of a rename, dot paths and test files', async () => {
+  it('keeps size accounting without labeling areas for source, tests, workflows or renames', async () => {
     const { github, added } = makeGithub({
       files: [
         {
@@ -412,14 +412,7 @@ describe('PR classification', () => {
       ]
     })
     await runJob('apply_type_labels', pullRequestContext(), github)
-    expect(added.flat()).toEqual([
-      'enhancement',
-      'area:notebook',
-      'area:literature',
-      'area:ci',
-      'area:tests',
-      'size:XS'
-    ])
+    expect(added.flat()).toEqual(['enhancement', 'size:XS'])
   })
 
   it('paginates complete file and label lists', async () => {
@@ -451,7 +444,7 @@ describe('PR classification', () => {
     })
     const core = await runJob('apply_type_labels', pullRequestContext(), github)
     expect(added).toEqual([['enhancement']])
-    expect(removed).toEqual(['area:ui', 'size:XXL'])
+    expect(removed).toEqual(['size:XXL'])
     expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Incomplete'))
   })
 
@@ -552,6 +545,67 @@ describe('reset_review_labels', () => {
 })
 
 describe('label catalog synchronization', () => {
+  it('retires only the former area catalog while preserving size and custom labels', async () => {
+    const retired = [
+      'area:ui',
+      'area:agents',
+      'area:notebook',
+      'area:compute',
+      'area:literature',
+      'area:storage',
+      'area:extensions',
+      'area:cli',
+      'area:ci',
+      'area:tests'
+    ]
+    const { github, created } = makeGithub({
+      definitions: [
+        ...catalog,
+        ...[...retired, 'area:custom', 'security', 'ready-to-merge'].map((name) => ({
+          name,
+          color: 'ffffff',
+          description: 'Existing label'
+        }))
+      ]
+    })
+    await runJob('sync', reviewContext(), github)
+    expect(github.rest.issues.deleteLabel.mock.calls.map(([args]) => args)).toEqual(
+      retired.map((name) => ({ ...repo, name }))
+    )
+    expect(created).toEqual([])
+    expect(github.rest.issues.updateLabel).not.toHaveBeenCalled()
+  })
+
+  it('previews retirement without deleting labels and supports already-clean repositories', async () => {
+    for (const dryRun of [true, false]) {
+      const { github } = makeGithub({
+        definitions: dryRun
+          ? [...catalog, { name: 'AREA:UI', color: 'ffffff', description: 'Old area' }]
+          : catalog
+      })
+      const core = await runJob('sync', reviewContext(), github, { LABELS_DRY_RUN: String(dryRun) })
+      expect(github.rest.issues.deleteLabel).not.toHaveBeenCalled()
+      if (dryRun)
+        expect(core.summary.addTable.mock.calls[0][0]).toContainEqual(['AREA:UI', 'delete'])
+    }
+  })
+
+  it('tolerates concurrent retirement but surfaces deletion permission errors', async () => {
+    for (const status of [404, 403]) {
+      const { github } = makeGithub({
+        definitions: [...catalog, { name: 'AREA:UI', color: 'ffffff', description: 'Old area' }]
+      })
+      github.rest.issues.deleteLabel.mockRejectedValueOnce({ status })
+      const run = runJob('sync', reviewContext(), github)
+      if (status === 404) await run
+      else await expect(run).rejects.toMatchObject({ status })
+      expect(github.rest.issues.deleteLabel).toHaveBeenCalledExactlyOnceWith({
+        ...repo,
+        name: 'AREA:UI'
+      })
+    }
+  })
+
   it('creates missing labels, updates managed metadata, and ignores labels outside the catalog', async () => {
     const { github, created } = makeGithub({
       definitions: [
@@ -652,23 +706,20 @@ describe('label configuration contracts', () => {
       expect(label.description.length).toBeGreaterThan(0)
       expect(label.description.length).toBeLessThanOrEqual(100)
       expect(
-        Object.keys(label).every((key) =>
-          ['name', 'color', 'description', 'type', 'paths'].includes(key)
-        )
+        Object.keys(label).every((key) => ['name', 'color', 'description', 'type'].includes(key))
       ).toBe(true)
       expect(
         Boolean(
           label.type ||
-          label.paths ||
           label.name.startsWith('size:') ||
           ['needs-triage', 'reproducibility'].includes(label.name)
         )
       ).toBe(true)
-      if (label.paths) expect(label.name).toMatch(/^area:/)
     }
     expect(
       catalog.filter((label) => label.name.startsWith('size:')).map((label) => label.name)
     ).toEqual(['size:XS', 'size:S', 'size:M', 'size:L', 'size:XL', 'size:XXL'])
+    expect(catalog.some((label) => label.name.startsWith('area:'))).toBe(false)
     const names = catalog.map((label) => label.name)
     for (const name of [
       'notebook',
@@ -680,41 +731,6 @@ describe('label configuration contracts', () => {
       'ci-scheduled-failure'
     ])
       expect(names).not.toContain(name)
-  })
-
-  it('keeps every area glob grounded in tracked files', () => {
-    const paths = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
-      .split('\0')
-      .filter(Boolean)
-    for (const label of catalog.filter((label) => label.paths)) {
-      for (const pattern of label.paths ?? []) {
-        expect(
-          paths.some((path) => posix.matchesGlob(path, pattern)),
-          `${label.name}: ${pattern}`
-        ).toBe(true)
-      }
-    }
-  })
-
-  it.each([
-    ['src/renderer/src/App.tsx', 'area:ui'],
-    ['src/main/acp/runtime.ts', 'area:agents'],
-    ['src/main/agents/agents-service.ts', 'area:agents'],
-    ['src/shared/provider-registry.ts', 'area:agents'],
-    ['src/renderer/src/components/Notebook.tsx', 'area:notebook'],
-    ['src/main/compute/job-repository.ts', 'area:compute'],
-    ['src/main/literature/library.ts', 'area:literature'],
-    ['prisma/schema.prisma', 'area:storage'],
-    ['src/main/connectors/providers/literature.ts', 'area:extensions'],
-    ['packages/open-science/src/index.ts', 'area:cli'],
-    ['.github/labels.json', 'area:ci'],
-    ['src/main/compute/job.test.ts', 'area:tests']
-  ])('maps %s to %s with portable POSIX globs', (path, area) => {
-    expect(
-      catalog
-        .find((label) => label.name === area)
-        ?.paths?.some((pattern) => posix.matchesGlob(path, pattern))
-    ).toBe(true)
   })
 
   it('uses catalog labels in each issue template without adding intake fields', () => {

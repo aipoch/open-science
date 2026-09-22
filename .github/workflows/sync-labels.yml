@@ -47,6 +47,21 @@ jobs:
             });
             const current = new Map(existing.map(label => [label.name.toLowerCase(), label]));
             const rows = [];
+            // Retire only the area labels previously owned by this catalog. Deleting a definition
+            // also removes its assignments from existing PRs/issues; never match arbitrary prefixes.
+            const retired = ['area:ui', 'area:agents', 'area:notebook', 'area:compute',
+              'area:literature', 'area:storage', 'area:extensions', 'area:cli', 'area:ci', 'area:tests'];
+            for (const name of retired) {
+              const label = current.get(name);
+              if (!label || catalog.some(entry => entry.name.toLowerCase() === name)) continue;
+              rows.push([label.name, 'delete']);
+              if (dryRun) continue;
+              try {
+                await github.rest.issues.deleteLabel({ ...repo, name: label.name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
             for (const { name, color, description } of catalog) {
               const label = current.get(name.toLowerCase());
               const action = !label ? 'create' :
