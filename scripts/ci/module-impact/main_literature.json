@@ -1106,9 +1106,15 @@
       "src/main/settings/workflows.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/settings/application-commands.test.ts"
+      "src/main/settings/application-commands.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

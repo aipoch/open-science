@@ -34,7 +34,9 @@
     "src/main/uploads/repository.test-utils.ts",
     "src/main/uploads/storage-helpers.ts"
   ],
-  "consumerModules": ["session_persistence"],
+  "consumerModules": [
+    "session_persistence"
+  ],
   "testFiles": {
     "owner": [
       "src/main/uploads/active-transfer-owner.test.ts",
@@ -467,9 +469,15 @@
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
-      "src/main/settings/codex-bridge-tools.test.ts"
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

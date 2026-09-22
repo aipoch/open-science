@@ -70,7 +70,11 @@
     "src/main/settings/xai-oauth-provider-bridge.ts",
     "src/main/settings/xai-protocol.ts"
   ],
-  "consumerModules": ["settings_service_facade", "reviewer_orchestrator", "artifact_provenance"],
+  "consumerModules": [
+    "settings_service_facade",
+    "reviewer_orchestrator",
+    "artifact_provenance"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -540,9 +544,15 @@
       "src/main/pdf-annotations/repository.integration.test.ts",
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
-      "src/main/session-package/ro-crate.test.ts"
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

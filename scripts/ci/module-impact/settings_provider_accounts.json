@@ -45,7 +45,10 @@
     "src/main/settings/provider-runtime-projection.ts",
     "src/main/settings/validate.ts"
   ],
-  "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
+  "consumerModules": [
+    "settings_backend_resolution",
+    "settings_service_facade"
+  ],
   "testFiles": {
     "owner": [
       "src/main/settings/settings-backend.architecture.test.ts",
@@ -536,9 +539,15 @@
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
-      "src/main/settings/codex-bridge-tools.test.ts"
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

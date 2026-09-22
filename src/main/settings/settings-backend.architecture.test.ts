@@ -1495,7 +1495,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/pdf-annotations/repository.integration.test.ts',
       'src/main/pdf-annotations/service.test.ts',
       'src/main/session-package/ro-crate.integration.test.ts',
-      'src/main/session-package/ro-crate.test.ts'
+      'src/main/session-package/ro-crate.test.ts',
+      'src/main/acp/context-recovery.native.integration.test.ts',
+      'src/main/acp/recovery-text-storage.test.ts'
     ])
     expect(
       [

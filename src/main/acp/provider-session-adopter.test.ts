@@ -24,7 +24,10 @@ import {
   type ShellRuntimeAgentContract
 } from '../notebook/shell-runtime'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
-import { AcpProviderSessionAdopter } from './provider-session-adopter'
+import {
+  AcpProviderSessionAdopter,
+  type AcpProviderSessionAdoptionRequest
+} from './provider-session-adopter'
 import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
@@ -68,6 +71,9 @@ type AdopterHarness = {
 
 const createHarness = (
   options: {
+    prepareCommit?: () => Promise<void>
+    replacement?: AcpProviderSessionAdoptionRequest['replacement']
+    previousSession?: ActiveSession
     configure?: (
       input: Parameters<
         ConstructorParameters<typeof AcpProviderSessionAdopter>[0]['configurator']['configure']
@@ -131,7 +137,22 @@ const createHarness = (
     order.push('registry publish')
     return AcpSessionRegistry.prototype.publish.call(registry, ...args)
   })
+  if (options.previousSession) {
+    const previous = registry.reserve({
+      sessionIds: ['stable-app-session', options.previousSession.sessionId]
+    })
+    if (previous.collision) throw previous.collision
+    registry.publish(previous.reservation, 'stable-app-session', {
+      session: options.previousSession,
+      cwd: '/workspace',
+      projectId: 'project-a',
+      frameworkId: 'opencode',
+      permissionProfile
+    })
+    previous.reservation.release()
+  }
   const reservation = registry.reserve({
+    publishedAppSessionId: options.previousSession ? 'stable-app-session' : undefined,
     sessionIds: ['stable-app-session'],
     mayRenewAfterConnectionSetup: true,
     blockStartup: false
@@ -175,6 +196,7 @@ const createHarness = (
           modelFacingMcpServerNames: servers.map((server) => server.name)
         }
       }),
+      prepareCommit: options.prepareCommit,
       commit,
       release
     }
@@ -219,7 +241,8 @@ const createHarness = (
       projectId: 'project-a',
       identity: reservation.reservation,
       specialistId,
-      specialistBindingPending
+      specialistBindingPending,
+      replacement: options.replacement
     })
   return {
     adopt,
@@ -241,6 +264,123 @@ const createHarness = (
 }
 
 describe('AcpProviderSessionAdopter', () => {
+  it.each(['configure', 'cancel', 'receipt'] as const)(
+    'preserves the previous binding when candidate %s fails',
+    async (failure) => {
+      const previousSession = {
+        sessionId: 'old-provider',
+        dispose: vi.fn()
+      } as unknown as ActiveSession
+      let cancelled = false
+      const harness = createHarness({
+        previousSession,
+        configure: async () => {
+          if (failure === 'configure') throw new Error('configuration failed')
+          return { permissionProfile, appliedModel: undefined, configOptions: undefined }
+        },
+        replacement: {
+          assertCurrent: () => {
+            if (cancelled) throw new Error('cancelled')
+          },
+          onBeforeCommit: async () => {
+            if (failure === 'receipt') throw new Error('receipt failed')
+            cancelled = true
+          },
+          afterPublish: () => previousSession.dispose()
+        }
+      })
+      await expect(harness.adopt()).rejects.toThrow()
+      expect(harness.registry.lookup('stable-app-session')?.attachment?.session).toBe(
+        previousSession
+      )
+      expect(previousSession.dispose).not.toHaveBeenCalled()
+      expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+      expect(harness.commit).not.toHaveBeenCalled()
+    }
+  )
+
+  it('leaves the old binding usable when candidate capability preparation fails', async () => {
+    const previousSession = {
+      sessionId: 'old-provider',
+      dispose: vi.fn()
+    } as unknown as ActiveSession
+    const onBeforeCommit = vi.fn(async () => {})
+    const harness = createHarness({
+      previousSession,
+      prepareCommit: async () => {
+        throw new Error('candidate tools unavailable')
+      },
+      replacement: { assertCurrent: vi.fn(), onBeforeCommit, afterPublish: vi.fn() }
+    })
+    await expect(harness.adopt()).rejects.toThrow('candidate tools unavailable')
+    expect(onBeforeCommit).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment?.session).toBe(previousSession)
+    expect(previousSession.dispose).not.toHaveBeenCalled()
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('rolls back a durable receipt when cancellation wins during its write', async () => {
+    const previousSession = {
+      sessionId: 'old-provider',
+      dispose: vi.fn()
+    } as unknown as ActiveSession
+    const gate = Promise.withResolvers<void>()
+    let cancelled = false
+    const onBeforeCommit = vi.fn(async () => gate.promise)
+    const onCommitFailed = vi.fn(async () => {})
+    const harness = createHarness({
+      previousSession,
+      replacement: {
+        assertCurrent: () => {
+          if (cancelled) throw new Error('cancelled')
+        },
+        onBeforeCommit,
+        onCommitFailed,
+        afterPublish: vi.fn()
+      }
+    })
+    const adoption = harness.adopt()
+    await vi.waitFor(() => expect(onBeforeCommit).toHaveBeenCalledOnce())
+    cancelled = true
+    gate.resolve()
+    await expect(adoption).rejects.toThrow('cancelled')
+    expect(onCommitFailed).toHaveBeenCalledWith('fresh-provider-session', expect.any(Error))
+    expect(harness.registry.lookup('stable-app-session')?.attachment?.session).toBe(previousSession)
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('publishes a ready candidate before releasing the previous provider', async () => {
+    const previousSession = {
+      sessionId: 'old-provider',
+      dispose: vi.fn()
+    } as unknown as ActiveSession
+    const receipt = vi.fn(async () => {
+      expect(harness.registry.lookup('stable-app-session')?.attachment?.session).toBe(
+        previousSession
+      )
+      expect(harness.configure).toHaveBeenCalledOnce()
+    })
+    const harness = createHarness({
+      previousSession,
+      replacement: {
+        assertCurrent: vi.fn(),
+        onBeforeCommit: receipt,
+        afterPublish: () => {
+          expect(harness.registry.lookup('stable-app-session')?.attachment?.session).toBe(
+            harness.providerSession
+          )
+          previousSession.dispose()
+        }
+      }
+    })
+    await harness.adopt()
+    expect(receipt).toHaveBeenCalledWith('fresh-provider-session')
+    expect(previousSession.dispose).toHaveBeenCalledOnce()
+    expect(harness.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ isolatedRouting: true })
+    )
+  })
+
   it('rejects Codex adoption when the Specialist scope changes before publication', async () => {
     const pending = Promise.withResolvers<ConfigurationFacts>()
     const harness = createHarness({

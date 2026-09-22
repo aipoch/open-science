@@ -42,6 +42,7 @@ type AcpSessionDeletion = Readonly<{
 type IdentityEpoch = { value: number; deletions: number; reservations: number }
 type ReservationState = {
   blocked: boolean
+  publishedAppSessionId?: string
   deletionEpochs: Map<string, number>
   generation: number
   mayRenewAfterConnectionSetup: boolean
@@ -127,7 +128,7 @@ class AcpSessionRegistry {
       return (
         (pendingOwner !== undefined && pendingOwner !== state?.token) ||
         (this.records.get(sessionId)?.attachment !== undefined &&
-          sessionId !== request.publishedAppSessionId) ||
+          sessionId !== (request.publishedAppSessionId ?? state?.publishedAppSessionId)) ||
         this.providerAliases.has(sessionId)
       )
     })
@@ -139,6 +140,7 @@ class AcpSessionRegistry {
       state ??
       ({
         blocked: request.blockStartup !== false,
+        publishedAppSessionId: request.publishedAppSessionId,
         deletionEpochs: new Map(),
         generation,
         mayRenewAfterConnectionSetup: request.mayRenewAfterConnectionSetup ?? false,
@@ -163,7 +165,8 @@ class AcpSessionRegistry {
   publish(
     reservation: AcpPrimarySessionIdentityReservation,
     appSessionId: string,
-    input: AcpSessionAggregateAttachInput
+    input: AcpSessionAggregateAttachInput,
+    options?: { moveToEnd?: boolean }
   ): AcpSessionRegistryEntry {
     const state = this.assertReservation(reservation)
     if (!state.sessionIds.has(appSessionId) || !state.sessionIds.has(input.session.sessionId)) {
@@ -183,7 +186,8 @@ class AcpSessionRegistry {
       generation: record.generation,
       session: input.session
     })
-    if (this.records.has(appSessionId) && !wasAttached) this.records.delete(appSessionId)
+    if (this.records.has(appSessionId) && (!wasAttached || options?.moveToEnd))
+      this.records.delete(appSessionId)
     this.records.set(appSessionId, record)
     if (input.session.sessionId !== appSessionId) {
       this.providerAliases.set(input.session.sessionId, {

@@ -6076,6 +6076,12 @@
     "The selected file already exists. Choose a new filename.": "선택한 파일이 이미 있습니다. 새 파일 이름을 지정하세요.",
     "Diagnostic operation timed out.": "진단 작업 시간이 초과되었습니다.",
     "Temporary diagnostic files could not be fully removed.": "임시 진단 파일을 완전히 삭제하지 못했습니다.",
-    "Choose a new .tar.gz file.": "새 .tar.gz 파일을 선택하세요."
+    "Choose a new .tar.gz file.": "새 .tar.gz 파일을 선택하세요.",
+    "Recovering session…": "세션 복구 중…",
+    "Session context needs recovery": "세션 컨텍스트를 복구해야 합니다",
+    "Your conversation and files are preserved. Recovery prepares a smaller context so work can continue.": "대화와 파일은 보존됩니다. 작업을 계속할 수 있도록 복구 시 더 작은 컨텍스트를 준비합니다.",
+    "Recover session": "세션 복구",
+    "Recovery was interrupted. Recover the session to continue.": "복구가 중단되었습니다. 계속하려면 세션을 복구하세요.",
+    "The previous recovery may have executed operations. Verify their results before continuing.": "이전 복구에서 작업이 실행되었을 수 있습니다. 결과를 확인한 후 계속하세요."
   }
 }

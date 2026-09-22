@@ -5,6 +5,7 @@ import { createLogger } from '../logger'
 import { AcpAppContinuationOwner } from './app-continuation-owner'
 import { AcpClientInteractionOwner } from './client-interaction-owner'
 import { AcpContextUsagePolicy } from './context-usage-policy'
+import { ContextUsageTracker } from './context-usage-tracker'
 import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 import { AcpElicitationOwner } from './elicitation-owner'
 import { AcpPermissionContext } from './permission-context'
@@ -154,6 +155,18 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     systemPromptAppends: () => sessionEnvironment.systemPromptAppends(),
     tooling: () => sessionEnvironment.toolingAvailability()
   })
+  const recoveryBudget = (sessionId: string) => {
+    const resolution = contextUsagePolicy.resolve(sessionId)
+    const estimator = new ContextUsageTracker()
+    estimator.beginSession(sessionId, resolution.estimateInput)
+    const usage = base.contextUsageTracker.usage(sessionId)
+    return {
+      contextWindowTokens: resolution.selectedWindow ?? usage?.size ?? 0,
+      fixedOverheadTokens:
+        (estimator.estimate(sessionId)?.estimatedTokens ?? 0) +
+        Math.max(0, usage?.breakdown?.difference ?? 0)
+    }
+  }
   const durableContinuationContext = new AcpDurableContinuationContextOwner(
     options.permissionWait?.sessions,
     options.permissionWait?.onContinuationSessionUpdated
@@ -373,6 +386,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     sessionRegistry,
     sessionEnvironment,
     contextUsagePolicy,
+    recoveryBudget,
     publication,
     appContinuations,
     elicitationOwner,

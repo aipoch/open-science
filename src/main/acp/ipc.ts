@@ -9,6 +9,7 @@ import {
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
+  AcpRecoverSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpContinueInterruptedTurnRequest,
@@ -81,6 +82,13 @@ const registerAcpIpcHandlerSet = (
           bindResumeRequestToProject(request, projectId),
           resolveMemoryEnabled
         )
+      )
+    )
+  )
+  ipcMainHandle('acp:recover-session', (_event, request: AcpRecoverSessionRequest) =>
+    stateCommand(
+      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+        runtime.recoverSession({ sessionId: request.sessionId })
       )
     )
   )

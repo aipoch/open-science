@@ -6078,6 +6078,12 @@
     "The selected file already exists. Choose a new filename.": "選択したファイルは既に存在します。別のファイル名を指定してください。",
     "Diagnostic operation timed out.": "診断処理がタイムアウトしました。",
     "Temporary diagnostic files could not be fully removed.": "一時診断ファイルを完全に削除できませんでした。",
-    "Choose a new .tar.gz file.": "新しい .tar.gz ファイルを選択してください。"
+    "Choose a new .tar.gz file.": "新しい .tar.gz ファイルを選択してください。",
+    "Recovering session…": "セッションを復旧中…",
+    "Session context needs recovery": "セッションのコンテキストを復旧する必要があります",
+    "Your conversation and files are preserved. Recovery prepares a smaller context so work can continue.": "会話とファイルは保持されています。作業を続行できるように、復旧時にコンテキストを小さくします。",
+    "Recover session": "セッションを復旧",
+    "Recovery was interrupted. Recover the session to continue.": "復旧が中断されました。続行するにはセッションを復旧してください。",
+    "The previous recovery may have executed operations. Verify their results before continuing.": "前回の復旧で操作が実行された可能性があります。結果を確認してから続行してください。"
   }
 }

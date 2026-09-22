@@ -93,6 +93,7 @@ const useAcpRuntime = (): {
     permissionProfile?: PermissionProfileId,
     memoryEnabled?: boolean
   ) => Promise<AcpCreateSessionResponse>
+  recoverSession: (sessionId: string) => Promise<AcpRuntimeState>
   compactSession: (
     sessionId: string,
     reason?: 'manual' | 'overflow-recovery'
@@ -425,6 +426,11 @@ const useAcpRuntime = (): {
     [runValueAction]
   )
 
+  const recoverSession = useCallback(
+    (sessionId: string) => runSendPromptAction(() => window.api.acp.recoverSession({ sessionId })),
+    [runSendPromptAction]
+  )
+
   // Asks the active agent framework to compact its own session context.
   const compactSession = useCallback(
     (sessionId: string, reason?: 'manual' | 'overflow-recovery') =>
@@ -573,6 +579,7 @@ const useAcpRuntime = (): {
     continueInterruptedTurn,
     resetSessionContext,
     compactSession,
+    recoverSession,
     deleteSession,
     cancel,
     steerFollowUp,

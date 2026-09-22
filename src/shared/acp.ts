@@ -745,6 +745,23 @@ export type DelegatedWorkUnavailableReason =
   | Readonly<{ kind: 'delegation-disabled'; reason: string }>
   | Readonly<{ kind: 'unavailable'; reason: string }>
 
+export type AcpContextRecoveryState = Readonly<{
+  canRetry?: boolean
+  phase:
+    | 'compacting'
+    | 'preparing'
+    | 'replacing'
+    | 'continuing'
+    | 'ready'
+    | 'completed'
+    | 'blocked'
+    | 'cancelled'
+    | 'failed'
+  reason?: string
+}>
+
+export type AcpRecoverSessionRequest = Readonly<{ sessionId: string }>
+
 export type AcpRuntimeState = {
   // Main-owned construction order lets the renderer reject delayed older IPC snapshots. It is
   // transient runtime state and is not persisted with Session data.
@@ -777,6 +794,9 @@ export type AcpRuntimeState = {
   // Sessions whose attached framework exposes a native compaction control turn. Missing is accepted
   // from an older main process during a rolling dev reload.
   nativeContextCompactionSessionIds?: string[]
+  // Main owns recovery for these sessions; renderer must not start a competing retry.
+  contextRecoverySessionIds?: string[]
+  contextRecoveryBySession?: Record<string, AcpContextRecoveryState>
   promptInFlight: boolean
   // Prompt-only ownership for first-output UI. `promptInFlightSessionIds` remains the broader
   // interaction lock and also contains framework compaction control turns.

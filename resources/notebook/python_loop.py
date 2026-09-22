@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import reprlib
 import sys
 import traceback
@@ -112,6 +113,7 @@ def _restore_python_random_state(value):
 # Protocol output must survive user code that reassigns fd 1; keep a private handle to the real stdout.
 _protocol_out = os.fdopen(os.dup(1), "w", buffering=1)
 _figures_dir = os.environ.get("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
+_output_root = os.environ.get("OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR", "")
 _text_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES", 2 * 1024 * 1024))
 _diagnostic_limit = min(16 * 1024, max(0, _text_limit))
 _figure_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", int(3.5 * 1024 * 1024)))
@@ -123,12 +125,16 @@ _namespace_response_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_NAMESPACE_
 
 
 class _OutputBudget:
-    def __init__(self, limit=_text_limit):
+    def __init__(self, limit=_text_limit, output_file=None):
+        self.output_file = output_file
         self.remaining = max(0, limit)
         self.truncated = False
 
     def take(self, value):
         value = str(value)
+        if self.output_file is not None:
+            self.output_file.write(value)
+            self.output_file.flush()
         if self.remaining <= 0:
             self.truncated = self.truncated or bool(value)
             return ""
@@ -148,6 +154,9 @@ class _OutputBudget:
 
     def take_tail(self, value):
         value = str(value)
+        if self.output_file is not None:
+            self.output_file.write(value)
+            self.output_file.flush()
         if self.remaining <= 0:
             self.truncated = self.truncated or bool(value)
             return ""
@@ -848,12 +857,12 @@ def _capture_environment(execution_context=None):
 # Runs one request against the persistent namespace: execs all but a trailing bare expression, then
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
-def _run(code, replay_random_state=None):
+def _run(code, replay_random_state=None, output_file=None):
     if replay_random_state is not None:
         _restore_python_random_state(replay_random_state)
     context_before = _capture_execution_context()
-    output_budget = _OutputBudget(_text_limit - _diagnostic_limit)
-    diagnostic_budget = _OutputBudget(_diagnostic_limit)
+    output_budget = _OutputBudget(_text_limit - _diagnostic_limit, output_file)
+    diagnostic_budget = _OutputBudget(_diagnostic_limit, output_file)
     out, err = _BudgetTextIO(output_budget), _BudgetTextIO(output_budget)
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
@@ -919,7 +928,17 @@ def main():
                 response = {"namespace": _inspect_namespace(request.get("include_private") is True)}
             else:
                 install_protected_paths_policy(request.get("protected_dirs", []))
-                response = _run(request.get("code", ""), request.get("python_random_state"))
+                output_root = _output_root
+                if output_root and isinstance(req_id, str) and re.fullmatch(r"[A-Za-z0-9_-]+", req_id):
+                    with open(os.path.join(output_root, req_id + ".txt"), "x", encoding="utf-8", errors="replace") as output_file:
+                        response = _run(request.get("code", ""), request.get("python_random_state"), output_file)
+                        output_file.flush()
+                        os.fsync(output_file.fileno())
+                    with open(os.path.join(output_root, req_id + ".complete"), "x") as receipt:
+                        receipt.flush()
+                        os.fsync(receipt.fileno())
+                else:
+                    response = _run(request.get("code", ""), request.get("python_random_state"))
             response["req_id"] = req_id
             _protocol_out.write(json.dumps(response, separators=(",", ":")) + "\n")
             _protocol_out.flush()

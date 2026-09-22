@@ -1,3 +1,4 @@
+import { notebookOutputRequestId } from '../notebook/output-storage'
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import {
   packageLiteratureSchema,
@@ -504,6 +505,17 @@ export const remapStorageKey = (key: string, identities: Record<string, string>)
     segments[3] === 'frames'
   ) {
     map(4)
+  }
+  if (segments[0] === 'notebooks' && segments[3] === 'outputs' && segments.length === 5) {
+    const suffix = /\.(txt|complete)$/.exec(segments[4])?.[0]
+    if (suffix) {
+      for (const [source, target] of Object.entries(identities)) {
+        if (segments[4] === notebookOutputRequestId(source) + suffix) {
+          segments[4] = notebookOutputRequestId(target) + suffix
+          break
+        }
+      }
+    }
   }
   // Data filenames are not identities, even when a researcher named a file after a Session id.
   return segments.join('/')

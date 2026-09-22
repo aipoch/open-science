@@ -1971,3 +1971,51 @@ it.each(['current', 'historical'] as const)(
     }
   }
 )
+
+it('keeps managed recovery evidence on the reference-only path and registers the readable upload', async () => {
+  const root = await createRoot()
+  const uploads = new UploadRepository(root)
+  const original = JSON.stringify({
+    role: 'user',
+    content: 'UNIQUE_FULL_RECOVERY_TEXT'.repeat(10000)
+  })
+  const [attachment] = await stageUploadFixtures(uploads, {
+    files: [
+      {
+        name: 'recovery-evidence.jsonl',
+        mimeType: 'application/vnd.open-science.recovery+jsonl',
+        content: Buffer.from(original).toString('base64')
+      }
+    ]
+  })
+  const owner = new AcpPromptContentOwner({
+    uploadRepository: uploads,
+    fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+  })
+  const prepared = await owner.prepare({
+    appSessionId: 'recovery-session',
+    projectId: 'default-project',
+    text: 'Continue the task.',
+    historyImages: [],
+    historyUploads: [],
+    currentUploads: [attachment],
+    references: [],
+    codexSkillInputs: [],
+    skillImportEnabled: false
+  })
+  try {
+    expect(JSON.stringify(prepared.content)).not.toContain('UNIQUE_FULL_RECOVERY_TEXT')
+    expect(JSON.stringify(prepared.content)).toContain('recovery-evidence.jsonl')
+    const registered = prepared.turnInputs?.uploads[0]
+    expect(registered?.id).toBe(attachment.id)
+    expect(registered).toBeDefined()
+    const path = await uploads.resolveSessionUploadPath(
+      'recovery-session',
+      { path: registered!.path },
+      'default-project'
+    )
+    expect(await readFile(path, 'utf8')).toBe(original)
+  } finally {
+    prepared.close()
+  }
+})

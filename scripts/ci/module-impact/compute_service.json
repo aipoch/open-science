@@ -157,7 +157,9 @@
     "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.tsx",
     "src/renderer/src/lib/compute/useSessionJobHydration.ts"
   ],
-  "consumerModules": ["workspace_page"],
+  "consumerModules": [
+    "workspace_page"
+  ],
   "testFiles": {
     "owner": [
       "src/main/compute/approval-session-lifecycle.test.ts",
@@ -560,9 +562,15 @@
       "src/main/settings/backend-route-planner.test.ts",
       "src/main/settings/claude-provider-configuration.integration.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
-      "src/main/settings/provider-transport-owner.test.ts"
+      "src/main/settings/provider-transport-owner.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

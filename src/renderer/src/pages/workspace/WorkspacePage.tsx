@@ -68,6 +68,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { recoveryStateForDisplay } from './context-recovery-presentation'
 import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
@@ -275,6 +276,8 @@ const WorkspacePage = ({
     saveAsSkillInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
     compactContext,
+    recoverSession,
+    contextRecoveryBySession = {},
     respondToPermission,
     setPermissionProfile,
     revokePermissionGrant
@@ -590,6 +593,16 @@ const WorkspacePage = ({
   const activeContextUsage = activeSession
     ? (contextUsageBySession?.[activeSession.id] ?? activeSession.contextUsage)
     : undefined
+  const activeContextRecovery = recoveryStateForDisplay(
+    activeSession ? contextRecoveryBySession[activeSession.id] : undefined,
+    activeSession?.runtimeContext?.contextRecovery,
+    {
+      interrupted: t('Recovery was interrupted. Recover the session to continue.'),
+      unknownOutcome: t(
+        'The previous recovery may have executed operations. Verify their results before continuing.'
+      )
+    }
+  )
   const activeSessionSupportsNativeCompaction = activeSession
     ? nativeContextCompactionSessionIds?.includes(activeSession.id) === true
     : false
@@ -1539,7 +1552,12 @@ const WorkspacePage = ({
                   usage: activeContextUsage,
                   canCompact: canCompactContext,
                   compactDisabledReason: compactContextDisabledReason,
-                  compact: compactActiveContext
+                  compact: compactActiveContext,
+                  recovery: activeContextRecovery,
+                  recover:
+                    activeSession && recoverSession
+                      ? () => recoverSession(activeSession.id)
+                      : undefined
                 }}
                 workflows={{
                   artifactFinalization: {

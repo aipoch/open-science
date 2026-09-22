@@ -1,3 +1,8 @@
+import {
+  ensureNotebookOutputDirectory,
+  notebookOutputDirectory,
+  notebookOutputRequestId
+} from './output-storage'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -621,7 +626,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         throw proc.terminationError ?? new Error('Notebook kernel process exited before execution.')
       }
 
-      const reqId = randomUUID()
+      const reqId = request.runId ? notebookOutputRequestId(request.runId) : randomUUID()
       const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
         kernelDispatched = true
       })
@@ -955,6 +960,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   }> {
     assertProcessTreeSupport(this.platform)
     const figuresDir = this.ensureFiguresDir()
+    if (request.notebookSessionRoot) ensureNotebookOutputDirectory(request.notebookSessionRoot)
     // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
     const workloadCacheEnv = request.runtimeRoot
       ? prepareNotebookWorkloadCache(request.runtimeRoot)
@@ -1061,6 +1067,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
               : {}),
             readWriteRoots: presentPaths([
               request.notebookSessionRoot,
+              spawnEnv.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR ?? '',
               request.cwd,
               figuresDir,
               ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
@@ -1259,6 +1266,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // host environment and would bypass the environment-isolation policy below.
       MPLBACKEND: 'Agg',
       OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
+      OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: request.notebookSessionRoot
+        ? notebookOutputDirectory(request.notebookSessionRoot)
+        : '',
       OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
       OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot,
       // Cross-kernel workspace channel (see repository.ts): same path every kernel kind sees.

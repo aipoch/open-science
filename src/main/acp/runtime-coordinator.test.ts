@@ -1,3 +1,6 @@
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
+import { admitContextRecoveryContinuation } from '../session-persistence/context-recovery-admission'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
@@ -5880,4 +5883,364 @@ it('queries Side chat interaction authority on the session owner after framework
   expect(checks[1]).toHaveBeenCalledWith(current.sessionId)
   oldPrompt.resolve({ stopReason: 'end_turn' })
   await turn
+})
+
+describe('Main context recovery integration', () => {
+  it.each(['replacing', 'ready'] as const)(
+    'never falls back to normal resume when a %s candidate cannot be loaded',
+    async (phase) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const strictLoads: Array<
+        ReturnType<
+          typeof vi.fn<
+            (
+              request: import('../../shared/acp').AcpResumeSessionRequest
+            ) => Promise<import('../../shared/acp').AcpCreateSessionResponse>
+          >
+        >
+      > = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: ['candidate-session'],
+          callbacks
+        })
+        const strict = vi.fn(
+          async (
+            request: import('../../shared/acp').AcpResumeSessionRequest
+          ): Promise<import('../../shared/acp').AcpCreateSessionResponse> => {
+            expect(request.providerSessionId).toBe('recorded-candidate')
+            throw new Error('Candidate not found')
+          }
+        )
+        fake.runtime.resumeExistingSession = strict
+        // Ordinary resume would create a replacement in a real resumer. It must not be reached.
+        fake.resumeSession.mockRejectedValue(new Error('unsafe ordinary fallback was reached'))
+        strictLoads.push(strict)
+        created.push(fake)
+        return fake.runtime
+      })
+      let durable: PersistedChatSession = {
+        id: 'candidate-session',
+        projectId: 'project',
+        title: 'Task',
+        cwd: '/workspace',
+        status: 'error',
+        agentFrameworkId: 'opencode',
+        providerSessionId: phase === 'ready' ? 'recorded-candidate' : 'old-provider',
+        agentConfiguration: { providerId: 'saved', model: 'model', reasoningEffort: 'medium' },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          contextRecovery: {
+            version: 1,
+            id: 'episode',
+            sourceBranch: JSON.stringify([undefined, undefined, undefined]),
+            sourceRevision: 1,
+            compactAttempts: 1,
+            replacementAttempts: 1,
+            candidateProviderSessionId: 'recorded-candidate',
+            oldProviderSessionId: 'old-provider',
+            phase
+          }
+        }
+      }
+      coordinator.setContextRecoveryDependencies({
+        load: async () => structuredClone(durable),
+        save: async (_id, record, providerSessionId) => {
+          durable = {
+            ...durable,
+            ...(providerSessionId ? { providerSessionId } : {}),
+            runtimeContext: { version: 1, revision: 2, contextRecovery: record }
+          }
+        },
+        prepare: () => ({ status: 'blocked', reason: 'Should not prepare during restart' })
+      })
+      const request = {
+        sessionId: durable.id,
+        cwd: durable.cwd,
+        projectId: durable.projectId,
+        providerSessionId: 'old-provider'
+      }
+      await expect(coordinator.resumeSession(request)).rejects.toThrow(
+        'could not be safely adopted'
+      )
+      await expect(coordinator.resumeSession(request)).rejects.toThrow(
+        'could not be safely adopted'
+      )
+      expect(strictLoads.reduce((sum, load) => sum + load.mock.calls.length, 0)).toBe(1)
+      expect(
+        created.every(
+          (fake) =>
+            fake.resumeSession.mock.calls.length === 0 &&
+            fake.createSession.mock.calls.length === 0 &&
+            fake.resetSessionContext.mock.calls.length === 0
+        )
+      ).toBe(true)
+      expect(durable.runtimeContext?.contextRecovery?.candidateProviderSessionId).toBe(
+        'recorded-candidate'
+      )
+      expect(durable.providerSessionId).toBe(
+        phase === 'ready' ? 'recorded-candidate' : 'old-provider'
+      )
+    }
+  )
+
+  it.each([false, true])(
+    'strictly loads a detached saved session before manual recovery (load failure: %s)',
+    async (loadFails) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const strictLoads: ReturnType<typeof vi.fn>[] = []
+      let attached = false
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: ['detached'],
+          callbacks
+        })
+        const strictLoad = vi.fn(
+          async (request: import('../../shared/acp').AcpResumeSessionRequest) => {
+            expect(request.providerSessionId).toBe('saved-provider')
+            expect(request.agentTarget).toEqual({
+              frameworkId: 'opencode',
+              providerId: 'saved-config',
+              model: 'saved-model',
+              reasoningEffort: 'medium'
+            })
+            if (loadFails) throw new Error('Saved provider session unavailable')
+            const result = await fake.runtime.resumeSession(request)
+            attached = true
+            return result
+          }
+        )
+        fake.runtime.resumeExistingSession = strictLoad
+        Object.assign(fake.runtime, {
+          recoveryBudget: () =>
+            attached ? { contextWindowTokens: 16000, fixedOverheadTokens: 1000 } : undefined
+        })
+        fake.resetSessionContext.mockImplementation(async (...args: unknown[]) => {
+          const hooks = args[1] as NonNullable<Parameters<AcpRuntime['resetSessionContext']>[1]>
+          await hooks.onCandidateCreated?.('replacement-provider')
+          await hooks.onBeforeCommit?.('replacement-provider')
+          return {
+            sessionId: 'detached',
+            cwd: '/workspace',
+            frameworkId: 'opencode',
+            contextReset: true
+          }
+        })
+        created.push(fake)
+        strictLoads.push(strictLoad)
+        return fake.runtime
+      })
+      let durable: PersistedChatSession = {
+        id: 'detached',
+        projectId: 'project',
+        title: 'Finished task',
+        cwd: '/workspace',
+        status: 'error',
+        agentFrameworkId: 'opencode',
+        providerSessionId: 'saved-provider',
+        agentConfiguration: {
+          providerId: 'saved-config',
+          model: 'saved-model',
+          reasoningEffort: 'medium'
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const prepare = vi.fn(() => {
+        expect(coordinator.getRecoveryBudget('detached')).toEqual({
+          contextWindowTokens: 16000,
+          fixedOverheadTokens: 1000
+        })
+        return {
+          status: 'ready' as const,
+          text: 'Finished historical task',
+          historyText: 'Finished historical task',
+          estimatedTokens: 10
+        }
+      })
+      coordinator.setContextRecoveryDependencies({
+        load: async () => structuredClone(durable),
+        save: async (_id, record, providerSessionId) => {
+          durable = {
+            ...durable,
+            ...(providerSessionId ? { providerSessionId } : {}),
+            runtimeContext: { version: 1, revision: 1, contextRecovery: record }
+          }
+        },
+        prepare
+      })
+      expect(coordinator.getRecoveryBudget('detached')).toBeUndefined()
+      const state = await coordinator.recoverSession({ sessionId: 'detached' })
+      expect(strictLoads.reduce((sum, load) => sum + load.mock.calls.length, 0)).toBe(1)
+      expect(created.every((fake) => fake.createSession.mock.calls.length === 0)).toBe(true)
+      expect(created.every((fake) => fake.sendAppContinuation.mock.calls.length === 0)).toBe(true)
+      expect(
+        created.reduce((sum, fake) => sum + fake.resetSessionContext.mock.calls.length, 0)
+      ).toBe(loadFails ? 0 : 1)
+      expect(state.contextRecoveryBySession?.detached.phase).toBe(loadFails ? 'failed' : 'ready')
+      expect(prepare).toHaveBeenCalledTimes(loadFails ? 0 : 1)
+      expect(durable.providerSessionId).toBe(loadFails ? 'saved-provider' : 'replacement-provider')
+    }
+  )
+
+  it('replaces an exhausted OpenCode context and continues the same durable user turn without renderer orchestration', async () => {
+    let fake!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      fake = createFakeRuntime({
+        frameworkId: 'opencode',
+        sessionIds: ['session-recovery'],
+        callbacks
+      })
+      return fake.runtime
+    })
+    await coordinator.createSession({ projectId: 'project' })
+    const user = {
+      id: 'prompt',
+      role: 'user' as const,
+      content: 'Finish the measured analysis',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    let durable: PersistedChatSession = {
+      id: 'session-recovery',
+      projectId: 'project',
+      title: 'Analysis',
+      cwd: '/workspace',
+      status: 'error',
+      agentFrameworkId: 'opencode',
+      messages: [user],
+      createdAt: 1,
+      updatedAt: 1,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-recovery',
+        messages: [user],
+        frameworkId: 'opencode',
+        createdAt: 1,
+        updatedAt: 1
+      })
+    }
+    const originalMessage = structuredClone(durable.conversationGraph!.messages[0])
+    const runtimeSessions = new RuntimeSessionOwner({
+      loadSession: async () => structuredClone(durable),
+      mutateSession: async (_scope, mutate) => {
+        durable = mutate(structuredClone(durable))
+        return structuredClone(durable)
+      },
+      finalizeArtifacts: async () => [],
+      scheduleFlush: () => () => undefined,
+      now: () => 100
+    })
+    coordinator.setContextRecoveryDependencies({
+      load: async () => structuredClone(durable),
+      save: async (_sessionId, record, providerSessionId) => {
+        durable = {
+          ...durable,
+          ...(providerSessionId ? { providerSessionId } : {}),
+          runtimeContext: {
+            version: 1,
+            revision: (durable.runtimeContext?.revision ?? 0) + 1,
+            contextRecovery: record
+          }
+        }
+      },
+      prepare: () => ({
+        status: 'ready',
+        text: 'Continue the measured analysis with preserved results',
+        historyText: 'Continue the measured analysis with preserved results',
+        estimatedTokens: 20,
+        pendingPromptMessageId: 'prompt'
+      }),
+      admitContinuation: async (request) => {
+        const admitted = admitContextRecoveryContinuation(durable, request, 100)
+        durable = admitted.session
+        return admitted.request
+      }
+    })
+    fake.resetSessionContext.mockImplementation(async (...args: unknown[]) => {
+      const hooks = args[1] as NonNullable<Parameters<AcpRuntime['resetSessionContext']>[1]>
+      await hooks.onCandidateCreated?.('provider-new')
+      await hooks.onBeforeCommit?.('provider-new')
+      hooks.assertCurrent?.()
+      return {
+        sessionId: 'session-recovery',
+        frameworkId: 'opencode',
+        cwd: '/workspace',
+        contextReset: true
+      }
+    })
+    fake.sendPrompt.mockRejectedValue(
+      new Error(
+        'Session too large to compact - context exceeds model limit even after stripping media'
+      )
+    )
+    fake.sendAppContinuation.mockImplementation(async (request: AcpPromptRequest) => {
+      const path = request.provenanceContext!
+      expect(durable.activeRun?.promptMessageId).toBe('prompt')
+      expect(durable.providerSessionId).toBe('provider-new')
+      await runtimeSessions.begin(
+        {
+          projectId: 'project',
+          sessionId: durable.id,
+          executionId: 'actual-recovery-execution',
+          promptMessageId: path.promptMessageId,
+          agentFrameId: path.agentFrameId!,
+          messageBranchId: path.messageBranchId!,
+          runtimeSegmentId: path.runtimeSegmentId!
+        },
+        { providerSessionId: 'provider-new', agentFrameworkId: 'opencode' }
+      )
+      runtimeSessions.accept({
+        id: 'answer',
+        kind: 'message',
+        level: 'info',
+        role: 'assistant',
+        sessionId: durable.id,
+        promptMessageId: 'prompt',
+        messageId: 'recovery-answer',
+        text: 'The measured result is 42.',
+        timestamp: 101
+      })
+      runtimeSessions.accept({
+        id: 'stop',
+        kind: 'stop',
+        level: 'info',
+        sessionId: durable.id,
+        promptMessageId: 'prompt',
+        title: 'Prompt stopped',
+        timestamp: 102
+      })
+      await runtimeSessions.flush(durable.id, 'prompt')
+      return { stopReason: 'end_turn' }
+    })
+    const result = await coordinator.sendPrompt({
+      sessionId: durable.id,
+      text: user.content,
+      provenanceContext: { promptMessageId: 'prompt' }
+    })
+    expect(result.stopReason).toBe('end_turn')
+    expect(fake.compactSession).not.toHaveBeenCalled()
+    expect(fake.resetSessionContext).toHaveBeenCalledTimes(1)
+    expect(fake.sendAppContinuation).toHaveBeenCalledTimes(1)
+    expect(durable.activeRun).toBeUndefined()
+    expect(durable.status).toBe('idle')
+    expect(durable.conversationGraph!.messages.find(({ id }) => id === 'prompt')).toEqual(
+      originalMessage
+    )
+    expect(durable.conversationGraph!.messages.filter(({ role }) => role === 'user')).toHaveLength(
+      1
+    )
+    expect(durable.messages.some(({ content }) => content === 'The measured result is 42.')).toBe(
+      true
+    )
+    expect(coordinator.getState().contextRecoveryBySession?.[durable.id]?.phase).toBe('completed')
+  })
 })

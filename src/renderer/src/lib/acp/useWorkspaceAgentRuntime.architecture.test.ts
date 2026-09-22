@@ -480,6 +480,8 @@ const hookKeys = [
   'permissionProfiles',
   'permissionGrants',
   'contextUsageBySession',
+  'contextRecoveryBySession',
+  'recoverSession',
   'delegatedWorkUnavailableBySession',
   'promptInFlightSessionIds',
   'sendPreparationInFlightSessionIds',
@@ -619,7 +621,8 @@ describe('workspace runtime architecture', () => {
       resumeSession: 1,
       respondToPermission: 1,
       revokePermissionGrant: 1,
-      steerFollowUp: 2
+      steerFollowUp: 2,
+      recoverSession: 1
     })
     const effects = effectBodies(facadeFile)
     for (const responsibility of [

@@ -468,6 +468,7 @@ describe('ACP module transport seam', () => {
       'acp:disconnect',
       'acp:get-plan-projection',
       'acp:get-state',
+      'acp:recover-session',
       'acp:reset-session-context',
       'acp:resume-session',
       'acp:revoke-permission-grant',
@@ -1352,6 +1353,38 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     resumeSession.mockRejectedValueOnce(failure)
 
     await expect(handlers.get('acp:resume-session')?.({}, request)).rejects.toBe(failure)
+  })
+})
+
+describe('installAcpIpcHandlers — context recovery bridge', () => {
+  it('binds recovery to an available Session and strips renderer-supplied recovery controls', async () => {
+    const recoverSession = vi
+      .fn()
+      .mockResolvedValue({ revision: 1, status: 'idle', cwd: '/workspace' })
+    installAcpIpcHandlers({ recoverSession } as never, {} as never, passThroughSessionAdmission)
+    await handlers.get('acp:recover-session')?.(
+      {},
+      {
+        sessionId: 's-1',
+        phase: 'completed',
+        attempts: 0,
+        text: 'untrusted override'
+      }
+    )
+    expect(recoverSession).toHaveBeenCalledWith({ sessionId: 's-1' })
+  })
+
+  it('does not start recovery for an unavailable Session', async () => {
+    const recoverSession = vi.fn()
+    installAcpIpcHandlers({ recoverSession } as never, {} as never, {
+      withSessionAvailableById: async () => {
+        throw new Error('Session is unavailable')
+      }
+    })
+    await expect(
+      handlers.get('acp:recover-session')?.({}, { sessionId: 'deleted' })
+    ).rejects.toThrow('Session is unavailable')
+    expect(recoverSession).not.toHaveBeenCalled()
   })
 })
 

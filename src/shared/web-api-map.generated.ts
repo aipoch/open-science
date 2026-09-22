@@ -10,6 +10,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.disconnect': 'acp:disconnect',
   'acp.getPlanProjection': 'acp:get-plan-projection',
   'acp.getState': 'acp:get-state',
+  'acp.recoverSession': 'acp:recover-session',
   'acp.resetSessionContext': 'acp:reset-session-context',
   'acp.respondPlan': 'acp:respond-plan',
   'acp.respondToElicitation': 'acp:respond-elicitation',

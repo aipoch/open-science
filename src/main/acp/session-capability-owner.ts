@@ -223,6 +223,7 @@ export type ProvisionSessionCapabilitiesRequest = Omit<
   | 'wslSetupEnabled'
 > & {
   stableAppSessionId?: string
+  isolatedRouting?: boolean
   literatureEnabled?: boolean
   setupSessionToken?: string
 }
@@ -241,6 +242,7 @@ export type SessionCapabilityProvision = Readonly<{
   wslSetup?: true
   includeFrameworkMcpServers: (servers: readonly McpServer[]) => SessionCapabilities
   prepareCommit?: (appSessionId: string) => Promise<void>
+  assertCurrent?: () => void
   commit: (appSessionId: string) => void
   release: (ownershipFacts: SessionCapabilityOwnershipFacts) => void | Promise<void>
 }>
@@ -380,7 +382,9 @@ export class AcpSessionCapabilityOwner {
         request.stableAppSessionId &&
         (await this.options.wslSetupSessions?.isBound(request.stableAppSessionId))
       )
-    const routingIds = this.createRoutingIds(request.stableAppSessionId)
+    const routingIds = this.createRoutingIds(
+      request.isolatedRouting ? undefined : request.stableAppSessionId
+    )
     const routingOwner = this.trackProvisionalRoutingOwner(routingIds)
     const provisionGeneration = this.provisionalGeneration
     let notebookRelease: (() => void) | undefined
@@ -456,8 +460,37 @@ export class AcpSessionCapabilityOwner {
     }
     let terminal = false
     let provisionalCleanupComplete = false
+    let preparedRoutingSessionId: string | undefined
     let preparedSetupSessionId: string | undefined
     let bridgeMcpSessionKey: string | undefined
+    const prepareRouting = (appSessionId: string): void => {
+      if (preparedRoutingSessionId === appSessionId) return
+      if (
+        built.descriptor.capabilities.includes('literature') &&
+        routingIds.literature &&
+        routingIds.literature !== appSessionId &&
+        this.options.literature &&
+        this.options.mcpHttpHost
+      ) {
+        this.options.mcpHttpHost.registerLiterature(
+          routingIds.literature,
+          this.options.literature.handlerFor(appSessionId, request.projectId)
+        )
+      }
+      if (
+        built.descriptor.capabilities.includes('literature-library') &&
+        routingIds.literature &&
+        routingIds.literature !== appSessionId &&
+        this.options.library &&
+        this.options.mcpHttpHost
+      ) {
+        this.options.mcpHttpHost.registerLiteratureLibrary(
+          routingIds.literature,
+          this.options.library.handlerFor(appSessionId, request.projectId, request.sessionCwd)
+        )
+      }
+      preparedRoutingSessionId = appSessionId
+    }
 
     return Object.freeze({
       mcpServers: built.mcpServers,
@@ -534,6 +567,7 @@ export class AcpSessionCapabilityOwner {
       },
       prepareCommit: async (appSessionId: string): Promise<void> => {
         if (terminal) throw new Error('ACP session capability provision is already finalized.')
+        prepareRouting(appSessionId)
         if (!request.setupSessionToken) return
         await this.options.wslSetupSessions?.bind(request.setupSessionToken, appSessionId)
         if (
@@ -551,6 +585,15 @@ export class AcpSessionCapabilityOwner {
           throw new Error('ACP session capability provision was superseded.')
         }
         preparedSetupSessionId = appSessionId
+      },
+      assertCurrent: (): void => {
+        if (
+          terminal ||
+          provisionGeneration !== this.provisionalGeneration ||
+          !this.ownsProvisionalRoutingIds(routingIds, routingOwner)
+        ) {
+          throw new Error('ACP session capability provision was superseded.')
+        }
       },
       commit: (appSessionId: string): void => {
         if (terminal) return
@@ -607,30 +650,7 @@ export class AcpSessionCapabilityOwner {
           provisionalCleanupComplete = true
           throw new Error('ACP session capability provision was superseded.')
         }
-        if (
-          built.descriptor.capabilities.includes('literature') &&
-          routingIds.literature &&
-          routingIds.literature !== appSessionId &&
-          this.options.literature &&
-          this.options.mcpHttpHost
-        ) {
-          this.options.mcpHttpHost.registerLiterature(
-            routingIds.literature,
-            this.options.literature.handlerFor(appSessionId, request.projectId)
-          )
-        }
-        if (
-          built.descriptor.capabilities.includes('literature-library') &&
-          routingIds.literature &&
-          routingIds.literature !== appSessionId &&
-          this.options.library &&
-          this.options.mcpHttpHost
-        ) {
-          this.options.mcpHttpHost.registerLiteratureLibrary(
-            routingIds.literature,
-            this.options.library.handlerFor(appSessionId, request.projectId, request.sessionCwd)
-          )
-        }
+        prepareRouting(appSessionId)
         if (request.setupSessionToken && preparedSetupSessionId !== appSessionId) {
           throw new Error('WSL setup Session capability was not prepared.')
         }
@@ -668,7 +688,7 @@ export class AcpSessionCapabilityOwner {
         }
         if (provisionalCleanupComplete) return setupRollback
         const ownsStableIdentity =
-          ownershipFacts.ownsStableIdentity &&
+          (request.isolatedRouting === true || ownershipFacts.ownsStableIdentity) &&
           this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         this.revokeProvisional({
           capabilityTokens,
@@ -1000,6 +1020,29 @@ export class AcpSessionCapabilityOwner {
 
   private commit(request: CommitSessionCapabilitiesRequest): void {
     const { appSessionId, routingIds, descriptor } = request
+    // Candidate routing is isolated. Retire only routes absent from the committed replacement;
+    // otherwise stable-id adoption would unregister its newly prepared routes.
+    const previousRoutingIds = new Set([
+      this.artifactRoutingIds.get(appSessionId),
+      this.notebookRoutingIds.get(appSessionId),
+      this.skillImportRoutingIds.get(appSessionId),
+      this.planRoutingIds.get(appSessionId),
+      this.sideChatRoutingIds.get(appSessionId),
+      this.literatureRoutingIds.get(appSessionId)
+    ])
+    const nextRoutingIds = new Set(Object.values(routingIds))
+    for (const routingId of previousRoutingIds) {
+      if (!routingId || nextRoutingIds.has(routingId)) continue
+      try {
+        this.options.mcpHttpHost?.unregister(routingId)
+      } catch (error) {
+        safeLogError('replaced http MCP route cleanup failed', {
+          ...diagnosticErrorFields(error),
+          routingId,
+          sessionId: appSessionId
+        })
+      }
+    }
     this.sessionCapabilityTokens.set(appSessionId, [...request.capabilityTokens])
     if (routingIds.artifact) this.artifactRoutingIds.set(appSessionId, routingIds.artifact)
     if (routingIds.notebook) {

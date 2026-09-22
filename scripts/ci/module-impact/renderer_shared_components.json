@@ -465,7 +465,8 @@
       "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSubagentMessageRow.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/ContextRecoveryNotice.test.tsx"
     ]
   },
   "capabilityOverlays": [],

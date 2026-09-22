@@ -177,7 +177,10 @@ Use `await host.frames.get(frameId, options)` with an exact full Frame ID to rea
 conversation path. `sessionId` may narrow or disambiguate within the current Project. `branchId`
 selects a specific Branch; without it, the Frame's active Branch is used. The latest 40 messages are
 returned chronologically by default, with a maximum of 100. Pass `before` with the returned
-`previousCursor` to page backward through older messages.
+`previousCursor` to page backward through older messages. Text pages are bounded to 16000 characters
+in total. Use `messageId` to select one message, then `contentOffset` and `contentLimit` (1–16000)
+to read its complete text in segments. Follow the message's `nextContentOffset` until absent;
+`contentLength` gives its original length. `search` filters messages by literal text.
 
 The result contains frozen Project, Session, Frame, Branch, visible transcript, and sanitized runtime
 segment projections. Messages follow the selected Branch graph rather than stored array order. The
@@ -220,3 +223,12 @@ is required. There is no Project override, mutation, recovery, cancellation, or 
 When a new host introspection surface ships, add its public capability key and update this Skill in
 the same feature change. Document only behavior that has shipped; do not predeclare future APIs as
 `false`.
+
+### Saved Notebook output
+
+New application-owned Notebook textual outputs are saved in Session-owned output files before
+the display preview and agent-facing reply are shortened. The files share Session export and deletion. Use `notebook_state` with `outputRunId`, `outputOffset`, and
+`outputLimit` (at most 4000) to retrieve textual output in bounded pages. Follow
+`outputPage.nextOffset` only for sections needed by the task. The 2 MiB limit applies to the display preview. Older runs may already have discarded output;
+`captureTruncated` marks that historical gap or incomplete capture. Saved-file offsets use UTF-8
+bytes as indicated by `offsetUnit`; always follow the returned cursor.

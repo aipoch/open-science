@@ -1,3 +1,4 @@
+import { notebookOutputDirectory, notebookOutputRequestId } from './output-storage'
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
@@ -1284,6 +1285,35 @@ describe('notebook shell process behavior', () => {
         processesTerminated: false,
         confirmTermination: expect.any(Function)
       })
+    })
+
+    it('saves the complete shell stream before bounding its display preview', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'os-shell-full-output-'))
+      try {
+        const script = "process.stdout.write('x'.repeat(3 * 1024 * 1024) + 'FINAL_SENTINEL')"
+        const result = await runShellCommand({
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+          cwd: root,
+          handoffDir: root,
+          notebookSessionRoot: root,
+          runId: 'shell-output',
+          runtimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'linux'
+        })
+        expect(result.exitCode).toBe(0)
+        expect(result.truncated).toBe(true)
+        expect(result.stdout).not.toContain('FINAL_SENTINEL')
+        expect(
+          await readFile(
+            join(notebookOutputDirectory(root), notebookOutputRequestId('shell-output') + '.txt'),
+            'utf8'
+          )
+        ).toContain('FINAL_SENTINEL')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
     })
 
     it('reserves stderr capacity after stdout reaches its capture limit', async () => {

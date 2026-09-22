@@ -376,7 +376,8 @@ class SessionPersistenceStateOwner {
     }
     if (
       Object.keys(patch).some(
-        (owner) => !['plan', 'permission', 'delegatedWork', 'pdfContext'].includes(owner)
+        (owner) =>
+          !['plan', 'permission', 'delegatedWork', 'pdfContext', 'contextRecovery'].includes(owner)
       )
     ) {
       throw new Error('Session runtime context patch contains an unknown authority owner.')

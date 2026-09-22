@@ -44,6 +44,7 @@ import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
   AcpCompactSessionRequest,
+  AcpRecoverSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpContinueInterruptedTurnRequest,
@@ -920,6 +921,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'acp:state',
     EVENT
   ]),
+  'acp.recoverSession': callable<
+    (request: AcpRecoverSessionRequest) => Promise<AcpStateCommandResponse>
+  >()('acp', ['acp:recover-session']),
   'acp.resetSessionContext': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:reset-session-context']),

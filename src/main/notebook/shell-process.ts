@@ -1,5 +1,11 @@
+import { appendFileSync, closeSync, fsyncSync, openSync, writeFileSync } from 'node:fs'
+import {
+  ensureNotebookOutputDirectory,
+  notebookOutputDirectory,
+  notebookOutputRequestId
+} from './output-storage'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { assertShellSearchScope } from './shell-search-scope'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
@@ -670,6 +676,22 @@ const runShellCommand = (
           return
         }
       }
+      const outputPath =
+        options.runId && options.notebookSessionRoot
+          ? join(
+              notebookOutputDirectory(options.notebookSessionRoot),
+              notebookOutputRequestId(options.runId)
+            )
+          : undefined
+      let outputStorageError: string | undefined
+      if (outputPath) {
+        try {
+          ensureNotebookOutputDirectory(options.notebookSessionRoot!)
+          writeFileSync(outputPath + '.txt', '', { flag: 'wx', mode: 0o600 })
+        } catch (error) {
+          outputStorageError = String(error)
+        }
+      }
       let stdout = ''
       let stderr = ''
       let stdoutBytes = 0
@@ -727,7 +749,26 @@ const runShellCommand = (
           complete = false
         }
         if (complete) releaseProcessOwnership?.()
-        const normalizedResult = { ...result, stderr }
+        if (outputPath && !outputStorageError) {
+          try {
+            const descriptor = openSync(outputPath + '.txt', 'r')
+            try {
+              fsyncSync(descriptor)
+            } finally {
+              closeSync(descriptor)
+            }
+            writeFileSync(outputPath + '.complete', '', { flag: 'wx' })
+          } catch (error) {
+            outputStorageError = String(error)
+          }
+        }
+        const normalizedResult = outputStorageError
+          ? {
+              ...result,
+              exitCode: null,
+              stderr: `${stderr}\nFull output could not be saved: ${outputStorageError}`
+            }
+          : { ...result, stderr }
         const completed = complete
           ? normalizedResult
           : withIncompleteCleanup(normalizedResult, 'may-have-run')
@@ -786,6 +827,13 @@ const runShellCommand = (
         remainingBytes: number,
         updateBytes: (captured: number) => void
       ): string => {
+        if (outputPath && !outputStorageError) {
+          try {
+            appendFileSync(outputPath + '.txt', chunk, 'utf8')
+          } catch (error) {
+            outputStorageError = String(error)
+          }
+        }
         const limited = limitUtf8(chunk, remainingBytes)
         updateBytes(Buffer.byteLength(limited.text, 'utf8'))
         truncated ||= limited.truncated

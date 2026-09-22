@@ -45,24 +45,34 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
 }>
 
+// Hooks run while the old attachment remains authoritative. onBeforeCommit may persist a
+// candidate binding; onCommitFailed must undo that write if the synchronous publication loses
+// ownership. assertCurrent is checked after preparation awaits and immediately before publish.
+export type AcpSessionReplacementOptions = Readonly<{
+  assertCurrent?: () => void
+  onCandidateCreated?: (providerSessionId: string) => Promise<void>
+  onBeforeCommit?: (providerSessionId: string) => Promise<void>
+  onCommitFailed?: (providerSessionId: string, error: unknown) => Promise<void>
+}>
+
 export class AcpSessionReplacementWorkflow {
   constructor(private readonly deps: AcpSessionReplacementWorkflowDependencies) {}
 
   // Coordinates owner cleanup without retaining Session facts; the Registry and each state owner
   // remain authoritative while the Adopter publishes the replacement provider Session.
-  async reset(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+  async reset(
+    request: AcpResumeSessionRequest,
+    options: AcpSessionReplacementOptions = {}
+  ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const publishedSession = this.deps.registry.lookup(request.sessionId)?.attachment?.session
-    const aggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
-    const previousMemoryEnabled = aggregate?.snapshot().memoryEnabled
     const reserved = this.deps.reserveIdentity(
       request.sessionId,
       publishedSession ? request.sessionId : undefined
     )
     if (reserved.collision) throw reserved.collision
     const identity = reserved.reservation
-    aggregate?.setMemoryEnabled(request.memoryEnabled !== false)
 
     try {
       const connection = await this.deps.ensureConnected(cwd)
@@ -80,21 +90,16 @@ export class AcpSessionReplacementWorkflow {
         throw new Error('ACP session startup was superseded.')
       }
 
-      this.deps.permission.cancelForSession(request.sessionId)
-      this.deps.clearUserChoiceProvenanceForSession(request.sessionId)
-      this.deps.elicitation.cancelForSession(request.sessionId)
-      this.deps.appContinuations.delete(request.sessionId)
-      this.deps.permission.clearLivePermissionProfile(request.sessionId)
-      const attachment = this.deps.registry.lookup(request.sessionId)?.attachment
-      if (attachment) {
-        attachment.session.dispose()
-        this.deps.registry.detach(attachment, 'provider')
+      const preparedAttachment = this.deps.registry.lookup(request.sessionId)?.attachment
+      const assertCurrent = (): void => {
+        identity.assertCurrent()
+        this.deps.assertCurrentConnection(connection)
+        options.assertCurrent?.()
+        if (this.deps.registry.lookup(request.sessionId)?.attachment !== preparedAttachment) {
+          throw new Error('ACP session startup was superseded.')
+        }
       }
-      this.deps.promptContent.resetSession(request.sessionId)
-      this.deps.releasePromptResourcesForSession(request.sessionId)
-      this.deps.contextUsage.deleteSession(request.sessionId)
-      this.deps.registry.lookup(request.sessionId)?.aggregate.clearAppliedModel()
-      this.deps.interactions.supersedeCurrent(request.sessionId)
+      assertCurrent()
 
       // Await inside the reservation scope: adoption extends the same identity to the new provider id.
       return await this.deps.adopter.adopt(request.sessionId, {
@@ -104,15 +109,29 @@ export class AcpSessionReplacementWorkflow {
         identity,
         permissionProfile: request.permissionProfile,
         specialistId: request.specialistId,
-        memoryEnabled: request.memoryEnabled
+        memoryEnabled: request.memoryEnabled,
+        replacement: {
+          assertCurrent,
+          onCandidateCreated: options.onCandidateCreated,
+          onBeforeCommit: options.onBeforeCommit,
+          onCommitFailed: options.onCommitFailed,
+          afterPublish: () => {
+            try {
+              this.deps.permission.cancelForSession(request.sessionId)
+              this.deps.clearUserChoiceProvenanceForSession(request.sessionId)
+              this.deps.elicitation.cancelForSession(request.sessionId)
+              this.deps.appContinuations.delete(request.sessionId)
+              this.deps.permission.clearLivePermissionProfile(request.sessionId)
+              this.deps.promptContent.resetSession(request.sessionId)
+              this.deps.releasePromptResourcesForSession(request.sessionId)
+              this.deps.contextUsage.deleteSession(request.sessionId)
+              this.deps.interactions.supersedeCurrent(request.sessionId)
+            } finally {
+              publishedSession?.dispose()
+            }
+          }
+        }
       })
-    } catch (error) {
-      if (previousMemoryEnabled !== undefined) {
-        this.deps.registry
-          .lookup(request.sessionId)
-          ?.aggregate.setMemoryEnabled(previousMemoryEnabled)
-      }
-      throw error
     } finally {
       identity.release()
     }
@@ -203,10 +222,14 @@ export class AcpSessionReplacementWorkflow {
 
       return { contextReset: requiresContextReset }
     } catch (error) {
-      // Reconfigure can restore the old attachment on failure. Its loader no longer matches the
-      // eagerly updated binding, so it must not remain usable under the new Specialist identity.
+      // A failed Specialist switch has already changed its authoritative binding. Even though
+      // reset preserves the old attachment, its baked-in identity no longer matches that binding.
       const currentAttachment = this.deps.registry.lookup(sessionId)?.attachment
-      if (refreshCodex && currentAttachment?.session === previousAttachment.session) {
+      if (
+        (refreshCodex || this.deps.currentFrameworkId() === 'claude-code') &&
+        previousAttachment &&
+        currentAttachment?.session === previousAttachment.session
+      ) {
         currentAttachment.session.dispose()
         this.deps.registry.detach(currentAttachment, 'provider')
       }

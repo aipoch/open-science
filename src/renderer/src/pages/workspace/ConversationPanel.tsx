@@ -18,6 +18,7 @@ import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
   AcpContextUsage,
+  AcpContextRecoveryState,
   DelegatedWorkUnavailableReason,
   ElicitationAnswer,
   ElicitationProjection,
@@ -127,6 +128,8 @@ import { ReadingContextPicker } from './ReadingContextPicker'
 import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
+import { ContextRecoveryNotice } from './ContextRecoveryNotice'
+import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
@@ -366,6 +369,8 @@ type ConversationPanelAgentControls = {
 }
 
 type ConversationPanelContextWindow = {
+  recovery?: AcpContextRecoveryState
+  recover?: () => Promise<void>
   usage: AcpContextUsage | undefined
   canCompact: boolean
   compactDisabledReason: string
@@ -607,7 +612,9 @@ const ConversationPanel = ({
     usage: contextUsage,
     canCompact: canCompactContext,
     compactDisabledReason: compactContextDisabledReason,
-    compact: onCompactContext
+    compact: onCompactContext,
+    recovery: contextRecovery,
+    recover: recoverContext
   } = contextWindow
   const { review, saveAsSkill } = workflows
   const {
@@ -1305,7 +1312,17 @@ const ConversationPanel = ({
                 ) : null}
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
+                {recoverContext &&
+                activeSession &&
+                ((contextRecovery && !['completed', 'ready'].includes(contextRecovery.phase)) ||
+                  (activeSession.agentFrameworkId === 'opencode' &&
+                    isMediaOverflowError(activeSession.error))) ? (
+                  <ContextRecoveryNotice
+                    key={activeSession.id}
+                    state={contextRecovery}
+                    onRecover={recoverContext}
+                  />
+                ) : activeSession?.interrupted && !hasUnsupportedCodexAcpRunError ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}

@@ -1,3 +1,4 @@
+import { saveRecoveryText } from '../acp/recovery-text-storage'
 import { ProjectFilesReconciliationError } from '../project-files/repository'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1118,6 +1119,48 @@ describe('SessionPersistenceCoordinator', () => {
       ).rejects.toThrow(`Cannot prepare a durable continuation for a ${status} Session.`)
     }
   )
+
+  it('persists a recovery receipt with its provider binding while preserving messages and other runtime owners', async () => {
+    let durable = createSession({
+      messages: [createUserMessage('user', 1)],
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn<SessionMutationRepository['saveSession']>(async (session) => {
+        durable = structuredClone(session)
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const record = {
+      version: 1 as const,
+      id: 'recovery',
+      sourceBranch: 'branch',
+      sourceRevision: 0,
+      compactAttempts: 0 as const,
+      replacementAttempts: 1 as const,
+      oldProviderSessionId: 'old',
+      candidateProviderSessionId: 'new',
+      phase: 'ready' as const
+    }
+    await coordinator.mutateRuntimeSession(
+      { projectId: durable.projectId, sessionId: durable.id },
+      (latest) => ({
+        ...latest,
+        providerSessionId: 'new',
+        runtimeContext: { ...latest.runtimeContext!, revision: 3, contextRecovery: record }
+      })
+    )
+    const loaded = await coordinator.loadSessionForContinuation(durable.projectId, durable.id)
+    expect(loaded.runtimeContext?.contextRecovery).toEqual(record)
+    expect(loaded.providerSessionId).toBe('new')
+    expect(loaded.runtimeContext?.plan).toEqual(createRuntimePlan())
+    expect(loaded.messages).toEqual([createUserMessage('user', 1)])
+  })
 
   it('persists blocked Plan feedback as a standard user Message without changing Plan authority', async () => {
     let durable = createSession({
@@ -7646,3 +7689,103 @@ const createTestLogger = (): TestLogger =>
     warn: vi.fn<Logger['warn']>(),
     error: vi.fn<Logger['error']>()
   }) satisfies Logger
+
+describe('recovery evidence immutable publication', () => {
+  it('publishes a real Upload Version before a real coordinator binds it and retains ownership on bind failure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-recovery-publication-'))
+    initDataRoot(root)
+    const client = createProjectDbClient(root)
+    await migrateApplicationDatabase(client)
+    try {
+      await client.project.create({ data: { id: 'project-1', name: 'Recovery project' } })
+      const repository = new SessionRepository(root)
+      await repository.saveSession(
+        materializeSessionConversationGraph(
+          createSession({ messages: [createUserMessage('source-message', 1)] })
+        )
+      )
+      const uploads = new UploadRepository(root, { getClient: async () => client })
+      const coordinator = new SessionPersistenceCoordinator(
+        repository,
+        createFileIndex(),
+        undefined,
+        undefined,
+        uploads
+      )
+      const text = JSON.stringify({ role: 'user', content: 'complete source '.repeat(10000) })
+      const attachment = await saveRecoveryText({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        messageId: 'source-message',
+        text,
+        uploads,
+        attach: async (messageId, published) => {
+          expect(published.versionId).toBeTruthy()
+          expect(
+            await client.uploadVersion.findUnique({ where: { id: published.versionId! } })
+          ).toMatchObject({ state: 'ready' })
+          await coordinator.mutateRuntimeSession(
+            { projectId: 'project-1', sessionId: 'session-1' },
+            (latest) => {
+              const attach = <T extends PersistedChatMessage>(message: T): T =>
+                message.id === messageId ? { ...message, uploads: [published] } : message
+              return {
+                ...latest,
+                messages: latest.messages.map(attach),
+                conversationGraph: latest.conversationGraph
+                  ? {
+                      ...latest.conversationGraph,
+                      messages: latest.conversationGraph.messages.map(attach)
+                    }
+                  : undefined
+              }
+            }
+          )
+        }
+      })
+      const restored = await new SessionRepository(root).loadSession('project-1', 'session-1')
+      expect(restored?.messages[0].uploads?.[0].versionId).toBe(attachment.versionId)
+      expect(restored?.conversationGraph?.messages[0].uploads?.[0].versionId).toBe(
+        attachment.versionId
+      )
+      const version = await client.uploadVersion.findUniqueOrThrow({
+        where: { id: attachment.versionId! }
+      })
+      expect(await readFile(join(root, version.contentStorageKey), 'utf8')).toBe(text)
+      const rejected = 'evidence whose message bind loses a branch race'
+      await expect(
+        saveRecoveryText({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          messageId: 'source-message',
+          text: rejected,
+          uploads,
+          attach: async () => {
+            await coordinator.mutateRuntimeSession(
+              { projectId: 'project-1', sessionId: 'session-1' },
+              () => {
+                throw new Error('branch changed')
+              }
+            )
+          }
+        })
+      ).rejects.toThrow('branch changed')
+      const owned = await client.uploadFile.findMany({
+        where: { projectId: 'project-1', sessionId: 'session-1' },
+        include: { versions: true }
+      })
+      expect(owned).toHaveLength(2)
+      const unattached = owned.find((file) => file.id !== attachment.id)!
+      expect(unattached.versions[0].state).toBe('ready')
+      expect(await readFile(join(root, unattached.versions[0].contentStorageKey), 'utf8')).toBe(
+        rejected
+      )
+      expect(
+        (await repository.loadSession('project-1', 'session-1'))?.messages[0].uploads
+      ).toHaveLength(1)
+    } finally {
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})

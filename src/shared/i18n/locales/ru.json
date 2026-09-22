@@ -6539,6 +6539,12 @@
     "The selected file already exists. Choose a new filename.": "Выбранный файл уже существует. Укажите новое имя файла.",
     "Diagnostic operation timed out.": "Время ожидания операции диагностики истекло.",
     "Temporary diagnostic files could not be fully removed.": "Не удалось полностью удалить временные файлы диагностики.",
-    "Choose a new .tar.gz file.": "Выберите новый файл .tar.gz."
+    "Choose a new .tar.gz file.": "Выберите новый файл .tar.gz.",
+    "Recovering session…": "Восстановление сеанса…",
+    "Session context needs recovery": "Необходимо восстановить контекст сеанса",
+    "Your conversation and files are preserved. Recovery prepares a smaller context so work can continue.": "Диалог и файлы сохранены. При восстановлении будет подготовлен меньший контекст для продолжения работы.",
+    "Recover session": "Восстановить сеанс",
+    "Recovery was interrupted. Recover the session to continue.": "Восстановление прервано. Восстановите диалог, чтобы продолжить.",
+    "The previous recovery may have executed operations. Verify their results before continuing.": "При предыдущем восстановлении могли быть выполнены операции. Проверьте их результаты перед продолжением."
   }
 }

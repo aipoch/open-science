@@ -6078,6 +6078,12 @@
     "The selected file already exists. Choose a new filename.": "所选文件已存在，请使用新的文件名。",
     "Diagnostic operation timed out.": "诊断操作超时。",
     "Temporary diagnostic files could not be fully removed.": "无法完全删除临时诊断文件。",
-    "Choose a new .tar.gz file.": "请选择新的 .tar.gz 文件。"
+    "Choose a new .tar.gz file.": "请选择新的 .tar.gz 文件。",
+    "Recovering session…": "正在恢复会话…",
+    "Session context needs recovery": "会话上下文需要恢复",
+    "Your conversation and files are preserved. Recovery prepares a smaller context so work can continue.": "对话和文件已保留。恢复将准备更小的上下文，以便继续工作。",
+    "Recover session": "恢复会话",
+    "Recovery was interrupted. Recover the session to continue.": "恢复已中断。请恢复会话以继续。",
+    "The previous recovery may have executed operations. Verify their results before continuing.": "上次恢复可能已执行操作。请先核实操作结果，再继续。"
   }
 }

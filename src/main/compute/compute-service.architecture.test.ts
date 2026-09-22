@@ -1122,7 +1122,9 @@ describe('Compute service architecture', () => {
       'src/main/settings/backend-route-planner.test.ts',
       'src/main/settings/claude-provider-configuration.integration.test.ts',
       'src/main/settings/provider-runtime-health-owner.test.ts',
-      'src/main/settings/provider-transport-owner.test.ts'
+      'src/main/settings/provider-transport-owner.test.ts',
+      'src/main/acp/recovery-text-storage.test.ts',
+      'src/main/acp/context-recovery.native.integration.test.ts'
     ])
   })
 

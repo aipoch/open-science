@@ -588,6 +588,9 @@ const processContextOverflowRecovery = (
     const isSessionLost = event.recoverable === 'session-lost'
 
     if (!isOverflow && !isSessionLost) continue
+    // Main owns the durable recovery protocol. Session-lost and other frameworks retain their
+    // existing path; a renderer reload must never start a second OpenCode overflow recovery.
+    if (isOverflow && runtime.state.contextRecoverySessionIds?.includes(event.sessionId)) continue
 
     handledEventIds.add(event.id)
 

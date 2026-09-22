@@ -31,6 +31,7 @@ import type {
   AcpSessionAttachment,
   AcpSessionRegistry
 } from './session-registry'
+import type { AcpSessionReplacementOptions } from './session-replacement-workflow'
 import { AcpSessionResumePolicy } from './session-resume-policy'
 
 const log = createLogger('acp')
@@ -105,6 +106,21 @@ export class AcpProviderSessionResumer {
     return this.resumeDetached(request, false)
   }
 
+  // Reclaim a recorded recovery candidate, never create another provider session. An already
+  // attached different provider must be resolved by its owner rather than silently replaced.
+  async resumeExisting(
+    request: AcpResumeSessionRequest,
+    recovery: AcpSessionReplacementOptions = {}
+  ): Promise<AcpCreateSessionResponse> {
+    recovery.assertCurrent?.()
+    if (!request.providerSessionId) throw new Error('A recorded provider session is required.')
+    const attached = this.deps.registry.lookup(request.sessionId)?.attachment
+    if (attached) {
+      throw new Error('Recovery candidate takeover requires a detached App Session.')
+    }
+    return this.resumeDetached(request, true, recovery)
+  }
+
   async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     const entry = this.deps.registry.lookup(request.sessionId)
     const attachment = entry?.attachment
@@ -175,7 +191,8 @@ export class AcpProviderSessionResumer {
 
   private async resumeDetached(
     request: AcpResumeSessionRequest,
-    compatibleOnly: boolean
+    compatibleOnly: boolean,
+    recovery?: AcpSessionReplacementOptions
   ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
@@ -186,6 +203,7 @@ export class AcpProviderSessionResumer {
     try {
       const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd))
       this.deps.assertCurrentConnection(connection)
+      recovery?.assertCurrent?.()
       identity.renew()
       return await this.withTimeout(
         (cancellationSignal) =>
@@ -196,7 +214,8 @@ export class AcpProviderSessionResumer {
             projectId,
             identity,
             compatibleOnly,
-            cancellationSignal
+            cancellationSignal,
+            recovery
           ),
         this.progressSessionIds(request)
       )
@@ -365,10 +384,13 @@ export class AcpProviderSessionResumer {
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation,
     compatibleOnly: boolean,
-    cancellationSignal: AbortSignal
+    cancellationSignal: AbortSignal,
+    recovery?: AcpSessionReplacementOptions
   ): Promise<AcpCreateSessionResponse> {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
-    const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
+    const persistedProviderSessionId = recovery
+      ? request.providerSessionId
+      : (affinity?.providerSessionId ?? request.providerSessionId)
     const backend = this.deps.currentBackend()
     if (request.specialistBindingPending === true) {
       if (compatibleOnly) {
@@ -390,7 +412,8 @@ export class AcpProviderSessionResumer {
         persistedProviderSessionId,
         true,
         true,
-        cancellationSignal
+        cancellationSignal,
+        recovery
       )
     }
     const decision = this.policy.decide({
@@ -441,10 +464,13 @@ export class AcpProviderSessionResumer {
     providerSessionId: string,
     providerSessionIdPersisted: boolean,
     compatibleOnly: boolean,
-    cancellationSignal: AbortSignal
+    cancellationSignal: AbortSignal,
+    recovery?: AcpSessionReplacementOptions
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
+    let recoveryCommitAttempted = false
+    let published = false
     try {
       let backend = this.deps.currentBackend()
       this.assertSkillScopeRefreshSupported()
@@ -551,6 +577,11 @@ export class AcpProviderSessionResumer {
         connection.agent as unknown as ClientContextSessionAttacher
       ).attachSession({ sessionId: providerSessionId, ...(resumeResponse as object) })
       const resumedProviderSessionId = provisionalSession.sessionId
+      if (recovery && resumedProviderSessionId !== providerSessionId) {
+        throw new Error(
+          'The resumed provider session does not match the recorded recovery candidate.'
+        )
+      }
       const extended = this.deps.registry.reserve({
         reservation: identity,
         sessionIds: [provisionalSession.sessionId]
@@ -599,6 +630,18 @@ export class AcpProviderSessionResumer {
           specialistProjection = await resolveSpecialistProjection(specialistId, backend)
           continue
         }
+        if (recovery) {
+          await capability.prepareCommit?.(request.sessionId)
+          recovery.assertCurrent?.()
+          identity.assertCurrent()
+          recoveryCommitAttempted = true
+          await recovery.onBeforeCommit?.(providerSessionId)
+          recovery.assertCurrent?.()
+          identity.assertCurrent()
+          capability.assertCurrent?.()
+          if (this.deps.currentBackend() !== backend)
+            throw new Error('ACP session startup was superseded.')
+        }
         const { aggregate } = this.deps.registry.publish(identity, request.sessionId, {
           session: provisionalSession,
           cwd,
@@ -610,6 +653,7 @@ export class AcpProviderSessionResumer {
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
+        published = true
         aggregate.setSessionSetupPromptPrefix(specialistProjection.setup.promptPrefix)
         aggregate.setSpecialistPrefix(specialistProjection.identity?.prefix || undefined)
         aggregate.setSpecialistId(specialistId)
@@ -633,15 +677,32 @@ export class AcpProviderSessionResumer {
       }
     } catch (caught) {
       let startupError = caught
+      if (recoveryCommitAttempted && !published) {
+        try {
+          await recovery?.onCommitFailed?.(providerSessionId, caught)
+        } catch (rollbackError) {
+          startupError = new AggregateError(
+            [caught, rollbackError],
+            'Candidate resume failed and its saved binding could not be restored.'
+          )
+        }
+      }
       let ownsStableIdentity = true
       try {
         identity.assertCurrent()
       } catch (supersededError) {
-        startupError = supersededError
+        if (startupError === caught) startupError = supersededError
         ownsStableIdentity = false
       }
-      capability?.release({ ownsStableIdentity })
-      this.disposeProvisional(provisionalSession, 'resumed startup session disposal failed')
+      if (!published) {
+        try {
+          await capability?.release({ ownsStableIdentity })
+        } catch (cleanupError) {
+          this.safeLogError('resumed capability release failed', cleanupError, request.sessionId)
+        }
+      }
+      if (!published)
+        this.disposeProvisional(provisionalSession, 'resumed startup session disposal failed')
       throw startupError
     }
   }

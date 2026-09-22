@@ -1,3 +1,4 @@
+import { notebookOutputDirectory, notebookOutputRequestId } from './output-storage'
 import {
   spawnSync,
   type ChildProcess,
@@ -4947,3 +4948,39 @@ describe('NotebookKernelExecutor readiness gate', () => {
     }
   })
 })
+
+describe.skipIf(process.platform === 'win32' || !python3)(
+  'full output capture through kernel execution',
+  () => {
+    it('passes the durable run identity to the real Python loop before display clipping', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-full-output-')
+      const request = baseRequest(cwdDir)
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+        platform: 'linux'
+      })
+      try {
+        const result = await executor.execute({
+          ...request,
+          runId: 'durable-output',
+          code: "print('x' * (3 * 1024 * 1024) + 'FINAL_SENTINEL')"
+        })
+        expect(result.status).toBe('completed')
+        expect(result.truncated).toBe(true)
+        expect(result.stdout).not.toContain('FINAL_SENTINEL')
+        expect(
+          await readFile(
+            join(
+              notebookOutputDirectory(request.notebookSessionRoot),
+              notebookOutputRequestId('durable-output') + '.txt'
+            ),
+            'utf8'
+          )
+        ).toContain('FINAL_SENTINEL')
+      } finally {
+        await executor.shutdown()
+      }
+    }, 30_000)
+  }
+)

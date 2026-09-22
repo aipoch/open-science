@@ -13,8 +13,13 @@
     "src/main/project-files/repository.architecture.test.ts",
     "src/main/project-files/repository.test.ts"
   ],
-  "interfacePaths": ["src/main/project-files/repository.ts", "src/main/project-files/ipc.ts"],
-  "consumerModules": ["session_persistence"],
+  "interfacePaths": [
+    "src/main/project-files/repository.ts",
+    "src/main/project-files/ipc.ts"
+  ],
+  "consumerModules": [
+    "session_persistence"
+  ],
   "testFiles": {
     "owner": [
       "src/main/project-files/repository.architecture.test.ts",
@@ -314,9 +319,15 @@
       "src/main/settings/workflows.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/settings/application-commands.test.ts"
+      "src/main/settings/application-commands.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

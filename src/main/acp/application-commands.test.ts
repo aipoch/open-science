@@ -52,6 +52,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     disconnect: vi.fn(async () => snapshot),
     resetSessionContext: vi.fn(async () => ({ ...sessionResponse, contextReset: true })),
     compactSession: vi.fn(async () => snapshot),
+    recoverSession: vi.fn(async () => snapshot),
     cancelPrompt: vi.fn(async () => snapshot),
     steerFollowUp: vi.fn(async () => ({
       injected: false as const,
@@ -129,6 +130,46 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.respondToElicitation).not.toHaveBeenCalled()
   })
 
+  it('routes an explicit human recovery through Session admission', async () => {
+    const dependencies = createDependencies()
+    const withSessionAvailableById = vi.fn(async (_id, operation) => operation('project-1'))
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, {
+      ...dependencies,
+      archiveAvailability: {
+        ...ownerResolvingArchiveAvailability('project-1'),
+        withSessionAvailableById
+      }
+    })
+    await expect(
+      router.dispatcher.invoke(acpCommands.recoverSession, invocation([{ sessionId: 'session-1' }]))
+    ).resolves.toEqual(commandResponse)
+    expect(withSessionAvailableById).toHaveBeenCalledOnce()
+    expect(dependencies.runtime.recoverSession).toHaveBeenCalledWith({ sessionId: 'session-1' })
+  })
+
+  it.each([
+    {
+      caller: createTaskCallerContext(),
+      message: 'Only a current human caller can recover a session.'
+    },
+    {
+      caller: createWebCallerContext('expired', { isAuthorizationCurrent: () => false }),
+      message: 'Caller authorization is no longer current.'
+    }
+  ])('rejects recovery without a current human caller', async ({ caller, message }) => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.recoverSession,
+        invocation([{ sessionId: 'session-1' }], caller)
+      )
+    ).rejects.toThrow(message)
+    expect(dependencies.runtime.recoverSession).not.toHaveBeenCalled()
+  })
+
   it('registers the exact renderer command inventory as one installable group', () => {
     const router = createApplicationCommandRouter()
 
@@ -145,6 +186,7 @@ describe('ACP application commands', () => {
       'acp:disconnect',
       'acp:get-plan-projection',
       'acp:get-state',
+      'acp:recover-session',
       'acp:reset-session-context',
       'acp:respond-elicitation',
       'acp:respond-permission',

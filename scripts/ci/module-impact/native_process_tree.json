@@ -7,7 +7,9 @@
     "packages/process-tree-native/src/process_tree_native.cc",
     "packages/process-tree-native/src/windows_owned_process.cc"
   ],
-  "interfacePaths": ["packages/process-tree-native/index.cjs"],
+  "interfacePaths": [
+    "packages/process-tree-native/index.cjs"
+  ],
   "consumerModules": [],
   "testFiles": {
     "owner": [],
@@ -541,9 +543,14 @@
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
-      "src/main/settings/codex-bridge-tools.test.ts"
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
+  "capabilityOverlays": [
+    "notebook_network_sandbox",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

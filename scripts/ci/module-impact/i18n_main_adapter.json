@@ -15,7 +15,10 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/locale/owner.test.ts", "src/main/locale/resources.lazy.test.ts"],
+    "owner": [
+      "src/main/locale/owner.test.ts",
+      "src/main/locale/resources.lazy.test.ts"
+    ],
     "contract": [
       "src/renderer/src/i18n/resources.test.ts",
       "src/preload/index.test.ts",
@@ -413,9 +416,13 @@
       "src/main/settings/backend-route-planner.test.ts",
       "src/main/settings/claude-provider-configuration.integration.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
-      "src/main/settings/provider-transport-owner.test.ts"
+      "src/main/settings/provider-transport-owner.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
-  "capabilityOverlays": ["i18n_catalog"],
+  "capabilityOverlays": [
+    "i18n_catalog"
+  ],
   "fallbackCapability": "main_runtime"
 }

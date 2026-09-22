@@ -499,6 +499,28 @@ describe('live runtime event ingest', () => {
     unmount()
   })
 
+  it('releases the legacy compaction projection when Main recovery ends without a prompt', () => {
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'recovery-terminal', content: 'Inspect data' })
+    useSessionStore.getState().finishRun('recovery-terminal')
+    useSessionStore.getState().beginCompaction('recovery-terminal')
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'recovery-terminal')?.compacting
+    ).toBe(true)
+    syncWorkspaceInteractionStateFromSnapshot(
+      createSnapshot({
+        revision: 5,
+        contextRecoveryBySession: {
+          'recovery-terminal': { phase: 'blocked', reason: 'Split the input.' }
+        }
+      })
+    )
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'recovery-terminal')?.compacting
+    ).toBeUndefined()
+  })
+
   it.each(['live-event', 'stale-snapshot', 'stale-render'] as const)(
     'does not restore a released prompt from the previous React state through %s',
     async (delivery) => {

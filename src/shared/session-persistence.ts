@@ -128,7 +128,36 @@ export type SessionRuntimeContextValue =
   | { [key: string]: SessionRuntimeContextValue }
 
 export type SessionRuntimeContextOwner =
-  'plan' | 'delegatedWork' | 'permission' | 'sideChat' | 'sideChatRelays' | 'pdfContext'
+  | 'plan'
+  | 'delegatedWork'
+  | 'permission'
+  | 'sideChat'
+  | 'sideChatRelays'
+  | 'pdfContext'
+  | 'contextRecovery'
+
+export type SessionContextRecoveryRecord = Readonly<{
+  version: 1
+  id: string
+  sourceBranch: string
+  sourceRevision: number
+  failedPromptMessageId?: string
+  compactAttempts: 0 | 1
+  replacementAttempts: 0 | 1
+  oldProviderSessionId?: string
+  candidateProviderSessionId?: string
+  phase:
+    | 'compacting'
+    | 'preparing'
+    | 'replacing'
+    | 'continuing'
+    | 'ready'
+    | 'completed'
+    | 'blocked'
+    | 'cancelled'
+    | 'failed'
+  reason?: string
+}>
 
 export const MAX_SESSION_PDF_CONTEXTS = 3
 
@@ -432,6 +461,7 @@ export type SessionRuntimeContext = Readonly<{
   delegatedWork?: SessionDelegatedWorkRuntimeContext
   permission?: SessionPermissionRuntimeContext
   pdfContext?: SessionPdfContext
+  contextRecovery?: SessionContextRecoveryRecord
   sideChat?: PersistedSideChat
   sideChats?: readonly PersistedSideChat[]
   sideChatRelays?: readonly PersistedSideChatRelay[]
@@ -450,6 +480,7 @@ export type SessionRuntimeContextPatch = Readonly<
     plan: SessionPlanRuntimeContext | undefined
     delegatedWork: SessionDelegatedWorkRuntimeContext | undefined
     permission: SessionPermissionRuntimeContext | undefined
+    contextRecovery: SessionContextRecoveryRecord | undefined
     pdfContext: SessionPdfContext | undefined
     sideChat: PersistedSideChat | undefined
     sideChats: readonly PersistedSideChat[] | undefined
@@ -2817,6 +2848,7 @@ export const sanitizeSessionRuntimeContext = (
     delegatedWork?: SessionDelegatedWorkRuntimeContext
     permission?: SessionPermissionRuntimeContext
     pdfContext?: SessionPdfContext
+    contextRecovery?: SessionContextRecoveryRecord
     sideChat?: PersistedSideChat
     sideChats?: readonly PersistedSideChat[]
     sideChatRelays?: readonly PersistedSideChatRelay[]
@@ -2829,6 +2861,57 @@ export const sanitizeSessionRuntimeContext = (
   const budget = { remaining: 2_000 }
   for (const [owner, ownerValue] of Object.entries(value)) {
     if (owner === 'version' || owner === 'revision') continue
+    if (owner === 'contextRecovery') {
+      if (
+        !isRecord(ownerValue) ||
+        ownerValue.version !== 1 ||
+        typeof ownerValue.id !== 'string' ||
+        !ownerValue.id ||
+        typeof ownerValue.sourceBranch !== 'string' ||
+        !Number.isSafeInteger(ownerValue.sourceRevision) ||
+        Number(ownerValue.sourceRevision) < 0 ||
+        (ownerValue.compactAttempts !== 0 && ownerValue.compactAttempts !== 1) ||
+        (ownerValue.replacementAttempts !== 0 && ownerValue.replacementAttempts !== 1) ||
+        ![
+          'compacting',
+          'preparing',
+          'replacing',
+          'continuing',
+          'ready',
+          'completed',
+          'blocked',
+          'cancelled',
+          'failed'
+        ].includes(String(ownerValue.phase)) ||
+        [
+          'failedPromptMessageId',
+          'oldProviderSessionId',
+          'candidateProviderSessionId',
+          'reason'
+        ].some((key) => ownerValue[key] !== undefined && typeof ownerValue[key] !== 'string')
+      )
+        return undefined
+      result.contextRecovery = {
+        version: 1,
+        id: ownerValue.id,
+        sourceBranch: ownerValue.sourceBranch,
+        sourceRevision: ownerValue.sourceRevision as number,
+        compactAttempts: ownerValue.compactAttempts as 0 | 1,
+        replacementAttempts: ownerValue.replacementAttempts as 0 | 1,
+        phase: ownerValue.phase as SessionContextRecoveryRecord['phase'],
+        ...(typeof ownerValue.failedPromptMessageId === 'string'
+          ? { failedPromptMessageId: ownerValue.failedPromptMessageId }
+          : {}),
+        ...(typeof ownerValue.oldProviderSessionId === 'string'
+          ? { oldProviderSessionId: ownerValue.oldProviderSessionId }
+          : {}),
+        ...(typeof ownerValue.candidateProviderSessionId === 'string'
+          ? { candidateProviderSessionId: ownerValue.candidateProviderSessionId }
+          : {}),
+        ...(typeof ownerValue.reason === 'string' ? { reason: ownerValue.reason } : {})
+      }
+      continue
+    }
     if (
       owner === 'plan' ||
       owner === 'delegatedWork' ||
