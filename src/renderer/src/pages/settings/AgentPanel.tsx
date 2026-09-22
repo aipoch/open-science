@@ -25,6 +25,7 @@ import {
   MINIMUM_CODEX_ACP_VERSION
 } from '../../../../shared/codex-runtime'
 import { AgentFrameworkCard } from './AgentFrameworkCard'
+import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { AgentFrameworkIcon } from './provider-icons'
 import { RepairFrameworkDialog } from './RepairFrameworkDialog'
@@ -360,13 +361,19 @@ const AgentPanel = ({
       name: 'Claude Agent',
       icon: <AgentFrameworkIcon frameworkId="claude-code" size={24} />,
       description: t("Anthropic's agentic coding tool for the terminal."),
-      ready: preflight.claudeReady,
+      ready: preflight.claudeReady && isSupportedClaudeCliVersion(claude.version),
       installed: Boolean(claude.resolvedPath),
+      updateRequired: Boolean(claude.resolvedPath && !isSupportedClaudeCliVersion(claude.version)),
       version: claude.version,
       path: claude.resolvedPath,
       sourceLabel: 'anthropics/claude-code',
       sourceUrl: 'https://github.com/anthropics/claude-code',
-      notReadyHint: t('Install Claude Agent below, or install it manually and re-detect.'),
+      notReadyHint:
+        claude.resolvedPath && !isSupportedClaudeCliVersion(claude.version)
+          ? t(
+              'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+            )
+          : t('Install Claude Agent below, or install it manually and re-detect.'),
       uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
       managed: claudeManaged,
       installSources: getClaudeInstallSources(window.api?.platform),

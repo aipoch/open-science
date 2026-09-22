@@ -64,7 +64,14 @@ const configureUnavailableRegistries = async (
 ): Promise<void> => {
   const frameworks = [
     { id: selected, label: selected, runtime: { found: false } },
-    { id: alternative, label: alternative, runtime: { found: failure !== 'no-runtime' } }
+    {
+      id: alternative,
+      label: alternative,
+      runtime: {
+        found: failure !== 'no-runtime',
+        version: alternative === 'claude-code' ? '2.1.118' : undefined
+      }
+    }
   ]
   const probeRegistry = vi.fn().mockRejectedValue(new Error('Installation source unreachable'))
   const inspect = (agentFrameworkId: AgentFrameworkId): Promise<EnvironmentCheckResult> =>

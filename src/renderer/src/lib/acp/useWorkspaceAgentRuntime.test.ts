@@ -1123,6 +1123,18 @@ describe('workspace agent runtime event processing', () => {
 })
 
 describe('resume failure classification', () => {
+  it('preserves the main-process Claude version gate message when resuming', () => {
+    const message = getResumeFailureMessage(
+      new Error(
+        "Error invoking remote method 'acp:resume-session': Error: The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings."
+      )
+    )
+
+    expect(message).toBe(
+      'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+    )
+  })
+
   it('classifies an opaque ACP Internal error as unknown without guessing a cause', () => {
     const message = getResumeFailureMessage(
       new Error("Error invoking remote method 'acp:resume-session': RequestError: Internal error")
@@ -6904,6 +6916,33 @@ describe('workspace agent message sending', () => {
 
     expect(useSessionStore.getState().sessions[0]?.error).toBe(
       'Agent session could not be created.'
+    )
+  })
+
+  it('surfaces the main-process Claude version gate as actionable setup guidance', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:create-session': Error: The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings."
+          )
+        ),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Start a new analysis',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'claude-code'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0]?.error).toBe(
+      'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
     )
   })
 
