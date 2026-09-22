@@ -93,3 +93,15 @@ test('clears the cursor on movement after a prevented pointer release', async ({
   await expect(handle).not.toHaveAttribute('data-separator', 'active')
   await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
 })
+
+test('does not mark cursor targets during ordinary text selection', async ({ page }) => {
+  await page.goto('/divider-cursor.html')
+  const text = page.getByText('Synthetic text')
+  await text.hover({ position: { x: 20, y: 30 } })
+  const box = (await text.boundingBox())!
+  await page.mouse.down()
+  await page.mouse.move(box.x + 80, box.y + 30, { steps: 5 })
+  await expect(text).toHaveCSS('cursor', 'text')
+  await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
+  await page.mouse.up()
+})
