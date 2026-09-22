@@ -962,6 +962,14 @@ export type PersistedChatSession = {
   updatedAt: number
 }
 
+// Recovery preparation, continuation admission and provider binding compare the same path identity.
+export const recoverySourceBranch = (session: PersistedChatSession): string => {
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+  const branch = graph?.branches.find(({ id }) => id === frame?.activeBranchId)
+  return JSON.stringify([graph?.activeFrameId, frame?.activeBranchId, branch?.headMessageId])
+}
+
 // Internal Task admission command; not part of the persisted Session format.
 export type BindTaskSessionRequest = Readonly<{
   session: Pick<

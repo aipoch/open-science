@@ -3854,3 +3854,86 @@ it.each([false, true])(
     }
   }
 )
+
+it.each(['ready', 'replacing'] as const)(
+  'strips %s recovery authority on export, external import and forwarding',
+  async (phase) => {
+    const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
+    const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
+    fixtures.push(source, target)
+    await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+    const receipt = {
+      version: 1 as const,
+      id: 'source-recovery',
+      phase,
+      sourceBranch: '["source-frame","source-branch","source-message"]',
+      sourceRevision: 1,
+      compactAttempts: 0 as const,
+      replacementAttempts: 1 as const,
+      oldProviderSessionId: 'source-provider',
+      candidateProviderSessionId: 'source-candidate'
+    }
+    await new SessionRepository(source.storageRoot).saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Recoverable research',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      runtimeContext: { version: 1, revision: 1, contextRecovery: receipt }
+    })
+    const archive = join(source.storageRoot, 'recovery.science')
+    await new SessionPackageService({
+      storageRoot: source.storageRoot,
+      getClient: async () => source.client
+    }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    const expanded = join(source.storageRoot, 'recovery-package')
+    await mkdir(expanded)
+    await extractTar({ cwd: expanded, file: archive })
+    const document = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8'))
+    expect(document.session.runtimeContext?.contextRecovery).toBeUndefined()
+    // A package produced by an older/external app can still contain a valid provider receipt.
+    // Make it the only private field to exercise raw-envelope forwarding detection independently.
+    document.session.runtimeContext = { version: 1, revision: 1, contextRecovery: receipt }
+    await writeFile(join(expanded, 'session.json'), JSON.stringify(document))
+    const manifest = JSON.parse(await readFile(join(expanded, 'manifest.json'), 'utf8'))
+    const sessionEntry = manifest.inventory.find(
+      (entry: { path: string }) => entry.path === 'session.json'
+    )
+    Object.assign(sessionEntry, await packageEntry(expanded, 'session.json', 'session'))
+    await writePackageRoCrateMetadata(
+      expanded,
+      manifest,
+      JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+    )
+    await writeFile(join(expanded, 'manifest.json'), JSON.stringify(manifest))
+    await createTar({ cwd: expanded, file: archive, gzip: true }, [
+      'manifest.json',
+      ...manifest.inventory.map((entry: { path: string }) => entry.path)
+    ])
+    const importer = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+    const imported = await importer.importFrom(archive)
+    const session = await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    )
+    expect(session?.runtimeContext?.contextRecovery).toBeUndefined()
+    expect(session?.providerSessionId).toBeUndefined()
+    const forwarded = join(target.storageRoot, 'forwarded-recovery.science')
+    await importer.exportTo(imported, forwarded)
+    const forwardedRoot = join(target.storageRoot, 'forwarded-recovery')
+    await mkdir(forwardedRoot)
+    await extractTar({ cwd: forwardedRoot, file: forwarded })
+    const forwardedDocument = JSON.parse(
+      await readFile(join(forwardedRoot, 'session.json'), 'utf8')
+    )
+    expect(forwardedDocument.session.runtimeContext?.contextRecovery).toBeUndefined()
+  }
+)

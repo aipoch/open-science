@@ -1,4 +1,5 @@
 import {
+  appendNotebookProcessStderr,
   ensureNotebookOutputDirectory,
   notebookOutputDirectory,
   notebookOutputRequestId
@@ -287,6 +288,7 @@ type ProcState = {
   pending?: PendingRequest
   beginSandboxExecution: () => () => void
   stderrTail: string
+  stderrTruncated: boolean
   annotateStderr: (stderr: string) => string
   confirmTermination?: () => Promise<boolean>
   cleanupSandbox: (
@@ -637,7 +639,18 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       const figureResult = await this.readFigures(response.figures)
       const processStderr = proc.annotateStderr(proc.stderrTail)
+      const processStderrTruncated = proc.stderrTruncated
       proc.stderrTail = ''
+      proc.stderrTruncated = false
+      let processStderrSaved = true
+      if (request.runId && request.notebookSessionRoot) {
+        processStderrSaved = await appendNotebookProcessStderr(
+          request.notebookSessionRoot,
+          request.runId,
+          processStderr,
+          processStderrTruncated
+        )
+      }
       const mapped = mapLoopOutputs({
         stdout: response.stdout,
         stderr: [response.stderr, processStderr].filter(Boolean).join('\n'),
@@ -668,7 +681,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
         outputs: cancelled
           ? mapped.outputs.filter((output) => output.type !== 'error')
           : mapped.outputs,
-        truncated: response.outputTruncated || figureResult.truncated,
+        truncated:
+          response.outputTruncated ||
+          figureResult.truncated ||
+          processStderrTruncated ||
+          !processStderrSaved,
         workingFiles: fileObservation.workingFiles,
         fileEvidence: fileObservation.fileEvidence,
         ...(fileObservation.confirmedReadPaths
@@ -860,6 +877,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       readline,
       beginSandboxExecution: spawned.beginSandboxExecution,
       stderrTail: '',
+      stderrTruncated: false,
       annotateStderr: spawned.annotateStderr,
       confirmTermination: spawned.confirmTermination,
       cleanupSandbox: spawned.cleanupSandbox,
@@ -873,7 +891,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
     readline.on('line', (line) => this.handleLine(proc, line))
     // Keep a bounded tail for sandbox diagnostics while continuing to drain a chatty child pipe.
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
-      proc.stderrTail = `${proc.stderrTail}${chunk}`.slice(-64 * 1024)
+      const text = proc.stderrTail + chunk
+      proc.stderrTruncated ||= text.length > 64 * 1024
+      proc.stderrTail = text.slice(-64 * 1024)
     })
     // A late async pipe error (e.g. EPIPE if the loop died mid-write) must not surface as an
     // uncaught error on the main process; fail any pending run instead, or swallow it if none is

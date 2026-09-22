@@ -16,9 +16,7 @@
     "src/main/artifacts/pending-file-transaction.ts",
     "src/main/artifacts/storage-access.ts"
   ],
-  "consumerModules": [
-    "artifact_provenance"
-  ],
+  "consumerModules": ["artifact_provenance"],
   "testFiles": {
     "owner": [
       "src/main/artifacts/repository.test.ts",
@@ -346,10 +344,6 @@
       "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

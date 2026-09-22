@@ -1,13 +1,10 @@
 import { updateContextRecoveryRecord } from '../session-persistence/context-recovery-admission'
 import { describe, expect, it, vi } from 'vitest'
+import { AcpContextRecoveryOwner, type ContextRecoveryDependencies } from './context-recovery-owner'
 import {
-  AcpContextRecoveryOwner,
   recoverySourceBranch,
-  type ContextRecoveryDependencies
-} from './context-recovery-owner'
-import type {
-  PersistedChatSession,
-  SessionContextRecoveryRecord
+  type PersistedChatSession,
+  type SessionContextRecoveryRecord
 } from '../../shared/session-persistence'
 
 const fixture = (): {
@@ -283,16 +280,97 @@ describe('main context recovery ownership', () => {
       estimatedTokens: 10
     }))
     await f.owner.recover('session')
-    const request = await f.owner.prepareUserPrompt({
+    const { request, recoveryId } = await f.owner.prepareUserPrompt({
       sessionId: 'session',
       text: 'Next instruction'
     })
     expect(request.text).toBe('Next instruction')
     expect(request.historyPreamble).toBe('Preserved historical constraints')
     expect(request.contextReset).toBe(true)
-    await f.owner.completeUserPrompt('session')
+    await f.owner.completeUserPrompt('session', recoveryId)
     expect(f.owner.snapshot().session.phase).toBe('completed')
   })
+  it.each(['blocked', 'failed', 'cancelled'] as const)(
+    'retires a %s receipt after a new explicit user turn succeeds',
+    async (phase) => {
+      const f = fixture()
+      const record: SessionContextRecoveryRecord = {
+        version: 1,
+        id: 'old-recovery',
+        phase,
+        reason: 'Previous recovery could not finish',
+        sourceBranch: recoverySourceBranch(f.session()),
+        sourceRevision: 0,
+        compactAttempts: 0,
+        replacementAttempts: 0
+      }
+      f.setSession({
+        ...f.session(),
+        runtimeContext: { version: 1, revision: 1, contextRecovery: record }
+      })
+      await f.owner.reconcile('session')
+      expect(() => f.owner.assertContinuationAllowed('session')).toThrow()
+      const prepared = await f.owner.prepareUserPrompt({
+        sessionId: 'session',
+        text: 'Adjusted input'
+      })
+      // Preparation alone must not unblock automatic continuation of the failed turn.
+      expect(() => f.owner.assertContinuationAllowed('session')).toThrow()
+      await f.owner.completeUserPrompt('session', prepared.recoveryId)
+      expect(f.session().runtimeContext?.contextRecovery).toMatchObject({
+        phase: 'completed',
+        reason: undefined
+      })
+      expect(() => f.owner.assertContinuationAllowed('session')).not.toThrow()
+      expect(f.owner.snapshot().session).toEqual({ phase: 'completed', canRetry: false })
+    }
+  )
+
+  it('does not retire a successor recovery receipt when an older user turn completes', async () => {
+    const f = fixture()
+    f.deps.prepare = vi.fn(() => ({ status: 'blocked' as const, reason: 'Budget too small' }))
+    await f.owner.recover('session')
+    const prepared = await f.owner.prepareUserPrompt({
+      sessionId: 'session',
+      text: 'Adjusted input'
+    })
+    await f.owner.recover('session')
+    const successor = f.session().runtimeContext?.contextRecovery
+    expect(successor?.id).not.toBe(prepared.recoveryId)
+    await f.owner.completeUserPrompt('session', prepared.recoveryId)
+    expect(f.session().runtimeContext?.contextRecovery).toEqual(successor)
+    expect(f.owner.snapshot().session.phase).toBe('blocked')
+  })
+
+  it('preserves a successor that wins the save queue during explicit prompt completion', async () => {
+    const f = fixture()
+    f.deps.prepare = vi.fn(() => ({ status: 'blocked' as const, reason: 'Budget too small' }))
+    await f.owner.recover('session')
+    const prepared = await f.owner.prepareUserPrompt({
+      sessionId: 'session',
+      text: 'Adjusted input'
+    })
+    const save = f.deps.save
+    f.deps.save = vi.fn(async (...args: Parameters<ContextRecoveryDependencies['save']>) => {
+      f.setSession({
+        ...f.session(),
+        runtimeContext: {
+          ...f.session().runtimeContext!,
+          contextRecovery: { ...f.session().runtimeContext!.contextRecovery!, id: 'successor' }
+        }
+      })
+      await save(...args)
+    })
+    await expect(
+      f.owner.completeUserPrompt('session', prepared.recoveryId)
+    ).resolves.toBeUndefined()
+    expect(f.session().runtimeContext?.contextRecovery).toMatchObject({
+      id: 'successor',
+      phase: 'blocked'
+    })
+    expect(f.owner.snapshot().session.phase).toBe('blocked')
+  })
+
   it('blocks new prompt admission during recovery and publishes release after cancellation', async () => {
     const f = fixture()
     let resolve!: () => void

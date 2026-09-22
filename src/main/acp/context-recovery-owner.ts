@@ -7,18 +7,12 @@ import type {
   AcpResumeSessionRequest
 } from '../../shared/acp'
 import { classifyContextOverflowError } from '../../shared/media-overflow'
-import type {
-  PersistedChatSession,
-  SessionContextRecoveryRecord
+import {
+  recoverySourceBranch,
+  type PersistedChatSession,
+  type SessionContextRecoveryRecord
 } from '../../shared/session-persistence'
 import { validateRecoveryContinuationSafety, type RecoveryHandoff } from './recovery-handoff'
-
-export const recoverySourceBranch = (session: PersistedChatSession): string => {
-  const graph = session.conversationGraph
-  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-  const branch = graph?.branches.find(({ id }) => id === frame?.activeBranchId)
-  return JSON.stringify([graph?.activeFrameId, frame?.activeBranchId, branch?.headMessageId])
-}
 
 export type RecoveryResumeDecision =
   | { kind: 'normal' }
@@ -123,26 +117,51 @@ export class AcpContextRecoveryOwner {
     }
   }
 
-  async prepareUserPrompt(request: AcpPromptRequest): Promise<AcpPromptRequest> {
+  async prepareUserPrompt(request: AcpPromptRequest): Promise<{
+    request: AcpPromptRequest
+    recoveryId?: string
+  }> {
     if (this.isActive(request.sessionId))
       throw new Error('Context recovery is already running for this session.')
     const session = await this.deps.load(request.sessionId)
-    if (session.runtimeContext?.contextRecovery?.phase !== 'ready') return request
+    const record = session.runtimeContext?.contextRecovery
+    if (record?.phase !== 'ready') return { request, recoveryId: record?.id }
     const prepared = await this.deps.prepare(session, request)
     if (prepared.status === 'blocked') throw new Error(prepared.reason)
     return {
-      ...request,
-      historyPreamble: prepared.historyText,
-      contextReset: true,
-      attachments: [...(request.attachments ?? []), ...(prepared.uploads ?? [])]
+      recoveryId: record.id,
+      request: {
+        ...request,
+        historyPreamble: prepared.historyText,
+        contextReset: true,
+        attachments: [...(request.attachments ?? []), ...(prepared.uploads ?? [])]
+      }
     }
   }
 
-  async completeUserPrompt(sessionId: string): Promise<void> {
-    if (this.active.has(sessionId)) return
+  async completeUserPrompt(sessionId: string, recoveryId?: string): Promise<void> {
+    if (!recoveryId || this.isActive(sessionId)) return
     const session = await this.deps.load(sessionId)
     const record = session.runtimeContext?.contextRecovery
-    if (record?.phase === 'ready') await this.persist(sessionId, { ...record, phase: 'completed' })
+    if (
+      !this.isActive(sessionId) &&
+      record?.id === recoveryId &&
+      ['ready', 'blocked', 'failed', 'cancelled'].includes(record.phase)
+    ) {
+      try {
+        await this.persist(
+          sessionId,
+          { ...record, phase: 'completed', reason: undefined },
+          undefined,
+          recoveryId
+        )
+      } catch (error) {
+        // A successor can win the mutation queue after our load. Its receipt remains authoritative;
+        // retiring an older receipt must not turn a successful user response into an error.
+        const latest = await this.deps.load(sessionId)
+        if (latest.runtimeContext?.contextRecovery?.id === recoveryId) throw error
+      }
+    }
   }
 
   reconcile(sessionId: string, owned = false): Promise<RecoveryResumeDecision> {

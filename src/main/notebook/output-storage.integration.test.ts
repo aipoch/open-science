@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { notebookOutputPage } from './output-page'
-import { ensureNotebookOutputDirectory, notebookOutputRequestId } from './output-storage'
+import {
+  appendNotebookProcessStderr,
+  ensureNotebookOutputDirectory,
+  notebookOutputRequestId
+} from './output-storage'
 import { framePythonRequest, frameRRequest } from './kernel-protocol'
 
 const runLoop = (
@@ -121,11 +125,19 @@ describe('durable full Notebook output', () => {
     const outside = await mkdtemp(join(tmpdir(), 'notebook-output-outside-'))
     try {
       await writeFile(join(outside, notebookOutputRequestId('r') + '.txt'), 'private')
+      await writeFile(join(outside, notebookOutputRequestId('r') + '.complete'), 'owned elsewhere')
       await symlink(
         outside,
         join(root, 'outputs'),
         process.platform === 'win32' ? 'junction' : 'dir'
       )
+      expect(await appendNotebookProcessStderr(root, 'r', 'must not append', false)).toBe(false)
+      expect(await readFile(join(outside, notebookOutputRequestId('r') + '.txt'), 'utf8')).toBe(
+        'private'
+      )
+      expect(
+        await readFile(join(outside, notebookOutputRequestId('r') + '.complete'), 'utf8')
+      ).toBe('owned elsewhere')
       await expect(
         notebookOutputPage(
           { notebookSessionRoot: root, runs: [{ runId: 'r', status: 'completed' }] },

@@ -1,8 +1,9 @@
 import type { AcpPromptRequest } from '../../shared/acp'
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
-import type {
-  PersistedChatSession,
-  SessionContextRecoveryRecord
+import {
+  recoverySourceBranch,
+  type PersistedChatSession,
+  type SessionContextRecoveryRecord
 } from '../../shared/session-persistence'
 
 /** Re-arm precisely the failed user turn under Main's durable recovery receipt. The original
@@ -15,18 +16,12 @@ export const admitContextRecoveryContinuation = (
   const record = session.runtimeContext?.contextRecovery
   const graph = session.conversationGraph
   const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-  const branch = graph?.branches.find(({ id }) => id === frame?.activeBranchId)
-  const sourceBranch = JSON.stringify([
-    graph?.activeFrameId,
-    frame?.activeBranchId,
-    branch?.headMessageId
-  ])
   const promptId = request.provenanceContext?.promptMessageId
   const prompt = graph?.messages.find(({ id }) => id === promptId)
   if (
     !record ||
     record.phase !== 'continuing' ||
-    record.sourceBranch !== sourceBranch ||
+    record.sourceBranch !== recoverySourceBranch(session) ||
     !graph ||
     !frame ||
     !prompt ||
@@ -131,14 +126,7 @@ export const updateContextRecoveryRecord = (
   if ((session.runtimeContext?.contextRecovery?.id ?? null) !== expectedRecoveryId) {
     throw new Error('Context recovery was superseded by another recovery episode.')
   }
-  const graph = session.conversationGraph
-  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-  const branch = graph?.branches.find(({ id }) => id === frame?.activeBranchId)
-  if (
-    providerSessionId &&
-    JSON.stringify([graph?.activeFrameId, frame?.activeBranchId, branch?.headMessageId]) !==
-      record.sourceBranch
-  ) {
+  if (providerSessionId && recoverySourceBranch(session) !== record.sourceBranch) {
     throw new Error('The conversation branch changed before the recovery binding committed.')
   }
   return {

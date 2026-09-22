@@ -98,9 +98,7 @@
     "src/main/skills/skill-name.ts",
     "src/main/skills/specialist-package-adapter.ts"
   ],
-  "consumerModules": [
-    "settings_service_facade"
-  ],
+  "consumerModules": ["settings_service_facade"],
   "testFiles": {
     "owner": [
       "src/main/skills/user-skill-catalog-observer.test.ts",
@@ -663,10 +661,6 @@
       "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }

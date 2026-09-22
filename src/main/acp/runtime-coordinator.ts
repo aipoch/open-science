@@ -1104,6 +1104,7 @@ class AcpRuntimeCoordinator {
       )
     const admission = this.promptAdmissionGuard?.(request.sessionId)
     const prepareAndDispatch = async (): ReturnType<AcpRuntime['sendPrompt']> => {
+      let recoveryId: string | undefined
       if (
         this.contextRecovery &&
         this.findRuntimeForSession(request.sessionId)?.isSessionUsingFramework(
@@ -1111,7 +1112,9 @@ class AcpRuntimeCoordinator {
           'opencode'
         )
       ) {
-        request = await this.contextRecovery.prepareUserPrompt(request)
+        const prepared = await this.contextRecovery.prepareUserPrompt(request)
+        request = prepared.request
+        recoveryId = prepared.recoveryId
       }
       const response = await dispatch()
       if (
@@ -1122,7 +1125,7 @@ class AcpRuntimeCoordinator {
           'opencode'
         )
       ) {
-        await this.contextRecovery.completeUserPrompt(request.sessionId)
+        await this.contextRecovery.completeUserPrompt(request.sessionId, recoveryId)
       }
       return response
     }

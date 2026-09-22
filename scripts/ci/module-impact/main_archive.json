@@ -4,15 +4,10 @@
     "src/main/archive/coordinator.test.ts",
     "src/main/archive/coordinator.ts"
   ],
-  "interfacePaths": [
-    "src/main/archive/availability-error.ts",
-    "src/main/archive/coordinator.ts"
-  ],
+  "interfacePaths": ["src/main/archive/availability-error.ts", "src/main/archive/coordinator.ts"],
   "consumerModules": [],
   "testFiles": {
-    "owner": [
-      "src/main/archive/coordinator.test.ts"
-    ],
+    "owner": ["src/main/archive/coordinator.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -314,10 +309,6 @@
       "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

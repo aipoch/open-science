@@ -6,9 +6,7 @@
     "packages/safe-file-publisher-native/package.json",
     "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc"
   ],
-  "interfacePaths": [
-    "packages/safe-file-publisher-native/index.cjs"
-  ],
+  "interfacePaths": ["packages/safe-file-publisher-native/index.cjs"],
   "consumerModules": [],
   "testFiles": {
     "owner": [],
@@ -362,9 +360,6 @@
       "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "notebook_network_sandbox",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

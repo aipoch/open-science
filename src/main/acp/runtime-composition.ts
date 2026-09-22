@@ -6,7 +6,6 @@ import {
 } from '../session-persistence/context-recovery-admission'
 import { saveRecoveryText } from './recovery-text-storage'
 import { buildRecoveryHandoff } from './recovery-handoff'
-import { recoverySourceBranch } from './context-recovery-owner'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -24,7 +23,7 @@ import {
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { recoverySourceBranch, type PersistedChatSession } from '../../shared/session-persistence'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,

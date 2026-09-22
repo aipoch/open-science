@@ -341,10 +341,7 @@
     "src/main/notebook/output-page.ts",
     "src/main/notebook/output-storage.ts"
   ],
-  "consumerModules": [
-    "notebook_execution",
-    "main_session_package"
-  ],
+  "consumerModules": ["notebook_execution", "main_session_package"],
   "testFiles": {
     "owner": [
       "src/main/notebook/application-commands.test.ts",
@@ -923,9 +920,6 @@
       "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "notebook_network_sandbox",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

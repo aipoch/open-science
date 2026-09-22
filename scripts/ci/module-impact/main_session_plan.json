@@ -29,9 +29,7 @@
     "src/main/session-plan/plan-context-file.ts",
     "src/main/session-plan/plan-context-guidance.ts"
   ],
-  "consumerModules": [
-    "workspace_runtime"
-  ],
+  "consumerModules": ["workspace_runtime"],
   "testFiles": {
     "owner": [
       "src/main/session-plan/adversarial-session-plan.test.ts",
@@ -197,10 +195,6 @@
       "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

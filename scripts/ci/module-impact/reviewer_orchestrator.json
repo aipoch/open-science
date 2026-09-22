@@ -84,11 +84,7 @@
     "src/main/reviewer/stale-reviews.ts",
     "src/main/reviewer/turn-evidence.ts"
   ],
-  "consumerModules": [
-    "workspace_runtime",
-    "workspace_page",
-    "artifact_provenance"
-  ],
+  "consumerModules": ["workspace_runtime", "workspace_page", "artifact_provenance"],
   "testFiles": {
     "owner": [
       "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
@@ -425,10 +421,6 @@
       "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "windows_sensitive",
-    "e2e_regressions",
-    "e2e_delegation"
-  ],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime"
 }
