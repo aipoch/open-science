@@ -3299,3 +3299,17 @@ describe('compactRestartResult', () => {
     expect(compactRestartResult('x')).toBe('x')
   })
 })
+
+describe('saved Notebook output paging projection', () => {
+  it('preserves the already bounded output page instead of replacing it with state metadata', () => {
+    const outputPage = {
+      runId: 'r',
+      offset: 0,
+      totalChars: 9000,
+      text: 'saved text',
+      nextOffset: 10,
+      captureTruncated: false
+    }
+    expect(compactNotebookStateResult({ outputPage })).toEqual({ outputPage })
+  })
+})

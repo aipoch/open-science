@@ -63,6 +63,10 @@ type TranscriptCursor = {
 }
 
 type NormalizedGetOptions = {
+  messageId?: string
+  contentOffset: number
+  contentLimit: number
+  search?: string
   sessionId?: string
   branchId?: string
   before?: string
@@ -105,7 +109,17 @@ const ARCHIVED_FILTERS = new Set<ArchivedFilter>(['exclude', 'include', 'only'])
 const DEFAULT_LIST_LIMIT = 20
 const MAX_LIMIT = 100
 const DEFAULT_GET_LIMIT = 40
-const GET_OPTION_KEYS = new Set(['session_id', 'branch_id', 'before', 'limit'])
+const GET_OPTION_KEYS = new Set([
+  'session_id',
+  'branch_id',
+  'before',
+  'limit',
+  'message_id',
+  'content_offset',
+  'content_limit',
+  'search'
+])
+const MAX_CONTENT_CHARS = 16_000
 
 const optionalString = (
   options: Record<string, unknown>,
@@ -203,7 +217,33 @@ const normalizeGetOptions = (value: unknown): NormalizedGetOptions => {
   if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > MAX_LIMIT) {
     throw new Error(`host.frames.get limit must be an integer between 1 and ${MAX_LIMIT}.`)
   }
-  return { sessionId, branchId, before, limit: limit as number }
+  const messageId = optionalString(value, 'message_id', 512, 'host.frames.get')
+  const search = optionalString(value, 'search', 256, 'host.frames.get')
+  const contentOffset = value.content_offset ?? 0
+  const contentLimit = value.content_limit ?? 2000
+  if (
+    !Number.isSafeInteger(contentOffset) ||
+    (contentOffset as number) < 0 ||
+    !Number.isSafeInteger(contentLimit) ||
+    (contentLimit as number) < 1 ||
+    (contentLimit as number) > MAX_CONTENT_CHARS
+  ) {
+    throw new Error(
+      'host.frames.get content_offset must be nonnegative and content_limit must be between 1 and 16000.'
+    )
+  }
+  if (contentOffset && !messageId)
+    throw new Error('host.frames.get content_offset requires message_id.')
+  return {
+    sessionId,
+    branchId,
+    before,
+    limit: limit as number,
+    messageId,
+    search,
+    contentOffset: contentOffset as number,
+    contentLimit: contentLimit as number
+  }
 }
 
 const toIso = (timestamp: number): string => new Date(timestamp).toISOString()
@@ -330,13 +370,20 @@ const toAttachments = (
 
 const toMessage = (
   message: PersistedMessageNode,
-  artifactsById: ReadonlyMap<string, PersistedArtifact>
+  artifactsById: ReadonlyMap<string, PersistedArtifact>,
+  offset: number,
+  limit: number
 ): unknown => {
   const attachments = toAttachments(message, artifactsById)
+  const content = sanitizeExportMarkdown(message.content)
   return {
     message_id: message.id,
     role: message.role,
-    content: sanitizeExportMarkdown(message.content),
+    content: content.slice(offset, offset + limit),
+    ...(offset > 0 || content.length > limit
+      ? { content_offset: offset, content_length: content.length }
+      : {}),
+    ...(offset + limit < content.length ? { next_content_offset: offset + limit } : {}),
     status: message.status,
     ...(message.responseToMessageId ? { response_to_message_id: message.responseToMessageId } : {}),
     ...(message.runtimeSegmentId ? { runtime_segment_id: message.runtimeSegmentId } : {}),
@@ -523,7 +570,14 @@ class HostFramesService {
       (candidate) => candidate.id === branchId && candidate.agentFrameId === match.frame.id
     )
     if (!branch) throw new Error(`Frame Branch not found in the current Project: ${branchId}`)
-    const path = resolveMessageBranchPath(match.graph, branch.id)
+    const path = resolveMessageBranchPath(match.graph, branch.id).filter(
+      (message) =>
+        (!normalized.messageId || message.id === normalized.messageId) &&
+        (!normalized.search ||
+          message.content.toLocaleLowerCase().includes(normalized.search.toLocaleLowerCase()))
+    )
+    if (normalized.messageId && !path.length)
+      throw new Error('Message not found in the requested Frame Branch.')
     const binding = {
       projectId: target.projectId,
       sessionId: match.session.id,
@@ -576,7 +630,17 @@ class HostFramesService {
         updated_at: toIso(branch.updatedAt)
       },
       transcript: {
-        messages: messages.map((message) => toMessage(message, artifactsById)),
+        messages: messages.map((message) =>
+          toMessage(
+            message,
+            artifactsById,
+            normalized.contentOffset,
+            Math.min(
+              normalized.contentLimit,
+              Math.floor(MAX_CONTENT_CHARS / Math.max(1, messages.length))
+            )
+          )
+        ),
         ...(start > 0
           ? {
               previous_cursor: encodeCursor({

@@ -862,10 +862,8 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       ? {
           truncated: true,
           note: captureTruncated
-            ? resultCompacted
-              ? 'Notebook output was truncated during capture and shortened again for this agent-facing result.'
-              : 'Notebook output was truncated during capture.'
-            : 'Agent-facing result shortened; full output remains in the notebook preview.'
+            ? 'Notebook display preview shortened during capture. Read saved text with notebook_state({ outputRunId: runId }); follow outputPage.nextOffset. Old runs may have gaps.'
+            : 'Agent-facing result shortened; read saved text with notebook_state({ outputRunId: runId, outputOffset: 0, outputLimit: 3000 }) and follow outputPage.nextOffset.'
         }
       : {})
   }
@@ -1018,6 +1016,7 @@ const compactStateRun = (
 const compactNotebookStateResult = (raw: unknown): unknown => {
   const record = asRecord(raw)
   if (!record) return raw
+  if (asRecord(record.outputPage)) return { outputPage: record.outputPage }
   const runs = Array.isArray(record.runs) ? record.runs : []
   const recentSource = Array.isArray(record.recentRuns) ? record.recentRuns : runs
   const recentRuns = recentSource.slice(-MAX_STATE_RUNS)
@@ -1610,9 +1609,13 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_state',
     title: 'Get notebook state',
     description:
-      'Return compact session state: cell identities, latest run metadata/output preview, cwd/dataRoot, kernel status, and runtime bindings. Full run history stays in the notebook preview.',
+      'Inspect Session state, or page saved output using outputRunId and outputOffset; follow outputPage.nextOffset. outputLimit bounds page length.',
     method: 'state',
-    inputSchema: {},
+    inputSchema: {
+      outputRunId: z.string().optional(),
+      outputOffset: z.number().optional(),
+      outputLimit: z.number().optional()
+    },
     mapResult: compactNotebookStateResult,
     resultLimitChars: NOTEBOOK_MCP_STATE_RESULT_LIMIT
   },

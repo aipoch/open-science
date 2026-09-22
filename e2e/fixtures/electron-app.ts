@@ -326,7 +326,7 @@ type ElectronApp = {
   completeOnboarding: () => Promise<Page>
   routeMarketplaceRequests: (origin: string) => Promise<void>
   configureFileBrowserFixture: () => Promise<void>
-  configureFakeAgent: () => Promise<Page>
+  configureFakeAgent: (options?: { contextWindow?: number }) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
@@ -839,40 +839,45 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async configureFakeAgent(): Promise<Page> {
-    await this.page.evaluate(async (providerName) => {
-      const bridge = globalThis as unknown as {
-        api: {
-          settings: {
-            setActiveProvider: (request: { id: string; model: string }) => Promise<unknown>
-            setAgentFramework: (request: { id: 'opencode' }) => Promise<unknown>
-            upsertProvider: (request: {
-              apiEndpoints: ['openai']
-              baseUrl: string
-              key: string
-              model: string
-              name: string
-              supportsImageInput: true
-              type: 'custom'
-            }) => Promise<{ providers: Array<{ id: string; name: string }> }>
+  async configureFakeAgent(options: { contextWindow?: number } = {}): Promise<Page> {
+    await this.page.evaluate(
+      async ({ providerName, contextWindow }) => {
+        const bridge = globalThis as unknown as {
+          api: {
+            settings: {
+              setActiveProvider: (request: { id: string; model: string }) => Promise<unknown>
+              setAgentFramework: (request: { id: 'opencode' }) => Promise<unknown>
+              upsertProvider: (request: {
+                apiEndpoints: ['openai']
+                baseUrl: string
+                key: string
+                model: string
+                name: string
+                supportsImageInput: true
+                contextWindow?: number
+                type: 'custom'
+              }) => Promise<{ providers: Array<{ id: string; name: string }> }>
+            }
           }
         }
-      }
-      const snapshot = await bridge.api.settings.upsertProvider({
-        type: 'custom',
-        name: providerName,
-        apiEndpoints: ['openai'],
-        baseUrl: 'http://127.0.0.1:9/v1',
-        model: 'e2e-model',
-        key: 'e2e-key',
-        supportsImageInput: true
-      })
-      const provider = snapshot.providers.find((item) => item.name === providerName)
-      if (!provider) throw new Error('The E2E provider was not persisted.')
+        const snapshot = await bridge.api.settings.upsertProvider({
+          type: 'custom',
+          name: providerName,
+          apiEndpoints: ['openai'],
+          baseUrl: 'http://127.0.0.1:9/v1',
+          model: 'e2e-model',
+          key: 'e2e-key',
+          supportsImageInput: true,
+          ...(contextWindow ? { contextWindow } : {})
+        })
+        const provider = snapshot.providers.find((item) => item.name === providerName)
+        if (!provider) throw new Error('The E2E provider was not persisted.')
 
-      await bridge.api.settings.setActiveProvider({ id: provider.id, model: 'e2e-model' })
-      await bridge.api.settings.setAgentFramework({ id: 'opencode' })
-    }, FAKE_PROVIDER_NAME)
+        await bridge.api.settings.setActiveProvider({ id: provider.id, model: 'e2e-model' })
+        await bridge.api.settings.setAgentFramework({ id: 'opencode' })
+      },
+      { providerName: FAKE_PROVIDER_NAME, contextWindow: options.contextWindow }
+    )
 
     this.fakeAgentEnabled = true
     await this.close()

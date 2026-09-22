@@ -263,6 +263,8 @@ describe('workspace Agent Runtime hook contract', () => {
         'nativeContextCompactionSessionIds',
         'subscribeToSubagentRuntimeUpdates',
         'compactContext',
+        'recoverSession',
+        'contextRecoveryBySession',
         'ensureSessionReady',
         'saveAsSkill',
         'sendMessage',

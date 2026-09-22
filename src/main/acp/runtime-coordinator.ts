@@ -1,3 +1,5 @@
+import { AcpContextRecoveryOwner, type ContextRecoveryDependencies } from './context-recovery-owner'
+import { classifyContextOverflowError } from '../../shared/media-overflow'
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
@@ -191,6 +193,7 @@ class AcpRuntimeCoordinator {
   // continuation for an approved handoff. The continuation keeps its provenance context but never
   // republishes this text as a new user message.
   private readonly latestPromptRequests = new Map<string, AcpPromptRequest>()
+  private contextRecovery?: AcpContextRecoveryOwner
   private activeRuntime: AcpRuntime | undefined
   private lastRuntime: AcpRuntime | undefined
 
@@ -214,6 +217,106 @@ class AcpRuntimeCoordinator {
       }
       this.emitState()
     })
+  }
+
+  setContextRecoveryDependencies(
+    dependencies: Omit<ContextRecoveryDependencies, 'compact' | 'replace' | 'continue' | 'changed'>
+  ): void {
+    this.contextRecovery = new AcpContextRecoveryOwner({
+      ...dependencies,
+      ensureRuntime: async (session, assertCurrent) => {
+        const attached = this.findRuntimeForSession(session.id)
+        if (attached && !this.retiredRuntimes.has(attached)) return
+        if (!session.agentConfiguration) {
+          throw new Error(
+            'The saved model configuration is required to restore this recovery session.'
+          )
+        }
+        const request: AcpResumeSessionRequest = {
+          sessionId: session.id,
+          projectId: session.projectId,
+          cwd: session.cwd,
+          providerSessionId: session.providerSessionId ?? session.id,
+          providerContinuityToken: session.providerContinuityToken,
+          previousFrameworkId: session.agentFrameworkId,
+          previousBackendId: session.agentBackendId,
+          permissionProfile: session.permissionProfile,
+          memoryEnabled: session.memoryEnabled,
+          specialistId: session.specialistId,
+          agentTarget: { frameworkId: 'opencode', ...session.agentConfiguration }
+        }
+        assertCurrent()
+        const runtime = await this.runtimeForTarget(request.agentTarget, session.id, session.cwd)
+        this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
+        try {
+          assertCurrent()
+          // Strict loading reapplies the saved model and capabilities but cannot create a provider
+          // Session on failure. Budget inspection therefore observes the exact restored target.
+          const response = await runtime.resumeExistingSession(request, { assertCurrent })
+          assertCurrent()
+          this.bindSessionRuntime(response.sessionId, runtime)
+          this.lastRuntime = runtime
+        } finally {
+          this.runtimeActivityCounts.set(runtime, this.runtimeActivityCounts.get(runtime)! - 1)
+          await this.retireUnusedTargetedRuntime(runtime)
+        }
+      },
+      adoptExistingCandidate: async (request, hooks) => {
+        const attached = this.findRuntimeForSession(request.sessionId)
+        if (
+          attached &&
+          !this.retiredRuntimes.has(attached) &&
+          attached.getAttachedProviderSessionId?.(request.sessionId) === request.providerSessionId
+        ) {
+          hooks.assertCurrent()
+          return {
+            sessionId: request.sessionId,
+            providerSessionId: request.providerSessionId,
+            cwd: request.cwd,
+            frameworkId: 'opencode'
+          }
+        }
+        const runtime = await this.runtimeForTarget(
+          request.agentTarget,
+          request.sessionId,
+          request.cwd
+        )
+        const response = await runtime.resumeExistingSession(request, hooks)
+        this.bindSessionRuntime(response.sessionId, runtime)
+        this.lastRuntime = runtime
+        return response
+      },
+      compact: (sessionId) =>
+        this.runtimeForSession(sessionId).compactSession({
+          sessionId,
+          reason: 'overflow-recovery'
+        }),
+      replace: (request, hooks) => {
+        const runtime = this.findRuntimeForSession(request.sessionId)
+        const target = runtime && this.runtimeTargets.get(runtime)
+        return this.resetSessionContext(
+          { ...request, ...(target ? { agentTarget: target } : {}) },
+          hooks
+        )
+      },
+      continue: (request) => this.sendAppContinuation(request),
+      changed: () => this.emitState()
+    })
+  }
+
+  getRecoveryBudget(
+    sessionId: string
+  ): { contextWindowTokens: number; fixedOverheadTokens: number } | undefined {
+    return this.findRuntimeForSession(sessionId)?.recoveryBudget?.(sessionId)
+  }
+
+  async recoverSession(request: { sessionId: string }): Promise<AcpRuntimeState> {
+    this.assertPromptAdmissionOpen()
+    await this.waitForInitialization()
+    if (!this.contextRecovery) throw new Error('Context recovery is unavailable.')
+    await this.waitForSessionInteractionRelease(request.sessionId)
+    await this.contextRecovery.recover(request.sessionId)
+    return this.getState()
   }
 
   getState(): AcpRuntimeState {
@@ -277,9 +380,12 @@ class AcpRuntimeCoordinator {
           )
         )
       )
-    const promptInFlightSessionIds = ownedSessionIds(
-      (snapshot) => snapshot.promptInFlightSessionIds
-    )
+    const promptInFlightSessionIds = [
+      ...new Set([
+        ...ownedSessionIds((snapshot) => snapshot.promptInFlightSessionIds),
+        ...(this.contextRecovery?.activeSessionIds() ?? [])
+      ])
+    ]
     const agentPromptInFlightSessionIds = ownedSessionIds(
       (snapshot) => snapshot.agentPromptInFlightSessionIds ?? []
     )
@@ -326,6 +432,14 @@ class AcpRuntimeCoordinator {
       permissionProfiles: Object.assign({}, ...states.map(({ state }) => state.permissionProfiles)),
       permissionGrants: this.permissionGrantSnapshot?.() ?? this.permissionGrantStore.snapshot(),
       contextUsageBySession,
+      ...(this.contextRecovery
+        ? {
+            contextRecoveryBySession: this.contextRecovery.snapshot(),
+            contextRecoverySessionIds: sessionIds.filter((sessionId) =>
+              this.findRuntimeForSession(sessionId)?.isSessionUsingFramework(sessionId, 'opencode')
+            )
+          }
+        : {}),
       delegatedWorkRevision: this.delegatedWorkRevision,
       delegatedWorkUnavailableBySession: this.delegatedWork?.unavailableReasons?.() ?? {},
       nativeContextCompactionSessionIds,
@@ -580,6 +694,12 @@ class AcpRuntimeCoordinator {
 
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
+    const recovery = await this.contextRecovery?.reconcile(request.sessionId)
+    if (recovery?.kind === 'blocked') throw new Error(recovery.reason)
+    if (recovery?.kind === 'restored') {
+      await this.sessionResumeObserver?.(request, recovery.response)
+      return recovery.response
+    }
     const owner = this.findRuntimeForSession(request.sessionId)
     const pendingReconciliation = this.pendingResumeReconciliations.get(request.sessionId)
     if (
@@ -723,7 +843,10 @@ class AcpRuntimeCoordinator {
     return response
   }
 
-  async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+  async resetSessionContext(
+    request: AcpResumeSessionRequest,
+    hooks?: Parameters<ContextRecoveryDependencies['replace']>[1]
+  ): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const owner = this.findRuntimeForSession(request.sessionId)
     const runtime =
@@ -734,7 +857,9 @@ class AcpRuntimeCoordinator {
     // retiring its generation before reset commits ownership, and release failed allocations.
     this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
     try {
-      const response = await runtime.resetSessionContext(request)
+      const response = hooks
+        ? await runtime.resetSessionContext(request, hooks)
+        : await runtime.resetSessionContext(request)
       this.bindSessionRuntime(response.sessionId, runtime)
       this.lastRuntime = runtime
       return response
@@ -978,10 +1103,59 @@ class AcpRuntimeCoordinator {
         ).finally(() => this.delegatedWork?.wakeMessages?.(request.sessionId))
       )
     const admission = this.promptAdmissionGuard?.(request.sessionId)
-    return admission ? admission.then(dispatch) : dispatch()
+    const prepareAndDispatch = async (): ReturnType<AcpRuntime['sendPrompt']> => {
+      let recoveryId: string | undefined
+      if (
+        this.contextRecovery &&
+        this.findRuntimeForSession(request.sessionId)?.isSessionUsingFramework(
+          request.sessionId,
+          'opencode'
+        )
+      ) {
+        const prepared = await this.contextRecovery.prepareUserPrompt(request)
+        request = prepared.request
+        recoveryId = prepared.recoveryId
+      }
+      const response = await dispatch()
+      if (
+        response?.stopReason === 'end_turn' &&
+        this.contextRecovery &&
+        this.findRuntimeForSession(request.sessionId)?.isSessionUsingFramework(
+          request.sessionId,
+          'opencode'
+        )
+      ) {
+        await this.contextRecovery.completeUserPrompt(request.sessionId, recoveryId)
+      }
+      return response
+    }
+    return (admission ? admission.then(prepareAndDispatch) : prepareAndDispatch()).catch(
+      async (error: unknown) => {
+        if (
+          !this.contextRecovery ||
+          this.contextRecovery.isActive(request.sessionId) ||
+          this.promptAdmissionClosedForQuit ||
+          !classifyContextOverflowError(error) ||
+          !this.findRuntimeForSession(request.sessionId)?.isSessionUsingFramework(
+            request.sessionId,
+            'opencode'
+          )
+        )
+          throw error
+        await this.contextRecovery.recover(request.sessionId, {
+          error,
+          request: this.latestPromptRequests.get(request.sessionId) ?? request
+        })
+        const phase = this.contextRecovery.snapshot()[request.sessionId]?.phase
+        if (phase === 'completed' || phase === 'ready') return { stopReason: 'end_turn' as const }
+        if (phase === 'cancelled') return { stopReason: 'cancelled' as const }
+        throw error
+      }
+    )
   }
 
   sendAppContinuation(request: AcpPromptRequest): ReturnType<AcpRuntime['sendAppContinuation']> {
+    this.contextRecovery?.assertContinuationAllowed(request.sessionId)
     return this.linearizeRootAdmission(request.sessionId, () =>
       this.dispatchPrompt(request, undefined, 'sendAppContinuation')
     )
@@ -991,6 +1165,7 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void
   ): ReturnType<AcpRuntime['sendAppContinuation']> {
+    this.contextRecovery?.assertContinuationAllowed(request.sessionId)
     return this.linearizeRootAdmission(request.sessionId, () =>
       this.dispatchPrompt(
         request,
@@ -1786,6 +1961,7 @@ class AcpRuntimeCoordinator {
   }
 
   private invalidateSessionTurn(sessionId: string, notifyCancellation = true): void {
+    this.contextRecovery?.cancel(sessionId)
     for (const attempt of this.pendingPromptStarts.get(sessionId) ?? []) {
       attempt.cancelled = true
       attempt.startAdmission?.reject(
@@ -1804,6 +1980,7 @@ class AcpRuntimeCoordinator {
   }
 
   private invalidateAllSessionTurns(): void {
+    this.contextRecovery?.cancelAll()
     this.globalCancellationGeneration += 1
     for (const attempts of this.pendingPromptStarts.values()) {
       for (const attempt of attempts) {

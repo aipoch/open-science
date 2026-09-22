@@ -123,6 +123,7 @@ type PreloadApi = {
     continueInterruptedTurn: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
     compactSession: (request: unknown) => unknown
+    recoverSession: (request: unknown) => unknown
   }
   notebookEnv: {
     cancel: (language?: unknown) => unknown
@@ -273,6 +274,7 @@ describe('preload bridge — public surface inventory', () => {
       'acp.onEvent',
       'acp.onPermissionRequest',
       'acp.onState',
+      'acp.recoverSession',
       'acp.resetSessionContext',
       'acp.respondPlan',
       'acp.respondToElicitation',
@@ -1696,6 +1698,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resetSessionContext(sampleResumeRequest),
     channel: 'acp:reset-session-context',
     args: [sampleResumeRequest]
+  },
+  {
+    name: 'acp.recoverSession → acp:recover-session',
+    invoke: (a) => a.acp.recoverSession({ sessionId: 's-1' }),
+    channel: 'acp:recover-session',
+    args: [{ sessionId: 's-1' }]
   },
   {
     name: 'acp.compactSession → acp:compact-session',

@@ -1,3 +1,5 @@
+import { remapStorageKey } from './native-snapshot'
+import { notebookOutputRequestId } from '../notebook/output-storage'
 import { PrismaClient } from '@prisma/client'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -291,3 +293,17 @@ it.each([
     expect(projected.tables[versions]).toEqual(source.tables[versions])
   }
 )
+
+it('remaps run-owned full output files and completion receipts when importing a Session', () => {
+  const identities = { project: 'new-project', session: 'new-session', 'old-run': 'new-run' }
+  for (const suffix of ['.txt', '.complete']) {
+    expect(
+      remapStorageKey(
+        `notebooks/project/session/outputs/${notebookOutputRequestId('old-run')}${suffix}`,
+        identities
+      )
+    ).toBe(
+      `notebooks/new-project/new-session/outputs/${notebookOutputRequestId('new-run')}${suffix}`
+    )
+  }
+})

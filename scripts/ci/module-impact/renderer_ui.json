@@ -404,7 +404,8 @@
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationMarker.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
-      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx"
+      "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/ContextRecoveryNotice.test.tsx"
     ]
   },
   "capabilityOverlays": [],

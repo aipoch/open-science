@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isMediaOverflowError } from './media-overflow'
+import { classifyContextOverflowError, isMediaOverflowError } from './media-overflow'
 
 describe('isMediaOverflowError', () => {
   it('matches the backend compaction failure', () => {
@@ -44,5 +44,58 @@ describe('isMediaOverflowError', () => {
     expect(isMediaOverflowError(undefined)).toBe(false)
     expect(isMediaOverflowError(null)).toBe(false)
     expect(isMediaOverflowError('')).toBe(false)
+  })
+})
+
+describe('classifyContextOverflowError', () => {
+  it('recognizes exhausted compaction without retrying ordinary compaction', () => {
+    expect(
+      classifyContextOverflowError(
+        'Session too large to compact - context exceeds model limit even after stripping media'
+      )
+    ).toBe('compaction-exhausted')
+    expect(
+      classifyContextOverflowError(
+        'Conversation history too large to compact - exceeds model context limit'
+      )
+    ).toBe('compaction-exhausted')
+    expect(classifyContextOverflowError({ error: { code: 'media_unstrippable' } })).toBe(
+      'compaction-exhausted'
+    )
+  })
+  it('prefers structured provider facts over wrapper text', () => {
+    expect(
+      classifyContextOverflowError({
+        message: 'Internal error',
+        data: { errorKind: 'compaction-exhausted' }
+      })
+    ).toBe('compaction-exhausted')
+    expect(
+      classifyContextOverflowError({
+        message: 'Request too large',
+        error: { code: 'context_length_exceeded' }
+      })
+    ).toBe('context-overflow')
+    expect(classifyContextOverflowError({ status: 413 })).toBe('payload-overflow')
+    expect(
+      classifyContextOverflowError({ code: 'invalid_request', message: 'file is too large' })
+    ).toBeUndefined()
+  })
+  it('prefers nested structured exhaustion over transport status and string wrappers', () => {
+    expect(
+      classifyContextOverflowError({
+        status: 413,
+        error: 'Request too large',
+        data: { errorKind: 'compaction-exhausted' }
+      })
+    ).toBe('compaction-exhausted')
+  })
+  it('ignores arbitrary payloads and handles cyclic envelopes', () => {
+    expect(
+      classifyContextOverflowError({ request: { message: 'context_length_exceeded' } })
+    ).toBeUndefined()
+    const error: { cause?: unknown } = {}
+    error.cause = error
+    expect(classifyContextOverflowError(error)).toBeUndefined()
   })
 })

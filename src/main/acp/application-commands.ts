@@ -1,6 +1,7 @@
 import type {
   AcpCancelPromptRequest,
   AcpCompactSessionRequest,
+  AcpRecoverSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
@@ -184,6 +185,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpResumeSessionRequest],
     AcpCreateSessionResponse
   >('acp:reset-session-context'),
+  recoverSession: defineApplicationCommand<
+    'acp:recover-session',
+    readonly [request: AcpRecoverSessionRequest],
+    AcpStateCommandResponse
+  >('acp:recover-session'),
   compactSession: defineApplicationCommand<
     'acp:compact-session',
     readonly [request: AcpCompactSessionRequest],
@@ -260,6 +266,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.continueInterruptedTurn,
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
+  acpCommands.recoverSession,
   acpCommands.sendPrompt,
   acpCommands.steerFollowUp,
   acpCommands.saveAsSkill,
@@ -282,6 +289,7 @@ type AcpApplicationCommandRuntime = Pick<
   | 'disconnect'
   | 'resetSessionContext'
   | 'compactSession'
+  | 'recoverSession'
   | 'cancelPrompt'
   | 'steerFollowUp'
   | 'deleteSession'
@@ -361,6 +369,19 @@ const registerAcpCommands = (
               )
             : dependencies.runtime.resetSessionContext(invocation.args[0])
         ),
+      'acp:recover-session': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can recover a session.')
+        }
+        const request = { sessionId: invocation.args[0].sessionId }
+        return stateCommand(
+          dependencies.archiveAvailability
+            ? dependencies.archiveAvailability.withSessionAvailableById(request.sessionId, () =>
+                dependencies.runtime.recoverSession(request)
+              )
+            : dependencies.runtime.recoverSession(request)
+        )
+      },
       'acp:compact-session': (invocation) =>
         stateCommand(
           dependencies.archiveAvailability

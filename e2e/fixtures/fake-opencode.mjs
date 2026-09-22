@@ -389,6 +389,23 @@ const captureProviderPrompt = async (sessionId, prompt) => {
   )
 }
 
+const configuredModelOptions = () => {
+  const thinkingOptions = inlineThinkingModelOptions()
+  if (thinkingOptions.length) return thinkingOptions
+  const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+  if (!config.model) return []
+  return [
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: config.model,
+      options: [{ value: config.model, name: config.model }]
+    }
+  ]
+}
+
 const verifyProviderBridge = () => {
   const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
   const providers = Object.values(config.provider ?? {})
@@ -1029,10 +1046,10 @@ if (process.argv.includes('--version')) {
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
-      return { sessionId, configOptions: inlineThinkingModelOptions() }
+      return { sessionId, configOptions: configuredModelOptions() }
     })
     .onRequest(acp.methods.agent.session.setConfigOption, () => ({
-      configOptions: inlineThinkingModelOptions()
+      configOptions: configuredModelOptions()
     }))
     .onRequest(acp.methods.agent.session.resume, async (context) => {
       const mcpServers = context.params.mcpServers ?? []
@@ -1041,7 +1058,7 @@ if (process.argv.includes('--version')) {
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
-      return {}
+      return { configOptions: configuredModelOptions() }
     })
     .onRequest(acp.methods.agent.session.prompt, async (context) => {
       const rawPrompt = context.params.prompt
@@ -1056,6 +1073,26 @@ if (process.argv.includes('--version')) {
       )
       const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
+      if (prompt.includes('Exercise exhausted context recovery.')) {
+        if (
+          !prompt.includes(
+            'Resume the existing task from the following persisted historical evidence.'
+          )
+        ) {
+          throw acp.RequestError.internalError(
+            { errorKind: 'compaction-exhausted' },
+            'Session too large to compact - context exceeds model limit even after stripping media'
+          )
+        }
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Context recovery completed in the same conversation.' }
+          }
+        })
+        return { stopReason: 'end_turn' }
+      }
       if (prompt.includes(PROVIDER_RUNTIME_FAILURE_PROMPT)) await rejectThroughProviderBridge()
       // Use the supported mid-response interruption wrapper: generic provider errors are terminal
       // failures and intentionally do not offer Resume. Let this escape the reply fixture catch.

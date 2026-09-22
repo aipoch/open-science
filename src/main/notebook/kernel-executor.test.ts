@@ -1,3 +1,5 @@
+import { notebookOutputPage } from './output-page'
+import { notebookOutputDirectory, notebookOutputRequestId } from './output-storage'
 import {
   spawnSync,
   type ChildProcess,
@@ -4947,3 +4949,117 @@ describe('NotebookKernelExecutor readiness gate', () => {
     }
   })
 })
+
+describe.skipIf(process.platform === 'win32' || !python3)(
+  'full output capture through kernel execution',
+  () => {
+    it.each([false, true])(
+      'pages distinct process stderr without duplicating loop stderr (overflow: %s)',
+      async (overflow) => {
+        cwdDir = await makeDefaultEnvCwd('os-kernel-process-stderr-')
+        const request = baseRequest(cwdDir)
+        const executor = new NotebookKernelExecutor({
+          pythonBin: python3,
+          pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+          platform: 'linux'
+        })
+        try {
+          const result = await executor.execute({
+            ...request,
+            runId: 'stderr-output',
+            code: `import os, sys, time
+print('LOOP_STDERR_SENTINEL', file=sys.stderr)
+os.write(2, b'x' * ${overflow ? 80 * 1024 : 0} + b'NATIVE_DIAGNOSTIC_SENTINEL')
+time.sleep(0.05)`
+          })
+          expect(result.status).toBe('completed')
+          expect(result.stderr).toContain('NATIVE_DIAGNOSTIC_SENTINEL')
+          expect(result.truncated).toBe(overflow)
+          let offset = 0
+          let recovered = ''
+          do {
+            const page = (await notebookOutputPage(
+              {
+                notebookSessionRoot: request.notebookSessionRoot,
+                runs: [{ runId: 'stderr-output', status: result.status }]
+              },
+              { outputRunId: 'stderr-output', outputOffset: offset, outputLimit: 4000 }
+            )) as { outputPage: { text: string; nextOffset?: number; captureTruncated: boolean } }
+            expect(JSON.stringify(page).length).toBeLessThanOrEqual(5000)
+            expect(page.outputPage.captureTruncated).toBe(overflow)
+            recovered += page.outputPage.text
+            offset = page.outputPage.nextOffset ?? -1
+          } while (offset >= 0)
+          expect(recovered.split('LOOP_STDERR_SENTINEL')).toHaveLength(2)
+          expect(recovered.split('NATIVE_DIAGNOSTIC_SENTINEL')).toHaveLength(2)
+        } finally {
+          await executor.shutdown()
+        }
+      },
+      30_000
+    )
+
+    it('preserves completed execution and captured stdout when saving process stderr fails', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-stderr-save-failure-')
+      const request = baseRequest(cwdDir)
+      const outputPath = join(
+        notebookOutputDirectory(request.notebookSessionRoot),
+        notebookOutputRequestId('stderr-save-failure') + '.txt'
+      )
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+        platform: 'linux'
+      })
+      try {
+        const result = await executor.execute({
+          ...request,
+          runId: 'stderr-save-failure',
+          code: `import os, time
+print('PRESERVED_STDOUT')
+os.write(2, b'PRESERVED_DIAGNOSTIC')
+os.chmod(${JSON.stringify(outputPath)}, 0o400)
+time.sleep(0.05)`
+        })
+        expect(result.status).toBe('completed')
+        expect(result.stderr).toContain('PRESERVED_DIAGNOSTIC')
+        expect(result.truncated).toBe(true)
+        expect(await readFile(outputPath, 'utf8')).toContain('PRESERVED_STDOUT')
+        expect(existsSync(outputPath.replace(/\.txt$/, '.complete'))).toBe(false)
+      } finally {
+        await executor.shutdown()
+      }
+    }, 30_000)
+
+    it('passes the durable run identity to the real Python loop before display clipping', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-full-output-')
+      const request = baseRequest(cwdDir)
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+        platform: 'linux'
+      })
+      try {
+        const result = await executor.execute({
+          ...request,
+          runId: 'durable-output',
+          code: "print('x' * (3 * 1024 * 1024) + 'FINAL_SENTINEL')"
+        })
+        expect(result.status).toBe('completed')
+        expect(result.truncated).toBe(true)
+        expect(result.stdout).not.toContain('FINAL_SENTINEL')
+        expect(
+          await readFile(
+            join(
+              notebookOutputDirectory(request.notebookSessionRoot),
+              notebookOutputRequestId('durable-output') + '.txt'
+            ),
+            'utf8'
+          )
+        ).toContain('FINAL_SENTINEL')
+      } finally {
+        await executor.shutdown()
+      }
+    }, 30_000)
+  }
+)

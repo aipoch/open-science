@@ -160,7 +160,10 @@ import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import type { AcpModelChangeWorkflow } from './model-change-workflow'
 import type { AcpProviderSessionCreator } from './provider-session-creator'
 import type { AcpProviderSessionResumer } from './provider-session-resumer'
-import type { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
+import type {
+  AcpSessionReplacementWorkflow,
+  AcpSessionReplacementOptions
+} from './session-replacement-workflow'
 import type { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
@@ -726,6 +729,10 @@ class AcpRuntime {
     string,
     { revision: number; tail: Promise<void> }
   >()
+  readonly recoveryBudget: (sessionId: string) => {
+    contextWindowTokens: number
+    fixedOverheadTokens: number
+  }
   private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
@@ -734,6 +741,7 @@ class AcpRuntime {
     base: AcpRuntimeBaseOwners,
     session: AcpRuntimeSessionOwners
   ) {
+    this.recoveryBudget = session.recoveryBudget
     this.spawnAgent = options.spawnAgent
     this.artifactOptions = options.artifacts
     this.snapshotOwner = base.snapshotOwner
@@ -1224,6 +1232,19 @@ class AcpRuntime {
     })
   }
 
+  getAttachedProviderSessionId(sessionId: string): string | undefined {
+    return this.sessionRegistry.lookup(sessionId)?.attachment?.session.sessionId
+  }
+
+  async resumeExistingSession(
+    request: AcpResumeSessionRequest,
+    recovery?: AcpSessionReplacementOptions
+  ): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() =>
+      this.providerSessionResumer.resumeExisting(request, recovery)
+    )
+  }
+
   async enableLiteratureContext(sessionId: string): Promise<void> {
     if (!this.options.literature) return
     this.sessionCapabilities.enableLiterature(sessionId)
@@ -1308,14 +1329,14 @@ class AcpRuntime {
     }
   }
 
-  // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
-  // — chiefly when inlined media pushed the request past the provider's size limit and the backend's own
-  // compaction fails with `media_unstrippable`. Disposes the current agent session and adopts a brand-new
-  // one under the SAME app id, resetting the per-session inline-image budget so a replayed text-only
-  // transcript starts clean. Returns contextReset so the caller replays a bounded transcript into the
-  // next prompt (the app-level equivalent of compaction, which — unlike the backend's — drops all media).
-  async resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.sessionReplacement.reset(request))
+  // Prepare a new provider context under the same App Session identity. The previous attachment
+  // remains usable until candidate capabilities and configuration are ready and binding commits.
+  // Failed or cancelled preparation preserves the old attachment; callers own bounded replay.
+  async resetSessionContext(
+    request: AcpResumeSessionRequest,
+    options?: AcpSessionReplacementOptions
+  ): Promise<AcpCreateSessionResponse> {
+    return this.withOperationLease(() => this.sessionReplacement.reset(request, options))
   }
 
   // Hot-switches the specialist bound to a live session. Updates the per-session skills and identity

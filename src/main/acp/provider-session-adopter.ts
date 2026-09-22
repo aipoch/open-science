@@ -36,6 +36,13 @@ type AcpProviderSessionAdoptionRequest = Readonly<{
   specialistId?: string
   specialistBindingPending?: true
   memoryEnabled?: boolean
+  replacement?: Readonly<{
+    assertCurrent: () => void
+    onCandidateCreated?: (providerSessionId: string) => Promise<void>
+    onBeforeCommit?: (providerSessionId: string) => Promise<void>
+    onCommitFailed?: (providerSessionId: string, error: unknown) => Promise<void>
+    afterPublish: () => void
+  }>
 }>
 
 type AcpProviderSessionAdopterDependencies = Readonly<{
@@ -83,6 +90,8 @@ export class AcpProviderSessionAdopter {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     let adoptedProviderSessionId: string | undefined
+    let published = false
+    let commitAttempted = false
     let wslSetup = false
     let identity = request.identity
     try {
@@ -92,6 +101,7 @@ export class AcpProviderSessionAdopter {
       })
       capability = await this.deps.capabilities.provision({
         stableAppSessionId,
+        isolatedRouting: request.replacement !== undefined,
         framework: startupBackend.framework,
         nativeMcpEnabled: startupBackend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
@@ -100,6 +110,7 @@ export class AcpProviderSessionAdopter {
         projectId: request.projectId,
         memoryEnabled: request.memoryEnabled
       })
+      request.replacement?.assertCurrent()
       wslSetup = capability.wslSetup === true
       const hasAuthoritativeSpecialistBinding =
         request.specialistBindingPending === true || request.specialistId !== undefined
@@ -113,9 +124,11 @@ export class AcpProviderSessionAdopter {
         this.resolveSpecialistIdentity(specialistId, startupBackend),
         this.resolveSpecialistSkills(specialistId)
       ])
+      request.replacement?.assertCurrent()
       const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
       diagnostics.phase('resolve-project-context')
       const projectContextAppend = await this.resolveProjectAgentContext(request.projectId)
+      request.replacement?.assertCurrent()
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
         tooling: {
@@ -145,6 +158,11 @@ export class AcpProviderSessionAdopter {
         })
         .start()
       adoptedProviderSessionId = provisionalSession.sessionId
+      request.replacement?.assertCurrent()
+      if (request.replacement?.onCandidateCreated) {
+        await request.replacement.onCandidateCreated(adoptedProviderSessionId)
+      }
+      request.replacement?.assertCurrent()
 
       const reserved = this.deps.reserveIdentity(identity, [
         stableAppSessionId,
@@ -180,6 +198,20 @@ export class AcpProviderSessionAdopter {
           })
           continue
         }
+        request.replacement?.assertCurrent()
+        if (request.replacement) {
+          await capability.prepareCommit?.(stableAppSessionId)
+          request.replacement.assertCurrent()
+        }
+        if (request.replacement?.onBeforeCommit) {
+          commitAttempted = true
+          await request.replacement.onBeforeCommit(provisionalSession.sessionId)
+        }
+        request.replacement?.assertCurrent()
+        if (this.deps.currentBackend() !== backend) {
+          throw new Error('ACP session startup was superseded.')
+        }
+        capability.assertCurrent?.()
         diagnostics.phase('publish-provider-session')
         identity.assertCurrent()
         if (
@@ -191,17 +223,23 @@ export class AcpProviderSessionAdopter {
         ) {
           throw new Error('ACP session startup was superseded.')
         }
-        const { aggregate } = this.deps.registry.publish(identity, stableAppSessionId, {
-          session: provisionalSession,
-          cwd: request.cwd,
-          projectId: request.projectId,
-          frameworkId: backend.framework.id,
-          backendId: backend.backendId,
-          permissionProfile: structuredClone(configuration.permissionProfile),
-          memoryEnabled: request.memoryEnabled !== false,
-          appliedModel: configuration.appliedModel,
-          configOptions: structuredClone(configuration.configOptions)
-        })
+        const { aggregate } = this.deps.registry.publish(
+          identity,
+          stableAppSessionId,
+          {
+            session: provisionalSession,
+            cwd: request.cwd,
+            projectId: request.projectId,
+            frameworkId: backend.framework.id,
+            backendId: backend.backendId,
+            permissionProfile: structuredClone(configuration.permissionProfile),
+            memoryEnabled: request.memoryEnabled !== false,
+            appliedModel: configuration.appliedModel,
+            configOptions: structuredClone(configuration.configOptions)
+          },
+          { moveToEnd: request.replacement !== undefined }
+        )
+        published = true
         aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
         this.deps.updateCwd(request.cwd)
         if (specialistIdentity) {
@@ -216,6 +254,11 @@ export class AcpProviderSessionAdopter {
         provisionalSession = undefined
         capability = undefined
         identity.release()
+        try {
+          request.replacement?.afterPublish()
+        } catch (error) {
+          this.safeLogError('replaced session cleanup failed', error, stableAppSessionId)
+        }
         break
       }
 
@@ -239,21 +282,32 @@ export class AcpProviderSessionAdopter {
       }
     } catch (caught) {
       let startupError = caught
+      if (!published && commitAttempted && adoptedProviderSessionId) {
+        try {
+          await request.replacement?.onCommitFailed?.(adoptedProviderSessionId, caught)
+        } catch (rollbackError) {
+          startupError = new AggregateError(
+            [caught, rollbackError],
+            'Session replacement failed and its saved binding could not be restored.'
+          )
+        }
+      }
       let ownsStableIdentity = true
       try {
         identity.assertCurrent()
       } catch (supersededError) {
-        startupError = supersededError
+        if (startupError === caught) startupError = supersededError
         ownsStableIdentity = false
       }
-      if (capability) {
+      if (capability && !published) {
         try {
-          capability.release({ ownsStableIdentity })
+          await capability.release({ ownsStableIdentity })
         } catch (cleanupError) {
           this.safeLogError('adopted capability release failed', cleanupError, stableAppSessionId)
         }
       }
-      this.disposeProvisional(provisionalSession, 'adopted startup session disposal failed')
+      if (!published)
+        this.disposeProvisional(provisionalSession, 'adopted startup session disposal failed')
       diagnostics.fail(startupError)
       throw startupError
     } finally {

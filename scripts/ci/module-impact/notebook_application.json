@@ -269,7 +269,10 @@
     "src/main/notebook/working-file-observer.test.ts",
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/wsl-setup-powershell.integration.test.ts",
-    "src/main/notebook/wsl2-shell.integration.test.ts"
+    "src/main/notebook/wsl2-shell.integration.test.ts",
+    "src/main/notebook/output-page.ts",
+    "src/main/notebook/output-storage.ts",
+    "src/main/notebook/output-storage.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -334,9 +337,11 @@
     "src/main/notebook/source-file-access-analysis.ts",
     "src/main/notebook/timeout-controller.ts",
     "src/main/notebook/trust-bundle.ts",
-    "src/main/notebook/working-file-observer.ts"
+    "src/main/notebook/working-file-observer.ts",
+    "src/main/notebook/output-page.ts",
+    "src/main/notebook/output-storage.ts"
   ],
-  "consumerModules": [],
+  "consumerModules": ["notebook_execution", "main_session_package"],
   "testFiles": {
     "owner": [
       "src/main/notebook/application-commands.test.ts",
@@ -520,7 +525,8 @@
       "src/main/notebook/working-file-observer.performance.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
-      "src/main/notebook/wsl2-shell.integration.test.ts"
+      "src/main/notebook/wsl2-shell.integration.test.ts",
+      "src/main/notebook/output-storage.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -909,7 +915,9 @@
       "src/main/pdf-annotations/service.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
-      "src/main/settings/codex-bridge-tools.test.ts"
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

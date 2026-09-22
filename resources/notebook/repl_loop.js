@@ -18,12 +18,14 @@ const { fileURLToPath } = require('node:url')
 // Protocol output line. console is captured into strings during a run (see run()), so writing the
 // JSON here via process.stdout.write cannot be corrupted by user console output.
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
+const OUTPUT_DIRECTORY = process.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR
 const OUTPUT_LIMIT_BYTES =
   Number(process.env.OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES) || 2 * 1024 * 1024
 const DIAGNOSTIC_LIMIT_BYTES = Math.min(16 * 1024, Math.max(0, OUTPUT_LIMIT_BYTES))
 
 const takeOutput = (budget, value) => {
   value = String(value)
+  if (budget.outputFile !== undefined) fs.writeSync(budget.outputFile, value)
   if (budget.remaining <= 0) {
     if (value) budget.truncated = true
     return ''
@@ -45,6 +47,7 @@ const takeOutput = (budget, value) => {
 
 const takeOutputTail = (budget, value) => {
   value = String(value)
+  if (budget.outputFile !== undefined) fs.writeSync(budget.outputFile, value)
   if (budget.remaining <= 0) {
     if (value) budget.truncated = true
     return ''
@@ -1732,6 +1735,9 @@ const validatedHostFrameAttachment = (value) => {
 const validatedHostFrameMessage = (value) => {
   const required = ['message_id', 'role', 'content', 'status', 'created_at', 'updated_at']
   const optional = [
+    'content_offset',
+    'content_length',
+    'next_content_offset',
     'response_to_message_id',
     'runtime_segment_id',
     'completed_at',
@@ -1754,6 +1760,9 @@ const validatedHostFrameMessage = (value) => {
       (!value.turn_usage ||
         typeof value.turn_usage !== 'object' ||
         Array.isArray(value.turn_usage))) ||
+    ['content_offset', 'content_length', 'next_content_offset'].some(
+      (key) => value[key] !== undefined && !hostFrameCount(value[key])
+    ) ||
     (value.attachments !== undefined && !Array.isArray(value.attachments))
   ) {
     throw new Error('host.frames.get returned an invalid Message')
@@ -2705,6 +2714,10 @@ async function hostFramesGet(frameId, options = {}) {
     options: remappedHostObject(options, 'host.frames.get options', {
       sessionId: 'session_id',
       branchId: 'branch_id',
+      messageId: 'message_id',
+      contentOffset: 'content_offset',
+      contentLimit: 'content_limit',
+      search: 'search',
       before: 'before',
       limit: 'limit'
     })
@@ -3669,14 +3682,15 @@ function wrapForRun(code) {
 
 // Runs one request against the persistent context. console is redirected into strings and restored in
 // finally; the awaited value of the async IIFE (i.e. what the user code `return`s) becomes result.
-async function run(code) {
+async function run(code, outputFile) {
   let out = '',
     err = ''
   const outputBudget = {
     remaining: OUTPUT_LIMIT_BYTES - DIAGNOSTIC_LIMIT_BYTES,
-    truncated: false
+    truncated: false,
+    outputFile
   }
-  const diagnosticBudget = { remaining: DIAGNOSTIC_LIMIT_BYTES, truncated: false }
+  const diagnosticBudget = { remaining: DIAGNOSTIC_LIMIT_BYTES, truncated: false, outputFile }
   const origLog = console.log,
     origErr = console.error
   console.log = (...a) => {
@@ -3735,7 +3749,21 @@ rl.on('line', (line) => {
     ACTIVE_CONTROL_INVOCATION_ID = request.control_invocation_id
     DELEGATE_CALL_SEQUENCE = 0
     try {
-      const resp = await run(request.code || '')
+      const outputRoot = OUTPUT_DIRECTORY
+      const outputFile =
+        outputRoot && /^[A-Za-z0-9_-]+$/.test(request.req_id)
+          ? fs.openSync(path.join(outputRoot, request.req_id + '.txt'), 'wx', 0o600)
+          : undefined
+      let resp
+      try {
+        resp = await run(request.code || '', outputFile)
+        if (outputFile !== undefined) {
+          fs.fsyncSync(outputFile)
+          fs.writeFileSync(path.join(outputRoot, request.req_id + '.complete'), '', { flag: 'wx' })
+        }
+      } finally {
+        if (outputFile !== undefined) fs.closeSync(outputFile)
+      }
       resp.req_id = request.req_id
       emit(resp)
     } finally {

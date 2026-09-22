@@ -308,7 +308,9 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/main/connectors/descriptors/omics-ena.test.ts",
       "src/main/connectors/descriptors/genomes-blast.test.ts",
-      "src/main/connectors/descriptors/gdc.test.ts"
+      "src/main/connectors/descriptors/gdc.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts",
+      "src/main/acp/provider-session-resumer.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

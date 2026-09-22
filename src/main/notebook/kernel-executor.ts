@@ -1,3 +1,9 @@
+import {
+  appendNotebookProcessStderr,
+  ensureNotebookOutputDirectory,
+  notebookOutputDirectory,
+  notebookOutputRequestId
+} from './output-storage'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -282,6 +288,7 @@ type ProcState = {
   pending?: PendingRequest
   beginSandboxExecution: () => () => void
   stderrTail: string
+  stderrTruncated: boolean
   annotateStderr: (stderr: string) => string
   confirmTermination?: () => Promise<boolean>
   cleanupSandbox: (
@@ -621,7 +628,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         throw proc.terminationError ?? new Error('Notebook kernel process exited before execution.')
       }
 
-      const reqId = randomUUID()
+      const reqId = request.runId ? notebookOutputRequestId(request.runId) : randomUUID()
       const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request, () => {
         kernelDispatched = true
       })
@@ -632,7 +639,18 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       const figureResult = await this.readFigures(response.figures)
       const processStderr = proc.annotateStderr(proc.stderrTail)
+      const processStderrTruncated = proc.stderrTruncated
       proc.stderrTail = ''
+      proc.stderrTruncated = false
+      let processStderrSaved = true
+      if (request.runId && request.notebookSessionRoot) {
+        processStderrSaved = await appendNotebookProcessStderr(
+          request.notebookSessionRoot,
+          request.runId,
+          processStderr,
+          processStderrTruncated
+        )
+      }
       const mapped = mapLoopOutputs({
         stdout: response.stdout,
         stderr: [response.stderr, processStderr].filter(Boolean).join('\n'),
@@ -663,7 +681,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
         outputs: cancelled
           ? mapped.outputs.filter((output) => output.type !== 'error')
           : mapped.outputs,
-        truncated: response.outputTruncated || figureResult.truncated,
+        truncated:
+          response.outputTruncated ||
+          figureResult.truncated ||
+          processStderrTruncated ||
+          !processStderrSaved,
         workingFiles: fileObservation.workingFiles,
         fileEvidence: fileObservation.fileEvidence,
         ...(fileObservation.confirmedReadPaths
@@ -855,6 +877,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       readline,
       beginSandboxExecution: spawned.beginSandboxExecution,
       stderrTail: '',
+      stderrTruncated: false,
       annotateStderr: spawned.annotateStderr,
       confirmTermination: spawned.confirmTermination,
       cleanupSandbox: spawned.cleanupSandbox,
@@ -868,7 +891,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
     readline.on('line', (line) => this.handleLine(proc, line))
     // Keep a bounded tail for sandbox diagnostics while continuing to drain a chatty child pipe.
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
-      proc.stderrTail = `${proc.stderrTail}${chunk}`.slice(-64 * 1024)
+      const text = proc.stderrTail + chunk
+      proc.stderrTruncated ||= text.length > 64 * 1024
+      proc.stderrTail = text.slice(-64 * 1024)
     })
     // A late async pipe error (e.g. EPIPE if the loop died mid-write) must not surface as an
     // uncaught error on the main process; fail any pending run instead, or swallow it if none is
@@ -955,6 +980,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   }> {
     assertProcessTreeSupport(this.platform)
     const figuresDir = this.ensureFiguresDir()
+    if (request.notebookSessionRoot) ensureNotebookOutputDirectory(request.notebookSessionRoot)
     // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
     const workloadCacheEnv = request.runtimeRoot
       ? prepareNotebookWorkloadCache(request.runtimeRoot)
@@ -1061,6 +1087,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
               : {}),
             readWriteRoots: presentPaths([
               request.notebookSessionRoot,
+              spawnEnv.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR ?? '',
               request.cwd,
               figuresDir,
               ...(request.runtimeRoot ? [notebookWorkloadCacheRoot(request.runtimeRoot)] : [])
@@ -1259,6 +1286,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // host environment and would bypass the environment-isolation policy below.
       MPLBACKEND: 'Agg',
       OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
+      OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: request.notebookSessionRoot
+        ? notebookOutputDirectory(request.notebookSessionRoot)
+        : '',
       OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
       OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot,
       // Cross-kernel workspace channel (see repository.ts): same path every kernel kind sees.

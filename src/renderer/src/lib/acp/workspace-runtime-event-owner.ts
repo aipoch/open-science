@@ -602,12 +602,22 @@ const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): v
 const syncWorkspaceInteractionState = (
   snapshot: Pick<
     AcpStateSnapshot,
-    'agentPromptInFlightSessionIds' | 'pendingElicitations' | 'pendingPermissions'
+    | 'agentPromptInFlightSessionIds'
+    | 'pendingElicitations'
+    | 'pendingPermissions'
+    | 'contextRecoveryBySession'
   >
 ): void => {
   syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
   syncWorkspaceElicitationState(snapshot.pendingElicitations ?? [])
   syncWorkspacePermissionState(snapshot.pendingPermissions)
+  // A native control turn may have set the legacy compaction projection. Main recovery owns
+  // its terminal transition, including failures without a continuation or a final prompt event.
+  for (const [sessionId, recovery] of Object.entries(snapshot.contextRecoveryBySession ?? {})) {
+    if (['ready', 'completed', 'blocked', 'cancelled', 'failed'].includes(recovery.phase)) {
+      useSessionStore.getState().finishCompaction(sessionId)
+    }
+  }
 }
 
 const resetWorkspaceRuntimeEventOwnerForTests = (): void => {

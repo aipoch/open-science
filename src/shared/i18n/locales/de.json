@@ -6236,6 +6236,12 @@
     "The selected file already exists. Choose a new filename.": "Die ausgewählte Datei ist bereits vorhanden. Wählen Sie einen neuen Dateinamen.",
     "Diagnostic operation timed out.": "Zeitüberschreitung beim Diagnosevorgang.",
     "Temporary diagnostic files could not be fully removed.": "Temporäre Diagnosedateien konnten nicht vollständig entfernt werden.",
-    "Choose a new .tar.gz file.": "Wählen Sie eine neue .tar.gz-Datei."
+    "Choose a new .tar.gz file.": "Wählen Sie eine neue .tar.gz-Datei.",
+    "Recovering session…": "Sitzung wird wiederhergestellt…",
+    "Session context needs recovery": "Der Sitzungskontext muss wiederhergestellt werden",
+    "Your conversation and files are preserved. Recovery prepares a smaller context so work can continue.": "Ihre Konversation und Dateien bleiben erhalten. Die Wiederherstellung bereitet einen kleineren Kontext vor, damit die Arbeit fortgesetzt werden kann.",
+    "Recover session": "Sitzung wiederherstellen",
+    "Recovery was interrupted. Recover the session to continue.": "Die Wiederherstellung wurde unterbrochen. Stellen Sie die Konversation wieder her, um fortzufahren.",
+    "The previous recovery may have executed operations. Verify their results before continuing.": "Bei der vorherigen Wiederherstellung wurden möglicherweise Vorgänge ausgeführt. Prüfen Sie deren Ergebnisse, bevor Sie fortfahren."
   }
 }

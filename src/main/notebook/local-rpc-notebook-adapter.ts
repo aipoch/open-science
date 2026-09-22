@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { notebookOutputPage } from './output-page'
 
 import {
   notebookLanguageSchema,
@@ -13,6 +14,7 @@ import {
   type NotebookLanguage,
   type NotebookRestartRequest,
   type NotebookSessionRequest,
+  type NotebookSessionStateRequest,
   type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
 } from '../../shared/notebook'
@@ -140,7 +142,11 @@ const notebookLocalRpcRequestSchemas = {
     runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
     command: z.string().min(1).optional()
   }),
-  state: notebookSessionRequestSchema,
+  state: notebookSessionRequestSchema.extend({
+    outputRunId: z.string().min(1).max(256).optional(),
+    outputOffset: z.number().int().nonnegative().optional(),
+    outputLimit: z.number().int().min(1).max(4000).optional()
+  }),
   restart: z.union([
     notebookSessionRequestSchema,
     notebookSessionRequestSchema.extend({
@@ -249,7 +255,7 @@ type NotebookLocalRpcCapability = {
     request: RequestNotebookNetworkAccessRequest,
     signal?: AbortSignal
   ): Promise<unknown>
-  state(request: NotebookSessionRequest): Promise<unknown>
+  state(request: NotebookSessionStateRequest): Promise<unknown>
   restart(request: NotebookRestartRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
   inspectPackages(request: InspectPackagesRequest): Promise<unknown>
@@ -391,7 +397,17 @@ const resolveNotebookLocalRpcHandler = (
           signal
         )
     case 'state':
-      return (request) => capability.state(parseNotebookLocalRpcRequest('state', request))
+      return async (request) => {
+        const parsed = parseNotebookLocalRpcRequest('state', request)
+        const { outputRunId, outputOffset, outputLimit, ...scope } = parsed
+        if (!outputRunId) {
+          if (outputOffset !== undefined || outputLimit !== undefined)
+            throw new Error('Output paging requires outputRunId.')
+          return capability.state(parsed)
+        }
+        const state = await capability.state({ ...scope, runIds: [outputRunId] })
+        return notebookOutputPage(state, { outputRunId, outputOffset, outputLimit })
+      }
     case 'restart':
       return (request) => capability.restart(parseNotebookLocalRpcRequest('restart', request))
     case 'shutdown':

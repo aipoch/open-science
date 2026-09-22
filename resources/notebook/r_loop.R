@@ -967,6 +967,7 @@ lockBinding("sink", baseenv())
 
 run <- base::local({
   kernel_figures_dir <- figures_dir
+  output_root <- Sys.getenv("OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR", "")
   output_text_limit <- max(0, text_limit_bytes - diagnostic_limit_bytes)
   output_figure_limit <- figure_limit_bytes
   output_figure_count_limit <- figure_count_limit
@@ -1487,7 +1488,9 @@ run <- base::local({
     error <- NULL
     interrupt_ack <- FALSE
     error_line <- NA_integer_
-    stdout_path <- tempfile("open-science-r-stdout-")
+    durable_output <- nzchar(output_root) && grepl("^[A-Za-z0-9_-]+$", req$req_id)
+    stdout_path <- if (durable_output) file.path(output_root, paste0(req$req_id, ".txt")) else tempfile("open-science-r-stdout-")
+    if (durable_output && file.exists(stdout_path)) stop("Notebook output already exists.")
     stdout_connection <- file(stdout_path, open = "wb")
     sink_depth <- sink.number(type = "output")
     kernel_sink(stdout_connection, type = "output")
@@ -1496,7 +1499,7 @@ run <- base::local({
       output_sink_state$protected_depth <- sink_depth
       while (sink.number(type = "output") > sink_depth) kernel_sink(type = "output")
       suppressWarnings(try(close(stdout_connection), silent = TRUE))
-      unlink(stdout_path, force = TRUE)
+      if (!durable_output) unlink(stdout_path, force = TRUE)
     }, add = TRUE)
     {
       # keep.source retains per-expression srcrefs so a runtime error can report the 1-based line of the
@@ -1544,7 +1547,7 @@ run <- base::local({
     stdout_file <- file(stdout_path, open = "rb")
     stdout_raw <- readBin(stdout_file, what = "raw", n = output_text_limit)
     close(stdout_file)
-    unlink(stdout_path, force = TRUE)
+    if (!durable_output) unlink(stdout_path, force = TRUE)
     stdout_text <- iconv(rawToChar(stdout_raw), from = "UTF-8", to = "UTF-8", sub = "")
     stdout_text <- sub("\\r?\\n$", "", stdout_text)
     if (!is.na(stdout_size) && stdout_size > output_text_limit) {
@@ -1552,6 +1555,7 @@ run <- base::local({
     }
     remaining_text_bytes <- diagnostic_limit_bytes
     if (!is.null(error)) {
+      if (durable_output) cat("\n[error]\n", error, file = stdout_path, append = TRUE)
       error_raw <- charToRaw(enc2utf8(error))
       if (length(error_raw) > remaining_text_bytes) {
         error <- if (remaining_text_bytes > 0) {
@@ -1586,6 +1590,7 @@ run <- base::local({
     } else {
       list()
     }
+    if (durable_output) file.create(file.path(output_root, paste0(req$req_id, ".complete")))
     list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
          interrupt_ack = isTRUE(interrupt_ack),
          error_line = if (is.na(error_line)) NULL else error_line,

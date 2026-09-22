@@ -382,3 +382,44 @@ describe('notebook local RPC adapter', () => {
     expect(leaseMethods).toEqual(['runCell', 'execute', 'executeControl', 'executeShell'])
   })
 })
+
+describe('saved Notebook output pages', () => {
+  it('retrieves only the requested Session run and keeps every serialized page bounded', async () => {
+    const capability = createCapability()
+    const original = '\u0000'.repeat(16000) + 'final result'
+    capability.state = vi.fn(async () => ({
+      runs: [{ runId: 'r', status: 'completed', text: { stdout: original }, truncated: true }]
+    }))
+    const params = { ...request, outputRunId: 'r', outputLimit: 4000 }
+    const handler = resolveNotebookLocalRpcHandler(capability, 'state', params)
+    let offset = 0
+    let recovered = ''
+    do {
+      const result = (await handler({ ...params, outputOffset: offset })) as {
+        outputPage: { text: string; nextOffset?: number; captureTruncated: boolean }
+      }
+      expect(JSON.stringify(result).length).toBeLessThanOrEqual(5000)
+      expect(result.outputPage.captureTruncated).toBe(true)
+      recovered += result.outputPage.text
+      offset = result.outputPage.nextOffset ?? -1
+    } while (offset >= 0)
+    expect(recovered).toBe('[stdout]\n' + original)
+    expect(capability.state).toHaveBeenCalledWith({ ...request, runIds: ['r'] })
+  })
+  it('does not disclose another run and validates paging options', async () => {
+    const capability = createCapability()
+    capability.state = vi.fn(async () => ({
+      runs: [{ runId: 'other', text: { stdout: 'private' } }]
+    }))
+    const params = { ...request, outputRunId: 'r' }
+    await expect(
+      resolveNotebookLocalRpcHandler(capability, 'state', params)(params)
+    ).rejects.toThrow('not found in the current Session')
+    expect(() =>
+      resolveNotebookLocalRpcHandler(capability, 'state', { ...params, outputLimit: 99999 })
+    ).toThrow()
+    expect(() =>
+      resolveNotebookLocalRpcHandler(capability, 'state', { ...params, outputOffset: -1 })
+    ).toThrow()
+  })
+})

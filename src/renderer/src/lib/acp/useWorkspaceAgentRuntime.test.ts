@@ -11061,6 +11061,34 @@ describe('recovering from a request-size overflow', () => {
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('leaves Main-owned overflow recovery to Main across repeated events', () => {
+    const runtime = {
+      state: { ...createSnapshot(['session-1']), contextRecoverySessionIds: ['session-1'] },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const recover = vi.fn()
+    const event = createEvent({
+      id: 'main-overflow',
+      kind: 'error',
+      level: 'error',
+      sessionId: 'session-1',
+      recoverable: 'context-overflow'
+    })
+    processContextOverflowRecovery(
+      runtime,
+      [event, event],
+      new Set(),
+      new Set(),
+      new Set(),
+      recover
+    )
+    expect(recover).not.toHaveBeenCalled()
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+  })
+
   it('triggers recovery once per overflow error event for an attached session', () => {
     const runtime = {
       state: createSnapshot(['session-1']),

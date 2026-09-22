@@ -52,7 +52,13 @@ describe('AcpSessionReplacementWorkflow', () => {
     const releasePromptResourcesForSession = vi.fn()
     const resetContextUsage = vi.fn()
     const supersedeInteraction = vi.fn()
-    const adopt = vi.fn(async () => replacement)
+    const adopt = vi.fn(async (_sessionId, request) => {
+      expect(dispose).not.toHaveBeenCalled()
+      request.replacement.assertCurrent()
+      registry.lookup('app-session')?.aggregate.setMemoryEnabled(request.memoryEnabled !== false)
+      request.replacement.afterPublish()
+      return replacement
+    })
     const workflow = new AcpSessionReplacementWorkflow({
       defaultCwd: '/default-workspace',
       defaultProjectId: 'default-project',
@@ -87,7 +93,7 @@ describe('AcpSessionReplacementWorkflow', () => {
     ).resolves.toEqual(replacement)
 
     expect(dispose).toHaveBeenCalledOnce()
-    expect(registry.lookup('app-session')?.attachment).toBeUndefined()
+    expect(registry.lookup('app-session')?.attachment?.providerSessionId).toBe('provider-session')
     expect(cancelPermissionFlow).toHaveBeenCalledWith('app-session')
     expect(clearUserChoiceProvenanceForSession).toHaveBeenCalledWith('app-session')
     expect(clearLivePermissionProfile).toHaveBeenCalledWith('app-session')
@@ -103,7 +109,11 @@ describe('AcpSessionReplacementWorkflow', () => {
       identity: expect.any(Object),
       permissionProfile: 'ask',
       specialistId: undefined,
-      memoryEnabled: false
+      memoryEnabled: false,
+      replacement: expect.objectContaining({
+        assertCurrent: expect.any(Function),
+        afterPublish: expect.any(Function)
+      })
     })
   })
 

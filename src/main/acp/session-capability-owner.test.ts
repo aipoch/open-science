@@ -316,6 +316,58 @@ describe('ACP session capability owner', () => {
     expect(disabled.mcpServers).toEqual([])
   })
 
+  it('keeps old HTTP tools registered until an isolated candidate commits', async () => {
+    const registerLiteratureLibrary = vi.fn()
+    const unregister = vi.fn()
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiteratureLibrary,
+      urlFor: vi.fn((kind: string, id: string) => `http://127.0.0.1:5/${kind}/${id}`),
+      unregister,
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      library: {
+        handlerFor: vi.fn(() => ({
+          searchLibrary: vi.fn(async () => ({ items: [], totalCount: 0, hasMore: false })),
+          readAbstract: vi.fn(async () => undefined),
+          readPdf: vi.fn(async () => undefined),
+          saveToInbox: vi.fn(async () => ({ results: [] }))
+        }))
+      },
+      mcpHttpHost: host
+    })
+    const request = {
+      stableAppSessionId: 'session-1',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    }
+    const old = await owner.provision(request)
+    old.commit('session-1')
+    const rejected = await owner.provision({ ...request, isolatedRouting: true })
+    expect(unregister).not.toHaveBeenCalled()
+    rejected.release({ ownsStableIdentity: false })
+    expect(unregister).toHaveBeenCalled()
+    expect(unregister).not.toHaveBeenCalledWith('session-1')
+    const candidate = await owner.provision({ ...request, isolatedRouting: true })
+    expect(unregister).not.toHaveBeenCalledWith('session-1')
+    candidate.commit('session-1')
+    expect(unregister).toHaveBeenCalledWith('session-1')
+    const registeredId = registerLiteratureLibrary.mock.lastCall?.[0]
+    expect(registeredId).toMatch(/^literature-session-/)
+    expect(unregister).not.toHaveBeenCalledWith(registeredId)
+    owner.revokeSession('session-1')
+    expect(unregister).toHaveBeenCalledWith(registeredId)
+  })
+
   it('restores the committed Literature route when replacement provisioning is released', async () => {
     const registerLiterature = vi.fn()
     const unregister = vi.fn()

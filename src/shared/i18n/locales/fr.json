@@ -6402,6 +6402,12 @@
     "The selected file already exists. Choose a new filename.": "Le fichier sélectionné existe déjà. Choisissez un nouveau nom de fichier.",
     "Diagnostic operation timed out.": "Le délai de l’opération de diagnostic a expiré.",
     "Temporary diagnostic files could not be fully removed.": "Les fichiers de diagnostic temporaires n’ont pas pu être entièrement supprimés.",
-    "Choose a new .tar.gz file.": "Choisissez un nouveau fichier .tar.gz."
+    "Choose a new .tar.gz file.": "Choisissez un nouveau fichier .tar.gz.",
+    "Recovering session…": "Restauration de la session…",
+    "Session context needs recovery": "Le contexte de la session doit être restauré",
+    "Your conversation and files are preserved. Recovery prepares a smaller context so work can continue.": "Votre conversation et vos fichiers sont conservés. La restauration prépare un contexte plus court pour poursuivre le travail.",
+    "Recover session": "Restaurer la session",
+    "Recovery was interrupted. Recover the session to continue.": "La récupération a été interrompue. Récupérez la session pour continuer.",
+    "The previous recovery may have executed operations. Verify their results before continuing.": "La récupération précédente a peut-être exécuté des opérations. Vérifiez leurs résultats avant de continuer."
   }
 }

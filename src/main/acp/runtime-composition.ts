@@ -1,3 +1,11 @@
+import { estimateHistoryTokens } from '../../shared/history-preamble'
+import {
+  admitContextRecoveryContinuation,
+  abandonContextRecoveryAdmission,
+  updateContextRecoveryRecord
+} from '../session-persistence/context-recovery-admission'
+import { saveRecoveryText } from './recovery-text-storage'
+import { buildRecoveryHandoff } from './recovery-handoff'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -10,9 +18,12 @@ import { app } from 'electron'
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
+import {
+  resolveActiveConversationActivities,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { recoverySourceBranch, type PersistedChatSession } from '../../shared/session-persistence'
 import { imageAttachmentMimeType } from '../../shared/uploads'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
@@ -988,6 +999,167 @@ const createAcpRuntime = ({
       : undefined,
     delegatedWork
   )
+  if (sessionPersistenceCoordinator && !delegatedNotebookConnection) {
+    const loadRecoverySession = async (sessionId: string): Promise<PersistedChatSession> => {
+      const projectId = await sessionPersistenceCoordinator.sessionProjectId(sessionId)
+      if (!projectId) throw new Error('Recovery session project is unavailable.')
+      return sessionPersistenceCoordinator.loadSessionForContinuation(projectId, sessionId)
+    }
+    runtimeCoordinator.setContextRecoveryDependencies({
+      load: loadRecoverySession,
+      abandonContinuation: async (sessionId) => {
+        const session = await loadRecoverySession(sessionId)
+        await sessionPersistenceCoordinator.mutateRuntimeSession(
+          { projectId: session.projectId, sessionId },
+          abandonContextRecoveryAdmission
+        )
+      },
+      admitContinuation: async (request) => {
+        const session = await loadRecoverySession(request.sessionId)
+        let admittedRequest = request
+        await sessionPersistenceCoordinator.mutateRuntimeSession(
+          { projectId: session.projectId, sessionId: session.id },
+          (latest) => {
+            const admitted = admitContextRecoveryContinuation(latest, request, Date.now())
+            admittedRequest = admitted.request
+            return admitted.session
+          }
+        )
+        return admittedRequest
+      },
+      rollbackBinding: async (sessionId, record, candidateId) => {
+        const session = await loadRecoverySession(sessionId)
+        await sessionPersistenceCoordinator.mutateRuntimeSession(
+          { projectId: session.projectId, sessionId },
+          (latest) => {
+            if (
+              latest.runtimeContext?.contextRecovery?.id !== record.id ||
+              latest.providerSessionId !== candidateId
+            )
+              return latest
+            return {
+              ...latest,
+              providerSessionId: record.oldProviderSessionId,
+              runtimeContext: {
+                ...latest.runtimeContext,
+                revision: latest.runtimeContext.revision + 1,
+                contextRecovery: record
+              }
+            }
+          }
+        )
+      },
+      save: async (sessionId, record, providerSessionId, expectedRecoveryId) => {
+        const session = await loadRecoverySession(sessionId)
+        await sessionPersistenceCoordinator.mutateRuntimeSession(
+          { projectId: session.projectId, sessionId },
+          (latest) =>
+            updateContextRecoveryRecord(latest, record, expectedRecoveryId, providerSessionId)
+        )
+      },
+      prepare: async (session, request) => {
+        const measured = runtimeCoordinator.getRecoveryBudget(session.id)
+        if (!measured)
+          return {
+            status: 'blocked',
+            reason: 'Recovery request overhead is unavailable for this model configuration.'
+          }
+        const budget = {
+          ...measured,
+          // Current-turn semantic inputs are retained on dispatch, so their serialized descriptors
+          // and visual data must also consume the conservative budget rather than disappearing.
+          fixedOverheadTokens:
+            measured.fixedOverheadTokens +
+            (request
+              ? estimateHistoryTokens(
+                  JSON.stringify({
+                    attachments: request.attachments,
+                    currentImages: request.currentImages,
+                    referencedArtifacts: request.referencedArtifacts,
+                    referencedSessions: request.referencedSessions,
+                    parts: request.parts,
+                    forcedSkillIds: request.forcedSkillIds,
+                    turnIntent: request.turnIntent
+                  })
+                )
+              : 0),
+          outputReserveTokens: Math.min(8192, Math.ceil(measured.contextWindowTokens * 0.15)),
+          currentInput: request?.text
+        }
+        const initial = buildRecoveryHandoff({ session, ...budget })
+        if (initial.status === 'blocked') return initial
+        const graph = session.conversationGraph!
+        const messages = resolveActiveConversationMessages(graph)
+        const source = messages.at(-1)
+        if (!source) return initial
+        const evidence = [
+          ...messages.map(({ id, role, content, status }) =>
+            JSON.stringify({ messageId: id, role, content, status })
+          ),
+          ...resolveActiveConversationActivities(graph).activities.map((activity) =>
+            JSON.stringify({
+              toolCallId: activity.id,
+              promptMessageId: activity.promptMessageId,
+              title: activity.title,
+              status: activity.status,
+              result: activity.rawOutput,
+              terminalOutput: activity.terminalOutput,
+              content: activity.toolContent,
+              locations: activity.toolLocations,
+              exitCode: activity.terminalExitCode
+            })
+          )
+        ].join('\n')
+        const evidenceUpload = await saveRecoveryText({
+          projectId: session.projectId,
+          sessionId: session.id,
+          messageId: source.id,
+          text: evidence,
+          uploads: uploadRepository,
+          attach: async (messageId, attachment) => {
+            await sessionPersistenceCoordinator.mutateRuntimeSession(
+              { projectId: session.projectId, sessionId: session.id },
+              (latest) => {
+                if (recoverySourceBranch(latest) !== recoverySourceBranch(session)) {
+                  throw new Error(
+                    'The conversation changed while recovery evidence was being saved.'
+                  )
+                }
+                const attach = <
+                  T extends {
+                    id: string
+                    uploads?: import('../../shared/uploads').PersistedUploadedAttachment[]
+                  }
+                >(
+                  message: T
+                ): T =>
+                  message.id === messageId
+                    ? {
+                        ...message,
+                        uploads: [
+                          ...(message.uploads ?? []).filter(({ id }) => id !== attachment.id),
+                          attachment
+                        ]
+                      }
+                    : message
+                return {
+                  ...latest,
+                  messages: latest.messages.map(attach),
+                  conversationGraph: latest.conversationGraph
+                    ? {
+                        ...latest.conversationGraph,
+                        messages: latest.conversationGraph.messages.map(attach)
+                      }
+                    : undefined
+                }
+              }
+            )
+          }
+        })
+        return buildRecoveryHandoff({ session, ...budget, evidenceUpload })
+      }
+    })
+  }
   runtimeCoordinatorRef.current = runtimeCoordinator
   return runtimeCoordinator
 }

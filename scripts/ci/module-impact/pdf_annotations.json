@@ -631,7 +631,9 @@
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/workflows.test.ts",
-      "src/main/settings/workflows/connectors-diagnostic.test.ts"
+      "src/main/settings/workflows/connectors-diagnostic.test.ts",
+      "src/main/acp/context-recovery.native.integration.test.ts",
+      "src/main/acp/recovery-text-storage.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions"],

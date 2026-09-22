@@ -78,3 +78,40 @@ it('records the copied active branch head independently of original usage attrib
     messageId: 'original-head'
   })
 })
+
+it.each(['ready', 'replacing'] as const)(
+  'does not transfer %s recovery provider authority into a fork',
+  (phase) => {
+    const source: PersistedChatSession = {
+      id: 'source',
+      projectId: 'project',
+      title: 'Research',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2,
+      providerSessionId: 'original-provider',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        contextRecovery: {
+          version: 1,
+          id: 'original-recovery',
+          phase,
+          sourceBranch: '["original-frame","original-branch","original-message"]',
+          sourceRevision: 2,
+          compactAttempts: 0,
+          replacementAttempts: 1,
+          oldProviderSessionId: 'original-provider',
+          candidateProviderSessionId: 'candidate'
+        }
+      }
+    }
+    const fork = createForkSession({ ...source, id: 'fork' }, source, 'ask', 'Research(2)')
+    expect(fork.providerSessionId).toBeUndefined()
+    expect(fork.runtimeContext?.contextRecovery).toBeUndefined()
+    expect(fork.pendingHistoryReplay).toEqual({ kind: 'all' })
+    expect(source.runtimeContext?.contextRecovery?.candidateProviderSessionId).toBe('candidate')
+  }
+)

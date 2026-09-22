@@ -1,19 +1,64 @@
-// Recognizes the "conversation grew past the provider's request-size limit" failure so the app can
-// auto-recover (reset the agent context, replay a text-only transcript) instead of dead-ending.
-//
-// Several signatures describe the same underlying condition, depending on who rejected the request:
-//   - `media_unstrippable`: the backend's own compaction gave up because accumulated base64 media
-//     blocks cannot be stripped from the history it would summarize.
-//   - `Request too large (max 32MB)`: the agent CLI's own client-side ceiling tripped before dispatch.
-//   - `request_too_large` / `request entity too large`: the provider's HTTP 413 surfaced upstream.
-//   - `maximum context length` / `context length exceeded` / `prompt is too long`: the wording most
-//     Anthropic-compatible third-party endpoints (e.g. DeepSeek) use for the same overflow.
-// Matching any is enough to trigger recovery; all are specific enough not to catch unrelated failures
-// (an oversized upload rejected before it reaches the model, a rate-limit error, or a generic
-// invalid_request about a malformed field).
-const MEDIA_OVERFLOW_PATTERN =
-  /media[_\s-]?unstrippable|request[_\s-]?(?:entity[_\s-]?)?too[_\s-]?large|maximum context length|context[_\s-]?length[_\s-]?exceeded|prompt is too long/i
+export type ContextOverflowKind = 'context-overflow' | 'compaction-exhausted' | 'payload-overflow'
 
-// Whether a failed-prompt message indicates the request outgrew the provider's size limit.
+const codes: Readonly<Record<string, ContextOverflowKind>> = {
+  'context-overflow': 'context-overflow',
+  'compaction-exhausted': 'compaction-exhausted',
+  'payload-overflow': 'payload-overflow',
+  context_length_exceeded: 'context-overflow',
+  context_window_exceeded: 'context-overflow',
+  media_unstrippable: 'compaction-exhausted',
+  compaction_exhausted: 'compaction-exhausted',
+  request_too_large: 'payload-overflow',
+  request_entity_too_large: 'payload-overflow'
+}
+
+// Only traverse error envelopes: arbitrary request data can contain quoted failure messages.
+export function classifyContextOverflowError(error: unknown): ContextOverflowKind | undefined {
+  const seen = new Set<object>()
+  const classify = (
+    value: unknown,
+    depth: number,
+    structuredOnly: boolean
+  ): ContextOverflowKind | undefined => {
+    if (depth > 8) return undefined
+    if (typeof value === 'string') {
+      if (structuredOnly) return undefined
+      if (
+        /media[_\s-]?unstrippable|session too large to compact\s*[-–:]\s*context exceeds model limit even after stripping media|conversation history too large to compact\s*[-–:]\s*exceeds model context limit/i.test(
+          value
+        )
+      )
+        return 'compaction-exhausted'
+      if (/request[_\s-]?(?:entity[_\s-]?)?too[_\s-]?large/i.test(value)) return 'payload-overflow'
+      if (
+        /maximum context length|context[_\s-]?(?:length|window)[_\s-]?exceeded|prompt is too long/i.test(
+          value
+        )
+      )
+        return 'context-overflow'
+      return undefined
+    }
+    if (!value || typeof value !== 'object' || seen.has(value)) return undefined
+    seen.add(value)
+    const envelope = value as Record<string, unknown>
+    for (const key of ['code', 'type', 'errorKind']) {
+      const code = envelope[key]
+      if (typeof code === 'string' && Object.hasOwn(codes, code)) return codes[code]
+    }
+    if (!structuredOnly && (envelope.status === 413 || envelope.statusCode === 413))
+      return 'payload-overflow'
+    for (const key of ['error', 'cause', 'data', 'message']) {
+      const result = classify(envelope[key], depth + 1, structuredOnly)
+      if (result) return result
+    }
+    return undefined
+  }
+  const structured = classify(error, 0, true)
+  if (structured) return structured
+  seen.clear()
+  return classify(error, 0, false)
+}
+
+// Compatibility for callers that still display the legacy overflow notice.
 export const isMediaOverflowError = (message: string | undefined | null): boolean =>
-  typeof message === 'string' && MEDIA_OVERFLOW_PATTERN.test(message)
+  classifyContextOverflowError(message) !== undefined

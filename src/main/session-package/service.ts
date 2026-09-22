@@ -175,6 +175,7 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
   runtimeContext: session.runtimeContext
     ? {
         ...session.runtimeContext,
+        contextRecovery: undefined,
         permission: undefined,
         sideChat: undefined,
         sideChats: undefined,
@@ -199,7 +200,7 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const runtimeContext = session.runtimeContext
   return (
     isRecord(runtimeContext) &&
-    ['permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
+    ['contextRecovery', 'permission', 'sideChat', 'sideChats', 'sideChatRelays'].some((key) =>
       Object.hasOwn(runtimeContext, key)
     )
   )

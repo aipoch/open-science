@@ -94,6 +94,7 @@ export const createForkSession = (
       ? {
           ...copied.runtimeContext,
           revision: 0,
+          contextRecovery: undefined,
           permission: undefined,
           sideChat: undefined,
           sideChats: undefined,

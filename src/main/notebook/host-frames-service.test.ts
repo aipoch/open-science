@@ -728,3 +728,38 @@ describe('HostFramesService', () => {
     }
   })
 })
+
+describe('bounded Frame message reads', () => {
+  it('reads all long-message segments without leaking another branch or exceeding the limit', async () => {
+    const original = '零'.repeat(39_999) + 'final constraint'
+    const target = session({ messages: [{ ...message('long', 'user', 100), content: original }] })
+    const service = new HostFramesService({
+      readProject: vi.fn(async () => ({ sessions: [target], isComplete: true })),
+      readSession: vi.fn(async () => ({ status: 'found' as const, session: target }))
+    })
+    let offset = 0
+    let recovered = ''
+    do {
+      const result = (await service.get(
+        'root-frame-session-1',
+        { message_id: 'long', content_offset: offset, content_limit: 4000 },
+        context
+      )) as { transcript: { messages: Array<{ content: string; next_content_offset?: number }> } }
+      const part = result.transcript.messages[0]
+      expect(part.content.length).toBeLessThanOrEqual(4000)
+      recovered += part.content
+      offset = part.next_content_offset ?? -1
+    } while (offset >= 0)
+    expect(recovered).toBe(original)
+    await expect(
+      service.get('root-frame-session-1', { message_id: 'missing' }, context)
+    ).rejects.toThrow('Message not found')
+    await expect(
+      service.get('root-frame-session-1', { content_limit: 16001 }, context)
+    ).rejects.toThrow('16000')
+    const searched = (await service.get('root-frame-session-1', { search: 'absent' }, context)) as {
+      transcript: { messages: unknown[] }
+    }
+    expect(searched.transcript.messages).toEqual([])
+  })
+})

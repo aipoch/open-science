@@ -825,7 +825,9 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/pdf-annotations/service.test.ts',
           'src/main/session-package/ro-crate.integration.test.ts',
           'src/main/session-package/ro-crate.test.ts',
-          'src/main/settings/codex-bridge-tools.test.ts'
+          'src/main/settings/codex-bridge-tools.test.ts',
+          'src/main/acp/recovery-text-storage.test.ts',
+          'src/main/acp/context-recovery.native.integration.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

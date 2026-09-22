@@ -120,6 +120,10 @@ type ResumerHarness = {
   release: ReturnType<typeof vi.fn>
   backend: AcpBackendGenerationView
   request: ReturnType<typeof vi.fn>
+  resumeExisting: (
+    request?: Partial<AcpResumeSessionRequest>,
+    recovery?: Parameters<AcpProviderSessionResumer['resumeExisting']>[1]
+  ) => Promise<AcpCreateSessionResponse>
   reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   sessionSetupAppends: string[][]
@@ -371,6 +375,11 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     })
 
   return {
+    resumeExisting: (request = {}, recovery) =>
+      resumer.resumeExisting(
+        { sessionId: 'stable-app-session', cwd: '/workspace', projectId: 'project-a', ...request },
+        recovery
+      ),
     adopt,
     assertCurrentConnection,
     attachSession,
@@ -400,6 +409,51 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('reclaims precisely the recorded candidate without fresh adoption', async () => {
+    const harness = createHarness({ providerSessionId: 'candidate' })
+    await expect(harness.resumeExisting({ providerSessionId: 'candidate' })).resolves.toMatchObject(
+      { providerSessionId: 'candidate' }
+    )
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.request).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessionId: 'candidate' }),
+      expect.anything()
+    )
+  })
+
+  it('does not create a replacement when the recorded candidate is missing', async () => {
+    const harness = createHarness({ resumeError: new Error('Session not found') })
+    await expect(
+      harness.resumeExisting({ providerSessionId: 'missing-candidate' })
+    ).rejects.toThrow('Session not found')
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+  })
+
+  it('rolls back a candidate takeover receipt when cancellation wins before publication', async () => {
+    const harness = createHarness({ providerSessionId: 'candidate' })
+    let cancelled = false
+    const onCommitFailed = vi.fn(async () => {})
+    await expect(
+      harness.resumeExisting(
+        { providerSessionId: 'candidate' },
+        {
+          assertCurrent: () => {
+            if (cancelled) throw new Error('cancelled')
+          },
+          onBeforeCommit: async () => {
+            cancelled = true
+          },
+          onCommitFailed
+        }
+      )
+    ).rejects.toThrow('cancelled')
+    expect(onCommitFailed).toHaveBeenCalledOnce()
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+  })
+
   it.each([
     ['Responses', false, codexResponsesBackend],
     ['Chat', false, codexBridgeBackend],

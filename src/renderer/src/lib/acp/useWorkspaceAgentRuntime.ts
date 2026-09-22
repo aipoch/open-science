@@ -41,6 +41,7 @@ import {
 } from '../../stores/preview-workbench-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
+import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
@@ -141,6 +142,10 @@ type WorkspaceAgentRuntime = {
   saveAsSkillInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
   subscribeToSubagentRuntimeUpdates: (listener: SubagentRuntimeListener) => () => void
+  contextRecoveryBySession: NonNullable<
+    import('../../../../shared/acp').AcpRuntimeState['contextRecoveryBySession']
+  >
+  recoverSession: (sessionId: string) => Promise<void>
   compactContext: (sessionId: string) => Promise<boolean>
   ensureSessionReady: (sessionId: string) => Promise<void>
   saveAsSkill: (
@@ -467,6 +472,14 @@ const useOwnedWorkspaceAgentRuntime = (
     [admitSendConfiguration, resolveRuntimeSelection, runtime]
   )
 
+  const recoverSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      await flushSessionPersistence()
+      await runtime.recoverSession(sessionId)
+    },
+    [runtime]
+  )
+
   const compactContext = useCallback(
     (sessionId: string): Promise<boolean> => lifecycleOwner.compact(runtime, sessionId),
     [lifecycleOwner, runtime]
@@ -659,6 +672,8 @@ const useOwnedWorkspaceAgentRuntime = (
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
     subscribeToSubagentRuntimeUpdates,
     compactContext,
+    recoverSession,
+    contextRecoveryBySession: runtime.state.contextRecoveryBySession ?? {},
     ensureSessionReady,
     setMemoryEnabled,
     saveAsSkill,

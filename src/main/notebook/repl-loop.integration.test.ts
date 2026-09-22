@@ -2555,6 +2555,9 @@ describe('repl_loop local RPC transport', () => {
                         message_id: 'message-1',
                         role: 'agent',
                         content: 'Visible answer',
+                        content_offset: 0,
+                        content_length: 100,
+                        next_content_offset: 14,
                         status: 'complete',
                         runtime_segment_id: 'runtime-1',
                         created_at: '2026-08-01T00:00:30.000Z',
@@ -2606,7 +2609,7 @@ describe('repl_loop local RPC transport', () => {
     try {
       const projection = await send(
         "const page = await host.frames.list({ search: 'research', sessionId: 'session-a', rootsOnly: false }); " +
-          "const detail = await host.frames.get('frame-1', { sessionId: 'session-a', branchId: 'branch-1' }); " +
+          "const detail = await host.frames.get('frame-1', { sessionId: 'session-a', branchId: 'branch-1', messageId: 'message-1', contentOffset: 0, contentLimit: 4000, search: 'test' }); " +
           'return JSON.stringify({ page, detail, pageFrozen: Object.isFrozen(page), ' +
           'framesFrozen: Object.isFrozen(page.frames), frameFrozen: Object.isFrozen(page.frames[0]), ' +
           'detailFrozen: Object.isFrozen(detail), transcriptFrozen: Object.isFrozen(detail.transcript), ' +
@@ -2622,7 +2625,11 @@ describe('repl_loop local RPC transport', () => {
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toMatchObject({
         page: { projectId: 'project-a', totalCount: 1, nextCursor: 'next' },
-        detail: { projectId: 'project-a', frame: { frameId: 'frame-1' } },
+        detail: {
+          projectId: 'project-a',
+          frame: { frameId: 'frame-1' },
+          transcript: { messages: [{ nextContentOffset: 14, contentLength: 100 }] }
+        },
         pageFrozen: true,
         framesFrozen: true,
         frameFrozen: true,
@@ -2652,7 +2659,14 @@ describe('repl_loop local RPC transport', () => {
           params: {
             op: 'get',
             frame_id: 'frame-1',
-            options: { session_id: 'session-a', branch_id: 'branch-1' }
+            options: {
+              session_id: 'session-a',
+              branch_id: 'branch-1',
+              message_id: 'message-1',
+              content_offset: 0,
+              content_limit: 4000,
+              search: 'test'
+            }
           }
         }
       ])

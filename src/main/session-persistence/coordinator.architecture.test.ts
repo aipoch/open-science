@@ -1194,7 +1194,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-writer.test.ts',
       'src/main/session-persistence/runtime-writer.ts',
       'src/main/session-persistence/runtime-resume-recovery.test.ts',
-      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/session-persistence/context-recovery-admission.ts',
+      'src/main/session-persistence/context-recovery-admission.test.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1253,7 +1255,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-session-owner.test.ts',
       'src/main/session-persistence/runtime-writer.test.ts',
       'src/main/session-persistence/runtime-resume-recovery.test.ts',
-      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts'
+      'src/main/session-persistence/resumed-artifact-publication.integration.test.ts',
+      'src/main/session-persistence/context-recovery-admission.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
@@ -1669,7 +1672,10 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/claude-provider-configuration.integration.test.ts',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/main/settings/provider-transport-owner.test.ts',
-      'src/main/settings/session-details-model-owner.test.ts'
+      'src/main/settings/session-details-model-owner.test.ts',
+      'src/main/acp/recovery-text-storage.test.ts',
+      'src/main/acp/context-recovery.native.integration.test.ts',
+      'src/main/acp/context-recovery-owner.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',
