@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
+import { CensusPythonRunner, createCensusHandler } from './census-runtime'
 import { CredentialRequestBroker } from './credential-request-broker'
 import { McpClientManager, McpToolCallError } from './mcp-client-manager'
 import type { SpecialistView } from '../../shared/specialist'
@@ -13,6 +14,126 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  describe('Census local dispatch', () => {
+    const context = {
+      origin: 'agent' as const,
+      sessionId: 'census-session',
+      projectId: 'census-project'
+    }
+    const tools = [
+      {
+        method: 'census_list_datasets',
+        action: 'list_datasets',
+        args: { query: 'liver', limit: 2 }
+      },
+      { method: 'census_query_cells', action: 'query_cells', args: { tissue: 'liver', limit: 2 } }
+    ]
+
+    it.each(tools)(
+      'dispatches $method through its bound Python handler and recovers after failure',
+      async ({ method, action, args }) => {
+        // Keep the production handler binding; only replace the Python execution boundary.
+        const result = { census_version: '2025-11-08', marker: method }
+        const failure = new Error('Census read failed')
+        const run = vi
+          .spyOn(CensusPythonRunner.prototype, 'call')
+          .mockRejectedValueOnce(failure)
+          .mockResolvedValue(result)
+        const engine = { call: vi.fn() } as unknown as ParserEngine
+        const signal = new AbortController().signal
+        const svc = new ConnectorService({
+          engine,
+          getConnectors: () => ({ enabledIds: ['census'], autoAllowIds: ['census'] }),
+          resolveApiKey: () => undefined,
+          localToolHandlers: Object.fromEntries(
+            tools.map((tool) => [
+              `census/${tool.method}`,
+              createCensusHandler({ action: tool.action })
+            ])
+          )
+        })
+        try {
+          await expect(svc.call('census', method, args, context, signal)).rejects.toBe(failure)
+          await expect(svc.call('census', method, args, context, signal)).resolves.toEqual(result)
+          expect(run).toHaveBeenCalledTimes(2)
+          expect(run).toHaveBeenNthCalledWith(1, { ...args, action }, context, signal)
+          expect(run).toHaveBeenNthCalledWith(2, { ...args, action }, context, signal)
+          expect(engine.call).not.toHaveBeenCalled()
+        } finally {
+          run.mockRestore()
+        }
+      }
+    )
+
+    it.each([
+      ['census_list_datasets', { limit: 101 }],
+      ['census_list_datasets', { query: 42 }],
+      ['census_list_datasets', { action: 'query_cells' }],
+      ['census_query_cells', {}],
+      ['census_query_cells', { tissue: '  ' }],
+      ['census_query_cells', { tissue: 'liver', cell_type: '' }],
+      ['census_query_cells', { tissue: 'liver', disease: '\t' }],
+      ['census_query_cells', { tissue: 'liver', limit: 0 }],
+      ['census_query_cells', { tissue: 'liver', limit: 101 }],
+      ['census_query_cells', { tissue: 'liver', action: 'list_datasets' }]
+    ] as const)(
+      'rejects invalid %s arguments before approval or local execution: %j',
+      async (method, args) => {
+        const handler = vi.fn()
+        const requestApproval = vi.fn()
+        const svc = new ConnectorService({
+          getConnectors: () => ({ enabledIds: ['census'], autoAllowIds: [] }),
+          resolveApiKey: () => undefined,
+          requestApproval,
+          localToolHandlers: { [`census/${method}`]: handler }
+        })
+        await expect(svc.call('census', method, args, context)).rejects.toThrow('invalid_arguments')
+        expect(requestApproval).not.toHaveBeenCalled()
+        expect(handler).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each(['disabled', 'blocked', 'denied', 'missing-session'] as const)(
+      'does not execute either Census handler when access is %s',
+      async (mode) => {
+        const handlers = tools.map(() => vi.fn())
+        const requestApproval = vi.fn().mockResolvedValue('deny')
+        const svc = new ConnectorService({
+          getConnectors: () => ({
+            enabledIds: ['census'],
+            autoAllowIds: mode === 'denied' ? [] : ['census'],
+            disabledConnectorIds: mode === 'disabled' ? ['census'] : [],
+            askToolIds: mode === 'denied' ? tools.map((tool) => `census/${tool.method}`) : [],
+            blockedToolIds: mode === 'blocked' ? tools.map((tool) => `census/${tool.method}`) : []
+          }),
+          resolveApiKey: () => undefined,
+          requestApproval,
+          localToolHandlers: Object.fromEntries(
+            tools.map((tool, i) => [`census/${tool.method}`, handlers[i]])
+          )
+        })
+        const error = {
+          disabled: /disabled/,
+          blocked: /blocked by policy/,
+          denied: /denied by user/,
+          'missing-session': /missing_session/
+        }[mode]
+        for (const tool of tools) {
+          await expect(
+            svc.call(
+              'census',
+              tool.method,
+              tool.args,
+              mode === 'missing-session' ? { origin: 'agent' } : context
+            )
+          ).rejects.toThrow(error)
+        }
+        for (const handler of handlers) expect(handler).not.toHaveBeenCalled()
+        expect(requestApproval).toHaveBeenCalledTimes(mode === 'denied' ? 2 : 0)
+      }
+    )
+  })
+
   it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
     const fetchImpl = vi
       .fn()

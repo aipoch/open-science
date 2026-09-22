@@ -13,7 +13,7 @@ it.skipIf(!python)(
       [join(__dirname, 'fixtures/census-contract.py')],
       { timeout: 60_000 }
     )
-    expect(stderr).toContain('Ran 16 tests')
+    expect(stderr).toContain('Ran 18 tests')
     expect(stderr).toContain('OK')
   },
   65_000

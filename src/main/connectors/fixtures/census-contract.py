@@ -7,7 +7,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pyarrow as pa
@@ -90,6 +90,35 @@ class Contract(unittest.TestCase):
         # context wrapper's int-to-string conversion. Exercise that contract.
         bridge['tiledbsoma'].pytiledbsoma.SOMAContext(seen['platform_config'])
         self.assertTrue(reader.closed)
+
+    def test_historical_release_projects_only_columns_present_in_schema(self):
+        historical = self.obs[['soma_joinid', 'dataset_id', 'cell_type', 'tissue_general']]
+        table = pa.Table.from_pandas(historical)
+        seen = {}
+        reader = Reader([historical.iloc[:1]])
+        def read(**kwargs):
+            seen.update(kwargs)
+            return reader
+        census = {'census_data': {'homo_sapiens': {
+            'obs': SimpleNamespace(schema=table.schema, read=read)
+        }}}
+        result = bridge['query_cells'](census, {'tissue': 'liver'}, 'historical')
+        self.assertEqual(result['total_returned'], 1)
+        self.assertEqual(seen['column_names'], [
+            'soma_joinid', 'dataset_id', 'cell_type', 'tissue_general'
+        ])
+        self.assertTrue(reader.closed)
+
+    def test_missing_historical_filter_field_fails_before_read(self):
+        historical = self.obs[['soma_joinid', 'dataset_id', 'cell_type', 'tissue_general']]
+        table = pa.Table.from_pandas(historical)
+        read = Mock()
+        census = {'census_data': {'homo_sapiens': {
+            'obs': SimpleNamespace(schema=table.schema, read=read)
+        }}}
+        with self.assertRaisesRegex(ValueError, 'does not provide the disease field'):
+            bridge['query_cells'](census, {'disease': 'normal'}, 'historical')
+        read.assert_not_called()
 
     def test_native_errors_never_return_command_proxy_credentials(self):
         text = "bad config http://user:p%40ss@localhost:4567 username=user password=p@ss encoded=p%40ss"

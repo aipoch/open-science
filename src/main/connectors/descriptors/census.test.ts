@@ -45,6 +45,16 @@ describe('CELLxGENE Census descriptors', () => {
     }
   )
 
+  it.each(['tissue', 'cell_type', 'disease'])(
+    'rejects filter syntax characters in %s values',
+    (field) => {
+      const validate = ajv.compile(descriptor('census_query_cells').input)
+      for (const value of ["normal'", 'normal\\liver', 'normal\n liver', 'normal\r']) {
+        expect(validate({ [field]: value })).toBe(false)
+      }
+    }
+  )
+
   it('keeps the local Python deadline in the runtime bridge contract', () => {
     for (const tool of CENSUS_TOOLS) expect(tool.totalTimeoutMs).toBeUndefined()
   })

@@ -16,21 +16,25 @@ const ORGANISM = {
   default: 'homo_sapiens'
 }
 
+// The Python bridge builds exact SOMA value filters and rejects these characters rather than
+// treating user input as filter syntax. Keep the public schema aligned with that boundary.
+const EXACT_FILTER_PATTERN = String.raw`^(?!.*['\\\r\n])(?=.*\S).+$`
+
 const FILTERS = {
   organism: ORGANISM,
   tissue: {
     type: 'string',
-    pattern: '\\S',
+    pattern: EXACT_FILTER_PATTERN,
     description: 'Nonblank exact tissue_general value, for example "liver".'
   },
   cell_type: {
     type: 'string',
-    pattern: '\\S',
+    pattern: EXACT_FILTER_PATTERN,
     description: 'Nonblank exact cell_type value, for example "hepatocyte".'
   },
   disease: {
     type: 'string',
-    pattern: '\\S',
+    pattern: EXACT_FILTER_PATTERN,
     description:
       'Nonblank exact disease field value, for example "normal". Composite disease fields are not expanded.'
   }
@@ -96,7 +100,7 @@ export const CENSUS_TOOLS: ToolDescriptor[] = [
       additionalProperties: false
     },
     returns:
-      '`{ census_version, organism, total_returned, cells: [{ soma_joinid, dataset_id, assay, cell_type, tissue_general, disease, sex, development_stage }] }`.',
+      '`{ census_version, organism, total_returned, cells: [{ soma_joinid, dataset_id, assay, cell_type, tissue_general, disease, sex, development_stage }] }`. Fields absent from the selected Census release are omitted from each cell.',
     example:
       'const result = await host.mcp("census", "census_query_cells", {"organism": "homo_sapiens", "tissue": "liver", "cell_type": "hepatocyte", "limit": 10})',
     ...appOnly('census_query_cells')

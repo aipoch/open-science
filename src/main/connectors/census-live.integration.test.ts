@@ -2,16 +2,14 @@ import type { SpawnOptions } from 'node:child_process'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { NotebookNetworkSandboxOwner } from '../notebook/network-sandbox-owner'
-import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
-import { ConnectorService } from './service'
-import { ParserEngine } from './engine'
 import { createCensusHandler } from './census-runtime'
 
 // Manual certification: OPEN_SCIENCE_CENSUS_LIVE=1 OPEN_SCIENCE_CENSUS_TEST_PYTHON=/path/to/python npm test -- src/main/connectors/census-live.integration.test.ts
-// Each request uses a fresh Python process while reusing the app RPC/service/sandbox owners.
+// Each request uses a fresh Python process while reusing the real app sandbox owner.
+// RPC authentication and connector dispatch are covered in their existing contract suites.
 type MetadataResult = {
   census_version: string
   organism?: string
@@ -49,7 +47,7 @@ const metadataCases = [
 ]
 
 it.skipIf(process.env.OPEN_SCIENCE_CENSUS_LIVE !== '1').each(metadataCases)(
-  '$action repeats real queries and recovers after an empty result through authenticated RPC and the Notebook sandbox',
+  '$action repeats real queries and recovers after an empty result through the Notebook sandbox',
   async (testCase) => {
     const pythonPath = process.env.OPEN_SCIENCE_CENSUS_TEST_PYTHON
     expect(pythonPath, 'A provisioned Python interpreter is required').toBeTruthy()
@@ -64,28 +62,16 @@ it.skipIf(process.env.OPEN_SCIENCE_CENSUS_LIVE !== '1').each(metadataCases)(
       },
       requestDecision: async () => 'deny'
     })
-    const service = new ConnectorService({
-      engine: new ParserEngine(),
-      getConnectors: () => ({ enabledIds: ['census'], autoAllowIds: ['census'] }),
-      resolveApiKey: () => undefined,
-      localToolHandlers: Object.fromEntries(
-        ['list_datasets', 'query_cells'].map((action) => [
-          `census/census_${action}`,
-          createCensusHandler({ action, pythonPath, processSandbox: sandbox })
-        ])
-      )
-    })
-    const rpc = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
-      transport: 'tcp',
-      connectorService: service
+    const wrap = vi.spyOn(sandbox, 'wrap')
+    const context = { sessionId: 'census-test-session', projectId: 'census-test-project' }
+    const handler = createCensusHandler({
+      action: testCase.action,
+      pythonPath,
+      processSandbox: sandbox
     })
     const failures: string[] = []
+    let requests = 0
     try {
-      const connection = await rpc.issueControlConnection(
-        'census-test-session',
-        'census-test-project',
-        'census-test-frame'
-      )
       const call = async (
         name: string,
         args: Record<string, unknown>,
@@ -93,27 +79,12 @@ it.skipIf(process.env.OPEN_SCIENCE_CENSUS_LIVE !== '1').each(metadataCases)(
       ): Promise<void> => {
         const started = Date.now()
         try {
-          const response = await fetch(connection.endpoint, {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${connection.token}`,
-              'content-type': 'application/json'
-            },
-            body: JSON.stringify({
-              method: 'mcpCall',
-              params: {
-                server: 'census',
-                method: `census_${testCase.action}`,
-                args: { census_version: '2025-11-08', ...args }
-              }
-            })
-          })
-          const body = await response.json()
-          if (body.error) throw new Error(String(body.error))
-          expect(body, name).not.toHaveProperty('error')
-          expect(response.status).toBe(200)
-          expect(body.result.census_version).toBe('2025-11-08')
-          check(body.result)
+          const result = (await handler(
+            { census_version: '2025-11-08', ...args },
+            context
+          )) as MetadataResult
+          expect(result.census_version).toBe('2025-11-08')
+          check(result)
           console.info(JSON.stringify({ case: name, ok: true, elapsedMs: Date.now() - started }))
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -127,6 +98,10 @@ it.skipIf(process.env.OPEN_SCIENCE_CENSUS_LIVE !== '1').each(metadataCases)(
             })
           )
         }
+        expect(wrap).toHaveBeenCalledTimes(++requests)
+        expect(wrap).toHaveBeenLastCalledWith(
+          expect.objectContaining({ ...context, runtime: 'python' })
+        )
         expect(await readdir(root)).toEqual([])
         expect(JSON.stringify(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)).toBe(settingsBefore)
       }
@@ -145,7 +120,6 @@ it.skipIf(process.env.OPEN_SCIENCE_CENSUS_LIVE !== '1').each(metadataCases)(
       await call(`${testCase.action}-after-empty`, testCase.args, checkRepeated)
       expect(failures).toEqual([])
     } finally {
-      await rpc.close()
       await sandbox.dispose()
       await rm(root, { recursive: true, force: true })
     }

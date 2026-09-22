@@ -24,6 +24,68 @@ afterEach(async () => {
 })
 
 describe('mcpCall RPC', () => {
+  it.each([
+    {
+      method: 'census_list_datasets',
+      args: { limit: 2 },
+      result: { census_version: '2025-11-08', total: 0, datasets: [] }
+    },
+    {
+      method: 'census_query_cells',
+      args: { tissue: 'liver', limit: 2 },
+      result: {
+        census_version: '2025-11-08',
+        organism: 'homo_sapiens',
+        total_returned: 0,
+        cells: []
+      }
+    }
+  ])(
+    'authenticates $method and binds its local handler to the trusted RPC owner',
+    async ({ method, args, result }) => {
+      const handler = vi.fn().mockResolvedValue(result)
+      const connectorService = new ConnectorService({
+        getConnectors: () => ({ enabledIds: ['census'], autoAllowIds: ['census'] }),
+        resolveApiKey: () => undefined,
+        localToolHandlers: { [`census/${method}`]: handler }
+      })
+      server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+        transport: 'tcp',
+        connectorService
+      })
+      const connection = await server.issueControlConnection('s-42', 'project-1', 'census-frame')
+      const call = (token: string): Promise<Response> =>
+        fetch(connection.endpoint, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            method: 'mcpCall',
+            params: {
+              server: 'census',
+              method,
+              args,
+              sessionId: 'forged-session',
+              projectId: 'forged-project',
+              origin: 'internal'
+            }
+          })
+        })
+      expect((await call('invalid-token')).status).toBe(401)
+      expect(handler).not.toHaveBeenCalled()
+      const response = await call(connection.token)
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual({ result })
+      expect(handler).toHaveBeenCalledExactlyOnceWith(
+        args,
+        { sessionId: 's-42', projectId: 'project-1', origin: 'agent' },
+        expect.any(AbortSignal)
+      )
+      connection.release()
+      expect((await call(connection.token)).status).toBe(401)
+      expect(handler).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('keeps Settings management outside the Notebook local RPC surface', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp'

@@ -145,9 +145,23 @@ OBSERVATION_FILTER_COLUMNS = (
 )
 
 
-def observation_filter(args):
+DEFAULT_OBSERVATION_COLUMNS = [
+    "soma_joinid",
+    "dataset_id",
+    "assay",
+    "cell_type",
+    "tissue_general",
+    "disease",
+    "sex",
+    "development_stage",
+]
+
+
+def observation_filter(args, available_columns=None):
     clauses = []
     for field, column in OBSERVATION_FILTER_COLUMNS:
+        if args.get(field) is not None and available_columns is not None and column not in available_columns:
+            raise ValueError(f"Census release does not provide the {column} field")
         clause = text_filter(column, args.get(field))
         if clause:
             clauses.append(clause)
@@ -156,26 +170,31 @@ def observation_filter(args):
 
 def observations(census, args, limit, columns=None):
     organism = organism_key(args.get("organism"))
-    value_filter = observation_filter(args)
+    dataframe = census["census_data"][organism]["obs"]
+    schema = getattr(dataframe, "schema", None)
+    schema_names = getattr(schema, "names", None)
+    # Real SOMA dataframes always expose schema names. The fallback keeps the offline bridge
+    # fixtures focused on query semantics without weakening the production path.
+    available_columns = set(schema_names) if schema_names is not None else None
+    value_filter = observation_filter(args, available_columns)
     if not value_filter:
         raise ValueError("at least one of tissue, cell_type, or disease is required")
-    columns = columns or [
-        "soma_joinid",
-        "dataset_id",
-        "assay",
-        "cell_type",
-        "tissue_general",
-        "disease",
-        "sex",
-        "development_stage",
-    ]
-    dataframe = census["census_data"][organism]["obs"]
+    requested_columns = columns or DEFAULT_OBSERVATION_COLUMNS
+    projected_columns = (
+        requested_columns
+        if available_columns is None
+        else [column for column in requested_columns if column in available_columns]
+    )
+    if not projected_columns:
+        raise ValueError(f"Census release does not provide cell metadata columns for {organism}")
     get_enumerations = getattr(dataframe, "get_enumeration_values", None)
     if get_enumerations is not None:
         categorical = {
             column: str(args[field]).strip()
             for field, column in OBSERVATION_FILTER_COLUMNS
             if args.get(field) is not None and str(args[field]).strip()
+            and available_columns is not None
+            and column in available_columns
             and isinstance(dataframe.schema.field(column).type, pa.DictionaryType)
         }
         if categorical:
@@ -186,7 +205,7 @@ def observations(census, args, limit, columns=None):
                 return organism, pd.DataFrame(columns=columns)
     reader = dataframe.read(
         value_filter=value_filter,
-        column_names=columns,
+        column_names=projected_columns,
         result_order="row-major",
         # Only this bounded cell scan needs a small first batch.
         platform_config={"soma.init_buffer_bytes": "65536"},
@@ -207,7 +226,7 @@ def observations(census, args, limit, columns=None):
         close = getattr(reader, "close", None)
         if close:
             close()
-    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=columns)
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=projected_columns)
     return organism, frame.head(limit)
 
 

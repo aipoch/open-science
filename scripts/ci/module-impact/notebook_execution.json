@@ -891,7 +891,8 @@
       "src/main/session-package/ro-crate.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
       "src/main/connectors/census-live.integration.test.ts",
-      "src/main/connectors/census-runtime.test.ts"
+      "src/main/connectors/census-runtime.test.ts",
+      "src/main/connectors/service.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

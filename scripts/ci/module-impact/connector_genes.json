@@ -187,8 +187,7 @@
       "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/connectors/census-live.integration.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
     ]
   },
   "capabilityOverlays": [],
