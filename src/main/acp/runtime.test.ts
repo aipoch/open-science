@@ -18509,6 +18509,58 @@ describe('ACP runtime session management', () => {
     ).toThrow('No user task is available')
   })
 
+  it.each(['start', 'configure'] as const)(
+    'preserves a fallback adoption %s failure after a missing Codex rollout and allows retry',
+    async (phase) => {
+      const process = new FakeAgentProcess()
+      let failAdoption = true
+      const failure = new Error('provider adoption failed')
+      const fakeAgent = startFakeAgent(process, ['replacement-1', 'replacement-2'], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+        resumeInternalErrorDetails:
+          'no rollout found for thread id 00000000-0000-4000-8000-000000000001',
+        onNewSession: () => {
+          if (phase === 'start' && failAdoption) throw failure
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: {
+          ...codexFramework,
+          mapPermissionProfile: (...args) => {
+            if (phase === 'configure' && failAdoption) throw failure
+            return codexFramework.mapPermissionProfile(...args)
+          }
+        }
+      })
+      const request = { sessionId: '00000000-0000-4000-8000-000000000001', cwd: '/workspace' }
+      try {
+        const rejected = expect(runtime.resumeSession(request))
+        if (phase === 'start') {
+          await rejected.rejects.toMatchObject({
+            code: -32603,
+            data: { details: failure.message }
+          })
+        } else {
+          await rejected.rejects.toBe(failure)
+        }
+        failAdoption = false
+        await expect(runtime.resumeSession(request)).resolves.toMatchObject({
+          sessionId: request.sessionId,
+          contextReset: true
+        })
+        await runtime.sendPrompt({ sessionId: request.sessionId, text: 'retry task' })
+        expect(fakeAgent.prompts).toEqual([
+          { sessionId: 'replacement-2', text: expect.stringContaining('retry task') }
+        ])
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it('preserves a generic Internal resume error as authoritative', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, [], { resumeInternalError: true })
