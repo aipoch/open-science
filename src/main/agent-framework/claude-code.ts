@@ -188,6 +188,8 @@ export const claudeCodeFramework: AgentFramework = {
       CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
       CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
     })
+    const safeSessionOptions = { ...sessionOptions }
+    delete safeSessionOptions.managedSettings
     const meta: Record<string, unknown> = {
       claudeCode: {
         // ACP's usage total omits the latest model-step split and Claude SDK's agentic turn count.
@@ -196,7 +198,7 @@ export const claudeCodeFramework: AgentFramework = {
         options: {
           tools: CLAUDE_CODE_BUILTIN_TOOLS,
           settingSources: ['user'],
-          ...sessionOptions,
+          ...safeSessionOptions,
           ...(mcpServers !== undefined ? { mcpServers } : {}),
           ...(toolAliases !== undefined ? { toolAliases } : {}),
           ...(hooks !== undefined ? { hooks } : {}),
