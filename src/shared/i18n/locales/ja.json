@@ -526,7 +526,7 @@
     "Open the xAI verification page and enter this one-time device code.": "xAI の確認ページを開き、この1回限りのデバイスコードを入力してください。",
     "Open xAI verification": "xAI の確認ページを開く",
     "Waiting for authorization…": "認証を待っています…",
-    "grok-4.7 · 500K": "grok-4.7 · 500K",
+    "Default model: grok-4.7 · 500K": "デフォルトモデル: grok-4.7 · 500K",
     " (control tab falls back to most recent data kernel)": " (コントロールタブは最新のデータカーネルに戻ります)",
     " or ": "または",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# 指示\n\nエージェントのステップバイステップガイダンス…",

@@ -498,7 +498,7 @@
     "Open the xAI verification page and enter this one-time device code.": "Öffnen Sie die xAI-Verifizierungsseite und geben Sie diesen einmaligen Gerätecode ein.",
     "Open xAI verification": "xAI-Verifizierung öffnen",
     "Waiting for authorization…": "Warten auf Autorisierung…",
-    "grok-4.7 · 500K": "grok-4.7 · 500K",
+    "Default model: grok-4.7 · 500K": "Standardmodell: grok-4.7 · 500K",
     " (control tab falls back to most recent data kernel)": " (die Steuerungsregisterkarte verwendet ersatzweise den zuletzt aktiven Daten-Kernel)",
     " or ": "oder",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# Anweisungen\n\nSchritt-für-Schritt-Anleitung für den Agenten…",

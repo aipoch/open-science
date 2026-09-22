@@ -495,7 +495,7 @@
     "Waiting for authorization…": "Esperando autorización…",
     "Waves": "Ondas",
     "Writer": "Escritor",
-    "grok-4.7 · 500K": "grok-4.7 · 500K",
+    "Default model: grok-4.7 · 500K": "Modelo predeterminado: grok-4.7 · 500K",
     " (control tab falls back to most recent data kernel)": "(la pestaña de control vuelve al kernel de datos más reciente)",
     " or ": " o ",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# Instrucciones\n\nGuía paso a paso para el agente…",

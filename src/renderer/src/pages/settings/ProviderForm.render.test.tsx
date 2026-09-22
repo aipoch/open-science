@@ -309,6 +309,19 @@ describe('ProviderForm field switching', () => {
     expect(container.textContent).toContain('grok-4.6')
   })
 
+  it.each(['grok-4.7', 'grok-4.6', 'grok-4.3'])(
+    'labels the xAI catalog default without changing the saved %s selection',
+    (model) => {
+      const value = createEmptyProviderFormValue({ type: 'xai-subscription', model })
+      const onChange = vi.fn()
+      render(value, { onChange })
+
+      expect(container.querySelector('code')?.textContent).toBe('Default model: grok-4.7 · 500K')
+      expect(value.model).toBe(model)
+      expect(onChange).not.toHaveBeenCalled()
+    }
+  )
+
   it('renders the bundled Bailian brand mark and regional catalog', () => {
     render(
       createEmptyProviderFormValue({
