@@ -90,3 +90,40 @@ for (const mode of ['fresh', 'legacy', 'custom'] as const) {
     await page.screenshot({ path: testInfo.outputPath(`${mode}-retained-project.png`) })
   })
 }
+
+test('upgrades a completed client with research in config root and no saved dataRoot', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  await app.restartWithBrandFixture('legacy-config')
+  await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  const initial = await app.page.evaluate(() => window.api.storage.getInfo())
+  const settingsPath = join(initial.dataRoot, 'settings.json')
+  const settings = JSON.parse(await readFile(settingsPath, 'utf8'))
+  expect(settings.dataRoot).toBe(initial.dataRoot)
+  expect(settings.onboardingCompletedAt).toBeDefined()
+  expect(await readFile(join(initial.dataRoot, 'workspaces/historical/evidence.txt'), 'utf8')).toBe(
+    'Historical research data retained verbatim'
+  )
+  // Existing clients can keep their location through the optional migration prompt.
+  const migration = app.page.getByRole('alertdialog', {
+    name: 'Move your data to a visible folder?'
+  })
+  await expect(migration.getByLabel('Current data location')).toHaveText(initial.dataRoot)
+  await migration.getByRole('button', { name: 'Keep it in the current folder' }).click()
+  await expect(migration).toBeHidden()
+  // The client reaches the workspace without repeating onboarding or manually editing settings.
+  await app.page.getByRole('button', { name: 'New project' }).click()
+  const dialog = app.page.getByRole('dialog', { name: 'New project' })
+  await dialog.getByLabel('Name').fill('Upgraded research')
+  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await expect(app.page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  const page = await app.restartAfterCrash()
+  expect((await page.evaluate(() => window.api.storage.getInfo())).dataRoot).toBe(initial.dataRoot)
+  await expect(
+    page.getByRole('region', { name: 'Projects' }).getByRole('button', {
+      name: 'Upgraded research',
+      exact: true
+    })
+  ).toBeVisible()
+})

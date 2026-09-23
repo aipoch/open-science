@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,6 +55,46 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('does not rewrite a concurrently saved legacy data-root pointer', async () => {
+    const dir = await createStorageRoot()
+    const legacyRoot = join(dir, 'OpenScience')
+    await mkdir(legacyRoot)
+    const repository = new SettingsRepository(dir)
+    await writeFile(join(dir, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+    const stale = await repository.getSettings()
+    expect(stale.dataRoot).toBeUndefined()
+
+    const saved = `{ "version": 2, "onboardingCompletedAt": 1, "dataRoot": ${JSON.stringify(legacyRoot)}, "opaque": { "keep": true } }\n`
+    await writeFile(join(dir, 'settings.json'), saved)
+
+    await expect(repository.persistLegacyDataRoot(legacyRoot, 1)).rejects.toThrow(
+      'data location changed'
+    )
+    expect(await readFile(join(dir, 'settings.json'), 'utf8')).toBe(saved)
+  })
+
+  it('preserves a concurrent Windows choice that differs only by case', async () => {
+    const dir = await createStorageRoot()
+    const legacyRoot = join(dir, 'OpenScience-DEV')
+    const selectedRoot = join(dir, 'OpenScience-dev')
+    await mkdir(legacyRoot)
+    const repository = new SettingsRepository(dir)
+    await writeFile(join(dir, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+    expect((await repository.getSettings()).dataRoot).toBeUndefined()
+    const saved = `{ "version": 2, "onboardingCompletedAt": 1, "dataRoot": ${JSON.stringify(selectedRoot)} }\n`
+    await writeFile(join(dir, 'settings.json'), saved)
+
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    try {
+      await expect(repository.persistLegacyDataRoot(legacyRoot, 1)).rejects.toThrow(
+        'data location changed'
+      )
+    } finally {
+      platform.mockRestore()
+    }
+    expect(await readFile(join(dir, 'settings.json'), 'utf8')).toBe(saved)
+  })
+
   it('does not treat a failed validation write as recovery of an in-flight request', async () => {
     const store = new SettingsDocumentStore(await createStorageRoot())
     const repository = new SettingsRepository(store)
