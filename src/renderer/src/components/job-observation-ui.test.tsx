@@ -309,6 +309,26 @@ import { CompletedJobCard } from './CompletedJobCard'
 
 describe('CompletedJobCard', () => {
   it.each([
+    ['cancelled', 'Cancelled'],
+    ['cancelling', 'Cancelling'],
+    ['cancel_failed', 'Cancellation failed']
+  ] as const)(
+    'shows %s instead of the underlying signal-induced failure',
+    (cancellation_status, label) => {
+      act(() => {
+        root.render(
+          <CompletedJobCard
+            job={makeJob({ status: 'failed', cancellation_status })}
+            onOpen={vi.fn()}
+          />
+        )
+      })
+      expect(container.textContent).toContain(label)
+      expect(container.textContent).not.toContain('— failed')
+    }
+  )
+
+  it.each([
     ['success', 'finished'],
     ['failed', 'failed'],
     ['timeout', 'timed out'],

@@ -81,10 +81,10 @@ describe('Project Session defaults migration', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_literature_smart_collections'
+        '0044_compute_cancellation_feedback'
       ],
       from: '0026_compute_job_remote_cleanup',
-      to: '0044_literature_smart_collections'
+      to: '0044_compute_cancellation_feedback'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

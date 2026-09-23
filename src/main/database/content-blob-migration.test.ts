@@ -87,7 +87,7 @@ describe('Content blob migration', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_literature_smart_collections'
+        '0044_compute_cancellation_feedback'
       ]
     })
     await expect(
@@ -176,10 +176,10 @@ describe('Content blob migration', () => {
                 '0041_bookmarks',
                 '0042_classification_usage',
                 '0043_pdf_annotations',
-                '0044_literature_smart_collections'
+                '0044_compute_cancellation_feedback'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0044_literature_smart_collections'
+        to: '0044_compute_cancellation_feedback'
       })
 
       await expect(

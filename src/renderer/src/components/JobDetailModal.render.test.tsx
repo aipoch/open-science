@@ -50,7 +50,7 @@ vi.mock('radix-ui', () => {
   )
 
   return {
-    Dialog: { Root, Portal, Overlay, Content, Close },
+    Dialog: { Root, Portal, Overlay, Content, Close, Title: Content, Description: Content },
     Tooltip: {
       Root: TooltipRoot,
       Provider: TooltipRoot,
@@ -262,7 +262,7 @@ describe('JobDetailModal — detail view', () => {
     }
   )
 
-  it('requests cancellation with the complete owner tuple and disables while cancelling', async () => {
+  it('requests cancellation with the complete owner tuple and removes duplicate actions while cancelling', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob()
     const jobsCancel = vi.fn(async () => ({
@@ -295,9 +295,7 @@ describe('JobDetailModal — detail view', () => {
       sessionId: job.session_id,
       projectId: job.project_id
     })
-    expect(
-      (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
-    ).toBe(true)
+    expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
     expect(container.textContent).toContain('Cancelling')
   })
 
@@ -345,11 +343,11 @@ describe('JobDetailModal — detail view', () => {
       ;(container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).click()
     })
     const retry = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Retry'
+      (button) => button.textContent?.trim() === 'Retry cancellation'
     )
     await act(async () => retry?.click())
 
-    expect(container.textContent).toContain('Unable to cancel remote job.')
+    expect(container.textContent).toContain('Cancellation failed')
     expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
       'cancel unavailable'
     )

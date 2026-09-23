@@ -96,6 +96,24 @@ describe('Slurm lifecycle boundaries', () => {
     } as unknown as ComputeConnectionLease
     expect(await cancelSlurmJob(handle, connection)).toBe(false)
   })
+  it.each([
+    ['squeue', { truncated: true }],
+    ['squeue', { exitCode: 1 }],
+    ['sacct', { truncated: true }],
+    ['sacct', { exitCode: 1 }]
+  ] as const)(
+    'does not confirm cancellation with incomplete %s evidence: %j',
+    async (stage, failure) => {
+      const connection = {
+        run: async (command: string) => {
+          if (command.startsWith(stage + ' ')) return { ...success(''), ...failure }
+          return success(command.startsWith('sacct ') ? '123|CANCELLED|0:0\n' : '')
+        }
+      } as unknown as ComputeConnectionLease
+      expect(await cancelSlurmJob(handle, connection)).toBe(false)
+    }
+  )
+
   it('retains a user time limit and resources before the first executable line', () => {
     const script = buildSlurmScript(
       job('#SBATCH --partition=cpu\n#SBATCH --time=00:05:00\necho done'),

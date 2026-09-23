@@ -1076,6 +1076,10 @@ model ComputeJob {
 // status/error vocabulary. `eligibleAt = null` means an active operation is immediately ready.
 // Kinds and settled outcomes are closed by SQLite checks and exhaustive TypeScript codecs.
 model ComputeJobOperation {
+  failureCode String?
+  requestedAt DateTime?
+  // Reserved for databases created by the pre-release cancellation prototype; no runtime semantics.
+  forceRequested Boolean @default(false)
   id             String     @id
   jobId          String
   kind           String

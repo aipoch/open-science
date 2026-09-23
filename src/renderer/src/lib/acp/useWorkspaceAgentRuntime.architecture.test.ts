@@ -694,6 +694,7 @@ describe('workspace runtime architecture', () => {
       }
       expect(unsupportedFacadeImports).toEqual([])
       expect(hookConsumers).toEqual([
+        'components/JobCancellationAgentDialog.tsx',
         'pages/workspace/WorkspacePage.tsx',
         'pages/workspace/workspace-message-queue-controller.ts'
       ])

@@ -34,6 +34,7 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
   // Truncate long intent text to keep the row compact
   const intentDisplay = job.intent.length > 60 ? `${job.intent.slice(0, 57)}…` : job.intent
   const statusLabel = (() => {
+    if (job.cancellation_status === 'cancel_failed') return t('Cancellation failed')
     if (job.cancellation_status === 'cancelling') return t('Cancelling')
     if (job.cancellation_status === 'cancelled') return t('Cancelled')
     switch (job.status) {

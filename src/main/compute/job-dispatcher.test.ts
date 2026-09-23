@@ -182,7 +182,11 @@ const runLauncher = (
 
   if (bashrc !== undefined) writeFileSync(join(home, '.bashrc'), bashrc)
   writeFileSync(join(workdir, 'command.sh'), command)
-  writeFileSync(join(workdir, 'launcher.sh'), buildLauncherScript(3600))
+  // This portable shell fixture covers the legacy backend; real SSH tests exercise the subreaper.
+  writeFileSync(
+    join(workdir, 'launcher.sh'),
+    buildLauncherScript(3600).replace('if python3', 'if false && python3')
+  )
 
   const result = spawnSync('bash', ['launcher.sh'], {
     cwd: workdir,

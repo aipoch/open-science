@@ -134,6 +134,8 @@ const cleanupCommand = (
     'fi',
     'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
     '[ -z "$workdir" ] || [ "$workdir" = "$expected_workdir" ] || exit 1',
+    `scope_required=${handle && handle.driver !== 'slurm' && handle.scope_version === 1 ? 1 : 0}`,
+    '[ ! -f "$workdir/supervisor.py" ] || scope_required=1',
     ...remoteJobPidTerminationFunctionLines(),
     'cleanup_job_pid() {',
     '  kill_job_pid "$1"',

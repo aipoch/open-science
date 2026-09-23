@@ -3,6 +3,7 @@ import { classificationUsageMigration } from './migrations/0042-classification-u
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
 import { pdfAnnotationsMigration } from './migrations/0043-pdf-annotations'
+import { computeCancellationFeedbackMigration } from './migrations/0045-compute-cancellation-feedback'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -858,6 +859,17 @@ const MIGRATION_MANIFEST = [
       literatureSmartCollectionsMigration.statements,
       literatureSmartCollectionsMigration.verifiers,
       literatureSmartCollectionsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeCancellationFeedbackMigration,
+    checksum: checksumMigrationPayload(
+      computeCancellationFeedbackMigration.id,
+      computeCancellationFeedbackMigration.statements,
+      computeCancellationFeedbackMigration.verifiers,
+      computeCancellationFeedbackMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

@@ -1,3 +1,4 @@
+import { CANCELLATION_WINDOW_MS, CANCELLATION_MAX_ATTEMPTS } from './cancellation-feedback'
 import { randomUUID } from 'node:crypto'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
@@ -26,6 +27,8 @@ type ComputeJobOperationRecord = Readonly<{
   outcome: ComputeJobOperationOutcome | null
   revision: number
   attemptCount: number
+  failureCode: string | null
+  requestedAt: Date | null
   eligibleAt: Date | null
   claimToken: string | null
   claimExpiresAt: Date | null
@@ -85,6 +88,8 @@ const toRecord = (row: {
   outcome: string | null
   revision: number
   attemptCount: number
+  failureCode: string | null
+  requestedAt: Date | null
   eligibleAt: Date | null
   claimToken: string | null
   claimExpiresAt: Date | null
@@ -140,6 +145,35 @@ class ComputeJobOperationRepository {
         where: { jobId_kind: { jobId, kind } }
       })
       if (existing) {
+        const expired =
+          now.getTime() - (existing.requestedAt ?? existing.createdAt).getTime() >=
+          CANCELLATION_WINDOW_MS
+        const claimExpired = existing.claimExpiresAt != null && existing.claimExpiresAt <= now
+        const mayRetry =
+          existing.phase === 'active' &&
+          (expired ||
+            claimExpired ||
+            (existing.failureCode !== null && existing.claimToken === null))
+        if (mayRetry) {
+          const reset = await transaction.computeJobOperation.update({
+            where: { id: existing.id },
+            data: {
+              revision: { increment: 1 },
+              requestedAt: now,
+              attemptCount: 0,
+              failureCode: null,
+              eligibleAt: null,
+              claimToken: null,
+              claimExpiresAt: null,
+              updatedAt: now
+            }
+          })
+          return {
+            found: true,
+            jobStatus: asJobStatus(job.status),
+            record: toRecord(reset)
+          } as const
+        }
         return {
           found: true,
           jobStatus: asJobStatus(job.status),
@@ -161,6 +195,7 @@ class ComputeJobOperationRepository {
               outcome: terminal ? 'superseded' : queued ? 'fulfilled' : null,
               revision: 1,
               attemptCount: 0,
+              requestedAt: now,
               createdAt: now,
               settledAt: settled ? now : null,
               updatedAt: now
@@ -224,6 +259,18 @@ class ComputeJobOperationRepository {
         where: {
           kind,
           phase: 'active',
+          attemptCount: { lt: CANCELLATION_MAX_ATTEMPTS },
+          AND: [
+            {
+              OR: [
+                { requestedAt: { gt: new Date(now.getTime() - CANCELLATION_WINDOW_MS) } },
+                {
+                  requestedAt: null,
+                  createdAt: { gt: new Date(now.getTime() - CANCELLATION_WINDOW_MS) }
+                }
+              ]
+            }
+          ],
           job: { is: { status: { in: [...ACTIVE_STATUSES] } } },
           OR: [
             {
@@ -372,11 +419,17 @@ class ComputeJobOperationRepository {
     })
   }
 
-  async retry(claim: ClaimedComputeJobOperation, now: Date, eligibleAt: Date): Promise<boolean> {
+  async retry(
+    claim: ClaimedComputeJobOperation,
+    now: Date,
+    eligibleAt: Date,
+    failureCode = 'unconfirmed'
+  ): Promise<boolean> {
     const client = await this.getClient()
     const data: Prisma.ComputeJobOperationUpdateManyMutationInput = {
       revision: { increment: 1 },
       eligibleAt,
+      failureCode,
       claimToken: null,
       claimExpiresAt: null,
       updatedAt: now

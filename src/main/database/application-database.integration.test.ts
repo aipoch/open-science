@@ -228,7 +228,7 @@ describe('application database (integration)', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_literature_smart_collections'
+        '0044_compute_cancellation_feedback'
       ]
     })
 
@@ -713,6 +713,9 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJobOperation" DROP COLUMN "failureCode"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJobOperation" DROP COLUMN "requestedAt"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJobOperation" DROP COLUMN "forceRequested"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
@@ -802,6 +805,9 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJobOperation" DROP COLUMN "failureCode"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJobOperation" DROP COLUMN "requestedAt"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJobOperation" DROP COLUMN "forceRequested"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
@@ -1302,7 +1308,7 @@ describe('application database (integration)', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_literature_smart_collections'
+        '0044_compute_cancellation_feedback'
       ]
     })
 

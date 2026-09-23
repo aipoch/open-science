@@ -2601,6 +2601,69 @@ describe('installComputeIpcHandlers', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it.each([{}])(
+    'forwards cancellation intent through the strict Electron boundary: %j',
+    async (mode) => {
+      const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+      const cancel = vi.spyOn(module.handlers, 'jobsCancel').mockResolvedValue({
+        job_id: 'job-1',
+        status: 'running',
+        result_final: false
+      } as import('../../shared/compute').JobStatusResult)
+      installComputeModule(module)
+      const request = {
+        jobId: 'job-1',
+        providerId: 'ssh:test',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        ...mode
+      }
+      await expect(invokeHandler('compute:jobs:cancel', request)).resolves.toMatchObject({
+        job_id: 'job-1'
+      })
+      expect(cancel).toHaveBeenCalledExactlyOnceWith(request)
+    }
+  )
+
+  it.each([
+    { force: false },
+    { force: true },
+    { force: 'true' },
+    { force: 1 },
+    { force: null },
+    { unknown: true }
+  ])('rejects unsupported cancellation fields without invoking the owner: %j', async (mode) => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    const cancel = vi.spyOn(module.handlers, 'jobsCancel')
+    installComputeModule(module)
+    await expect(
+      invokeHandler('compute:jobs:cancel', {
+        jobId: 'job-1',
+        providerId: 'ssh:test',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        ...mode
+      })
+    ).rejects.toThrow('Invalid arguments')
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('keeps force outside the harvest retry contract', async () => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    const retry = vi.spyOn(module.handlers, 'jobsRetryHarvest')
+    installComputeModule(module)
+    await expect(
+      invokeHandler('compute:jobs:retry-harvest', {
+        jobId: 'job-1',
+        providerId: 'ssh:test',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        force: true
+      })
+    ).rejects.toThrow('Invalid arguments')
+    expect(retry).not.toHaveBeenCalled()
+  })
+
   it.each([{}, { port: undefined }])(
     'forwards an inherited SSH port through Electron IPC: %j',
     async (port) => {

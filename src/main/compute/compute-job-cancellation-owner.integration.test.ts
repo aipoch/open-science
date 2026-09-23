@@ -144,7 +144,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
         await reaper.runOnce()
         await expect(owner.status('job-1', scope)).resolves.toMatchObject({
           status: evidence.startsWith('truncated-') ? 'running' : 'failed',
-          cancellation_status: evidence.startsWith('truncated-') ? 'cancelling' : 'cancelled'
+          cancellation_status: evidence.startsWith('truncated-') ? 'cancel_failed' : 'cancelled'
         })
         expect(run).toHaveBeenCalledTimes(
           evidence === 'owned' || evidence === 'truncated-termination' ? 2 : 1
@@ -152,6 +152,119 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
       } finally {
         await rm(directory, { recursive: true, force: true })
       }
+    }
+  )
+
+  it('exposes failed cancellation without declaring the running job stopped', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await owner.request('job-1', scope)
+    const reaper = new ComputeJobCancellationReaper(operations, jobs, {
+      acquire: vi.fn(async () => {
+        throw new Error('connection failed')
+      })
+    })
+    await reaper.runOnce()
+    await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+      status: 'running',
+      cancellation_status: 'cancel_failed'
+    })
+    await expect(jobs.get('job-1')).resolves.toMatchObject({
+      status: 'running',
+      cancellation_status: 'cancel_failed'
+    })
+  })
+
+  it('bounds a hung connection and ignores its late result', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await owner.request('job-1', scope)
+    let resolve!: (lease: ComputeConnectionLease) => void
+    const acquire = vi.fn<ComputeConnectionBrokerAcquirer['acquire']>(
+      () =>
+        new Promise<ComputeConnectionLease>((done) => {
+          resolve = done
+        })
+    )
+    const run = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue(success('owned'))
+    const reaper = new ComputeJobCancellationReaper(
+      operations,
+      jobs,
+      { acquire },
+      { attemptTimeoutMs: 50 }
+    )
+    await reaper.runOnce()
+    await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+      status: 'running',
+      cancellation_status: 'cancel_failed',
+      cancellation: { failureCode: 'timeout' }
+    })
+    resolve({ run } as unknown as ComputeConnectionLease)
+    await new Promise((done) => setTimeout(done, 10))
+    expect(run).not.toHaveBeenCalled()
+    expect(acquire.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+  })
+
+  it('allows a scoped retry to fence an expired background claim', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running')
+    let now = new Date()
+    const owner = new ComputeJobCancellationOwner(operations, jobs, () => now)
+    await owner.request('job-1', scope)
+    const old = await operations.claimNext('cancel', now, 30_000, 'stuck')
+    expect(old).not.toBeNull()
+    now = new Date(now.getTime() + 30_001)
+    await expect(owner.request('job-1', { ...scope, sessionId: 'other' })).rejects.toThrow()
+    await owner.request('job-1', scope)
+    const run = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue(success('absent'))
+    const reaper = new ComputeJobCancellationReaper(
+      operations,
+      jobs,
+      {
+        acquire: async () => ({ run }) as unknown as ComputeConnectionLease
+      },
+      { now: () => now }
+    )
+    await reaper.runOnce()
+    await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+      cancellation_status: 'cancelled'
+    })
+    await expect(operations.retry(old!, now, now, 'timeout')).resolves.toBe(false)
+    await expect(operations.fulfill(old!, now)).resolves.toBe(false)
+  })
+
+  it.each([false, true])(
+    'bounds retries across owners with reserved forceRequested=%s',
+    async (reservedForce) => {
+      const { client, jobs, operations, createJob } = await setup()
+      await createJob('running')
+      const owner = new ComputeJobCancellationOwner(operations, jobs)
+      await owner.request('job-1', scope)
+      await client.computeJobOperation.update({
+        where: { jobId_kind: { jobId: 'job-1', kind: 'cancel' } },
+        data: { forceRequested: reservedForce }
+      })
+      const acquire = vi.fn(async () => {
+        throw new Error('offline')
+      })
+      const reaper = new ComputeJobCancellationReaper(
+        operations,
+        jobs,
+        { acquire },
+        { retryDelayMs: () => 0 }
+      )
+      for (let i = 0; i < 3; i++) expect(await reaper.runOnce()).toBe(true)
+      expect(await reaper.runOnce()).toBe(false)
+      expect(acquire).toHaveBeenCalledTimes(3)
+      const restarted = new ComputeJobCancellationOwner(operations, jobs)
+      await expect(restarted.status('job-1', scope)).resolves.toMatchObject({
+        cancellation_status: 'cancel_failed',
+        cancellation: { attemptCount: 3 }
+      })
+      await restarted.request('job-1', scope)
+      expect(await reaper.runOnce()).toBe(true)
     }
   )
 
@@ -301,7 +414,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await reaper.runOnce()
 
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
-      cancellation_status: 'cancelling'
+      cancellation_status: 'cancel_failed'
     })
     await expect(operations.get('job-1', 'cancel')).resolves.toMatchObject({
       phase: 'active',
@@ -334,7 +447,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     expect(run.mock.calls.some(([command]) => command.startsWith('scancel '))).toBe(false)
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
       status: 'running',
-      cancellation_status: 'cancelling'
+      cancellation_status: 'cancel_failed'
     })
   })
 
@@ -439,7 +552,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
       expect.stringContaining('.openscience/jobs/job-1'),
       expect.anything()
     )
-    expect(run.mock.calls[0]?.[0]).toContain('job_pid_is_owned 4321')
+    expect(run.mock.calls[0]?.[0]).toContain('job_scope_state 4321')
     expect(JSON.stringify(run.mock.calls)).not.toContain('open-science:protected')
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
       cancellation_status: 'cancelled'

@@ -12,7 +12,7 @@ import {
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
+import { dispatchJob, buildLauncherScript, toBase64 } from './job-dispatcher'
 import { JobPoller } from './job-poller'
 import { probeRemoteLaunch } from './remote-launch-recovery'
 import { ComputeHostRepository } from './repository'
@@ -55,12 +55,30 @@ it.skipIf(!enabled).each(['running', 'orphaned'] as const)(
     const scope = { projectId: 'project-1', sessionId: 'session-1', providerId: `ssh:${alias}` }
     const hosts = new ComputeHostRepository(async () => db.client)
     await hosts.create({ sshAlias: alias, executionMode: 'direct_ssh' })
-    const broker: ComputeConnectionBrokerAcquirer = remoteEnabled
+    const transport: ComputeConnectionBrokerAcquirer = remoteEnabled
       ? new SshConfigComputeConnectionBroker({
           getHost: (id) => hosts.get(id),
           runner: new SystemSshRunner()
         })
       : { acquire: async () => ({ run: localRun }) as ComputeConnectionLease }
+    // This regression covers hosts using the legacy session backend. New supervisor ownership
+    // (including root exit and owner loss) is exercised by remote-job-tree.real-ssh.integration.
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: async (...args) => {
+        const lease = await transport.acquire(...args)
+        return {
+          ...lease,
+          run: (command, options) =>
+            lease.run(
+              command.replace(
+                toBase64(buildLauncherScript(120)),
+                toBase64(buildLauncherScript(120).replace('if python3', 'if false && python3'))
+              ),
+              options
+            )
+        }
+      }
+    }
     const connection = await broker.acquire(scope.providerId, { intent: 'job_cleanup' })
     const run = (command: string): ReturnType<ComputeConnectionLease['run']> =>
       connection.run(command, { timeoutMs: 10000, loginShell: false, maxOutputBytes: 8192 })

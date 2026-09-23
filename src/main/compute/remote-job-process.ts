@@ -1,6 +1,7 @@
 import { isConnectionStdoutTruncated } from './connection-broker'
 import { quoteRemotePath } from './remote-path-security'
 import type { ComputeConnectionLease } from './connection-broker'
+import { remoteExecutionScopeFunctionLines } from './remote-execution-scope'
 
 export type RemoteJobProcessOwnership = 'owned' | 'mismatch' | 'absent' | 'unknown'
 
@@ -49,9 +50,9 @@ export const remoteJobPidOwnershipFunctionLines = (): string[] => [
 // A launcher is a session leader, but GNU timeout creates another process group inside that
 // session. Keep a verified cwd witness alive until every other workload group is gone; killing
 // only -pid leaves timeout and its descendants running. All consumers share this boundary.
-export const remoteJobPidTerminationFunctionLines = (): string[] => [
+const legacyJobPidTerminationFunctionLines = (): string[] => [
   ...remoteJobPidOwnershipFunctionLines(),
-  'kill_job_pid() {',
+  'stop_legacy_job_scope() {',
   '  pid=$1',
   "  case $pid in ''|*[!0-9]*) return 2 ;; esac",
   '  job_pid_is_owned "$pid"',
@@ -94,6 +95,16 @@ export const remoteJobPidTerminationFunctionLines = (): string[] => [
   '}'
 ]
 
+// Shared by cancellation, deletion and timeout cleanup. The scope controller validates ownership
+// again at execution time and requires workload completion evidence before confirming termination.
+export const remoteJobPidTerminationFunctionLines = (): string[] => [
+  ...legacyJobPidTerminationFunctionLines(),
+  ...remoteExecutionScopeFunctionLines(),
+  'kill_job_pid() {',
+  '  stop_job_scope "$1"',
+  '}'
+]
+
 const canonicalWorkdirLines = (workdir: string): string[] => {
   const quotedWorkdir = quoteRemotePath(workdir)
   return [
@@ -102,20 +113,27 @@ const canonicalWorkdirLines = (workdir: string): string[] => {
   ]
 }
 
-const ownershipProbeCommand = (pid: number, workdir: string): string => {
+const ownershipProbeCommand = (pid: number, workdir: string, scopeRequired: boolean): string => {
   validPid(pid)
   return [
     ...canonicalWorkdirLines(workdir),
+    `scope_required=${scopeRequired ? 1 : 0}`,
     ...remoteJobPidOwnershipFunctionLines(),
-    `job_pid_is_owned ${pid}`,
+    ...remoteExecutionScopeFunctionLines(),
+    `job_scope_state ${pid}`,
     'case $? in 0) echo owned ;; 1) echo mismatch ;; 3) echo absent ;; *) echo unknown ;; esac'
   ].join('\n')
 }
 
-const guardedTerminationCommand = (pid: number, workdir: string): string => {
+const guardedTerminationCommand = (
+  pid: number,
+  workdir: string,
+  scopeRequired: boolean
+): string => {
   validPid(pid)
   return [
     ...canonicalWorkdirLines(workdir),
+    `scope_required=${scopeRequired ? 1 : 0}`,
     ...remoteJobPidTerminationFunctionLines(),
     `kill_job_pid ${pid}`
   ].join('\n')
@@ -124,11 +142,12 @@ const guardedTerminationCommand = (pid: number, workdir: string): string => {
 export const probeRemoteJobProcessOwnership = async (
   pid: number,
   workdir: string,
-  connection: ComputeConnectionLease
+  connection: ComputeConnectionLease,
+  scopeRequired = false
 ): Promise<RemoteJobProcessOwnership> => {
   let result
   try {
-    result = await connection.run(ownershipProbeCommand(pid, workdir), {
+    result = await connection.run(ownershipProbeCommand(pid, workdir, scopeRequired), {
       timeoutMs: 10_000,
       loginShell: false,
       maxOutputBytes: 64
@@ -147,11 +166,12 @@ export const probeRemoteJobProcessOwnership = async (
 export const terminateRemoteJobProcessIfOwned = async (
   pid: number,
   workdir: string,
-  connection: ComputeConnectionLease
+  connection: ComputeConnectionLease,
+  scopeRequired = false
 ): Promise<boolean> => {
   let result
   try {
-    result = await connection.run(guardedTerminationCommand(pid, workdir), {
+    result = await connection.run(guardedTerminationCommand(pid, workdir, scopeRequired), {
       timeoutMs: 10_000,
       loginShell: false,
       maxOutputBytes: 64

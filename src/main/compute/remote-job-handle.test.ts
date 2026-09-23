@@ -16,8 +16,15 @@ describe('remote Job handle validation', () => {
     expect(parseRemoteJobHandle(JSON.stringify(handle), workdir)).toEqual(handle)
   })
 
+  it('preserves the scope protocol requirement across persistence', () => {
+    const scoped = { ...handle, scope_version: 1 }
+    expect(parseRemoteJobHandle(JSON.stringify(scoped), workdir)).toEqual(scoped)
+  })
+
   it.each([
     undefined,
+    JSON.stringify({ ...handle, scope_version: 2 }),
+    JSON.stringify({ ...handle, scope_version: '1' }),
     '{bad json',
     JSON.stringify({ ...handle, pid: 1 }),
     JSON.stringify({ ...handle, pid: Number.MAX_SAFE_INTEGER + 1 }),

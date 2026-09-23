@@ -50,6 +50,7 @@ export const parseRemoteJobHandle = (
     if (
       !handle ||
       typeof handle !== 'object' ||
+      (handle.scope_version !== undefined && handle.scope_version !== 1) ||
       !Number.isSafeInteger(handle.pid) ||
       (handle.pid ?? 0) <= 1 ||
       typeof expectedWorkdir !== 'string' ||

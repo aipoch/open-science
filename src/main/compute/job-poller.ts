@@ -25,8 +25,10 @@ import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { cleanupCommand } from './job-deletion-owner'
 import {
   probeRemoteJobProcessOwnership,
+  remoteJobPidOwnershipFunctionLines,
   terminateRemoteJobProcessIfOwned
 } from './remote-job-process'
+import { remoteExecutionScopeFunctionLines } from './remote-execution-scope'
 import { classifyComputeJobExit } from './remote-launch-recovery'
 import { SubmittedJobRecovery, type SubmittedJobRecoveryResult } from './submitted-job-recovery'
 import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
@@ -659,7 +661,10 @@ export class JobPoller {
     const nonce = this.makeNonceFn()
 
     // Build one ownership/status/tail command section per job.
-    const parts: string[] = [REMOTE_PROCESS_OWNERSHIP_FUNCTION]
+    const parts: string[] = [
+      ...remoteJobPidOwnershipFunctionLines(),
+      ...remoteExecutionScopeFunctionLines()
+    ]
     const batched: ComputeJob[] = []
     for (const job of jobs) {
       const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
@@ -669,7 +674,8 @@ export class JobPoller {
       parts.push(
         `echo "${nonce}JOB_START:${job.job_id}"`,
         `workdir=$(cd -- ${quoteRemotePath(handle.workdir)} 2>/dev/null && pwd -P || true)`,
-        `process_owned_by_workdir ${handle.pid} "$workdir"; case $? in 0) echo "${nonce}alive:1" ;; 1|3) echo "${nonce}alive:0" ;; *) echo "${nonce}alive:unknown" ;; esac`,
+        `scope_required=${handle.scope_version === 1 ? 1 : 0}`,
+        `job_scope_state ${handle.pid}; case $? in 0) echo "${nonce}alive:1";; 3) echo "${nonce}alive:0";; *) echo "${nonce}alive:unknown";; esac`,
         `if [ -f ${quoteRemotePath(handle.exit_code_path)} ]; then POLL_EXIT_CODE=$(cat ${quoteRemotePath(handle.exit_code_path)}); else POLL_EXIT_CODE=; fi; printf '${nonce}exit:%s\\n' "$POLL_EXIT_CODE"`,
         `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stdout_path)} 2>/dev/null || true`,
         `printf '\n%s\n' '${nonce}STDOUT_END:${job.job_id}'`,
@@ -816,8 +822,9 @@ export class JobPoller {
     if (signal.aborted) return
     const { alive, exitCode, hasExitCode, stdoutTail, stderrTail } = result
 
-    // Terminal: exit_code file exists — this is authoritative.
-    if (hasExitCode && exitCode !== null) {
+    // The launcher exit code describes the command result, not the lifetime of its descendants.
+    // Publish a final result only once the entire execution scope has stopped.
+    if (hasExitCode && exitCode !== null && !alive) {
       // Reset vanish counter since we have a definitive result.
       this.vanishCounters.delete(job.job_id)
 
@@ -885,7 +892,8 @@ export class JobPoller {
           const ownership = await probeRemoteJobProcessOwnership(
             handle.pid,
             handle.workdir,
-            connection
+            connection,
+            handle.scope_version === 1
           )
           if (ownership === 'unknown') {
             if (signal.aborted) return
@@ -896,7 +904,8 @@ export class JobPoller {
             const terminated = await terminateRemoteJobProcessIfOwned(
               handle.pid,
               handle.workdir,
-              connection
+              connection,
+              handle.scope_version === 1
             )
             if (!terminated) {
               if (signal.aborted) return

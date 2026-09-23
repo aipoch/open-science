@@ -14,6 +14,7 @@ import {
   type DeleteComputeHostRequest,
   type DetailsAuthor,
   type ResetPasswordComputeHostRequest,
+  type RetryComputeJobHarvestRequest,
   type SetComputeJobRemoteCleanupRequest
 } from '../../shared/compute'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
@@ -130,14 +131,17 @@ const computeJobAnalysisTransitionSchema = z
   })
   .strict() satisfies z.ZodType<ComputeJobAnalysisTransition>
 
-const cancelComputeJobRequestSchema = z
+const computeJobOwnerRequestSchema = z
   .object({
     jobId: z.string(),
     providerId: z.string(),
     sessionId: z.string(),
     projectId: z.string()
   })
-  .strict() satisfies z.ZodType<CancelComputeJobRequest>
+  .strict() satisfies z.ZodType<RetryComputeJobHarvestRequest>
+
+const cancelComputeJobRequestSchema =
+  computeJobOwnerRequestSchema satisfies z.ZodType<CancelComputeJobRequest>
 
 const setComputeJobRemoteCleanupRequestSchema = z
   .object({
@@ -177,7 +181,7 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:approval-replay-pending': z.tuple([]),
   'compute:jobs:list': z.tuple([computeJobsListFilterSchema]),
   'compute:jobs:cancel': z.tuple([cancelComputeJobRequestSchema]),
-  'compute:jobs:retry-harvest': z.tuple([cancelComputeJobRequestSchema]),
+  'compute:jobs:retry-harvest': z.tuple([computeJobOwnerRequestSchema]),
   'compute:jobs:set-remote-cleanup': z.tuple([setComputeJobRemoteCleanupRequestSchema]),
   'compute:jobs:pending-notification': z.tuple([computeJobsPendingNotificationFilterSchema]),
   'compute:jobs:mark-consumed': z.tuple([z.string(), stringArraySchema]),
