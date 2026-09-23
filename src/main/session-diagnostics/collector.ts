@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, opendir, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import * as tar from 'tar'
 import type {
   SessionDiagnosticItem,
@@ -10,6 +10,7 @@ import type {
 import { arch, release } from 'node:os'
 import { projectDiagnosticSession, projectDiagnosticLog } from './projection'
 import { readDiagnosticDatabase } from './database'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
 
 const FILE_LIMIT = 8 * 1024 * 1024
 const TOTAL_LIMIT = 32 * 1024 * 1024
@@ -41,6 +42,7 @@ async function checkPath(root: string, path: string): Promise<void> {
 
 async function inspectSource(source: Source): Promise<Source> {
   try {
+    if (source.kind === 'sensitive-evidence') return { ...source, available: true }
     if (!source.path) throw new DiagnosticCollectionError('Source is unavailable')
     await checkPath(source.root, source.path)
     const stat = await lstat(source.path)
@@ -121,6 +123,41 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
     path: join(input.configRoot, 'open-science.db'),
     output: 'db'
   })
+  if (input.sensitiveContent) {
+    sources.push({
+      id: 'sensitive-evidence',
+      name: 'Sensitive-content evidence (redacted)',
+      kind: 'sensitive-evidence',
+      available: true,
+      root: input.dataRoot,
+      output: 'sensitive-content/evidence.json'
+    })
+    const keys = [
+      ...new Set(
+        input.sensitiveContent.evidence
+          .map((evidence) => evidence.sourceStorageKey)
+          .filter((key): key is string => Boolean(key))
+      )
+    ].slice(0, 20)
+    for (const [index, key] of keys.entries()) {
+      let path: string | undefined
+      try {
+        path = resolveStorageKey(input.dataRoot, key)
+      } catch {
+        /* Invalid storage keys remain visible as unavailable diagnostic items. */
+      }
+      const label = basename(key).slice(0, 120) || `file-${index}`
+      sources.push({
+        id: `sensitive-file:${index}`,
+        name: key.slice(0, 240),
+        kind: 'sensitive-file',
+        available: false,
+        root: input.dataRoot,
+        path,
+        output: `sensitive-content/files/${index}-${label}`
+      })
+    }
+  }
   return Promise.all(sources.map(inspectSource))
 }
 
@@ -165,6 +202,29 @@ async function readSource(
   }
 }
 
+async function readBinarySource(source: Source): Promise<Buffer> {
+  await checkPath(source.root, source.path!)
+  const handle = await open(source.path!, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  try {
+    const before = await handle.stat()
+    if (!before.isFile() || before.size > FILE_LIMIT)
+      throw new DiagnosticCollectionError('Source exceeds file limit or is not regular')
+    const buffer = Buffer.alloc(before.size)
+    let offset = 0
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+      if (!bytesRead) break
+      offset += bytesRead
+    }
+    const after = await handle.stat()
+    if (offset !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs)
+      throw new DiagnosticCollectionError('Source changed during collection')
+    return buffer
+  } finally {
+    await handle.close()
+  }
+}
+
 export async function runSessionDiagnosticWorker(
   input: SessionDiagnosticWorkerInput
 ): Promise<SessionDiagnosticWorkerResult> {
@@ -203,8 +263,12 @@ export async function runSessionDiagnosticWorker(
     await mkdir(content, { mode: 0o700 })
     const files: string[] = []
     let total = 0
-    const write = async (name: string, value: string, required = false): Promise<void> => {
-      const bytes = Buffer.byteLength(value)
+    const write = async (
+      name: string,
+      value: string | Uint8Array,
+      required = false
+    ): Promise<void> => {
+      const bytes = typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength
       if (bytes > FILE_LIMIT || total + bytes > TOTAL_LIMIT - (required ? 0 : 1024 * 1024))
         throw new DiagnosticCollectionError('Diagnostic output size limit exceeded')
       await mkdir(dirname(join(content, name)), { recursive: true, mode: 0o700 })
@@ -248,12 +312,31 @@ export async function runSessionDiagnosticWorker(
       }
       statuses.push(state)
       try {
-        if (!source?.available || !source.path)
+        if (!source?.available || (source.kind !== 'sensitive-evidence' && !source.path))
           throw new DiagnosticCollectionError(source?.reason ?? 'Source is no longer discoverable')
-        if (source.kind === 'database') {
-          await checkPath(source.root, source.path)
+        if (source.kind === 'sensitive-evidence') {
+          await write(source.output, encode(input.sensitiveContent ?? {}), true)
+        } else if (source.kind === 'sensitive-file') {
+          const stat = await lstat(source.path!)
+          if (stat.size > FILE_LIMIT) {
+            await write(
+              `${source.output}.metadata.json`,
+              encode({
+                sizeBytes: stat.size,
+                mtimeMs: stat.mtimeMs,
+                omissionReason: 'source-size-limit'
+              })
+            )
+            partial = true
+            state.status = 'truncated'
+            record('Sensitive-content source exceeds read budget; file metadata retained')
+          } else {
+            await write(source.output, await readBinarySource(source))
+          }
+        } else if (source.kind === 'database') {
+          await checkPath(source.root, source.path!)
           for (const result of readDiagnosticDatabase(
-            source.path,
+            source.path!,
             input.projectId,
             input.sessionId
           )) {
@@ -279,7 +362,7 @@ export async function runSessionDiagnosticWorker(
             }
           }
         } else {
-          const stat = await lstat(source.path)
+          const stat = await lstat(source.path!)
           const metadata = { sizeBytes: stat.size, mtimeMs: stat.mtimeMs }
           if (stat.size > FILE_LIMIT) {
             await write(
@@ -382,7 +465,7 @@ export async function runSessionDiagnosticWorker(
     )
     await write(
       'README.txt',
-      'Local diagnostic observations, not a restore package. No upload or LLM is involved. Only fixed diagnostic fields are exported. Conversation text, titles, tool inputs and outputs, log messages, stacks, paths, credentials and unknown fields are omitted, not text-redacted. IDs, states, timestamps and numeric usage remain. Invalid or oversized session files contribute metadata only. Unstructured log lines are omitted. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n',
+      'Local diagnostic observations, not a restore package. No upload or LLM is involved. Only fixed diagnostic fields are exported. Conversation text, titles, tool inputs and outputs, log messages, stacks, paths, credentials and unknown fields are omitted, not text-redacted. Sensitive-content evidence is structurally redacted and includes hashes, lengths and boundaries. Original sensitive-content files are included only when explicitly selected and may contain credentials or research content. IDs, states, timestamps and numeric usage remain. Invalid or oversized session files contribute metadata only. Unstructured log lines are omitted. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n',
       true
     )
     record('Collection complete; starting archive creation')

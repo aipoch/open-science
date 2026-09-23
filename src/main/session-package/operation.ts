@@ -19,6 +19,7 @@ import type {
   SessionPackageRequest,
   SessionPackageImportRequest
 } from '../../shared/session-package'
+import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
 export class SessionPackageOperation {
@@ -315,6 +316,12 @@ export class SessionPackageOperation {
     this.publish()
   }
 
+  setSensitiveContent(evidence: SensitiveContentEvidence[]): void {
+    if (!this.current) return
+    this.current = { ...this.current, sensitiveContent: evidence.slice(0, 20) }
+    this.publish()
+  }
+
   async retryCleanup(
     work: (signal: AbortSignal) => Promise<void>
   ): Promise<PackageOperationSnapshot | null> {
@@ -399,6 +406,7 @@ export class SessionPackageOperation {
       this.diagnostic.complete(this.diagnosticFields())
       return result
     } catch (error) {
+      const sensitiveContent = this.current?.sensitiveContent
       this.current = {
         ...this.current!,
         state:
@@ -411,7 +419,8 @@ export class SessionPackageOperation {
             ? undefined
             : error instanceof Error
               ? error.message
-              : String(error)
+              : String(error),
+        ...(sensitiveContent ? { sensitiveContent } : {})
       }
       if (controller.signal.aborted) this.diagnostic.cancel(this.diagnosticFields())
       else this.diagnostic.fail(error, this.diagnosticFields())

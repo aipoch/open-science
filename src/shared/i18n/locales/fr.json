@@ -6573,6 +6573,10 @@
     "Retrieve exact identity and paired accessions for an NCBI genome assembly.": "Récupérer l’identité exacte et les accessions appariées d’un assemblage génomique NCBI.",
     "List sequence names and UCSC, RefSeq and GenBank aliases for an NCBI assembly.": "Lister les noms de séquence et les alias UCSC, RefSeq et GenBank d’un assemblage NCBI.",
     "Summarize UCSC conservation scores for a genomic region.": "Résumer les scores de conservation UCSC d’une région génomique.",
-    "Retrieve a gnomAD variant with optional population frequencies.": "Récupérer un variant gnomAD avec des fréquences de population facultatives."
+    "Retrieve a gnomAD variant with optional population frequencies.": "Récupérer un variant gnomAD avec des fréquences de population facultatives.",
+    "Sensitive-content evidence": "Preuve de contenu sensible",
+    "Redacted scanner evidence for the failed Session package export.": "Preuve expurgée de l’analyse de l’exportation du paquet Session ayant échoué.",
+    "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "Fichier original à l’origine du contrôle du paquet Session. Il peut contenir des identifiants ou du contenu de recherche; vérifiez-le avant de l’exporter.",
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "Les fichiers contenant du contenu sensible ne sont pas sélectionnés par défaut. En sélectionner un ajoute ses octets d’origine à l’archive de diagnostic locale."
   }
 }

@@ -6247,6 +6247,10 @@
     "Retrieve exact identity and paired accessions for an NCBI genome assembly.": "NCBI 유전체 어셈블리의 정확한 식별 정보와 쌍 액세션 조회.",
     "List sequence names and UCSC, RefSeq and GenBank aliases for an NCBI assembly.": "NCBI 어셈블리의 서열 이름과 UCSC, RefSeq, GenBank 별칭 나열.",
     "Summarize UCSC conservation scores for a genomic region.": "유전체 영역의 UCSC 보존 점수 요약.",
-    "Retrieve a gnomAD variant with optional population frequencies.": "선택적 집단 빈도와 함께 gnomAD 변이 조회."
+    "Retrieve a gnomAD variant with optional population frequencies.": "선택적 집단 빈도와 함께 gnomAD 변이 조회.",
+    "Sensitive-content evidence": "민감한 콘텐츠 증거",
+    "Redacted scanner evidence for the failed Session package export.": "실패한 세션 패키지 내보내기의 비식별화된 스캔 증거입니다.",
+    "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "세션 패키지 검사를 유발한 원본 파일입니다. 자격 증명이나 연구 내용이 포함될 수 있으므로 내보내기 전에 검토하세요.",
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "민감한 콘텐츠 파일은 기본적으로 선택되지 않습니다. 선택하면 원본 바이트가 로컬 진단 아카이브에 포함됩니다."
   }
 }

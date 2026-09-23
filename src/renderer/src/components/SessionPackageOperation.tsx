@@ -618,6 +618,16 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     ) : null}
                   </div>
                 ) : null}
+                {operation.sensitiveContent?.length ? (
+                  <details className="border-t border-border pt-3 text-sm">
+                    <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                      {t('Sensitive-content evidence')}
+                    </summary>
+                    <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
+                      {JSON.stringify(operation.sensitiveContent, null, 2)}
+                    </pre>
+                  </details>
+                ) : null}
                 {operation.cleanupPending && !active ? (
                   <ErrorNotice
                     inline

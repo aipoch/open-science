@@ -112,6 +112,42 @@ it('closes from the title bar without bypassing the dialog close flow', async ()
   })
   expect(onClose).toHaveBeenCalledOnce()
 })
+it('keeps sensitive evidence visible while requiring an explicit opt-in for original files', async () => {
+  inspectDiagnostics.mockResolvedValue({
+    items: [
+      {
+        id: 'sensitive-evidence',
+        name: 'Sensitive-content evidence (redacted)',
+        kind: 'sensitive-evidence',
+        available: true
+      },
+      {
+        id: 'sensitive-file:0',
+        name: 'objects/matched.bin',
+        kind: 'sensitive-file',
+        available: true,
+        sizeBytes: 4
+      }
+    ]
+  })
+  await render()
+  const checkboxes = [...document.querySelectorAll<HTMLButtonElement>('[role="checkbox"]')]
+  expect(checkboxes).toHaveLength(2)
+  expect(checkboxes.map((item) => item.getAttribute('aria-checked') === 'true')).toEqual([
+    true,
+    false
+  ])
+  expect(document.body.textContent).toContain(
+    'Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.'
+  )
+  expect(checkboxes[0].textContent).toContain('Redacted scanner evidence')
+  expect(checkboxes[1].textContent).toContain('Original file that triggered')
+  await act(async () => fireEvent.click(checkboxes[1]))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics).toHaveBeenCalledWith(
+    expect.objectContaining({ selectedItems: ['sensitive-evidence', 'sensitive-file:0'] })
+  )
+})
 it('cancels an in-flight inspection using its operation identity', async () => {
   inspectDiagnostics.mockReturnValue(new Promise(() => {}))
   await render()

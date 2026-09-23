@@ -394,6 +394,10 @@ import type {
   PersistedChatSession,
   SessionSummary
 } from '../shared/session-persistence'
+import type {
+  SensitiveContentFailure,
+  SensitiveContentEvidence
+} from '../shared/session-diagnostics'
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createLocalModelOwner } from './local-models/owner'
 import { registerLocalModelIpcHandlers } from './local-models/ipc'
@@ -1166,14 +1170,34 @@ const createApplicationModules = async (
       })
     }
   }
+  const sensitiveContentFailures = new Map<string, SensitiveContentFailure>()
+  const sensitiveContentKey = (projectId: string, sessionId: string): string =>
+    `${projectId}\0${sessionId}`
+  const rememberSensitiveContentFailure = (
+    request: { projectId: string; sessionId: string },
+    evidence: SensitiveContentEvidence[]
+  ): void => {
+    sensitiveContentFailures.set(sensitiveContentKey(request.projectId, request.sessionId), {
+      occurredAt: new Date().toISOString(),
+      evidence: evidence.slice(0, 20)
+    })
+    while (sensitiveContentFailures.size > 128) {
+      const oldest = sensitiveContentFailures.keys().next().value
+      if (oldest === undefined) break
+      sensitiveContentFailures.delete(oldest)
+    }
+  }
   const sessionDiagnosticsDesktop = await modules.add(undefined, () => {
     const owner = createSessionDiagnosticsDesktop({
       createWorker: createDiagnosticsWorker,
-      resolveSources: () => ({
+      resolveSources: (identity) => ({
         dataRoot: resolveDataRoot(),
         configRoot: resolveConfigRoot(),
         logPath: getLogFilePath(),
-        appVersion: app.getVersion()
+        appVersion: app.getVersion(),
+        sensitiveContent: sensitiveContentFailures.get(
+          sensitiveContentKey(identity.projectId, identity.sessionId)
+        )
       }),
       chooseDestination: async (defaultName) => {
         const result = await dialog.showSaveDialog({ defaultPath: defaultName })
@@ -4669,7 +4693,8 @@ const createApplicationModules = async (
     applicationEvents,
     projectRepository,
     sessionRepository,
-    isPackageHandoffHeld: () => packageHandoffHeld
+    isPackageHandoffHeld: () => packageHandoffHeld,
+    onSensitiveContentFailure: rememberSensitiveContentFailure
   })
   sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active
   const removePackageQuitGuard = installSessionPackageQuitGuard(

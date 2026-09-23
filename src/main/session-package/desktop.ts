@@ -13,6 +13,7 @@ import type {
   SessionPackageImportResult,
   SessionPackageRequest
 } from '../../shared/session-package'
+import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
 import { sanitizeExportFilename } from '../../shared/conversation-export'
 import type { NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'
@@ -63,6 +64,10 @@ export class SessionPackageDesktop {
       reserveExport?: (identity: SessionPackageRequest, signal: AbortSignal) => Promise<() => void>
       reserveImport?: (projectId: string, signal: AbortSignal) => Promise<() => void>
       onOperationChanged?: (snapshot: PackageOperationSnapshot) => void
+      onSensitiveContentFailure?: (
+        request: SessionPackageRequest,
+        evidence: SensitiveContentEvidence[]
+      ) => void
       assertCanStart?: () => void
     }
   ) {
@@ -298,12 +303,15 @@ export class SessionPackageDesktop {
     }
   }
 
-  private staged<T>(work: (directory: string) => Promise<T>): Promise<T> {
+  private staged<T>(
+    work: (directory: string) => Promise<T>,
+    request?: SessionPackageRequest
+  ): Promise<T> {
     if (this.shutdown.signal.aborted) return Promise.reject(this.shutdown.signal.reason)
     if (this.busy)
       return Promise.reject(new Error('A Session package operation is already in progress.'))
     const result = withPackageTransfer(
-      () => this.stagedNow(work),
+      () => this.stagedNow(work, request),
       () => this.operations.transferBytesPerSecond,
       this.operations.reportIo
     )
@@ -311,7 +319,10 @@ export class SessionPackageDesktop {
     return result
   }
 
-  private async stagedNow<T>(work: (directory: string) => Promise<T>): Promise<T> {
+  private async stagedNow<T>(
+    work: (directory: string) => Promise<T>,
+    request?: SessionPackageRequest
+  ): Promise<T> {
     this.busy = true
     try {
       const directory = await mkdtemp(join(tmpdir(), 'open-science-package-dialog-'))
@@ -325,6 +336,14 @@ export class SessionPackageDesktop {
         )
       )
     } catch (error) {
+      if (error instanceof PackageSensitiveContentError && request && error.evidence) {
+        this.operations.setSensitiveContent([error.evidence])
+        try {
+          this.options.onSensitiveContentFailure?.(request, [error.evidence])
+        } catch {
+          // Diagnostic capture must not change the package operation result.
+        }
+      }
       createLogger('session-package').warn(
         'Session package operation failed',
         diagnosticErrorFields(error)
@@ -435,6 +454,14 @@ export class SessionPackageDesktop {
           }
           return result
         } catch (error) {
+          if (error instanceof PackageSensitiveContentError && error.evidence) {
+            this.operations.setSensitiveContent([error.evidence])
+            try {
+              this.options.onSensitiveContentFailure?.(request, [error.evidence])
+            } catch {
+              // Diagnostic capture must not change the package operation result.
+            }
+          }
           if (error instanceof ForkRecoveryRequiredError) {
             this.operations.completeResult({ recovery: error.recovery })
             throw new Error(
@@ -536,7 +563,7 @@ export class SessionPackageDesktop {
             )
             this.operations.completeResult({ filePath })
             return { saved: true, filePath }
-          })
+          }, request)
         } finally {
           release?.()
         }
@@ -651,7 +678,7 @@ export class SessionPackageDesktop {
                 )
               }
               return result
-            })
+            }, undefined)
           } finally {
             release?.()
           }

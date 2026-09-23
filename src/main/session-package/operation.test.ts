@@ -176,6 +176,28 @@ describe('SessionPackageOperation', () => {
     expect(owner.snapshot?.state).toBe('failed')
   })
 
+  it('retains sensitive evidence on a failed operation snapshot', async () => {
+    const owner = new SessionPackageOperation()
+    const evidence = {
+      location: 'objects/file @3',
+      offset: 3,
+      rule: 'token' as const,
+      matchLength: 8,
+      leftBoundary: 'whitespace' as const,
+      rightBoundary: 'end' as const,
+      context: 'token=[redacted]',
+      valueLength: 8,
+      valueHash: 'a'.repeat(64),
+      sourceStorageKey: 'objects/file'
+    }
+    const run = owner.run('export', session, async () => {
+      owner.setSensitiveContent([evidence])
+      throw new Error('sensitive content')
+    })
+    await expect(run).rejects.toThrow('sensitive content')
+    expect(owner.snapshot).toMatchObject({ state: 'failed', sensitiveContent: [evidence] })
+  })
+
   it('owns cleanup retry through shutdown and restores the completed result', async () => {
     const owner = new SessionPackageOperation()
     await owner.run('import', undefined, async () => {

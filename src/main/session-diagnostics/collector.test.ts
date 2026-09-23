@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as tar from 'tar'
@@ -87,6 +87,58 @@ describe('session diagnostics isolated collector', () => {
       'Diagnostic source'
     )
     expect(await readdir(input.configRoot)).toEqual(['sessions'])
+  })
+  it('exports redacted sensitive evidence and explicitly selected original files', async () => {
+    const input = await fixture()
+    const sourceKey = 'objects/matched.bin'
+    const source = join(input.dataRoot, sourceKey)
+    const bytes = Buffer.from([0, 255, 1, 2])
+    await mkdir(dirname(source), { recursive: true })
+    await writeFile(source, bytes)
+    input.sensitiveContent = {
+      occurredAt: '2026-09-23T00:00:00.000Z',
+      evidence: [
+        {
+          location: 'objects/matched.bin @4',
+          offset: 4,
+          rule: 'assignment',
+          matchLength: 16,
+          label: 'token',
+          leftBoundary: 'whitespace',
+          rightBoundary: 'punctuation',
+          context: 'token=[redacted]',
+          valueLength: 16,
+          valueHash: 'a'.repeat(64),
+          sourceStorageKey: sourceKey
+        }
+      ]
+    }
+    const inspection = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
+    expect(inspection).toMatchObject({ kind: 'inspection' })
+    if (inspection.kind !== 'inspection') return
+    expect(inspection.inspection.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'sensitive-evidence', available: true }),
+        expect.objectContaining({
+          id: 'sensitive-file:0',
+          available: true,
+          sizeBytes: bytes.length
+        })
+      ])
+    )
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['sensitive-evidence', 'sensitive-file:0']
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    expect(
+      JSON.parse(
+        await readFile(join(input.directory!, 'content/sensitive-content/evidence.json'), 'utf8')
+      )
+    ).toEqual(input.sensitiveContent)
+    expect(
+      await readFile(join(input.directory!, 'content/sensitive-content/files/0-matched.bin'))
+    ).toEqual(bytes)
   })
   it('rejects ancestor symlinks and permits oversized metadata sources during inspection', async () => {
     const input = await fixture()

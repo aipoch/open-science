@@ -3,6 +3,8 @@ import {
   isSensitiveUrlQueryKey,
   redactSensitiveText
 } from '../../shared/diagnostic-redaction'
+import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
+import { createHash } from 'node:crypto'
 
 // Export decisions are distinct from log redaction: empty values and the exact redaction
 // marker are not credentials, and a URL parser failure alone is not evidence of a secret.
@@ -16,7 +18,55 @@ export const isPrivatePackageValue = (value: string): boolean => {
   return text !== '' && text !== '[redacted]'
 }
 
-export type PackageTextMatch = { offset: number; rule: 'field' | 'assignment' | 'url' | 'token' }
+export type PackageTextMatch = {
+  offset: number
+  length: number
+  rule: 'field' | 'assignment' | 'url' | 'token'
+  label?: string
+}
+
+type Boundary = Exclude<
+  SensitiveContentEvidence['leftBoundary'] | SensitiveContentEvidence['rightBoundary'],
+  'start' | 'end'
+>
+const boundary = (value: string): Boundary => {
+  if (/\p{L}/u.test(value)) return 'letter'
+  if (/\p{N}/u.test(value)) return 'number'
+  if (/\p{M}/u.test(value)) return 'mark'
+  if (/\s/u.test(value)) return 'whitespace'
+  if (/\p{P}|\p{S}/u.test(value)) return 'punctuation'
+  return 'other'
+}
+
+export const buildSensitiveContentEvidence = (
+  text: string,
+  match: PackageTextMatch,
+  location: string,
+  sourceStorageKey?: string,
+  offsetBase = 0
+): SensitiveContentEvidence => {
+  const start = Math.max(0, match.offset - 160)
+  const end = Math.min(text.length, match.offset + match.length + 160)
+  const rawContext = text.slice(start, end)
+  const context = redactSensitiveText(rawContext).slice(0, 800)
+  const rawMatch = text.slice(match.offset, match.offset + match.length)
+  return {
+    location,
+    offset: offsetBase + match.offset,
+    rule: match.rule,
+    matchLength: match.length,
+    ...(match.label ? { label: match.label } : {}),
+    leftBoundary: text[match.offset - 1] === undefined ? 'start' : boundary(text[match.offset - 1]),
+    rightBoundary:
+      text[match.offset + match.length] === undefined
+        ? 'end'
+        : boundary(text[match.offset + match.length]),
+    context,
+    valueLength: rawMatch.length,
+    valueHash: createHash('sha256').update(rawMatch).digest('hex'),
+    ...(sourceStorageKey ? { sourceStorageKey } : {})
+  }
+}
 
 export const findSensitivePackageText = (
   text: string,
@@ -64,7 +114,7 @@ export const findSensitivePackageText = (
             isSensitiveUrlQueryKey(key) && privateValue(value, match.index + match[0].length)
         )
       )
-        return { offset: match.index, rule: 'url' }
+        return { offset: match.index, length: match[0].length, rule: 'url', label: 'URL' }
     } catch {
       /* A malformed/template URL alone is not a credential. */
     }
@@ -75,7 +125,7 @@ export const findSensitivePackageText = (
         isSensitiveDiagnosticKey(JSON.parse(match[1])) &&
         isPrivatePackageValue(JSON.parse(match[2]))
       )
-        return { offset: match.index, rule: 'field' }
+        return { offset: match.index, length: match[0].length, rule: 'field', label: match[1] }
     } catch {
       /* Incomplete or invalid JSON is still inspected as text below. */
     }
@@ -84,7 +134,12 @@ export const findSensitivePackageText = (
     /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b\s*["']?\s*:\s*["']?([^"'\r\n}]*)/gi
   )) {
     if (privateValue(match[1], match.index + match[0].length))
-      return { offset: match.index, rule: 'assignment' }
+      return {
+        offset: match.index,
+        length: match[0].length,
+        rule: 'assignment',
+        label: match[1]
+      }
   }
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
   for (const match of text.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
@@ -113,7 +168,12 @@ export const findSensitivePackageText = (
       /* Inspect literal text. */
     }
     if (privateValue(content, start + value[0].length))
-      return { offset: match.index, rule: 'assignment' }
+      return {
+        offset: match.index,
+        length: match[0].length + value[0].length,
+        rule: 'assignment',
+        label: match[1]
+      }
   }
   for (const match of text.matchAll(
     /(?<![\p{L}\p{N}\p{M}_-])--?([a-z][a-z0-9_-]*)(?:\s+|=)(["'](?:\\.|[^"'\\\r\n])*["']|["'][^\r\n]*$|(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^\s"'&;]+)/giu
@@ -121,13 +181,18 @@ export const findSensitivePackageText = (
     if (!isSensitiveDiagnosticKey(match[1])) continue
     const value = match[2].replace(/^(["'])(.*)\1$/, '$2').replace(/^["']/, '')
     if (privateValue(value, match.index + match[0].length))
-      return { offset: match.index, rule: 'assignment' }
+      return {
+        offset: match.index,
+        length: match[0].length,
+        rule: 'assignment',
+        label: `-${match[1]}`
+      }
   }
   for (const match of text.matchAll(
     /\bBearer\s+[^\s"']+|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b|\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|sk-[A-Za-z0-9_-]{8,})\b/gi
   )) {
     if (privateValue(match[0], match.index + match[0].length))
-      return { offset: match.index, rule: 'token' }
+      return { offset: match.index, length: match[0].length, rule: 'token', label: 'token pattern' }
   }
   return undefined
 }
@@ -136,7 +201,8 @@ export class PackageSensitiveContentError extends Error {
   readonly location: string
   constructor(
     location: string,
-    readonly rule: PackageTextMatch['rule']
+    readonly rule: PackageTextMatch['rule'],
+    readonly evidence?: SensitiveContentEvidence
   ) {
     // Location contains no matched values. Bound and redact user-controlled filenames/keys.
     const safe = Array.from(redactSensitiveText(location).slice(0, 800), (char) =>

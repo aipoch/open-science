@@ -9,16 +9,17 @@ import type {
   SessionDiagnosticInspection,
   SessionDiagnosticRequest,
   SessionDiagnosticWorkerInput,
-  SessionDiagnosticWorkerResult
+  SessionDiagnosticWorkerResult,
+  SensitiveContentFailure
 } from '../../shared/session-diagnostics'
 
 type Sources = Pick<
   SessionDiagnosticWorkerInput,
   'dataRoot' | 'configRoot' | 'logPath' | 'appVersion'
->
+> & { sensitiveContent?: SensitiveContentFailure }
 type Options = {
   createWorker: (options: WorkerOptions) => Worker
-  resolveSources: () => Sources
+  resolveSources: (identity: SessionDiagnosticRequest) => Sources
   chooseDestination: (defaultName: string) => Promise<string | undefined>
   temporaryRoot?: string
   timeoutMs?: number
@@ -230,7 +231,7 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
     try {
       operation = await begin(request)
       const signal = operation.controller.signal
-      sources = options.resolveSources()
+      sources = options.resolveSources(request)
       let target: string | undefined
       if (action === 'export') {
         const selected = (request as SessionDiagnosticExportRequest).selectedItems
