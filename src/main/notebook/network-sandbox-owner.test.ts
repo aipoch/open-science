@@ -2021,6 +2021,34 @@ it('opens the existing administrator authorization flow when the R ACL preflight
   }
 })
 
+it('does not authorize when an ACL marker appears only in the runtime path', async () => {
+  backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+  const failure = new Error(
+    'grant AppContainer access to D:\\WINDOWS_ACL_ACCESS_DENIED\\R: The system cannot find the path specified'
+  )
+  backend.wrap.mockRejectedValueOnce(failure)
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: tmpdir(),
+    platform: 'win32',
+    allowRuntimeAccessPrompt: true,
+    getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    persistAlwaysAllow: vi.fn(),
+    requestDecision: vi.fn()
+  })
+  try {
+    await expect(
+      owner.ensureRuntimeAccess({
+        runtime: 'r',
+        executable: 'D:\\WINDOWS_ACL_ACCESS_DENIED\\R\\bin\\Rscript.exe',
+        sessionId: 'r-path-marker'
+      })
+    ).rejects.toBe(failure)
+    expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+  } finally {
+    await owner.dispose()
+  }
+})
+
 it('does not repeat a cancelled UAC prompt and reports cancellation before cell dispatch', async () => {
   const root = await mkdtemp(join(tmpdir(), 'os-r-uac-cancel-'))
   fixtureDirectories.push(root)
