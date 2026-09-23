@@ -15,7 +15,9 @@ export const useArtifactHiddenState = (
     ready: boolean
     ids: ReadonlySet<string>
   }>({ ready: false, ids: EMPTY_IDS })
-  const supported = typeof window.api?.projectFiles?.getHiddenArtifactIds === 'function'
+  const supported =
+    typeof window !== 'undefined' &&
+    typeof window.api?.projectFiles?.getHiddenArtifactIds === 'function'
   useEffect(() => {
     if (!projectId || !supported) return
     let active = true
@@ -54,7 +56,9 @@ export const useArtifactHiddenState = (
 // event, and remove decoded content while the main-process policy is being checked.
 export const usePreviewPathVisibility = (path: string | undefined): boolean => {
   const [state, setState] = useState<{ path?: string; allowed: boolean }>({ allowed: false })
-  const supported = typeof window.api?.projectFiles?.getHiddenArtifactIds === 'function'
+  const supported =
+    typeof window !== 'undefined' &&
+    typeof window.api?.projectFiles?.getHiddenArtifactIds === 'function'
   useEffect(() => {
     if (!path || !supported) return
     let active = true

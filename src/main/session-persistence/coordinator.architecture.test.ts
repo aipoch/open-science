@@ -1671,7 +1671,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/settings/provider-transport-owner.test.ts',
       'src/main/settings/session-details-model-owner.test.ts',
       'src/main/literature/smart-collections.test.ts',
-      'src/main/settings/classification-usage.test.ts'
+      'src/main/settings/classification-usage.test.ts',
+      'src/main/project-files/artifact-hidden.integration.test.ts',
+      'src/main/compute/compute-submission-evidence-recovery.integration.test.ts'
     ])
     expect(sessionPersistence.capabilityOverlays).toEqual([
       'windows_sensitive',

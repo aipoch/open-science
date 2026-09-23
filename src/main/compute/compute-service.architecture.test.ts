@@ -690,7 +690,8 @@ describe('Compute service architecture', () => {
       'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx',
       'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
-      'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx'
+      'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx',
+      'src/main/compute/compute-submission-evidence-recovery.integration.test.ts'
     ])
     expect(computeService.interfacePaths).toEqual([
       'src/main/compute/connection-broker.ts',
@@ -776,7 +777,8 @@ describe('Compute service architecture', () => {
       'src/main/compute/skill-provisioning.test.ts',
       'src/main/compute/slurm-driver-boundaries.test.ts',
       'src/main/compute/slurm.real-ssh.integration.test.ts',
-      'src/main/compute/ssh-config.test.ts'
+      'src/main/compute/ssh-config.test.ts',
+      'src/main/compute/compute-submission-evidence-recovery.integration.test.ts'
     ])
     expect(computeService.testFiles.contract).toEqual([
       'src/main/application-command-composition.test.ts',
@@ -1123,7 +1125,8 @@ describe('Compute service architecture', () => {
       'src/main/settings/claude-provider-configuration.integration.test.ts',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/main/settings/provider-transport-owner.test.ts',
-      'src/main/literature/smart-collections.test.ts'
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/project-files/artifact-hidden.integration.test.ts'
     ])
   })
 

@@ -166,6 +166,59 @@ class _OutputBudget:
         return suffix
 
 
+def _safe_format_exception():
+    """Diagnostics must not terminate the protocol, even for unusual exception frames/objects."""
+    _, error, tb = sys.exc_info()
+    try:
+        return traceback.format_exc()
+    except BaseException:
+        # Python's rich traceback formatter may execute exception __str__, inspect frame locals
+        # for NameError suggestions, or itself be modified by a library. This fallback uses only
+        # interpreter-owned traceback fields and exact string arguments, never user formatting.
+        try:
+            chain = []
+            seen = set()
+            while error is not None and id(error) not in seen and len(chain) < 8:
+                seen.add(id(error))
+                frames = []
+                while tb is not None:
+                    code = tb.tb_frame.f_code
+                    frames.append('  File "%s", line %s, in %s\n' %
+                                  (code.co_filename, tb.tb_lineno, code.co_name))
+                    tb = tb.tb_next
+                name = type.__getattribute__(type(error), "__name__")
+                args = BaseException.__getattribute__(error, "args")
+                message = args[0] if args and type(args[0]) is str else "<message unavailable>"
+                chain.append("".join(frames) + name + ": " + message + "\n")
+                cause = BaseException.__getattribute__(error, "__cause__")
+                if cause is None and not BaseException.__getattribute__(error, "__suppress_context__"):
+                    cause = BaseException.__getattribute__(error, "__context__")
+                error = cause
+                tb = BaseException.__getattribute__(error, "__traceback__") if error is not None else None
+            return ("Traceback (fallback; rich formatting failed):\n" +
+                    "\nChained exception:\n".join(reversed(chain)))
+        except BaseException:
+            return "Python execution failed; exception diagnostics are unavailable.\n"
+
+
+def _fallback_response(req_id):
+    budget = _OutputBudget(_diagnostic_limit)
+    error = budget.take_tail(_safe_format_exception())
+    # A failure in post-execution metadata collection may have brought us here. Do not call those
+    # same collectors unguarded while constructing the final protocol response.
+    try:
+        cwd = os.getcwd()
+    except BaseException:
+        cwd = ""
+    try:
+        environment = _capture_environment()
+    except BaseException:
+        environment = {}
+    return {"stdout": "", "stderr": "", "error": error,
+            "result": None, "cwd": cwd, "figures": [],
+            "output_truncated": budget.truncated, "environment": environment, "req_id": req_id}
+
+
 class _BudgetTextIO(io.TextIOBase):
     def __init__(self, budget):
         self._budget = budget
@@ -872,13 +925,13 @@ def _run(code, replay_random_state=None):
             if value is not None:
                 result = output_budget.take(repr(value))
     except KeyboardInterrupt:
-        error = diagnostic_budget.take_tail("KeyboardInterrupt\n" + traceback.format_exc())
+        error = diagnostic_budget.take_tail("KeyboardInterrupt\n" + _safe_format_exception())
     except SystemExit:
         # A cell calling sys.exit()/exit() raises SystemExit (a BaseException, not Exception). Report
         # it as a normal cell error so the kernel survives instead of the process exiting.
-        error = diagnostic_budget.take_tail(traceback.format_exc())
+        error = diagnostic_budget.take_tail(_safe_format_exception())
     except Exception:
-        error = diagnostic_budget.take_tail(traceback.format_exc())
+        error = diagnostic_budget.take_tail(_safe_format_exception())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     figures, figures_truncated = _capture_figures()
@@ -927,10 +980,7 @@ def main():
             # A soft-timeout SIGINT (KeyboardInterrupt) can land during figure capture or the response
             # write; catching it here keeps the loop alive. SystemExit from user code is already turned
             # into an error inside _run, so it doesn't reach this guard.
-            fallback = {"stdout": "", "stderr": "", "error": traceback.format_exc(),
-                        "result": None, "cwd": os.getcwd(), "figures": [],
-                        "output_truncated": False,
-                        "environment": _capture_environment(), "req_id": req_id}
+            fallback = _fallback_response(req_id)
             try:
                 _protocol_out.write(json.dumps(fallback, separators=(",", ":")) + "\n")
                 _protocol_out.flush()

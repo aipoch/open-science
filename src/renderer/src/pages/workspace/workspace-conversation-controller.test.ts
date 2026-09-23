@@ -851,6 +851,79 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['idle', 'draft'],
+    ['error', 'draft'],
+    ['idle', 'revision'],
+    ['error', 'revision']
+  ] as const)(
+    'keeps %s projection %s queued until Main releases ownership',
+    async (status, kind) => {
+      let currentSession = { ...runningSession(), status, agentPromptInFlight: true }
+      const input = options({
+        activeSession: currentSession,
+        // The store may accept live ownership before React receives the runtime snapshot.
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      expect(hook.result.current.availability).toMatchObject({
+        submit: true,
+        submitMode: 'queue',
+        revise: true
+      })
+      await act(async () => {
+        if (kind === 'draft') hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+        else {
+          expect(
+            await hook.result.current.actions.revise('message-user-a', textDoc('changed'), [])
+          ).toEqual({ ok: true, disposition: 'queued' })
+        }
+      })
+      expect(hook.result.current.queue.items).toEqual([
+        expect.objectContaining({ text: kind === 'draft' ? 'hello' : 'changed', phase: 'queued' })
+      ])
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+
+      // A state-only release must drain the queue without requiring another provider stop event.
+      currentSession = { ...currentSession, agentPromptInFlight: false }
+      hook.rerender({
+        ...input,
+        activeSession: currentSession,
+        actionability: projectSessionActionability(currentSession)
+      })
+      await vi.waitFor(() =>
+        expect(
+          kind === 'draft' ? input.runtime.sendMessage : input.runtime.resendEditedMessage
+        ).toHaveBeenCalledOnce()
+      )
+    }
+  )
+
+  it.each(['waiting-for-user', 'waiting-permission', 'waiting-plan-approval'] as const)(
+    'does not queue over %s even while Main owns the prompt',
+    async (status) => {
+      const activeSession = { ...runningSession(), status, agentPromptInFlight: true }
+      const input = options({ activeSession, getSession: () => activeSession })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
+      await act(async () => {
+        hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+        expect(
+          await hook.result.current.actions.revise('message-user-a', textDoc('changed'), [])
+        ).toEqual({ ok: false })
+      })
+      expect(hook.result.current.queue.items).toEqual([])
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+    }
+  )
+
   it('blocks sending and queueing while a Reading context mutation is pending', () => {
     const idleInput = options()
     Object.assign(idleInput.composer.view, {

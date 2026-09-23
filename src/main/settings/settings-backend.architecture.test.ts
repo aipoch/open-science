@@ -344,6 +344,7 @@ describe('Settings backend ownership architecture', () => {
       'markOnboardingComplete',
       'markPathsNormalized',
       'mutateClassification',
+      'persistLegacyDataRoot',
       'publishBootstrapOpenAlex',
       'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',
@@ -1499,7 +1500,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/pdf-annotations/service.test.ts',
       'src/main/session-package/ro-crate.integration.test.ts',
       'src/main/session-package/ro-crate.test.ts',
-      'src/main/literature/smart-collections.test.ts'
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/project-files/artifact-hidden.integration.test.ts'
     ])
     expect(
       [
