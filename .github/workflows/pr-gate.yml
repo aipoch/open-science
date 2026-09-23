@@ -1265,6 +1265,32 @@ jobs:
           if [[ "${E2E_GROUP:-}" == "delegation" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
           exit "$failed"
 
+  windows_arm64_host:
+    name: Windows arm64 sandbox host artifact
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --locked
+      - name: Build Windows arm64 sandbox host
+        run: >-
+          cargo xwin build --locked --release
+          --target aarch64-pc-windows-msvc
+          --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
+      - name: Upload rebuilt Windows arm64 sandbox host
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-sandbox-host-arm64
+          path: packages/notebook-network-sandbox/vendor/windows-src/target/aarch64-pc-windows-msvc/release/notebook-appcontainer-host.exe
+          retention-days: 5
+          if-no-files-found: error
+
   windows_e2e:
     name: Windows E2E (shard ${{ matrix.shard }}/3)
     needs: [preflight, windows_e2e_setup]
