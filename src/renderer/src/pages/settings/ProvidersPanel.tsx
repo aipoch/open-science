@@ -763,7 +763,7 @@ const ProvidersPanel = ({
                     disabled={providerDeletionPending}
                     onClick={() => void confirmProviderDeletion('preserve')}
                   >
-                    {t('Delete')}
+                    {t('Delete provider')}
                   </Button>
                 </>
               )}
