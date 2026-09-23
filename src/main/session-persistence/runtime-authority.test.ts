@@ -490,4 +490,34 @@ describe('Main runtime Session authority', () => {
       })
     ).rejects.toThrow('Cannot fork a running or changed conversation Branch.')
   })
+
+  it('persists independent rebased fields while deferring a fork command', async () => {
+    const h = harness({ ...fixture(), runtimeTranscriptOwner: 'main' })
+    const initial = h.durable()
+    const parentBranchId = initial.conversationGraph!.branches[0].id
+
+    const saved = await h.owner.saveSession(
+      { ...initial, title: 'Renamed' },
+      {
+        conflictRebaseFields: ['title'],
+        conversationCommands: [
+          {
+            id: 'edit-with-title-race',
+            kind: 'fork-message' as const,
+            branchId: 'edited-branch',
+            parentBranchId,
+            messageId: 'prompt',
+            timestamp: 10
+          }
+        ]
+      }
+    )
+
+    expect(saved).toMatchObject({
+      title: 'Renamed',
+      activeRun: { promptMessageId: 'prompt' },
+      conversationGraph: initial.conversationGraph
+    })
+    expect(h.saveSession).toHaveBeenCalledTimes(1)
+  })
 })

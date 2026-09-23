@@ -1194,9 +1194,12 @@ class SessionPersistenceStateOwner {
           candidate = applySessionConversationCommands(candidate, options.conversationCommands)
         } catch (error) {
           // A renderer edit can arrive after the UI becomes idle but before Main commits the
-          // terminal runtime projection. Keep the intent pending; the next terminal save retries it
-          // against an authority with no active run. Real branch identity conflicts still reject.
-          if (error instanceof SessionConversationCommandDeferredError) return authority
+          // terminal runtime projection. Keep the command pending; independent named preferences
+          // in this same save still belong to the current renderer intent and must be committed.
+          // The next terminal save retries the command against an authority with no active run.
+          // Real branch identity conflicts still reject.
+          if (error instanceof SessionConversationCommandDeferredError)
+            return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
           throw error
         }
         if (this.options.uploads)
