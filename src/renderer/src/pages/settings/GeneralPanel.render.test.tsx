@@ -291,6 +291,93 @@ describe('GeneralPanel notifications', () => {
     expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
   })
 
+  it('dims the toggle while the write is in flight and shows a transient Saved check', async () => {
+    let finishWrite!: (snapshot: { notificationsEnabled: boolean }) => void
+    settingsApi.setNotificationsEnabled.mockImplementationOnce(
+      () => new Promise((resolve) => (finishWrite = resolve))
+    )
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    // Install fake timers before the click so the Saved fade-out timers are fake-timer driven.
+    vi.useFakeTimers()
+    try {
+      const toggle = container.querySelector(
+        '[aria-label="Toggle task notifications"]'
+      ) as HTMLButtonElement | null
+
+      await act(async () => {
+        toggle?.click()
+      })
+      // Busy: dimmed and non-interactive; the optimistic value is already applied.
+      expect(toggle?.disabled).toBe(true)
+      expect(toggle?.getAttribute('aria-busy')).toBe('true')
+      expect(toggle?.getAttribute('data-state')).toBe('unchecked')
+
+      await act(async () => {
+        finishWrite({ notificationsEnabled: false })
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(toggle?.disabled).toBe(false)
+      expect(toggle?.getAttribute('aria-busy')).toBeNull()
+      const row = toggle?.closest('[data-slot="settings-row"]')
+      expect(row?.querySelector('[role="status"]')?.textContent).toBe('Saved')
+
+      // The confirmation fades out on its own (visible 1.7s, then a 300ms fade).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1800)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400)
+      })
+      expect(row?.querySelector('[role="status"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reverts the toggle and offers an inline Retry when the write fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    settingsApi.setNotificationsEnabled.mockRejectedValueOnce(new Error('ipc down'))
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    const toggle = container.querySelector(
+      '[aria-label="Toggle task notifications"]'
+    ) as HTMLButtonElement | null
+    await act(async () => {
+      toggle?.click()
+    })
+    await flush()
+
+    // Reverted to the previous value, with the failure inline at the row.
+    expect(toggle?.getAttribute('data-state')).toBe('checked')
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+    const row = toggle?.closest('[data-slot="settings-row"]')
+    const inlineError = row?.querySelector('[role="alert"]')
+    expect(inlineError?.textContent).toContain("Couldn't save this setting. It was reverted.")
+    // The row reports the failure itself, so it is dismissed from the top-of-dialog banner.
+    expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
+
+    const retry = Array.from(row?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => {
+      retry?.click()
+    })
+    await flush()
+
+    expect(settingsApi.setNotificationsEnabled).toHaveBeenLastCalledWith({ enabled: false })
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false)
+    expect(row?.querySelector('[role="alert"]')).toBeNull()
+    expect(row?.querySelector('[role="status"]')?.textContent).toBe('Saved')
+  })
+
   it('keeps task content private by default and can verify native delivery', async () => {
     await act(async () => {
       root.render(<GeneralPanel />)

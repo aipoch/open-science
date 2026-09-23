@@ -94,7 +94,8 @@ import {
 } from './settings-skills-slice'
 import {
   createSettingsWriteCoordinator,
-  type SettingsWriteCoordinator
+  type SettingsWriteCoordinator,
+  type SettingsWriteKey
 } from './settings-write-coordinator'
 export { selectAnyInstalling } from './settings-runtime-slice'
 
@@ -174,6 +175,7 @@ type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
   acceptCommittedSnapshot: (snapshot: SettingsSnapshot) => void
   clearSettingsWriteError: () => void
+  dismissSettingsWriteError: (key: SettingsWriteKey) => void
 }
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
@@ -621,6 +623,7 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
+  dismissSettingsWriteError: (key) => writeCoordinator.dismissFailure(key),
   acceptCommittedSnapshot: (snapshot) =>
     set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
 })
