@@ -3,7 +3,7 @@ import {
   isSensitiveUrlQueryKey,
   redactSensitiveText
 } from '../../shared/diagnostic-redaction'
-import type { SensitiveContentEvidence } from '../../shared/sensitive-content'
+import type { SensitiveContentEvidence } from '../../shared/session-package'
 import { createHash } from 'node:crypto'
 
 // Export decisions are distinct from log redaction: empty values and the exact redaction

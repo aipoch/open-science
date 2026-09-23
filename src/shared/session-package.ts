@@ -1,7 +1,20 @@
 import { z } from 'zod'
 import { PROJECT_NAME_MAX_LENGTH } from './projects'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
-import type { SensitiveContentEvidence } from './sensitive-content'
+
+export type SensitiveContentEvidence = {
+  location: string
+  offset: number
+  rule: 'field' | 'assignment' | 'url' | 'token'
+  matchLength: number
+  label?: string
+  leftBoundary: 'start' | 'whitespace' | 'punctuation' | 'letter' | 'number' | 'mark' | 'other'
+  rightBoundary: 'end' | 'whitespace' | 'punctuation' | 'letter' | 'number' | 'mark' | 'other'
+  context: string
+  valueLength?: number
+  valueHash: string
+  sourceStorageKey?: string
+}
 
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)

@@ -9,11 +9,11 @@ import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
+  SensitiveContentEvidence,
   SessionPackageExportResult,
   SessionPackageImportResult,
   SessionPackageRequest
 } from '../../shared/session-package'
-import type { SensitiveContentEvidence } from '../../shared/sensitive-content'
 import { sanitizeExportFilename } from '../../shared/conversation-export'
 import type { NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'
