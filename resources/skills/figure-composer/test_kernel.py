@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from kernel import compose_crops, compose_figure, grid_geom, panel_px, panel_task
+from kernel import apply_outline_revisions, compose_crops, compose_figure, grid_geom, panel_px, panel_task
 
 
 class ComposerTests(unittest.TestCase):
@@ -171,6 +171,49 @@ class ComposerTests(unittest.TestCase):
         crops = compose_crops(outline, dpi=100, pad_px=0)
         self.assertEqual(crops["a"], (0, 0, 92, 215))
         self.assertEqual(crops["b"], (107, 115, 199, 215))
+
+    def test_shared_row_resize_regenerates_rowmates_and_reuses_unchanged_panels(self):
+        self.outline["row_heights_mm"] = [25.4, 25.4]
+        self.outline["panels"].append(dict(self.outline["panels"][0], letter="c", row=1))
+        paths = {}
+        for letter, color in (("a", "red"), ("b", "blue"), ("c", "green")):
+            paths[letter] = self.root / (letter + ".png")
+            Image.new("RGB", panel_px(self.outline, letter, dpi=100), color).save(paths[letter])
+        previous = copy.deepcopy(self.outline)
+        unchanged_bytes = paths["c"].read_bytes()
+        self.outline["row_heights_mm"][0] = 30
+        revisions = [{"kind": "geometry", "affected_panels": ["a"]}]
+        affected = apply_outline_revisions(self.outline, revisions, previous, dpi=100)
+        self.assertEqual(affected, {"a", "b"})
+        for letter in affected:
+            Image.new("RGB", panel_px(self.outline, letter, dpi=100), "yellow").save(paths[letter])
+        target = self.root / "revised.png"
+        compose_figure(self.outline, paths, target, dpi=100)
+        with Image.open(target) as result:
+            self.assertEqual(result.size, (200, 233))
+            self.assertEqual(result.getpixel((150, 110)), (255, 255, 0))
+            self.assertEqual(result.getpixel((40, 180)), (0, 128, 0))
+        self.assertEqual(paths["c"].read_bytes(), unchanged_bytes)
+
+    def test_panel_replacement_adds_new_panel_and_excludes_removed_panel(self):
+        paths = self.make_panels()
+        previous = copy.deepcopy(self.outline)
+        unchanged_bytes = paths["b"].read_bytes()
+        self.outline["panels"][0]["letter"] = "c"
+        revisions = [{"kind": "panel_set", "affected_panels": ["a"]}]
+        affected = apply_outline_revisions(self.outline, revisions, previous, dpi=100)
+        self.assertEqual(affected, {"c"})
+        del paths["a"]
+        paths["c"] = self.root / "c.png"
+        Image.new("RGB", panel_px(self.outline, "c", dpi=100), "green").save(paths["c"])
+        target = self.root / "replacement.png"
+        compose_figure(self.outline, paths, target, dpi=100)
+        with Image.open(target) as result:
+            self.assertEqual(result.getpixel((40, 50)), (0, 128, 0))
+            self.assertEqual(result.getpixel((150, 50)), (0, 0, 255))
+        self.assertEqual(paths["b"].read_bytes(), unchanged_bytes)
+        self.assertEqual(apply_outline_revisions(self.outline, revisions), set())
+        self.assertEqual(apply_outline_revisions(self.outline, [{"affected_panels": ["b"]}]), {"b"})
 
     def test_generated_instructions_save_exact_pixel_dimensions(self):
         for width, height, columns in ((180, 40, 12), (85, 60, 1), (180, 46, 7)):

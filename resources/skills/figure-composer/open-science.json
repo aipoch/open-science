@@ -4,7 +4,7 @@
     {
       "id": "figure-composer",
       "language": "python",
-      "interfaceRevision": 4,
+      "interfaceRevision": 5,
       "implementation": "kernel.py",
       "exports": [
         "figure_outline_schema",
