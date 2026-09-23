@@ -91,8 +91,7 @@ const isWindowsRuntimeAccessPermissionError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false
   const message = error.message.toLowerCase()
   return (
-    message.includes('grant appcontainer access') &&
-    (message.includes('access denied') || message.includes('拒绝访问'))
+    message.includes('grant appcontainer access') && message.includes('windows_acl_access_denied')
   )
 }
 

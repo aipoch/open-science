@@ -1982,7 +1982,7 @@ it('authorizes missing R access before the original Notebook cell is dispatched'
 it('opens the existing administrator authorization flow when the R ACL preflight is denied', async () => {
   backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
   backend.wrap.mockRejectedValueOnce(
-    new Error('grant AppContainer access to D:\\R-4.6.1: access denied')
+    new Error('grant AppContainer access to D:\\R-4.6.1: WINDOWS_ACL_ACCESS_DENIED: access denied')
   )
   backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => ({
     argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
