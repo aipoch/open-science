@@ -14,6 +14,7 @@ import {
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
 import { TagFilter } from './ResourceTagControls'
+import { connectorDescription } from './connector-copy'
 
 type ConnectorRow = {
   id: string
@@ -180,7 +181,8 @@ const SpecialistCapabilitiesSection = ({
       ...connectors.map((connector) => ({
         id: connector.id,
         name: connector.displayName,
-        description: connector.description,
+        description:
+          connector.id === 'genomes' ? connectorDescription(connector, t) : connector.description,
         mainEnabled: connector.enabled,
         available: true
       })),
@@ -212,7 +214,7 @@ const SpecialistCapabilitiesSection = ({
       }
     }
     return known.sort((a, b) => a.name.localeCompare(b.name))
-  }, [connectors, customServers, selectedConnectorIds, excludedConnectorIds])
+  }, [connectors, customServers, selectedConnectorIds, excludedConnectorIds, t])
 
   // Main-disabled installed Skills remain selectable for a Specialist. Persisted IDs absent from
   // the runtime-available catalog are rendered locally so the user can remove them without blocking

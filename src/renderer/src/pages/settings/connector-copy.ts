@@ -11,6 +11,11 @@ export function connectorDescription(
   if (connector.id === 'zenodo') {
     return t('Public research records, versions and file metadata from Zenodo.')
   }
+  if (connector.id === 'genomes') {
+    return t(
+      'Genome annotation, sequence similarity search, multiple sequence alignment and browser tracks via NCBI, EMBL-EBI, Ensembl and UCSC.'
+    )
+  }
   return connector.id === 'literature'
     ? t('Literature and research data via OpenAlex, arXiv, Crossref and DataCite.')
     : connector.description
@@ -29,6 +34,16 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Search public Zenodo records, one page at a time.')
     case 'zenodo/get_record':
       return t('Retrieve Zenodo record metadata and file links. Files are not downloaded.')
+    case 'genomes/clustalo_submit':
+      return t(
+        'Submit three or more protein, DNA or RNA sequences to Clustal Omega for asynchronous multiple sequence alignment.'
+      )
+    case 'genomes/clustalo_status':
+      return t('Check a Clustal Omega job once. Wait at least 10 seconds between checks.')
+    case 'genomes/clustalo_results':
+      return t(
+        'Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.'
+      )
     case 'rna/search_sequence':
       return t(
         'Search RNA/DNA against Rfam models. Cancelling stops polling; the service retains results for one week.'

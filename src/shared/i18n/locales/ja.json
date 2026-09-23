@@ -6221,6 +6221,10 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "自動更新は実行ごとに {{run}} 回、全コレクション合計で 24 時間に {{day}} 回のリクエストで一時停止します。再試行も含まれます。",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "InterProScan ジョブの状態を1回確認します。確認の間隔は10秒以上空けてください。",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "完了した InterProScan ジョブの完全な TSV レポートを取得します。結果にはサービス側の有効期限があります。",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI を介した InterProScan ジョブの状態確認と TSV 結果の取得。"
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI を介した InterProScan ジョブの状態確認と TSV 結果の取得。",
+    "Genome annotation, sequence similarity search, multiple sequence alignment and browser tracks via NCBI, EMBL-EBI, Ensembl and UCSC.": "NCBI、EMBL-EBI、Ensembl、UCSC によるゲノム注釈、配列類似性検索、多重配列アラインメント、ブラウザトラック。",
+    "Submit three or more protein, DNA or RNA sequences to Clustal Omega for asynchronous multiple sequence alignment.": "タンパク質、DNA、RNA の配列を3つ以上 Clustal Omega に送信し、非同期で多重配列アラインメントを実行します。",
+    "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Clustal Omega ジョブの状態を1回確認します。確認の間隔は10秒以上空けてください。",
+    "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "完了した Clustal Omega ジョブのアラインメントファイルを取得します。結果にはサービス側の有効期限があります。"
   }
 }

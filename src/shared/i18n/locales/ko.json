@@ -6219,6 +6219,10 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "자동 업데이트는 실행당 {{run}}회 또는 모든 컬렉션에서 24시간 동안 {{day}}회 요청 후 일시 중지됩니다. 재시도도 한도에 포함됩니다.",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "InterProScan 작업 상태를 한 번 확인합니다. 확인 사이에 최소 10초를 기다리세요.",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "완료된 InterProScan 작업의 전체 TSV 보고서를 가져옵니다. 결과는 서비스에서 만료됩니다.",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI를 통한 InterProScan 작업 상태 및 TSV 결과 조회."
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI를 통한 InterProScan 작업 상태 및 TSV 결과 조회.",
+    "Genome annotation, sequence similarity search, multiple sequence alignment and browser tracks via NCBI, EMBL-EBI, Ensembl and UCSC.": "NCBI, EMBL-EBI, Ensembl 및 UCSC를 통한 게놈 주석, 서열 유사성 검색, 다중 서열 정렬 및 브라우저 트랙.",
+    "Submit three or more protein, DNA or RNA sequences to Clustal Omega for asynchronous multiple sequence alignment.": "비동기 다중 서열 정렬을 위해 단백질, DNA 또는 RNA 서열 3개 이상을 Clustal Omega에 제출합니다.",
+    "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Clustal Omega 작업 상태를 한 번 확인합니다. 확인 사이에 최소 10초를 기다리세요.",
+    "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "완료된 Clustal Omega 작업의 정렬 파일을 가져옵니다. 결과는 서비스에서 만료됩니다."
   }
 }

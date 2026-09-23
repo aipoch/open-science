@@ -6221,6 +6221,10 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "自动更新每轮最多请求 {{run}} 次，所有合集 24 小时内合计最多 {{day}} 次，达到上限后暂停。重试也计入次数。",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "查询一次 InterProScan 任务状态。两次查询之间至少等待 10 秒。",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "获取已完成的 InterProScan 任务的完整 TSV 报告。结果会在服务端过期。",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "通过 EMBL-EBI 查询 InterProScan 作业状态并获取 TSV 结果。"
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "通过 EMBL-EBI 查询 InterProScan 作业状态并获取 TSV 结果。",
+    "Genome annotation, sequence similarity search, multiple sequence alignment and browser tracks via NCBI, EMBL-EBI, Ensembl and UCSC.": "通过 NCBI、EMBL-EBI、Ensembl 和 UCSC 进行基因组注释、序列相似性搜索、多序列比对和浏览器轨道查看。",
+    "Submit three or more protein, DNA or RNA sequences to Clustal Omega for asynchronous multiple sequence alignment.": "向 Clustal Omega 提交至少三条蛋白质、DNA 或 RNA 序列，进行异步多序列比对。",
+    "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "查询一次 Clustal Omega 任务状态。两次查询之间至少等待 10 秒。",
+    "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "获取已完成 Clustal Omega 任务的比对文件。结果会在服务端过期。"
   }
 }

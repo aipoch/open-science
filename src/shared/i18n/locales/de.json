@@ -6379,6 +6379,10 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "Automatische Aktualisierungen pausieren nach {{run}} Anfragen pro Lauf oder {{day}} über alle Sammlungen in 24 Stunden. Wiederholungen zählen mit.",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "Den Status eines InterProScan-Auftrags einmal prüfen. Zwischen Prüfungen mindestens 10 Sekunden warten.",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "Den vollständigen TSV-Bericht eines abgeschlossenen InterProScan-Auftrags abrufen. Ergebnisse verfallen beim Dienst.",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "InterProScan-Auftragsstatus und TSV-Ergebnisse über EMBL-EBI."
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "InterProScan-Auftragsstatus und TSV-Ergebnisse über EMBL-EBI.",
+    "Genome annotation, sequence similarity search, multiple sequence alignment and browser tracks via NCBI, EMBL-EBI, Ensembl and UCSC.": "Genomannotation, Sequenzähnlichkeitssuche, multiples Sequenzalignment und Browser-Tracks über NCBI, EMBL-EBI, Ensembl und UCSC.",
+    "Submit three or more protein, DNA or RNA sequences to Clustal Omega for asynchronous multiple sequence alignment.": "Mindestens drei Protein-, DNA- oder RNA-Sequenzen zur asynchronen multiplen Sequenzanalyse an Clustal Omega senden.",
+    "Check a Clustal Omega job once. Wait at least 10 seconds between checks.": "Den Status eines Clustal-Omega-Auftrags einmal prüfen. Zwischen Prüfungen mindestens 10 Sekunden warten.",
+    "Retrieve the alignment file for a finished Clustal Omega job. Results expire at the service.": "Die Alignment-Datei eines abgeschlossenen Clustal-Omega-Auftrags abrufen. Ergebnisse verfallen beim Dienst."
   }
 }

@@ -103,7 +103,7 @@ describe('composer refresh storage', () => {
   })
   it('retains exportable text when storage refuses writes', () => {
     configureComposerDraftStorage('scope')
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(Object.getPrototypeOf(sessionStorage), 'setItem').mockImplementation(() => {
       throw new Error('quota')
     })
     writeComposerDraft('p', 's', draft('copy me'))
@@ -112,7 +112,7 @@ describe('composer refresh storage', () => {
   it('removes stale saved text when a cleared draft cannot be persisted', () => {
     configureComposerDraftStorage('scope')
     writeComposerDraft('p', 's', draft('already sent'))
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(Object.getPrototypeOf(sessionStorage), 'setItem').mockImplementation(() => {
       throw new Error('quota')
     })
     writeComposerDraft('p', 's', draft(''))
