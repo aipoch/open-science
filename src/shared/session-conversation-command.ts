@@ -250,10 +250,10 @@ export const applySessionConversationCommands = (
           }
           break
         }
-        if (result.activeRun) throw new SessionConversationCommandDeferredError()
         if (branch.id !== command.parentBranchId) {
           throw new Error('Cannot fork a running or changed conversation Branch.')
         }
+        if (result.activeRun) throw new SessionConversationCommandDeferredError()
         graph =
           command.kind === 'fork-message'
             ? forkEditedConversationMessage(

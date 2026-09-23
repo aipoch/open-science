@@ -470,4 +470,24 @@ describe('Main runtime Session authority', () => {
       expect.arrayContaining([expect.objectContaining({ id: branchId })])
     )
   })
+
+  it('rejects a fork command whose parent Branch is stale during an active run', async () => {
+    const h = harness({ ...fixture(), runtimeTranscriptOwner: 'main' })
+    const branchId = 'edited-branch'
+
+    await expect(
+      h.owner.saveSession(h.durable(), {
+        conversationCommands: [
+          {
+            id: 'edit-with-stale-parent',
+            kind: 'fork-message' as const,
+            branchId,
+            parentBranchId: 'stale-parent',
+            messageId: 'prompt',
+            timestamp: 10
+          }
+        ]
+      })
+    ).rejects.toThrow('Cannot fork a running or changed conversation Branch.')
+  })
 })
