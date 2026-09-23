@@ -6226,6 +6226,7 @@
     "Could not load project files.": "無法載入專案檔案。",
     "Could not load file preview.": "無法載入檔案預覽。",
     "Download this file to view it.": "請下載此檔案以檢視。",
-    "Preview truncated.": "預覽已截斷。"
+    "Preview truncated.": "預覽已截斷。",
+    "Hide file": "隱藏檔案"
   }
 }

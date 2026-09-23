@@ -6226,6 +6226,7 @@
     "Could not load project files.": "无法加载项目文件。",
     "Could not load file preview.": "无法加载文件预览。",
     "Download this file to view it.": "请下载此文件以查看。",
-    "Preview truncated.": "预览已截断。"
+    "Preview truncated.": "预览已截断。",
+    "Hide file": "隐藏文件"
   }
 }

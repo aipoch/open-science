@@ -6224,6 +6224,7 @@
     "Could not load project files.": "프로젝트 파일을 불러올 수 없습니다.",
     "Could not load file preview.": "파일 미리보기를 불러올 수 없습니다.",
     "Download this file to view it.": "이 파일을 보려면 다운로드하세요.",
-    "Preview truncated.": "미리보기가 잘렸습니다."
+    "Preview truncated.": "미리보기가 잘렸습니다.",
+    "Hide file": "파일 숨기기"
   }
 }

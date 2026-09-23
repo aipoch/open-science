@@ -19,12 +19,24 @@ for (const [theme, width] of [
     await page.getByRole('button', { name: 'Filter project files' }).first().click()
     await page.getByRole('menuitemradio', { name: /Hidden/ }).click()
     await expect(page.getByTestId('hidden-artifacts')).toBeVisible()
-    await page.getByRole('button', { name: 'result.txt', exact: true }).click()
-    await expect(page.getByText('private result', { exact: true })).toBeVisible()
+    await expect(page.locator('[data-view-mode="grid"]')).toBeVisible()
+    await expect(page.getByTestId('project-file-meta')).toContainText('14 B')
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('hidden-grid.png') })
+    await page.getByRole('button', { name: 'Toggle file layout' }).click()
+    await expect(page.locator('[data-view-mode="list"]')).toBeVisible()
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('hidden-list.png') })
+    await page
+      .getByRole('button', { name: 'Preview generated file result.txt', exact: true })
+      .click()
+    await expect(page.getByRole('dialog', { name: 'result.txt' })).toBeVisible()
+    await expect(
+      page.getByRole('dialog').getByText('private result', { exact: true })
+    ).toBeVisible()
     await page.screenshot({
       animations: 'disabled',
       path: testInfo.outputPath('hidden-preview.png')
     })
+    await page.getByRole('button', { name: 'Close preview' }).click()
     await page.getByRole('button', { name: 'Filter project files' }).click()
     await page.getByRole('menuitemradio', { name: /All artifacts/ }).click()
     await expect(page.getByText('private result', { exact: true })).toHaveCount(0)

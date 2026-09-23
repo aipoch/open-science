@@ -37,7 +37,12 @@ export const readHiddenArtifactChunk = async (
     const offset = request.offset ?? 0
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > lease.size)
       throw new Error('Invalid hidden file offset.')
-    const limit = request.validationOnly ? 0 : Math.min(lease.size - offset, 8 * 1024 * 1024)
+    const maxBytes = request.maxBytes ?? 8 * 1024 * 1024
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+      throw new Error('Invalid hidden file byte limit.')
+    const limit = request.validationOnly
+      ? 0
+      : Math.min(lease.size - offset, maxBytes, 8 * 1024 * 1024)
     const bytes =
       limit === 0 ? Buffer.alloc(0) : Buffer.from(await lease.readRange(offset, offset + limit))
     await lease.verifyUnchanged()

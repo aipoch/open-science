@@ -68,6 +68,8 @@ export type ReadHiddenArtifactRequest = {
   offset?: number
   // Revalidates Hidden visibility without asking the bounded reader for a size,size range.
   validationOnly?: boolean
+  // Optional smaller budget for transient Hidden thumbnails; the main-process cap still applies.
+  maxBytes?: number
 }
 
 export type SetArtifactHiddenRequest = {

@@ -6226,6 +6226,7 @@
     "Could not load project files.": "プロジェクトファイルを読み込めませんでした。",
     "Could not load file preview.": "ファイルのプレビューを読み込めませんでした。",
     "Download this file to view it.": "このファイルを表示するにはダウンロードしてください。",
-    "Preview truncated.": "プレビューは省略されています。"
+    "Preview truncated.": "プレビューは省略されています。",
+    "Hide file": "ファイルを非表示にする"
   }
 }

@@ -6687,6 +6687,7 @@
     "Could not load project files.": "Не удалось загрузить файлы проекта.",
     "Could not load file preview.": "Не удалось загрузить предпросмотр файла.",
     "Download this file to view it.": "Скачайте этот файл, чтобы просмотреть его.",
-    "Preview truncated.": "Предпросмотр сокращён."
+    "Preview truncated.": "Предпросмотр сокращён.",
+    "Hide file": "Скрыть файл"
   }
 }
