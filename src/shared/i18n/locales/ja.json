@@ -1187,11 +1187,8 @@
     "Delete {{provider}}?": "{{provider}} を削除しますか？",
     "Deleting this provider affects these scenario models:": "このプロバイダーを削除すると、次のシナリオモデルに影響します：",
     "For Vision, using the main model disables the separate fallback model.": "Vision でメインモデルを使用すると、個別のフォールバックモデルは無効になります。",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "保存済みの選択を利用不可のまま保持するか、メインモデルを使用するようにリセットしてください。",
-    "Keep unavailable": "利用不可のまま保持",
     "Reassign first": "先に再割り当て",
     "This provider will be removed from Open-Science.": "このプロバイダーは Open-Science から削除されます。",
-    "Use main model": "メインモデルを使用",
     "Delete Session?": "セッションを削除しますか？",
     "Delete Specialist": "スペシャリストの削除",
     "Delete project": "プロジェクトの削除",
@@ -6224,6 +6221,13 @@
     "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI を介した InterProScan ジョブの状態確認と TSV 結果の取得。",
     "Delete skill?": "スキルを削除しますか？",
     "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "「{{name}}」は完全に削除されます。この操作は元に戻せません。",
-    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "このスキルは {{count}} 個のエージェントで有効になっています。これらのエージェントはこのスキルを使用できなくなります。"
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "このスキルは {{count}} 個のエージェントで有効になっています。これらのエージェントはこのスキルを使用できなくなります。",
+    "Recommended": "推奨",
+    "Reset to main model": "メインモデルにリセット",
+    "Keep saved selections": "保存済みの選択を保持",
+    "Affected scenario models will use the main model instead, without interruption.": "影響を受けるシナリオモデルは、中断なくメインモデルを使用します。",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "シナリオモデルは保存済みの選択を保持し、再割り当てするまで利用不可としてマークされます。",
+    "Delete provider": "プロバイダを削除",
+    "Scenario model handling": "シナリオモデルの扱い"
   }
 }

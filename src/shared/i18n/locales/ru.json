@@ -1231,11 +1231,8 @@
     "Delete {{provider}}?": "Удалить {{provider}}?",
     "Deleting this provider affects these scenario models:": "Удаление этого поставщика затронет следующие модели сценариев:",
     "For Vision, using the main model disables the separate fallback model.": "Для Vision использование основной модели отключает отдельную резервную модель.",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "Сохраните их выбранные модели как недоступные или сбросьте настройки, чтобы использовать основную модель.",
-    "Keep unavailable": "Сохранить как недоступные",
     "Reassign first": "Сначала переназначить",
     "This provider will be removed from Open-Science.": "Этот поставщик будет удалён из Open-Science.",
-    "Use main model": "Использовать основную модель",
     "Delete Session?": "Удалить сессию?",
     "Delete Specialist": "Удалить специалиста",
     "Delete project": "Удалить проект",
@@ -6688,6 +6685,13 @@
     "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Этот навык включён для {{count}} агента; он больше не сможет его использовать.",
     "This skill is enabled for {{count}} agents; they will no longer be able to use it._few": "Этот навык включён для {{count}} агентов; они больше не смогут его использовать.",
     "This skill is enabled for {{count}} agents; they will no longer be able to use it._many": "Этот навык включён для {{count}} агентов; они больше не смогут его использовать.",
-    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Этот навык включён для {{count}} агента; они больше не смогут его использовать."
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Этот навык включён для {{count}} агента; они больше не смогут его использовать.",
+    "Recommended": "Рекомендуется",
+    "Reset to main model": "Сбросить на основную модель",
+    "Keep saved selections": "Оставить сохранённые варианты",
+    "Affected scenario models will use the main model instead, without interruption.": "Затронутые сценарные модели будут использовать основную модель без прерывания.",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "Сценарные модели сохранят выбранные варианты и будут помечены как недоступные, пока вы не переназначите их.",
+    "Delete provider": "Удалить поставщика",
+    "Scenario model handling": "Обработка сценарных моделей"
   }
 }

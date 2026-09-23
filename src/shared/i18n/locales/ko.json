@@ -1206,11 +1206,8 @@
     "Delete {{provider}}?": "{{provider}}을(를) 삭제하시겠습니까?",
     "Deleting this provider affects these scenario models:": "이 모델 제공업체를 삭제하면 다음 시나리오 모델에 영향을 줍니다:",
     "For Vision, using the main model disables the separate fallback model.": "Vision에서 메인 모델을 사용하면 별도의 대체 모델이 비활성화됩니다.",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "저장된 선택을 이용 불가 상태로 유지하거나 메인 모델을 사용하도록 재설정하세요.",
-    "Keep unavailable": "이용 불가로 유지",
     "Reassign first": "먼저 다시 지정",
     "This provider will be removed from Open-Science.": "이 모델 제공업체가 Open-Science에서 삭제됩니다.",
-    "Use main model": "메인 모델 사용",
     "Delete Session?": "세션을 삭제하시겠습니까?",
     "Delete Specialist": "스페셜리스트 삭제",
     "Delete project": "프로젝트 삭제",
@@ -6222,6 +6219,13 @@
     "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI를 통한 InterProScan 작업 상태 및 TSV 결과 조회.",
     "Delete skill?": "스킬을 삭제하시겠습니까?",
     "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "\"{{name}}\"이(가) 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
-    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "이 스킬은 {{count}}개의 에이전트에서 활성화되어 있으며, 해당 에이전트는 더 이상 이 스킬을 사용할 수 없습니다."
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "이 스킬은 {{count}}개의 에이전트에서 활성화되어 있으며, 해당 에이전트는 더 이상 이 스킬을 사용할 수 없습니다.",
+    "Recommended": "권장",
+    "Reset to main model": "메인 모델로 재설정",
+    "Keep saved selections": "저장된 선택 유지",
+    "Affected scenario models will use the main model instead, without interruption.": "영향을 받는 시나리오 모델은 중단 없이 메인 모델을 사용합니다.",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "시나리오 모델은 저장된 선택을 유지하며, 다시 지정하기 전까지 사용할 수 없음으로 표시됩니다.",
+    "Delete provider": "모델 제공업체 삭제",
+    "Scenario model handling": "시나리오 모델 처리 방식"
   }
 }

@@ -1273,11 +1273,8 @@
     "Delete {{provider}}?": "刪除 {{provider}}？",
     "Deleting this provider affects these scenario models:": "刪除此模型服務商會影響以下情境模型：",
     "For Vision, using the main model disables the separate fallback model.": "對於視覺，使用主模型會停用獨立的備援模型。",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "保留已儲存的選擇並將其標示為不可用，或將其重設為使用主模型。",
-    "Keep unavailable": "保留為不可用",
     "Reassign first": "先重新綁定",
     "This provider will be removed from Open-Science.": "此模型服務商將從 Open-Science 中刪除。",
-    "Use main model": "使用主模型",
     "Delete Session?": "刪除工作階段？",
     "Delete Specialist": "刪除專家",
     "Delete project": "刪除專案",
@@ -6224,6 +6221,13 @@
     "InterProScan job status and TSV result retrieval via EMBL-EBI.": "透過 EMBL-EBI 查詢 InterProScan 工作狀態並取得 TSV 結果。",
     "Delete skill?": "刪除技能？",
     "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "將永久刪除「{{name}}」。此操作無法復原。",
-    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "此技能已對 {{count}} 個智能體啟用；它們將無法再使用該技能。"
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "此技能已對 {{count}} 個智能體啟用；它們將無法再使用該技能。",
+    "Recommended": "建議",
+    "Reset to main model": "重設為主模型",
+    "Keep saved selections": "保留已儲存的選擇",
+    "Affected scenario models will use the main model instead, without interruption.": "受影響的場景模型將改用主模型，不會中斷。",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "場景模型將保留已儲存的選擇，並在你重新綁定前標示為不可用。",
+    "Delete provider": "刪除模型服務商",
+    "Scenario model handling": "場景模型處理方式"
   }
 }

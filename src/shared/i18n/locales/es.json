@@ -1236,11 +1236,8 @@
     "Delete {{provider}}?": "¿Eliminar {{provider}}?",
     "Deleting this provider affects these scenario models:": "Al eliminar este proveedor, se verán afectados estos modelos de escenario:",
     "For Vision, using the main model disables the separate fallback model.": "Para Visión, usar el modelo principal desactiva el modelo de respaldo independiente.",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "Conserve sus selecciones guardadas como no disponibles o restablézcalas para usar el modelo principal.",
-    "Keep unavailable": "Conservar como no disponible",
     "Reassign first": "Reasignar primero",
     "This provider will be removed from Open-Science.": "Este proveedor se eliminará de Open-Science.",
-    "Use main model": "Usar el modelo principal",
     "Delete Session?": "¿Eliminar sesión?",
     "Delete Specialist": "Eliminar especialista",
     "Delete project": "Eliminar proyecto",
@@ -6550,6 +6547,13 @@
     "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "«{{name}}» se eliminará permanentemente. Esta acción no se puede deshacer.",
     "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Esta habilidad está activada para {{count}} agente; ya no podrá usarla.",
     "This skill is enabled for {{count}} agents; they will no longer be able to use it._many": "Esta habilidad está activada para {{count}} agentes; ya no podrán usarla.",
-    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Esta habilidad está activada para {{count}} agentes; ya no podrán usarla."
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Esta habilidad está activada para {{count}} agentes; ya no podrán usarla.",
+    "Recommended": "Recomendado",
+    "Reset to main model": "Restablecer al modelo principal",
+    "Keep saved selections": "Mantener las selecciones guardadas",
+    "Affected scenario models will use the main model instead, without interruption.": "Los modelos de escenario afectados usarán el modelo principal, sin interrupciones.",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "Los modelos de escenario mantienen sus selecciones guardadas y se marcan como no disponibles hasta que los reasigne.",
+    "Delete provider": "Eliminar proveedor",
+    "Scenario model handling": "Gestión de los modelos de escenario"
   }
 }
