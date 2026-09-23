@@ -630,9 +630,17 @@ export const createSessionDetailsOwner = (
     await Promise.all(admissions)
   }
 
-  const enqueueAdmission = (projectId: string, sessionId: string): Promise<void> => {
+  const enqueueAdmission = (
+    projectId: string,
+    sessionId: string,
+    retainIfAdmitting = false
+  ): Promise<void> => {
     const key = keyOf(projectId, sessionId)
-    if (stopping || active.has(key) || admitting.has(key)) return Promise.resolve()
+    if (stopping || active.has(key)) return Promise.resolve()
+    if (admitting.has(key)) {
+      if (retainIfAdmitting) admissionQueue.set(key, { projectId, sessionId })
+      return Promise.resolve()
+    }
     admissionQueue.set(key, { projectId, sessionId })
     return drainAdmissions()
   }
@@ -736,7 +744,7 @@ export const createSessionDetailsOwner = (
       return false
     }
     pendingAdmissionRetries.delete(claimKey)
-    await enqueueAdmission(session.projectId, session.id)
+    await enqueueAdmission(session.projectId, session.id, true)
     return true
   }
 
