@@ -159,6 +159,56 @@ describe('workspace runtime events', () => {
       (['single', 'batch'] as const).map((path) => ({ target, path }))
     )
   )(
+    'keeps delayed $target $path text before a later tool using runtime event time',
+    async ({ target, path }) => {
+      const framework = target === 'codex-response' || target === 'codex-bridge' ? 'codex' : target
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({ ...session, agentFrameworkId: framework }))
+      }))
+      const timestamp = Date.now() + 1
+      const message = createEvent({
+        timestamp,
+        role: 'assistant',
+        messageId: 'delayed-intent',
+        text: 'Intent'
+      })
+      vi.advanceTimersByTime(500)
+      if (path === 'single') await applyWorkspaceRuntimeEvent(message)
+      else await applyWorkspaceRuntimeEventBatch([message])
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'later-tool',
+          timestamp: timestamp + 30,
+          kind: 'tool',
+          toolCallId: 'ordered-tool',
+          title: 'Slow ordered tool',
+          status: 'in_progress'
+        })
+      )
+      const delta = {
+        ...message,
+        id: 'intent-delta',
+        timestamp: timestamp + 60,
+        text: ' continued'
+      }
+      if (path === 'single') await applyWorkspaceRuntimeEvent(delta)
+      else await applyWorkspaceRuntimeEventBatch([delta])
+
+      const live = useSessionStore.getState().sessions[0]
+      expect(live.messages[1].createdAt).toBeLessThan(live.activities![0].createdAt)
+      useSessionStore.getState().finishRun('transport-session-1')
+      const session = toPersistedSession(useSessionStore.getState().sessions[0])
+      expect(session.messages[1].createdAt).toBe(timestamp)
+      expect(session.messages[1].createdAt).toBeLessThan(session.activities![0].createdAt)
+      expect(session.messages[1].content).toBe('Intent continued')
+    }
+  )
+
+  it.each(
+    (['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const).flatMap((target) =>
+      (['single', 'batch'] as const).map((path) => ({ target, path }))
+    )
+  )(
     'loads a summarized $target session before applying a restored reply through the $path path',
     async ({ target, path }) => {
       const framework = target === 'codex-response' || target === 'codex-bridge' ? 'codex' : target
