@@ -33,7 +33,8 @@ import {
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import {
   createSettingsWriteCoordinator,
-  type SettingsWriteCoordinator
+  type SettingsWriteCoordinator,
+  type SettingsWriteKey
 } from './settings-write-coordinator'
 import {
   createInitialSettingsNavigationState,
@@ -168,6 +169,7 @@ type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
   acceptCommittedSnapshot: (snapshot: SettingsSnapshot) => void
   clearSettingsWriteError: () => void
+  dismissSettingsWriteError: (key: SettingsWriteKey) => void
 }
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
@@ -540,6 +542,7 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
+  dismissSettingsWriteError: (key) => writeCoordinator.dismissFailure(key),
   acceptCommittedSnapshot: (snapshot) =>
     set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
 })
