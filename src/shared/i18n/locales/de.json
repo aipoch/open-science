@@ -6379,6 +6379,10 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "Automatische Aktualisierungen pausieren nach {{run}} Anfragen pro Lauf oder {{day}} über alle Sammlungen in 24 Stunden. Wiederholungen zählen mit.",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "Den Status eines InterProScan-Auftrags einmal prüfen. Zwischen Prüfungen mindestens 10 Sekunden warten.",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "Den vollständigen TSV-Bericht eines abgeschlossenen InterProScan-Auftrags abrufen. Ergebnisse verfallen beim Dienst.",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "InterProScan-Auftragsstatus und TSV-Ergebnisse über EMBL-EBI."
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "InterProScan-Auftragsstatus und TSV-Ergebnisse über EMBL-EBI.",
+    "Delete skill?": "Fähigkeit löschen?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "„{{name}}\" wird endgültig gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Diese Fähigkeit ist für {{count}} Agent aktiviert; er kann sie nicht mehr verwenden.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Diese Fähigkeit ist für {{count}} Agenten aktiviert; sie können sie nicht mehr verwenden."
   }
 }

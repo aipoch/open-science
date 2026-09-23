@@ -6219,6 +6219,9 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "자동 업데이트는 실행당 {{run}}회 또는 모든 컬렉션에서 24시간 동안 {{day}}회 요청 후 일시 중지됩니다. 재시도도 한도에 포함됩니다.",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "InterProScan 작업 상태를 한 번 확인합니다. 확인 사이에 최소 10초를 기다리세요.",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "완료된 InterProScan 작업의 전체 TSV 보고서를 가져옵니다. 결과는 서비스에서 만료됩니다.",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI를 통한 InterProScan 작업 상태 및 TSV 결과 조회."
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI를 통한 InterProScan 작업 상태 및 TSV 결과 조회.",
+    "Delete skill?": "스킬을 삭제하시겠습니까?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "\"{{name}}\"이(가) 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "이 스킬은 {{count}}개의 에이전트에서 활성화되어 있으며, 해당 에이전트는 더 이상 이 스킬을 사용할 수 없습니다."
   }
 }

@@ -6221,6 +6221,9 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "自動更新每輪最多請求 {{run}} 次，所有合集 24 小時內合計最多 {{day}} 次，達到上限後暫停。重試也計入次數。",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "查詢一次 InterProScan 工作狀態。兩次查詢之間至少等待 10 秒。",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "取得已完成的 InterProScan 工作的完整 TSV 報告。結果會在服務端過期。",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "透過 EMBL-EBI 查詢 InterProScan 工作狀態並取得 TSV 結果。"
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "透過 EMBL-EBI 查詢 InterProScan 工作狀態並取得 TSV 結果。",
+    "Delete skill?": "刪除技能？",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "將永久刪除「{{name}}」。此操作無法復原。",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "此技能已對 {{count}} 個智能體啟用；它們將無法再使用該技能。"
   }
 }

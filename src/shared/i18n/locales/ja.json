@@ -6221,6 +6221,9 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "自動更新は実行ごとに {{run}} 回、全コレクション合計で 24 時間に {{day}} 回のリクエストで一時停止します。再試行も含まれます。",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "InterProScan ジョブの状態を1回確認します。確認の間隔は10秒以上空けてください。",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "完了した InterProScan ジョブの完全な TSV レポートを取得します。結果にはサービス側の有効期限があります。",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI を介した InterProScan ジョブの状態確認と TSV 結果の取得。"
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI を介した InterProScan ジョブの状態確認と TSV 結果の取得。",
+    "Delete skill?": "スキルを削除しますか？",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "「{{name}}」は完全に削除されます。この操作は元に戻せません。",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "このスキルは {{count}} 個のエージェントで有効になっています。これらのエージェントはこのスキルを使用できなくなります。"
   }
 }

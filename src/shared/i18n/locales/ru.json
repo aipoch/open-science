@@ -6682,6 +6682,12 @@
     "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "Автоматические обновления приостанавливаются после {{run}} запросов за запуск или {{day}} по всем коллекциям за 24 часа. Повторные попытки учитываются.",
     "Check an InterProScan job once. Wait at least 10 seconds between checks.": "Проверить статус задания InterProScan один раз. Подождите не менее 10 секунд между проверками.",
     "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "Получить полный отчёт TSV завершённого задания InterProScan. Срок хранения результатов на сервисе ограничен.",
-    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "Проверка состояния заданий InterProScan и получение результатов TSV через EMBL-EBI."
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "Проверка состояния заданий InterProScan и получение результатов TSV через EMBL-EBI.",
+    "Delete skill?": "Удалить навык?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "«{{name}}» будет удалён без возможности восстановления. Это действие нельзя отменить.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Этот навык включён для {{count}} агента; он больше не сможет его использовать.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._few": "Этот навык включён для {{count}} агентов; они больше не смогут его использовать.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._many": "Этот навык включён для {{count}} агентов; они больше не смогут его использовать.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Этот навык включён для {{count}} агента; они больше не смогут его использовать."
   }
 }
