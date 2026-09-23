@@ -6387,6 +6387,8 @@
     "Affected scenario models will use the main model instead, without interruption.": "Die betroffenen Szenariomodelle verwenden stattdessen unterbrechungsfrei das Hauptmodell.",
     "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "Szenariomodelle behalten ihre gespeicherte Auswahl und werden als nicht verfügbar markiert, bis Sie sie neu zuweisen.",
     "Delete provider": "Anbieter löschen",
-    "Scenario model handling": "Umgang mit Szenariomodellen"
+    "Scenario model handling": "Umgang mit Szenariomodellen",
+    "Retrying didn't fix it": "Der erneute Versuch hat nicht geholfen",
+    "This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.": "Dies ist in der Regel ein vorübergehendes Dateiproblem nach einem App-Update. Versuchen Sie es erneut, um das Panel direkt zu laden — ein Neuladen der App ist nicht nötig."
   }
 }

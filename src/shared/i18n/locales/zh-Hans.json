@@ -6228,6 +6228,8 @@
     "Affected scenario models will use the main model instead, without interruption.": "受影响的场景模型将改用主模型，不会中断。",
     "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "场景模型将保留已保存的选择，并在你重新绑定前标记为不可用。",
     "Delete provider": "删除模型服务商",
-    "Scenario model handling": "场景模型处理方式"
+    "Scenario model handling": "场景模型处理方式",
+    "Retrying didn't fix it": "重试未能解决问题",
+    "This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.": "这通常是应用更新后出现的临时文件问题。重试即可就地加载，无需重新加载应用。"
   }
 }

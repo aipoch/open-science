@@ -6228,6 +6228,8 @@
     "Affected scenario models will use the main model instead, without interruption.": "影響を受けるシナリオモデルは、中断なくメインモデルを使用します。",
     "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "シナリオモデルは保存済みの選択を保持し、再割り当てするまで利用不可としてマークされます。",
     "Delete provider": "プロバイダを削除",
-    "Scenario model handling": "シナリオモデルの扱い"
+    "Scenario model handling": "シナリオモデルの扱い",
+    "Retrying didn't fix it": "再試行では解決しませんでした",
+    "This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.": "これは通常、アプリの更新後に発生する一時的なファイルの問題です。再試行すればその場で読み込めるため、アプリを再読み込みする必要はありません。"
   }
 }

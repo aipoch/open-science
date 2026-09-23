@@ -6226,6 +6226,8 @@
     "Affected scenario models will use the main model instead, without interruption.": "영향을 받는 시나리오 모델은 중단 없이 메인 모델을 사용합니다.",
     "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "시나리오 모델은 저장된 선택을 유지하며, 다시 지정하기 전까지 사용할 수 없음으로 표시됩니다.",
     "Delete provider": "모델 제공업체 삭제",
-    "Scenario model handling": "시나리오 모델 처리 방식"
+    "Scenario model handling": "시나리오 모델 처리 방식",
+    "Retrying didn't fix it": "재시도해도 해결되지 않았습니다",
+    "This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.": "이는 보통 앱 업데이트 후 발생하는 일시적인 파일 문제입니다. 앱을 다시 로드할 필요 없이 재시도하면 바로 로드할 수 있습니다."
   }
 }

@@ -6692,6 +6692,8 @@
     "Affected scenario models will use the main model instead, without interruption.": "Затронутые сценарные модели будут использовать основную модель без прерывания.",
     "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "Сценарные модели сохранят выбранные варианты и будут помечены как недоступные, пока вы не переназначите их.",
     "Delete provider": "Удалить поставщика",
-    "Scenario model handling": "Обработка сценарных моделей"
+    "Scenario model handling": "Обработка сценарных моделей",
+    "Retrying didn't fix it": "Повторная попытка не помогла",
+    "This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.": "Обычно это временная проблема с файлами после обновления приложения. Повторите попытку, чтобы загрузить панель на месте — перезагружать приложение не нужно."
   }
 }
