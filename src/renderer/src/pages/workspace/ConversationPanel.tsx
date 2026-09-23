@@ -65,7 +65,7 @@ import {
   Stethoscope,
   X
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isUnsupportedCodexAcpVersionError } from '../../../../shared/codex-runtime'
 import {
@@ -771,23 +771,44 @@ const ConversationPanel = ({
     : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend = canSendMessage && !isStopping
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
-  // Runtime-context revisions also advance for feedback and delivery receipts. They do
-  // not start a new review. An explicit review request, a different Plan, or a finished
-  // Agent attempt does: if the Agent leaves the Plan pending, the user must be able
-  // to respond again.
+  // Keep the mounted editor stable across receipts and run completion. Only a
+  // different Plan or an explicit review request owns a fresh draft/collapse state.
   const activePendingPlanKey = activePendingPlan
     ? JSON.stringify([
         activeSession?.id,
         activePendingPlan.artifactVersionId,
-        activePendingPlan.reviewRequestId,
+        activePendingPlan.reviewRequestId
+      ])
+    : undefined
+  // A completed Agent attempt may leave a previously answered Plan pending. Allow
+  // that review again without remounting an editor the user is still working in.
+  const activePlanReviewKey = activePendingPlanKey
+    ? JSON.stringify([
+        activePendingPlanKey,
         activeSession?.runtimeTranscriptLastRun?.promptMessageId,
         activeSession?.runtimeTranscriptLastRun?.startedAt
       ])
     : undefined
+  const currentPlanReviewRef = useRef({
+    planKey: activePendingPlanKey,
+    reviewKey: activePlanReviewKey
+  })
+  useLayoutEffect(() => {
+    currentPlanReviewRef.current = {
+      planKey: activePendingPlanKey,
+      reviewKey: activePlanReviewKey
+    }
+  }, [activePendingPlanKey, activePlanReviewKey])
   const [resolvedPlanKey, setResolvedPlanKey] = useState<string>()
+  const resolvePendingPlan = (): void => {
+    const current = currentPlanReviewRef.current
+    // Async submission may span run completion. Resolve the current review of
+    // this editor, but never dismiss a replacement Plan or explicit new request.
+    if (current.planKey === activePendingPlanKey) setResolvedPlanKey(current.reviewKey)
+  }
   const pendingPlan =
-    activePendingPlanKey &&
-    resolvedPlanKey !== activePendingPlanKey &&
+    activePlanReviewKey &&
+    resolvedPlanKey !== activePlanReviewKey &&
     activeSession?.status === 'waiting-plan-approval'
       ? activePendingPlan
       : undefined
@@ -910,7 +931,7 @@ const ConversationPanel = ({
         planPending:
           pendingPlan !== undefined
             ? true
-            : activePendingPlanKey && resolvedPlanKey === activePendingPlanKey
+            : activePlanReviewKey && resolvedPlanKey === activePlanReviewKey
               ? false
               : undefined
       })
@@ -1696,7 +1717,7 @@ const ConversationPanel = ({
                               onOpen={openPendingPlan}
                               onRespond={(decision) => respondToPendingPlan({ decision })}
                               onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
-                              onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                              onResolved={resolvePendingPlan}
                             />
                           )}
                         </ResizablePlanComposer>
