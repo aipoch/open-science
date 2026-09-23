@@ -327,6 +327,33 @@ describe('SettingsGlobalSearch', () => {
     }
   })
 
+  it('cancels a superseded highlight when a new selection starts', () => {
+    vi.useFakeTimers()
+    mountPanelRoot(
+      'general',
+      `<section data-slot="settings-section" data-settings-anchor="general.notifications">Notifications</section>
+       <section data-slot="settings-section" data-settings-anchor="general.language">Language</section>`
+    )
+    renderSearch()
+
+    typeQuery('notifications')
+    pressKey('Enter')
+    const first = document.body.querySelector<HTMLElement>(
+      '[data-settings-anchor="general.notifications"]'
+    )!
+    expect(first.classList.contains('settings-search-highlight')).toBe(true)
+
+    // A second jump strips the first ring immediately instead of letting it dwell.
+    typeQuery('language')
+    pressKey('Enter')
+    expect(first.classList.contains('settings-search-highlight')).toBe(false)
+    const second = document.body.querySelector<HTMLElement>(
+      '[data-settings-anchor="general.language"]'
+    )!
+    expect(second.classList.contains('settings-search-highlight')).toBe(true)
+    expect(document.activeElement).toBe(second)
+  })
+
   it('marks a jump target in the panel sources for every anchored entry', () => {
     const sources = readdirSync(__dirname, { recursive: true, withFileTypes: true })
       .filter(

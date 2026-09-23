@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -226,9 +226,10 @@ const HIGHLIGHT_CLASS = 'settings-search-highlight'
 // user sees exactly where they landed. Entries with an anchor jump to their own setting element;
 // the anchor gets a grace period (lazy chunks, async data) before falling back to the panel's
 // first content block. Polls until the target panel has actually rendered, so the highlight never
-// lands on the previous panel. Purely visual and focus-only: no persistence. Returns a cancel
-// function that stops polling and strips any active ring — callers run it on unmount and before
-// starting another highlight.
+// lands on the previous panel. Purely visual and focus-only: no persistence. Self-terminating:
+// polling stops after a bounded window and stripRing skips detached nodes, so an in-flight jump
+// survives the combobox unmounting — the narrow-viewport search overlay unmounts it right after
+// navigation. Returns a cancel function that callers run before starting another highlight.
 const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() => void) => {
   const startedAt = Date.now()
   const timers: number[] = []
@@ -306,16 +307,10 @@ const SettingsGlobalSearch = ({
   const [activeIndex, setActiveIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const listId = useId()
+  // Only used to cancel a previous highlight when a new selection supersedes it. Deliberately not
+  // cancelled on unmount: the overlay usage unmounts this combobox as part of navigation, and the
+  // highlight is self-terminating (see highlightNavigatedPanel).
   const cancelHighlightRef = useRef<(() => void) | null>(null)
-
-  // Stop highlight polling and strip any ring when the dialog (and this field) unmounts.
-  useEffect(
-    () => () => {
-      cancelHighlightRef.current?.()
-      cancelHighlightRef.current = null
-    },
-    []
-  )
 
   const panelLabel = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)

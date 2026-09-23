@@ -507,9 +507,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // Narrow viewports swap the header search field for an icon button that opens a full-width
   // search overlay; the field only exists while the overlay is open, so ⌘K never targets an
   // invisible input.
-  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false)
+  const [isMobileSearchOpen, setIsMobileSearchOpenState] = useState(false)
+  const isMobileSearchOpenRef = useRef(false)
+  const setIsMobileSearchOpen = useCallback((next: boolean) => {
+    // The dialog's Escape listener can retain an earlier render's callback, same as the mobile
+    // navigation state above. Update its authority before scheduling the visual state change.
+    isMobileSearchOpenRef.current = next
+    setIsMobileSearchOpenState(next)
+  }, [])
   const mobileSearchTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const mobileSearchOverlayRef = useRef<HTMLDivElement | null>(null)
   const mobileSearchWasOpenRef = useRef(false)
+  // Whether focus was inside the overlay when a breakpoint crossing closed it.
+  const mobileSearchHadFocusRef = useRef(false)
   const codebuddyAutoDetectAttempted = useRef(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
@@ -582,10 +592,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   }, [isMobile, isMobileNavOpen])
 
   // The search overlay belongs to the narrow layout; dropping it when the viewport crosses the md
-  // breakpoint keeps the desktop header field as the only mounted combobox.
-  if (!isMobile && isMobileSearchOpen) setIsMobileSearchOpen(false)
+  // breakpoint keeps the desktop header field as the only mounted combobox. Record whether focus
+  // was inside the overlay so the close effect can hand it to that desktop field.
+  if (!isMobile && isMobileSearchOpen) {
+    mobileSearchHadFocusRef.current =
+      document.activeElement instanceof Node &&
+      (mobileSearchOverlayRef.current?.contains(document.activeElement) ?? false)
+    setIsMobileSearchOpen(false)
+  }
 
-  // Return focus to the header search button when the overlay closes.
+  // Return focus when the overlay closes: to the header search button on narrow viewports, or to
+  // the desktop search field if a breakpoint crossing closed the overlay mid-search.
   useEffect(() => {
     if (isMobile && isMobileSearchOpen) {
       mobileSearchWasOpenRef.current = true
@@ -593,7 +610,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
     if (!mobileSearchWasOpenRef.current) return
     mobileSearchWasOpenRef.current = false
-    mobileSearchTriggerRef.current?.focus()
+    if (isMobile) {
+      mobileSearchTriggerRef.current?.focus()
+      return
+    }
+    if (!mobileSearchHadFocusRef.current) return
+    mobileSearchHadFocusRef.current = false
+    document.querySelector<HTMLElement>('[data-slot="settings-global-search"] input')?.focus()
   }, [isMobile, isMobileSearchOpen])
 
   // External entry points publish one route intent with an event identity. Guard by request rather
@@ -1383,13 +1406,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               event.preventDefault()
               return
             }
-            // Mobile search overlay: Escape reaches the overlay's own handler, which closes the
-            // results list first and only then the overlay — never the whole dialog.
+            // Mobile search overlay, closed in two stages. While the results list is open the
+            // combobox's own Escape closes just the list (and blurs the field); the overlay's
+            // bubble-phase handler or — once focus fell out of the overlay with the blur — the
+            // ref-guarded branch below closes the overlay itself. Never the whole dialog.
             if (
               event.target instanceof HTMLElement &&
               event.target.closest('[data-slot="settings-mobile-search"]')
             ) {
               event.preventDefault()
+              return
+            }
+            if (isMobileSearchOpenRef.current) {
+              event.preventDefault()
+              setIsMobileSearchOpen(false)
               return
             }
             if (!isMobileNavOpenRef.current) return
@@ -1517,9 +1547,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             {/* Right column: header bar + scrollable panel content. */}
             <div
               data-slot="settings-main"
-              aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
-              inert={isMobile && isMobileNavOpen ? true : undefined}
-              className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-card"
+              aria-hidden={isMobile && (isMobileNavOpen || isMobileSearchOpen) ? true : undefined}
+              inert={isMobile && (isMobileNavOpen || isMobileSearchOpen) ? true : undefined}
+              className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
             >
               <TooltipProvider delayDuration={300}>
                 <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
@@ -1719,48 +1749,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   </div>
                 ) : null}
               </TooltipProvider>
-
-              {/* Narrow viewports: full-width search surface over the panel content, opened from
-                  the header search button. Reuses the desktop combobox; Escape and the back button
-                  dismiss it and return focus to that button. */}
-              {isMobile && isMobileSearchOpen ? (
-                <div
-                  data-slot="settings-mobile-search"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label={t('Search settings')}
-                  className="absolute inset-0 z-20 flex flex-col bg-card"
-                  onKeyDownCapture={(event) => {
-                    if (event.key !== 'Escape') return
-                    event.preventDefault()
-                    event.stopPropagation()
-                    setIsMobileSearchOpen(false)
-                  }}
-                >
-                  <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setIsMobileSearchOpen(false)}
-                      aria-label={t('Back', { context: 'step' })}
-                      className="shrink-0 rounded-lg text-muted-foreground"
-                    >
-                      <ArrowLeft className="size-4" aria-hidden="true" />
-                    </Button>
-                    <div className="min-w-0 flex-1">
-                      <SettingsGlobalSearch
-                        panels={SETTINGS_PANELS}
-                        autoFocus
-                        onNavigate={(panel) => {
-                          setIsMobileSearchOpen(false)
-                          navigatePanel(panel)
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : null}
 
               <motion.div
                 layoutScroll
@@ -2339,6 +2327,54 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 </SettingsFormFooter>
               ) : null}
             </div>
+
+            {/* Narrow viewports: full-width search surface over the whole settings column, opened
+                from the header search button. Reuses the desktop combobox; Escape closes the
+                results list first, then the overlay, and the back button dismisses it — both
+                return focus to the search button. Sibling of settings-main (which is inerted while
+                this is open) so the overlay itself stays interactive; z-30 sits above the panels'
+                sticky z-20 filter bars and below the toast stack and nav drawer. */}
+            {isMobile && isMobileSearchOpen ? (
+              <div
+                ref={mobileSearchOverlayRef}
+                data-slot="settings-mobile-search"
+                role="dialog"
+                aria-modal="true"
+                aria-label={t('Search settings')}
+                className="absolute inset-0 z-30 flex flex-col bg-card"
+                onKeyDown={(event) => {
+                  // Bubble phase: while the results list is open the combobox stops propagation
+                  // and closes just the list, so this only fires once the list is gone.
+                  if (event.key !== 'Escape') return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setIsMobileSearchOpen(false)
+                }}
+              >
+                <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setIsMobileSearchOpen(false)}
+                    aria-label={t('Back', { context: 'step' })}
+                    className="shrink-0 rounded-lg text-muted-foreground"
+                  >
+                    <ArrowLeft className="size-4" aria-hidden="true" />
+                  </Button>
+                  <div className="min-w-0 flex-1">
+                    <SettingsGlobalSearch
+                      panels={SETTINGS_PANELS}
+                      autoFocus
+                      onNavigate={(panel) => {
+                        setIsMobileSearchOpen(false)
+                        navigatePanel(panel)
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </motion.div>
           <div
             hidden={isMobile && isMobileNavOpen}
