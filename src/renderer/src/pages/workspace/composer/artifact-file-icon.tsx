@@ -1,15 +1,8 @@
 import { useEffect, useState } from 'react'
-import {
-  File,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  Presentation,
-  type LucideIcon
-} from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
+import { FileTypeIcon } from '../file-type-icon'
 import { getFileExtension, getImageMimeTypeForExtension } from '../preview-support'
 
 type ArtifactSource = 'upload' | 'artifact' | 'literature'
@@ -28,31 +21,6 @@ const THUMBNAIL_MAX_BYTES = 256 * 1024
 // Mirrors isImageArtifact: an image/* mime type or a known image extension.
 const isImageFile = (name: string, mimeType?: string): boolean =>
   Boolean(mimeType?.startsWith('image/')) || /\.(avif|gif|jpe?g|png|svg|tiff?|webp)$/i.test(name)
-
-// Category SVG plus a distinct accent color, keyed by file extension.
-const iconForExtension = (extension: string): { Icon: LucideIcon; color: string } => {
-  switch (extension) {
-    case 'pdf':
-      return { Icon: FileText, color: 'text-red-500' }
-    case 'csv':
-    case 'tsv':
-      return { Icon: FileSpreadsheet, color: 'text-green-600 dark:text-green-400' }
-    case 'xls':
-    case 'xlsx':
-      return { Icon: FileSpreadsheet, color: 'text-emerald-600 dark:text-emerald-400' }
-    case 'ppt':
-    case 'pptx':
-      return { Icon: Presentation, color: 'text-orange-500' }
-    case 'doc':
-    case 'docx':
-      return { Icon: FileText, color: 'text-blue-500' }
-    case 'txt':
-    case 'md':
-      return { Icon: FileText, color: 'text-text-300' }
-    default:
-      return { Icon: File, color: 'text-text-300' }
-  }
-}
 
 // Fixed 20px slot so image thumbnails and category glyphs line up across rows.
 const iconSlotClassName = 'flex h-5 w-5 shrink-0 items-center justify-center'
@@ -111,7 +79,7 @@ const ArtifactThumbnail = ({
 
   return (
     <span className={cn(iconSlotClassName, className)}>
-      <FileImage className="h-4 w-4 text-text-300" />
+      <FileTypeIcon name={name} mimeType={mimeType} className="size-4" />
     </span>
   )
 }
@@ -122,10 +90,9 @@ export const ArtifactFileIcon = (props: ArtifactFileIconProps): React.JSX.Elemen
     return <ArtifactThumbnail {...props} />
   }
 
-  const { Icon, color } = iconForExtension(getFileExtension(props.name))
   return (
     <span className={cn(iconSlotClassName, props.className)}>
-      <Icon className={cn('h-4 w-4', color)} />
+      <FileTypeIcon name={props.name} mimeType={props.mimeType} />
     </span>
   )
 }

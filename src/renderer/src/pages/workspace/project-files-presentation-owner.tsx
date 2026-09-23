@@ -4,7 +4,6 @@ import {
   Boxes,
   Check,
   ChevronDown,
-  File,
   Folder,
   Monitor,
   Paperclip,
@@ -36,6 +35,7 @@ import type { ProjectFileItem } from '../../../../shared/project-files'
 
 import { ArtifactPreview } from './artifact-preview'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { FileTypeIcon } from './file-type-icon'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import type { MessageArtifact } from './preview-file-item'
 import { GrantedRootMenuRow } from './project-files-granted-root-menu-row'
@@ -326,7 +326,7 @@ const FileListRow = ({
         onClick={onPreview}
       >
         <span className="flex size-7 shrink-0 items-center justify-center rounded bg-bg-200 text-text-300">
-          <File className="size-4" strokeWidth={1.7} aria-hidden="true" />
+          <FileTypeIcon name={file.name} mimeType={file.mimeType} />
         </span>
         <ExtensionPreservingFileName
           name={file.name}

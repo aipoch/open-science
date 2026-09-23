@@ -463,7 +463,11 @@
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionCells.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionDecision.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionDraftPreview.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionDraftPreview.test.tsx",
+      "src/renderer/src/pages/workspace/file-type-icon.test.ts",
+      "src/renderer/src/pages/workspace/artifact-preview-tiff.test.tsx",
+      "src/renderer/src/pages/workspace/artifact-preview.interaction.test.tsx",
+      "src/renderer/src/pages/workspace/artifact-preview.test.tsx"
     ]
   },
   "capabilityOverlays": [],

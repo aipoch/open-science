@@ -22,9 +22,7 @@ import {
   CircleAlert,
   CircleGauge,
   Copy,
-  FileText,
   GitBranch,
-  Image as ImageIcon,
   MessageCircleMore,
   Loader2,
   Pencil
@@ -52,6 +50,7 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import { copyMessageToClipboard } from './composer/message-clipboard'
 import { EditMessageConfirmDialog } from './EditMessageConfirmDialog'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { FileTypeIcon } from './file-type-icon'
 import { providerKindKey } from '../settings/provider-form-value'
 import { AgentFrameworkIcon, ProviderKindIcon } from '../settings/provider-icons'
 import {
@@ -1074,8 +1073,6 @@ const MessageUploadAttachmentList = ({
       {attachments.map((attachment) => {
         // Use the original display name so pasted/renamed files match the composer chip.
         const attachmentName = getUploadedAttachmentName(attachment)
-        const Icon = attachment.mimeType?.startsWith('image/') ? ImageIcon : FileText
-
         return (
           <button
             key={attachment.id}
@@ -1087,7 +1084,11 @@ const MessageUploadAttachmentList = ({
             aria-label={t('Preview uploaded attachment {{name}}', { name: attachmentName })}
             title={attachment.path}
           >
-            <Icon className="h-3.5 w-3.5 shrink-0 text-text-300" aria-hidden="true" />
+            <FileTypeIcon
+              name={attachmentName}
+              mimeType={attachment.mimeType}
+              className="size-3.5"
+            />
             <ExtensionPreservingFileName name={attachmentName} compact />
           </button>
         )
