@@ -1469,12 +1469,13 @@ describe('RuntimesPanel packages dialog', () => {
     const shortcutEvent = new KeyboardEvent('keydown', {
       key: 'k',
       ctrlKey: true,
+      altKey: true,
       cancelable: true
     })
     await act(async () => window.dispatchEvent(shortcutEvent))
     expect(shortcutEvent.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(filter)
-    expect(filter?.getAttribute('aria-keyshortcuts')).toBe('Control+K')
+    expect(filter?.getAttribute('aria-keyshortcuts')).toBe('Control+Alt+K')
 
     await act(async () => setInputValue(filter!, 'nump'))
     expect(document.querySelectorAll('[data-testid="runtime-package-row"]').length).toBe(1)

@@ -52,13 +52,13 @@ describe('SettingsSearchInput', () => {
       expect(input.placeholder).toBe(placeholder || ' ')
       expect(input.classList.contains('pr-20')).toBe(false)
       expect(input.classList.contains('pr-2.5')).toBe(true)
-      expect(input.classList.contains('[&:placeholder-shown:not(:focus)]:pr-20')).toBe(true)
+      expect(input.classList.contains('[&:placeholder-shown:not(:focus)]:pr-28')).toBe(true)
       expect(hint.classList.contains('hidden')).toBe(true)
       expect(hint.classList.contains('peer-[:placeholder-shown:not(:focus)]:flex')).toBe(true)
     }
   )
 
-  it('shows the macOS shortcut and focuses the field with Cmd+K', () => {
+  it('shows the macOS shortcut and focuses the field with Cmd+Alt+K', () => {
     ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
     act(() => {
       root.render(
@@ -69,15 +69,15 @@ describe('SettingsSearchInput', () => {
     })
 
     const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
-    const event = pressSearchShortcut({ metaKey: true })
+    const event = pressSearchShortcut({ metaKey: true, altKey: true })
 
     expect(event.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(input)
-    expect(input?.getAttribute('aria-keyshortcuts')).toBe('Meta+K')
-    expect(document.body.textContent).toContain('⌘K')
+    expect(input?.getAttribute('aria-keyshortcuts')).toBe('Meta+Alt+K')
+    expect(document.body.textContent).toContain('⌘⌥K')
   })
 
-  it('shows the cross-platform shortcut and focuses the field with Ctrl+K', () => {
+  it('shows the cross-platform shortcut and focuses the field with Ctrl+Alt+K', () => {
     ;(window as unknown as { api: unknown }).api = { platform: 'linux' }
     act(() => {
       root.render(
@@ -88,12 +88,12 @@ describe('SettingsSearchInput', () => {
     })
 
     const input = document.body.querySelector<HTMLInputElement>('[aria-label="Search connectors"]')
-    const event = pressSearchShortcut({ ctrlKey: true })
+    const event = pressSearchShortcut({ ctrlKey: true, altKey: true })
 
     expect(event.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(input)
-    expect(input?.getAttribute('aria-keyshortcuts')).toBe('Control+K')
-    expect(document.body.textContent).toContain('CtrlK')
+    expect(input?.getAttribute('aria-keyshortcuts')).toBe('Control+Alt+K')
+    expect(document.body.textContent).toContain('CtrlAltK')
   })
 
   it('focuses the search owned by the topmost dialog', () => {
@@ -109,21 +109,21 @@ describe('SettingsSearchInput', () => {
       )
     })
 
-    pressSearchShortcut({ metaKey: true })
+    pressSearchShortcut({ metaKey: true, altKey: true })
 
     expect(document.activeElement).toBe(
       document.body.querySelector<HTMLInputElement>('[aria-label="Filter packages"]')
     )
   })
 
-  it('lets a higher-priority field win over a later-mounted panel search in the same dialog', () => {
+  it('routes plain K to global search and Alt+K to the local search in the same dialog', () => {
     ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
     act(() => {
       root.render(
         <div role="dialog">
           <SettingsSearchInput
             aria-label="Search settings"
-            shortcutPriority={1}
+            shortcutScope="global"
             value=""
             onChange={() => undefined}
           />
@@ -134,12 +134,20 @@ describe('SettingsSearchInput', () => {
 
     pressSearchShortcut({ metaKey: true })
 
+    const globalSearch = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Search settings"]'
+    )!
+    expect(document.activeElement).toBe(globalSearch)
+    expect(globalSearch.getAttribute('aria-keyshortcuts')).toBe('Meta+K')
+    expect(globalSearch.nextElementSibling?.textContent).toBe('⌘K')
+
+    pressSearchShortcut({ metaKey: true, altKey: true })
     expect(document.activeElement).toBe(
-      document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')
+      document.body.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
     )
   })
 
-  it('keeps last-mounted-wins for same-priority fields in the same dialog', () => {
+  it('keeps last-mounted-wins for same-scope fields in the same dialog', () => {
     ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
     act(() => {
       root.render(
@@ -150,21 +158,21 @@ describe('SettingsSearchInput', () => {
       )
     })
 
-    pressSearchShortcut({ metaKey: true })
+    pressSearchShortcut({ metaKey: true, altKey: true })
 
     expect(document.activeElement).toBe(
       document.body.querySelector<HTMLInputElement>('[aria-label="Second search"]')
     )
   })
 
-  it('keeps a nested dialog search ahead of a higher-priority field in the dialog below', () => {
+  it('keeps a nested dialog search ahead of the global field in the dialog below', () => {
     ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
     act(() => {
       root.render(
         <div role="dialog" aria-label="Settings">
           <SettingsSearchInput
             aria-label="Search settings"
-            shortcutPriority={1}
+            shortcutScope="global"
             value=""
             onChange={() => undefined}
           />
@@ -175,7 +183,7 @@ describe('SettingsSearchInput', () => {
       )
     })
 
-    pressSearchShortcut({ metaKey: true })
+    pressSearchShortcut({ metaKey: true, altKey: true })
 
     expect(document.activeElement).toBe(
       document.body.querySelector<HTMLInputElement>('[aria-label="Filter selected"]')
@@ -195,8 +203,38 @@ describe('SettingsSearchInput', () => {
       )
     })
 
-    const event = pressSearchShortcut({ metaKey: true })
+    const event = pressSearchShortcut({ metaKey: true, altKey: true })
 
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('preserves the global shortcut character on alternate keyboard layouts', () => {
+    act(() =>
+      root.render(<SettingsSearchInput shortcutScope="global" aria-label="Global search" />)
+    )
+    const event = pressSearchShortcut({ metaKey: true, key: 't', code: 'KeyK' })
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('handles the macOS Option-modified K character', () => {
+    act(() => root.render(<SettingsSearchInput aria-label="Local search" />))
+    const event = pressSearchShortcut({ metaKey: true, altKey: true, key: '˚', code: 'KeyK' })
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(container.querySelector('input'))
+  })
+
+  it.each([
+    { ctrlKey: true },
+    { altKey: true },
+    { ctrlKey: true, altKey: true, shiftKey: true },
+    { ctrlKey: true, altKey: true, repeat: true },
+    { ctrlKey: true, altKey: true, isComposing: true },
+    { ctrlKey: true, altKey: true, key: 'x', code: 'KeyX' }
+  ])('does not claim a nonmatching local shortcut: %j', (init) => {
+    act(() => root.render(<SettingsSearchInput aria-label="Local search" />))
+    const event = pressSearchShortcut(init)
     expect(event.defaultPrevented).toBe(false)
     expect(document.activeElement).toBe(document.body)
   })
@@ -230,7 +268,7 @@ describe('SettingsSearchInput', () => {
     })
 
     expect(document.body.querySelector('[aria-label="Clear search"]')).not.toBeNull()
-    expect(document.body.textContent).not.toContain('⌘K')
+    expect(document.body.textContent).not.toContain('⌘⌥K')
   })
 
   it('clears through a real input event and keeps focus in the field', () => {

@@ -8,6 +8,7 @@ import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { HomePage } from '@/pages/home/HomePage'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useUpdateStore } from '@/stores/update-store'
@@ -61,6 +62,37 @@ useUpdateStore.setState({
   appInfo: { name: 'Open-Science', version: '0.0.0', copyright: 'Test fixture' },
   status: { state: 'up-to-date', current: '0.0.0', latest: '0.0.0' }
 })
+
+// Seed only native data boundaries for the search-shortcut journey; render real panels.
+if (new URLSearchParams(location.search).has('search-shortcuts')) {
+  useSettingsStore.setState({
+    skillsLoaded: true,
+    connectorsLoaded: true,
+    loadSkills: async () => undefined,
+    loadConnectors: async () => undefined
+  })
+  useTagStore.setState({ status: 'ready' })
+  useSpecialistStore.setState({
+    isLoaded: true,
+    load: async () => undefined,
+    listen: unsubscribe,
+    items: [
+      {
+        id: 'search-fixture',
+        name: 'search-fixture',
+        displayName: 'Researcher',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        revision: 1,
+        kind: 'custom',
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
+      }
+    ]
+  })
+}
 
 const undoFixture = new URLSearchParams(location.search).has('undo')
 if (undoFixture) {
