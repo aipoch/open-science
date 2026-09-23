@@ -5,6 +5,9 @@ export function connectorDescription(
   connector: { id: string; description: string },
   t: TFunction
 ): string {
+  if (connector.id === 'interproscan') {
+    return t('InterProScan job status and TSV result retrieval via EMBL-EBI.')
+  }
   if (connector.id === 'zenodo') {
     return t('Public research records, versions and file metadata from Zenodo.')
   }
@@ -15,6 +18,13 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'interproscan/status':
+      return t('Check an InterProScan job once. Wait at least 10 seconds between checks.')
+    case 'interproscan/results':
+      return t(
+        'Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.'
+      )
+
     case 'zenodo/search_records':
       return t('Search public Zenodo records, one page at a time.')
     case 'zenodo/get_record':

@@ -6216,6 +6216,9 @@
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "이전 자동 실행이 중지되었거나 진행 상황을 저장하지 못했습니다. 재개하기 전에 저장소를 확인하세요. 저장된 결과는 유지됩니다.",
     "Resume automatic updates": "자동 업데이트 재개",
     "This run reached {{limit}} automatic requests, including retries. Resume to evaluate the remaining references.": "이번 실행에서 재시도를 포함한 자동 요청이 {{limit}}회에 도달했습니다. 나머지 문헌을 처리하려면 재개하세요.",
-    "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "자동 업데이트는 실행당 {{run}}회 또는 모든 컬렉션에서 24시간 동안 {{day}}회 요청 후 일시 중지됩니다. 재시도도 한도에 포함됩니다."
+    "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "자동 업데이트는 실행당 {{run}}회 또는 모든 컬렉션에서 24시간 동안 {{day}}회 요청 후 일시 중지됩니다. 재시도도 한도에 포함됩니다.",
+    "Check an InterProScan job once. Wait at least 10 seconds between checks.": "InterProScan 작업 상태를 한 번 확인합니다. 확인 사이에 최소 10초를 기다리세요.",
+    "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "완료된 InterProScan 작업의 전체 TSV 보고서를 가져옵니다. 결과는 서비스에서 만료됩니다.",
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "EMBL-EBI를 통한 InterProScan 작업 상태 및 TSV 결과 조회."
   }
 }

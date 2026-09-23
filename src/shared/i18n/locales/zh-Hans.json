@@ -6218,6 +6218,9 @@
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "上次自动运行已停止或无法保存进度。恢复前请检查存储。已保存的结果仍会保留。",
     "Resume automatic updates": "恢复自动更新",
     "This run reached {{limit}} automatic requests, including retries. Resume to evaluate the remaining references.": "本轮已达到 {{limit}} 次自动请求（含重试）。恢复后继续处理剩余题录。",
-    "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "自动更新每轮最多请求 {{run}} 次，所有合集 24 小时内合计最多 {{day}} 次，达到上限后暂停。重试也计入次数。"
+    "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "自动更新每轮最多请求 {{run}} 次，所有合集 24 小时内合计最多 {{day}} 次，达到上限后暂停。重试也计入次数。",
+    "Check an InterProScan job once. Wait at least 10 seconds between checks.": "查询一次 InterProScan 任务状态。两次查询之间至少等待 10 秒。",
+    "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "获取已完成的 InterProScan 任务的完整 TSV 报告。结果会在服务端过期。",
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "通过 EMBL-EBI 查询 InterProScan 作业状态并获取 TSV 结果。"
   }
 }

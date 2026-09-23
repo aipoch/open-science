@@ -188,6 +188,17 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'interproscan',
+    displayName: 'InterProScan',
+    aliases: ['InterProScan 5', 'iprscan5'],
+    description: 'InterProScan job status and TSV result retrieval via EMBL-EBI.',
+    useWhen:
+      'Use when you already have an EMBL-EBI InterProScan job_id and need to check its status or retrieve its finished TSV matches. This connector does not create or cancel jobs. For precomputed annotations of known UniProt accessions, use Protein Annotation instead.',
+    sources: ['InterProScan', 'EMBL-EBI'],
+    termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
+    requiresNcbi: false
+  },
+  {
     id: 'protein-annotation',
     displayName: 'Protein Annotation',
     description:

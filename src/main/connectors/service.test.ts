@@ -13,6 +13,33 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('routes InterProScan through existing enablement and tool policy without affecting Protein Annotation', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('RUNNING'))
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const svc = new ConnectorService({
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined
+    })
+    const args = { job_id: 'iprscan5-R20260922-123456-0123-12345678-p1m' }
+    await expect(svc.call('interproscan', 'status', args, internal)).resolves.toMatchObject({
+      ready: false,
+      status: 'RUNNING'
+    })
+    settings.blockedToolIds.push('interproscan/status')
+    await expect(svc.call('interproscan', 'status', args, internal)).rejects.toThrow(
+      'tool blocked by policy: interproscan/status'
+    )
+    settings.disabledConnectorIds.push('interproscan')
+    await expect(svc.call('interproscan', 'status', args, internal)).rejects.toThrow(/disabled/)
+    expect(svc.isEnabled('protein-annotation')).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
   it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
     const fetchImpl = vi
       .fn()

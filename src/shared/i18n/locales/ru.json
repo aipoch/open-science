@@ -6679,6 +6679,9 @@
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "Предыдущий автоматический запуск остановлен или его ход не удалось сохранить. Перед возобновлением проверьте хранилище. Сохранённые результаты сохранены.",
     "Resume automatic updates": "Возобновить автоматические обновления",
     "This run reached {{limit}} automatic requests, including retries. Resume to evaluate the remaining references.": "В этом запуске достигнут лимит {{limit}} автоматических запросов, включая повторные попытки. Возобновите обработку оставшихся источников.",
-    "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "Автоматические обновления приостанавливаются после {{run}} запросов за запуск или {{day}} по всем коллекциям за 24 часа. Повторные попытки учитываются."
+    "Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.": "Автоматические обновления приостанавливаются после {{run}} запросов за запуск или {{day}} по всем коллекциям за 24 часа. Повторные попытки учитываются.",
+    "Check an InterProScan job once. Wait at least 10 seconds between checks.": "Проверить статус задания InterProScan один раз. Подождите не менее 10 секунд между проверками.",
+    "Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.": "Получить полный отчёт TSV завершённого задания InterProScan. Срок хранения результатов на сервисе ограничен.",
+    "InterProScan job status and TSV result retrieval via EMBL-EBI.": "Проверка состояния заданий InterProScan и получение результатов TSV через EMBL-EBI."
   }
 }
