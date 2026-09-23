@@ -6304,7 +6304,7 @@
     "Remembered for this conversation": "Запомнить для этого диалога",
     "This conversation or this call": "Этот диалог или этот вызов",
     "DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.": "DeepSeek перенаправляет deepseek-v4-flash и deepseek-v4-flash-vision-exp на DeepSeek V4.1 Flash (deepseek-flash) с тарификацией по ценам Flash.",
-    "Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open Science сохраняет прежние названия моделей после обновления, чтобы существующие сеансы могли продолжать использовать исходные идентификаторы моделей.",
+    "Open-Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open-Science сохраняет прежние названия моделей после обновления, чтобы существующие сеансы могли продолжать использовать исходные идентификаторы моделей.",
     "DeepSeek API model and routing details": "Модели и маршрутизация API DeepSeek",
     "Saved to Inbox": "Сохранено во входящих",
     "PDF downloaded to Inbox": "PDF загружен во входящие",

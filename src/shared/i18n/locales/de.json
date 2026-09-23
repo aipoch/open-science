@@ -6007,7 +6007,7 @@
     "Remembered for this conversation": "Für diese Konversation gespeichert",
     "This conversation or this call": "Diese Konversation oder dieser Aufruf",
     "DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.": "DeepSeek leitet deepseek-v4-flash und deepseek-v4-flash-vision-exp an DeepSeek V4.1 Flash (deepseek-flash) weiter und berechnet die Flash-Preise.",
-    "Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open Science behält ältere Modellnamen nach der Aktualisierung bei, damit bestehende Sitzungen ihre ursprünglichen Modell-IDs weiter verwenden können.",
+    "Open-Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open-Science behält ältere Modellnamen nach der Aktualisierung bei, damit bestehende Sitzungen ihre ursprünglichen Modell-IDs weiter verwenden können.",
     "DeepSeek API model and routing details": "Details zu Modellen und Routing der DeepSeek API",
     "Saved to Inbox": "Im Posteingang gespeichert",
     "PDF downloaded to Inbox": "PDF in den Posteingang heruntergeladen",

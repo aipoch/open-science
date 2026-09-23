@@ -5852,7 +5852,7 @@
     "Remembered for this conversation": "この会話で許可を記憶",
     "This conversation or this call": "この会話または今回の呼び出し",
     "DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.": "DeepSeek は deepseek-v4-flash と deepseek-v4-flash-vision-exp を DeepSeek V4.1 Flash（deepseek-flash）にルーティングし、Flash の料金を適用します。",
-    "Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open Science は更新後も旧モデル名を保持するため、既存のセッションで元のモデル ID を引き続き使用できます。",
+    "Open-Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open-Science は更新後も旧モデル名を保持するため、既存のセッションで元のモデル ID を引き続き使用できます。",
     "DeepSeek API model and routing details": "DeepSeek API のモデルとルーティングの詳細",
     "Saved to Inbox": "受信トレイに保存済み",
     "PDF downloaded to Inbox": "PDF を受信トレイにダウンロード済み",

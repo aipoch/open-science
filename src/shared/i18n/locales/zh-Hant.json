@@ -5852,7 +5852,7 @@
     "Remembered for this conversation": "在此對話中記住授權",
     "This conversation or this call": "此對話或僅此次呼叫",
     "DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.": "DeepSeek 將 deepseek-v4-flash 和 deepseek-v4-flash-vision-exp 路由至 DeepSeek V4.1 Flash（deepseek-flash），並按 Flash 價格計費。",
-    "Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open Science 會在重新整理後保留舊模型名稱，讓現有會話繼續使用原始模型 ID。",
+    "Open-Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open-Science 會在重新整理後保留舊模型名稱，讓現有會話繼續使用原始模型 ID。",
     "DeepSeek API model and routing details": "DeepSeek API 模型與路由說明",
     "Saved to Inbox": "已儲存至收件匣",
     "PDF downloaded to Inbox": "PDF 已下載至收件匣",

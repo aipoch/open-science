@@ -5850,7 +5850,7 @@
     "Remembered for this conversation": "이 대화에서 승인 기억",
     "This conversation or this call": "이 대화 또는 이번 호출",
     "DeepSeek routes deepseek-v4-flash and deepseek-v4-flash-vision-exp to DeepSeek V4.1 Flash (deepseek-flash), with Flash pricing.": "DeepSeek은 deepseek-v4-flash와 deepseek-v4-flash-vision-exp를 DeepSeek V4.1 Flash(deepseek-flash)로 라우팅하며 Flash 요금을 적용합니다.",
-    "Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open Science는 새로 고침 후에도 기존 모델 이름을 유지하므로 기존 세션에서 원래 모델 ID를 계속 사용할 수 있습니다.",
+    "Open-Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.": "Open-Science는 새로 고침 후에도 기존 모델 이름을 유지하므로 기존 세션에서 원래 모델 ID를 계속 사용할 수 있습니다.",
     "DeepSeek API model and routing details": "DeepSeek API 모델 및 라우팅 안내",
     "Saved to Inbox": "받은 편지함에 저장됨",
     "PDF downloaded to Inbox": "PDF가 받은 편지함에 다운로드됨",
