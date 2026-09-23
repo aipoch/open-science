@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -59,5 +59,41 @@ exit (Invoke-OwnedHost 'remove')
     )
     expect(result.error).toBeUndefined()
     expect(result.status, result.stderr || result.stdout).toBe(0)
+  })
+
+  it('reports the missing host and ownership locations when cleanup cannot be retried', () => {
+    const root = mkdtempSync(join(tmpdir(), 'notebook-uninstall-missing-host-'))
+    roots.push(root)
+    const script = resolve('build/windows-notebook-sandbox-uninstall.ps1')
+    const sandboxRoot = join(root, 'resources', 'notebook-network-sandbox', 'windows')
+    const configRoot = join(root, 'config')
+    const ownershipRoot = join(configRoot, 'notebook-sandbox', '0f3cd2a44c3d4e4e9f1e2a5b')
+    mkdirSync(ownershipRoot, { recursive: true })
+    writeFileSync(join(ownershipRoot, 'receipt.json'), '{}')
+    const result = spawnSync(
+      join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        script,
+        '-SandboxRoot',
+        sandboxRoot
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        env: { ...process.env, OPEN_SCIENCE_CONFIG_ROOT: configRoot }
+      }
+    )
+    expect(result.error).toBeUndefined()
+    expect(result.status, result.stdout).toBe(1)
+    const diagnostics = result.stderr.replace(/\r?\n\s*/g, '')
+    expect(diagnostics).toContain('host is missing while owned resources still require cleanup')
+    expect(diagnostics).toContain(`sandboxRoot=${sandboxRoot}`)
+    expect(diagnostics).toContain(`ownershipRoot=${ownershipRoot}`)
+    expect(diagnostics).toContain('receipt=True')
   })
 })

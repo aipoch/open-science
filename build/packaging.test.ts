@@ -598,6 +598,19 @@ describe('NSIS installer include (build/installer.nsh)', () => {
       installerNsi.indexOf('Section "install"')
     )
   })
+
+  it('records actionable cleanup failure reasons in the NSIS detail log', () => {
+    expect(include).toContain('Open-Science Notebook cleanup failure code=$0')
+    for (const code of [
+      'parent-path-unresolved',
+      'backup-already-exists',
+      'preserve-rename-failed',
+      'restore-destination-exists',
+      'restore-rename-failed'
+    ]) {
+      expect(include).toContain(`Open-Science data protection failure code=${code}`)
+    }
+  })
 })
 
 it('protects both re-created branded data folders before retrying the old uninstaller', () => {
