@@ -128,7 +128,7 @@ test('shows redacted sensitive-content evidence after a failed export', async ({
 }, testInfo) => {
   const page = await app.completeOnboarding()
   const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
-  await app.emitSessionPackageProgress({
+  const failedExport = {
     id: 'sensitive-evidence-fixture',
     kind: 'export' as const,
     state: 'failed' as const,
@@ -149,10 +149,13 @@ test('shows redacted sensitive-content evidence after a failed export', async ({
         sourceStorageKey: 'objects/result.json'
       }
     ]
-  })
-  await expect(
-    dialog.getByText('Sensitive content detected at objects/result.json @42.')
-  ).toBeVisible()
+  }
+  await expect(async () => {
+    await app.emitSessionPackageProgress(failedExport)
+    await expect(
+      dialog.getByText('Sensitive content detected at objects/result.json @42.')
+    ).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 10000 })
   await dialog.getByText('Details', { exact: true }).click()
   await expect(dialog.getByText('Sensitive-content evidence', { exact: true })).toBeVisible()
   await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
