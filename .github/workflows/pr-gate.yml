@@ -1276,6 +1276,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install Rust Windows arm64 target
+        run: rustup target add aarch64-pc-windows-msvc
       - name: Install cargo-xwin
         run: cargo install cargo-xwin --locked
       - name: Build Windows arm64 sandbox host
