@@ -6,10 +6,23 @@ import type { ComputeJobStatus } from '../../shared/compute'
 
 // Match upload publication's admission budget on the shared single-connection SQLite client.
 // Execution deadlines and rollback behavior remain Prisma defaults.
-const runOperationTransaction = <Result>(
+const isExpiredTransactionError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2028'
+
+const runOperationTransaction = async <Result>(
   client: Pick<PrismaClient, '$transaction'>,
   operation: (transaction: Prisma.TransactionClient) => Promise<Result>
-): Promise<Result> => client.$transaction(operation, { maxWait: 10_000 })
+): Promise<Result> => {
+  try {
+    return await client.$transaction(operation, { maxWait: 10_000 })
+  } catch (error) {
+    // Interactive transactions can outlive the process suspension that started them. Prisma then
+    // reports P2028 when the client resumes; the callback only contains fenced database mutations,
+    // so replaying it once starts from a fresh transaction without repeating remote work.
+    if (!isExpiredTransactionError(error)) throw error
+    return client.$transaction(operation, { maxWait: 10_000 })
+  }
+}
 
 type OperationClient = Pick<PrismaClient, '$transaction' | 'computeJobOperation'>
 type OperationClientProvider = () => Promise<OperationClient>
