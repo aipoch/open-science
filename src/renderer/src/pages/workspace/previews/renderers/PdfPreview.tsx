@@ -3452,10 +3452,67 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
   const sourceKind = target?.sourceKind
   const sourceFileId = target?.sourceFileId
   const sourceVersionId = target?.sourceVersionId
+  const {
+    id: draftItemId,
+    projectId: draftItemProjectId,
+    sessionId: draftItemSessionId,
+    title: draftItemTitle,
+    source: draftItemSource,
+    path: draftItemPath,
+    format: draftItemFormat,
+    name: draftItemName,
+    mimeType: draftItemMimeType,
+    size: draftItemSize,
+    mtimeMs: draftItemMtimeMs,
+    artifactId: draftItemArtifactId,
+    managedFileId: draftItemManagedFileId,
+    selectedVersionId: draftItemSelectedVersionId,
+    versionNumber: draftItemVersionNumber,
+    originSession: draftItemOriginSession
+  } = props.item
+  const draftSourceItem = useMemo(
+    () => ({
+      id: draftItemId,
+      projectId: draftItemProjectId,
+      sessionId: draftItemSessionId,
+      title: draftItemTitle,
+      type: 'file' as const,
+      source: draftItemSource,
+      path: draftItemPath,
+      format: draftItemFormat,
+      name: draftItemName,
+      mimeType: draftItemMimeType,
+      size: draftItemSize,
+      mtimeMs: draftItemMtimeMs,
+      artifactId: draftItemArtifactId,
+      managedFileId: draftItemManagedFileId,
+      selectedVersionId: draftItemSelectedVersionId,
+      versionNumber: draftItemVersionNumber,
+      originSession: draftItemOriginSession
+    }),
+    [
+      draftItemId,
+      draftItemProjectId,
+      draftItemSessionId,
+      draftItemTitle,
+      draftItemSource,
+      draftItemPath,
+      draftItemFormat,
+      draftItemName,
+      draftItemMimeType,
+      draftItemSize,
+      draftItemMtimeMs,
+      draftItemArtifactId,
+      draftItemManagedFileId,
+      draftItemSelectedVersionId,
+      draftItemVersionNumber,
+      draftItemOriginSession
+    ]
+  )
   useEffect(() => {
     if (!draftSourceKey || isLibrary || !sourceFileId || !sourceVersionId) return
     let active = true
-    const item = props.item
+    const item = draftSourceItem
     void window.api.managedFileVersions
       .inspect({
         projectId: item.projectId!,
@@ -3503,7 +3560,7 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
     return () => {
       active = false
     }
-  }, [draftSourceKey, isLibrary, sourceFileId, sourceVersionId, props.item, sourceKind])
+  }, [draftSourceKey, draftSourceItem, isLibrary, sourceFileId, sourceVersionId, sourceKind])
   const binding = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
