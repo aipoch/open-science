@@ -88,11 +88,19 @@ const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
 // AppContainer ACL grant. That is the point at which the interactive elevated repair is needed.
 // Keep this narrow: cleanup failures and arbitrary child-process errors must remain fail-closed.
 const isWindowsRuntimeAccessPermissionError = (error: unknown): boolean => {
-  if (!(error instanceof Error)) return false
-  const message = error.message.toLowerCase()
-  return (
-    message.includes('grant appcontainer access') && /\bwindows_acl_access_denied:\s/i.test(message)
-  )
+  const seen = new Set<unknown>()
+  let current: unknown = error
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current)
+    const message = current.message.toLowerCase()
+    if (
+      message.includes('grant appcontainer access') &&
+      /\bwindows_acl_access_denied:\s/i.test(message)
+    )
+      return true
+    current = current.cause
+  }
+  return false
 }
 
 const WINDOWS_PROBE_DIRECTORY_LOCK_CODES = new Set([

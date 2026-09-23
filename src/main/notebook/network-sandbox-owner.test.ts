@@ -2021,6 +2021,52 @@ it('opens the existing administrator authorization flow when the R ACL preflight
   }
 })
 
+it('opens the administrator authorization flow when cleanup wraps the ACL preflight error', async () => {
+  backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+  backend.wrap.mockRejectedValueOnce(
+    new Error('R runtime verification cleanup could not be confirmed.', {
+      cause: new Error(
+        'grant AppContainer access to D:\\R-4.6.1: WINDOWS_ACL_ACCESS_DENIED: access denied'
+      )
+    })
+  )
+  backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => ({
+    argv: [process.execPath, '-e', 'console.log("OPEN_SCIENCE_R_ACCESS_OK")'],
+    env: command.env,
+    annotateStderr: (value: string) => value,
+    resetNetworkConnections: backend.resetNetworkConnections,
+    setExecutionActive: backend.setExecutionActive,
+    confirmProcessTreeTermination: async () => true,
+    cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+      backend.cleanup(outcome)
+  }))
+  backend.setWindowsRuntimeAccess.mockResolvedValue({ cancelled: false })
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: tmpdir(),
+    platform: 'win32',
+    allowRuntimeAccessPrompt: true,
+    getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+    persistAlwaysAllow: vi.fn(),
+    requestDecision: vi.fn()
+  })
+  try {
+    await expect(
+      owner.ensureRuntimeAccess({
+        runtime: 'r',
+        executable: 'D:\\R-4.6.1\\bin\\x64\\Rscript.exe',
+        sessionId: 'r-acl-cleanup-cause'
+      })
+    ).resolves.toEqual({ windowsProtectionRequired: true, windowsRuntimeAccessRequired: true })
+    expect(backend.setWindowsRuntimeAccess).toHaveBeenCalledWith(
+      'D:\\R-4.6.1\\bin\\x64\\Rscript.exe',
+      true,
+      expect.anything()
+    )
+  } finally {
+    await owner.dispose()
+  }
+})
+
 it('does not authorize when an ACL marker appears only in the runtime path', async () => {
   backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
   const failure = new Error(
