@@ -124,6 +124,7 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): (() => voi
       owner.clearSearch = () => onClear(event)
       owner.focusSource = () => {
         if (webContents.isDestroyed?.()) return false
+        if (resolveTarget(event.sender) !== webContents) return false
         webContents.focus?.()
         return true
       }

@@ -101,6 +101,28 @@ describe('source webview lifetime', () => {
     })
     expect(container.querySelector('[data-source-preview-error]')).not.toBeNull()
   })
+  it.each(['hidden', 'inert'])(
+    'does not restore menu focus into a %s source panel',
+    async (attribute) => {
+      let menu!: (request: { guestId: number; x: number; y: number }) => void
+      window.api.sourcePreview!.onContextMenu = (callback) => {
+        menu = callback
+        return () => {}
+      }
+      await render()
+      const guest = container.querySelector('webview')!
+      const focus = vi.fn()
+      Object.assign(guest, { getWebContentsId: () => 12, getClientRects: () => [{}], focus })
+      await act(async () => menu({ guestId: 12, x: 10, y: 10 }))
+      const action = document.body.querySelector<HTMLElement>('[data-action-id="open-source"]')!
+      expect(action).not.toBeNull()
+      // Keep the guest alive as a background tab while the shared menu is dismissed.
+      container.setAttribute(attribute, '')
+      vi.spyOn(window, 'open').mockReturnValue(null)
+      await act(async () => action.click())
+      expect(focus).not.toHaveBeenCalled()
+    }
+  )
   it('keeps one connected guest and writes src only once across StrictMode and rerenders', async () => {
     const setAttribute = vi.spyOn(Element.prototype, 'setAttribute')
     await render()

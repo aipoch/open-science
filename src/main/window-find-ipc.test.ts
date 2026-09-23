@@ -193,6 +193,26 @@ describe('window find IPC', () => {
     expect(closeOverlay).toHaveBeenCalledOnce()
   })
 
+  it('does not restore focus to a source after the search target changes', () => {
+    const host = createTargetWindow()
+    const source = createTargetWindow()
+    const overlay = createOverlay()
+    let active = source.webContents
+    registerFindOverlayOwner(overlay, { mainWindow: host, closeOverlay: vi.fn() })
+    registerWindowFindIpcHandlers({
+      resolveMainWindow: () => host,
+      resolveSearchTarget: () => active
+    })
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    active = host.webContents
+    expect(resolveFindOverlayOwner(overlay)?.focusSource?.()).toBe(false)
+    expect(source.webContents.focus).not.toHaveBeenCalled()
+  })
+
   it('ignores a request when no main window can be resolved for the overlay', () => {
     const target = createTargetWindow()
     registerWindowFindIpcHandlers({ resolveMainWindow: () => null })

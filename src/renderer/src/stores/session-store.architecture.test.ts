@@ -1365,6 +1365,7 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/settings-store.test.ts',
           'src/renderer/web/bootstrap.test.ts',
           'src/renderer/web/renderer-argument-shape-characterization.test.ts',
+          'src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx',
           'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
           'src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx',
           'src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx'

@@ -26,11 +26,12 @@ export const isAllowedSourcePreviewStorageAccess = (
   webContents: WebContents | null,
   session: Electron.Session,
   details: { isMainFrame: boolean; requestingUrl?: string },
-  permission = 'storage-access'
+  permission = 'storage-access',
+  requestingOrigin?: string
 ): boolean =>
   permission === 'storage-access' &&
   !details.isMainFrame &&
-  parseHttpsSourceUrl(details.requestingUrl ?? '') !== undefined &&
+  parseHttpsSourceUrl(details.requestingUrl ?? requestingOrigin ?? '') !== undefined &&
   isRegisteredSourcePreviewGuest(webContents, session)
 
 // The DOM owns guest lifetime. Main owns security and the focused source used by page find.

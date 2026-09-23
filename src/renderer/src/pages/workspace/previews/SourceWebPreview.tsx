@@ -166,6 +166,22 @@ const SourceWebPreviewContent = ({
     'currentUrl' in loadState
       ? (parseHttpsSourceUrl(loadState.currentUrl)?.href ?? sourceUrl.href)
       : sourceUrl.href
+  const restoreSourceFocus = useCallback(
+    (restoreDefault: () => void): void => {
+      if (!nativeView) {
+        restoreDefault()
+        return
+      }
+      const guest = webviewRef.current
+      if (
+        guest?.isConnected &&
+        guest.closest('[hidden], [inert], [aria-hidden="true"]') === null &&
+        guest.getClientRects().length > 0
+      )
+        restoreDefault()
+    },
+    [nativeView]
+  )
   const failureDescription =
     loadState.phase !== 'failed'
       ? undefined
@@ -185,6 +201,7 @@ const SourceWebPreviewContent = ({
       catalog={PREVIEW_CAPABILITY_CATALOG}
       recipe={SOURCE_PREVIEW_MENU_RECIPE}
       invocation={undefined}
+      onRestoreFocus={restoreSourceFocus}
       resolveInvocation={(event) =>
         shouldHandlePreviewContextMenu(event.target) ? undefined : null
       }

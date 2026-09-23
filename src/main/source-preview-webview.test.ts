@@ -198,6 +198,25 @@ describe('source guest security', () => {
       )
     ).toBe(false)
   })
+  it('checks cross-origin storage by origin when Electron omits requestingUrl', () => {
+    const s = setup()
+    s.attach()
+    const guest = s.guest as unknown as Electron.WebContents
+    const session = s.session as unknown as Electron.Session
+    const check = (origin: string, requestingUrl?: string): boolean =>
+      isAllowedSourcePreviewStorageAccess(
+        guest,
+        session,
+        { isMainFrame: false, requestingUrl },
+        'storage-access',
+        origin
+      )
+    expect(check('https://third-party.example')).toBe(true)
+    expect(check('http://third-party.example')).toBe(false)
+    expect(check('https://third-party.example', 'http://third-party.example/frame')).toBe(false)
+    s.guest.emit('destroyed')
+    expect(check('https://third-party.example')).toBe(false)
+  })
   it('blocks only registered guest downloads and unregisters when the guest dies', () => {
     const s = setup()
     s.attach()

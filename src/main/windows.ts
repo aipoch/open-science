@@ -106,7 +106,8 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   const isAllowedRendererPermission = (
     requestingWebContents: WebContents | null,
     permission: string,
-    details: { isMainFrame: boolean; requestingUrl?: string }
+    details: { isMainFrame: boolean; requestingUrl?: string },
+    requestingOrigin?: string
   ): boolean => {
     if (window.isDestroyed()) return false
     if (
@@ -114,7 +115,8 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
         requestingWebContents,
         window.webContents.session,
         details,
-        permission
+        permission,
+        requestingOrigin
       )
     )
       return true
@@ -134,8 +136,8 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       callback(isAllowedRendererPermission(webContents, permission, details))
   )
   window.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, _requestingOrigin, details) =>
-      isAllowedRendererPermission(webContents, permission, details)
+    (webContents, permission, requestingOrigin, details) =>
+      isAllowedRendererPermission(webContents, permission, details, requestingOrigin)
   )
   const unregisterPreviewContextMenuBridge = installPreviewContextMenuBridge(
     window.webContents as unknown as PreviewContextMenuWebContents
