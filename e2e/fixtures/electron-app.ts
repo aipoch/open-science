@@ -346,6 +346,7 @@ type ElectronApp = {
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
   trustSourcePreviewCertificate: (certificate: string) => Promise<void>
+  setDefaultSessionCookie: (url: string) => Promise<void>
   readClipboardText: () => Promise<string>
   markResourceProfilePhase: (phase: string) => Promise<void>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
@@ -1016,14 +1017,28 @@ class ElectronAppHarness implements ElectronApp {
   // Trust only the current test's loopback certificate; retain normal verification elsewhere.
   async trustSourcePreviewCertificate(certificate: string): Promise<void> {
     await this.runningApplication.evaluate(({ session }, certificate) => {
-      session.defaultSession.setCertificateVerifyProc((request, callback) => {
-        callback(
-          request.hostname === '127.0.0.1' && request.certificate.data.trim() === certificate.trim()
-            ? 0
-            : -3
-        )
-      })
+      session
+        .fromPartition('persist:open-science-source-preview-v1')
+        .setCertificateVerifyProc((request, callback) => {
+          callback(
+            request.hostname === '127.0.0.1' &&
+              request.certificate.data.trim() === certificate.trim()
+              ? 0
+              : -3
+          )
+        })
     }, certificate)
+  }
+
+  async setDefaultSessionCookie(url: string): Promise<void> {
+    await this.runningApplication.evaluate(async ({ session }, cookieUrl) => {
+      await session.defaultSession.cookies.set({
+        url: cookieUrl,
+        name: 'hostOnlyCookie',
+        value: 'host-session',
+        path: '/'
+      })
+    }, url)
   }
 
   async readClipboardText(): Promise<string> {

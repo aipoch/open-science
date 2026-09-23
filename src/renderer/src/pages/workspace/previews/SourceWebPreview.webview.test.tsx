@@ -129,6 +129,7 @@ describe('source webview lifetime', () => {
     const webview = container.querySelector('[data-source-preview-frame]')!
     expect(webview?.tagName).toBe('WEBVIEW')
     expect(webview.getAttribute('src')).toBe(item.url)
+    expect(webview.getAttribute('partition')).toBe('persist:open-science-source-preview-v1')
     await act(async () =>
       fire(webview, 'did-frame-navigate', {
         isMainFrame: true,
@@ -142,7 +143,12 @@ describe('source webview lifetime', () => {
     expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
       'https://example.com/redirect'
     )
-    expect(setAttribute.mock.calls.filter(([name]) => name === 'src')).toEqual([['src', item.url]])
+    expect(
+      setAttribute.mock.calls.filter(([name]) => name === 'src' || name === 'partition')
+    ).toEqual([
+      ['partition', 'persist:open-science-source-preview-v1'],
+      ['src', item.url]
+    ])
     expect(webview.isConnected).toBe(true)
   })
   it('retries the existing guest instead of replacing its browsing context', async () => {

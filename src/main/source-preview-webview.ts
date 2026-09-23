@@ -1,13 +1,83 @@
-import { webFrameMain, type BrowserWindow, type WebContents, type WebPreferences } from 'electron'
+import {
+  session as electronSession,
+  webFrameMain,
+  type BrowserWindow,
+  type Cookie,
+  type WebContents,
+  type WebPreferences
+} from 'electron'
 import { isAllowedSourceDescendantNavigation } from './navigation-policy'
 import {
   parseHttpsSourceUrl,
+  SOURCE_PREVIEW_PARTITION,
   SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL,
   SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL
 } from '../shared/source-preview'
 
 const activeSources = new WeakMap<object, WebContents>()
 const registeredSourceGuests = new WeakSet<WebContents>()
+const configuredSessions = new WeakSet<Electron.Session>()
+let sourcePreviewSession: Electron.Session | undefined
+
+// Created only after app readiness. Never copy or clear the host profile on first use.
+export const getSourcePreviewSession = (): Electron.Session => {
+  sourcePreviewSession ??= electronSession.fromPartition(SOURCE_PREVIEW_PARTITION)
+  return sourcePreviewSession
+}
+
+const cookieDomain = (domain: string): string => {
+  const hostname = domain.replace(/^\./, '').toLowerCase()
+  const url = parseHttpsSourceUrl(`https://${hostname}`)
+  if (
+    !hostname ||
+    hostname.includes('*') ||
+    !url ||
+    url.host !== hostname ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('Expected a Cookie domain, not a URL or wildcard')
+  return hostname
+}
+
+// Match the stored Cookie domain exactly (ignoring its leading dot), not unrelated subdomains.
+export const getSourcePreviewCookies = async (domain: string): Promise<Cookie[]> => {
+  const hostname = cookieDomain(domain)
+  const cookies = await getSourcePreviewSession().cookies.get({ domain: hostname })
+  return cookies.filter((cookie) => cookie.domain?.replace(/^\./, '').toLowerCase() === hostname)
+}
+
+export const removeSourcePreviewCookies = async (domain: string): Promise<void> => {
+  const cookies = await getSourcePreviewCookies(domain)
+  const sourceSession = getSourcePreviewSession()
+  for (const cookie of cookies) {
+    const url = new URL(
+      `${cookie.secure ? 'https' : 'http'}://${cookie.domain!.replace(/^\./, '')}`
+    )
+    url.pathname = cookie.path || '/'
+    await sourceSession.cookies.remove(url.href, cookie.name)
+  }
+}
+
+// Cookies are domain scoped, so use the separate Cookie API rather than clear them by origin.
+// CacheStorage belongs to this origin; Chromium's HTTP cache has no exact-domain guarantee.
+export const clearSourcePreviewOriginStorage = async (origin: string): Promise<void> => {
+  const url = parseHttpsSourceUrl(origin)
+  if (!url || url.origin !== origin) throw new Error('Expected an HTTPS origin')
+  await getSourcePreviewSession().clearStorageData({
+    origin,
+    storages: ['filesystem', 'indexdb', 'localstorage', 'websql', 'serviceworkers', 'cachestorage']
+  })
+}
+
+// Deliberately preserve localStorage/IndexedDB. This operation clears only HTTP cache and Cookies.
+export const clearSourcePreviewPartitionData = async (): Promise<void> => {
+  const sourceSession = getSourcePreviewSession()
+  await sourceSession.clearCache()
+  await sourceSession.clearStorageData({ storages: ['cookies'] })
+}
+
 export const getActiveSourceContents = (owner: object): WebContents | undefined => {
   const contents = activeSources.get(owner)
   return contents && !contents.isDestroyed() ? contents : undefined
@@ -34,10 +104,32 @@ export const isAllowedSourcePreviewStorageAccess = (
   parseHttpsSourceUrl(details.requestingUrl ?? requestingOrigin ?? '') !== undefined &&
   isRegisteredSourcePreviewGuest(webContents, session)
 
+const configureSourcePreviewSession = (sourceSession: Electron.Session): void => {
+  if (configuredSessions.has(sourceSession)) return
+  configuredSessions.add(sourceSession)
+  // Install session policies once, regardless of the number of host windows or source tabs.
+  sourceSession.on('will-download', (event, _item, guest) => {
+    if (guest && isRegisteredSourcePreviewGuest(guest, sourceSession)) event.preventDefault()
+  })
+  sourceSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isAllowedSourcePreviewStorageAccess(webContents, sourceSession, details, permission))
+  })
+  sourceSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+    isAllowedSourcePreviewStorageAccess(
+      webContents,
+      sourceSession,
+      details,
+      permission,
+      requestingOrigin
+    )
+  )
+}
+
 // The DOM owns guest lifetime. Main owns security and the focused source used by page find.
 export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
   const host = window.webContents
-  const session = host.session
+  const session = getSourcePreviewSession()
+  configureSourcePreviewSession(session)
   const cleanups = new Map<WebContents, () => void>()
   const willAttach = (
     event: Electron.Event,
@@ -46,7 +138,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
   ): void => {
     if (
       !parseHttpsSourceUrl(params.src ?? '') ||
-      params.partition ||
+      params.partition !== SOURCE_PREVIEW_PARTITION ||
       params.preload ||
       params.webpreferences ||
       params.allowpopups ||
@@ -236,26 +328,17 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
     guest.on('did-frame-navigate', rememberContextTarget)
     guest.once('destroyed', cleanup)
   }
-  const download = (
-    event: Electron.Event,
-    _item: Electron.DownloadItem,
-    guest: WebContents
-  ): void => {
-    if (cleanups.has(guest) && registeredSourceGuests.has(guest)) event.preventDefault()
-  }
   const hostFocus = (): void => {
     activeSources.delete(host)
   }
   host.on('will-attach-webview', willAttach)
   host.on('did-attach-webview', didAttach)
   host.on('focus', hostFocus)
-  session.on('will-download', download)
   window.on('closed', () => {
     for (const cleanup of cleanups.values()) cleanup()
     activeSources.delete(host)
     host.removeListener('will-attach-webview', willAttach)
     host.removeListener('did-attach-webview', didAttach)
     host.removeListener('focus', hostFocus)
-    session.removeListener('will-download', download)
   })
 }

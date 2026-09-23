@@ -1,7 +1,4 @@
-import {
-  installSourcePreviewWebviews,
-  isAllowedSourcePreviewStorageAccess
-} from './source-preview-webview'
+import { installSourcePreviewWebviews } from './source-preview-webview'
 import {
   app,
   BrowserWindow,
@@ -106,20 +103,9 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   const isAllowedRendererPermission = (
     requestingWebContents: WebContents | null,
     permission: string,
-    details: { isMainFrame: boolean; requestingUrl?: string },
-    requestingOrigin?: string
+    details: { isMainFrame: boolean; requestingUrl?: string }
   ): boolean => {
     if (window.isDestroyed()) return false
-    if (
-      isAllowedSourcePreviewStorageAccess(
-        requestingWebContents,
-        window.webContents.session,
-        details,
-        permission,
-        requestingOrigin
-      )
-    )
-      return true
     if (requestingWebContents !== window.webContents) return false
     const rendererUrl = window.webContents.getURL()
     return (
@@ -130,14 +116,14 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       ALLOWED_RENDERER_PERMISSIONS.has(permission)
     )
   }
-  // Remote guests share the Session, but never the trusted renderer's permissions.
+  // Remote source guests use their own Session and permission handlers.
   window.webContents.session.setPermissionRequestHandler(
     (webContents, permission, callback, details) =>
       callback(isAllowedRendererPermission(webContents, permission, details))
   )
   window.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) =>
-      isAllowedRendererPermission(webContents, permission, details, requestingOrigin)
+    (webContents, permission, _requestingOrigin, details) =>
+      isAllowedRendererPermission(webContents, permission, details)
   )
   const unregisterPreviewContextMenuBridge = installPreviewContextMenuBridge(
     window.webContents as unknown as PreviewContextMenuWebContents

@@ -6,7 +6,10 @@ import type {
   DidNavigateInPageEvent,
   DidFailLoadEvent
 } from 'electron'
-import type { SourcePreviewLoadState } from '../../../../../shared/source-preview'
+import {
+  SOURCE_PREVIEW_PARTITION,
+  type SourcePreviewLoadState
+} from '../../../../../shared/source-preview'
 import { PreviewActionMenuAdapterContext } from '../preview-actions/preview-action-adapter-context'
 
 // A connected custom element can still be waiting for Electron's asynchronous guest attachment.
@@ -123,6 +126,7 @@ export const SourceWebview = ({
       guest.setAttribute('data-source-preview-frame', '')
       guest.setAttribute('data-source-url', sourceUrl)
       guest.setAttribute('class', 'absolute inset-0 flex size-full bg-white')
+      guest.setAttribute('partition', SOURCE_PREVIEW_PARTITION)
       guest.setAttribute('src', sourceUrl)
       host.appendChild(guest)
     }

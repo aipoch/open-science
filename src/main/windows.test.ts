@@ -205,6 +205,14 @@ vi.mock('electron', () => ({
       return currentWindow as unknown as object
     }
   },
+  session: {
+    fromPartition: () => ({
+      setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      on: vi.fn(),
+      removeListener: vi.fn()
+    })
+  },
   WebContentsView: class {},
   dialog: { showMessageBox: showMessageBoxMock, showMessageBoxSync: showMessageBoxSyncMock },
   ipcMain: { on: ipcMainOnMock, removeListener: ipcMainRemoveListenerMock },

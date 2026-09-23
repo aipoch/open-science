@@ -62,7 +62,7 @@ test('retains source cookies, cache and local storage while session storage ends
       ]
     }).end(`<!doctype html><html><body><h1>Source storage fixture</h1>
       <button id="access">Allow storage</button><output id="result"></output>
-      <iframe id="third-party" src="https://third-party.example/storage"></iframe>
+      <iframe id="third-party" src="https://pmc.ncbi.nlm.nih.gov/articles/PMC12345"></iframe>
       <script>document.getElementById('access').onclick = async () => {
         try { await document.requestStorageAccess(); document.getElementById('result').textContent = 'granted'; }
         catch (error) { document.getElementById('result').textContent = error.name; }
@@ -85,6 +85,7 @@ test('retains source cookies, cache and local storage while session storage ends
       const host = document.createElement('webview')
       host.id = 'storage-fixture'
       host.style.cssText = 'position:fixed;left:20px;top:20px;width:600px;height:500px;z-index:10'
+      host.setAttribute('partition', 'persist:open-science-source-preview-v1')
       host.setAttribute('src', `${origin}/page`)
       document.body.append(host)
     }, origin)
@@ -110,7 +111,8 @@ test('retains source cookies, cache and local storage while session storage ends
   try {
     let page = await app.completeOnboarding()
     await app.trustSourcePreviewCertificate(pem)
-    await page.context().route('https://third-party.example/storage', async (route) => {
+    await app.setDefaultSessionCookie(`${origin}/page`)
+    await page.context().route('https://pmc.ncbi.nlm.nih.gov/articles/PMC12345', async (route) => {
       await route.fulfill({
         contentType: 'text/html',
         headers: {
@@ -145,11 +147,31 @@ test('retains source cookies, cache and local storage while session storage ends
     expect(initial.cookies).toContain('strictCookie=retained')
     expect(initial.cookies).toContain('serverCookie=retained')
     expect(initial.cookies).toContain('clientCookie=retained')
+    expect(initial.cookies).not.toContain('hostOnlyCookie=host-session')
     expect(initial.cached).toBe('cached evidence')
     expect(initial.privileged).toBe('undefined')
     // The app's trusted document cannot read the remote origin's localStorage.
     expect(await page.evaluate(() => localStorage.getItem('source-persistent'))).toBeNull()
     const remote = sourceFrame(page)
+    const siblingClosed = page.context().waitForEvent('page')
+    await page.evaluate((origin) => {
+      const sibling = document.createElement('webview')
+      sibling.id = 'storage-fixture-sibling'
+      sibling.style.cssText =
+        'position:fixed;left:640px;top:20px;width:600px;height:500px;z-index:10'
+      sibling.setAttribute('partition', 'persist:open-science-source-preview-v1')
+      sibling.setAttribute('src', `${origin}/page`)
+      document.body.append(sibling)
+    }, origin)
+    const sibling = await siblingClosed
+    await expect(sibling.getByRole('heading')).toHaveText('Source storage fixture')
+    expect(await sibling.evaluate(() => localStorage.getItem('source-persistent'))).toBe('retained')
+    expect(await sibling.evaluate(async () => (await fetch('/echo')).text())).toContain(
+      'clientCookie=retained'
+    )
+    const siblingClosedAfterRemoval = sibling.waitForEvent('close')
+    await page.locator('#storage-fixture-sibling').evaluate((element) => element.remove())
+    await siblingClosedAfterRemoval
     expect(
       await remote.evaluate(() => ({
         api: typeof (window as unknown as { api?: unknown }).api,
@@ -186,6 +208,7 @@ test('retains source cookies, cache and local storage while session storage ends
         ({ name, value, origin }) => {
           const guest = document.createElement('webview')
           guest.id = 'rejected-guest'
+          guest.setAttribute('partition', 'persist:open-science-source-preview-v1')
           guest.setAttribute('src', `${origin}/page`)
           guest.setAttribute(name, value)
           document.body.append(guest)

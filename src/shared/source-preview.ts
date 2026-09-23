@@ -1,4 +1,5 @@
 const SOURCE_PREVIEW_FRAME_NAME = 'open-science-source-preview'
+const SOURCE_PREVIEW_PARTITION = 'persist:open-science-source-preview-v1'
 // Retain ordinary origin-scoped storage and let a user gesture request unpartitioned cookies.
 const SOURCE_PREVIEW_SANDBOX =
   'allow-same-origin allow-scripts allow-forms allow-storage-access-by-user-activation'
@@ -43,6 +44,7 @@ const parseHttpsSourceUrl = (value: string): URL | undefined => {
 
 export {
   SOURCE_PREVIEW_FRAME_NAME,
+  SOURCE_PREVIEW_PARTITION,
   SOURCE_PREVIEW_SANDBOX,
   SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL,
   SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL,

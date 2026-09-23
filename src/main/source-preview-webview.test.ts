@@ -4,10 +4,30 @@ import {
   installSourcePreviewWebviews,
   getActiveSourceContents,
   isRegisteredSourcePreviewGuest,
-  isAllowedSourcePreviewStorageAccess
+  isAllowedSourcePreviewStorageAccess,
+  getSourcePreviewSession,
+  getSourcePreviewCookies,
+  removeSourcePreviewCookies,
+  clearSourcePreviewOriginStorage,
+  clearSourcePreviewPartitionData
 } from './source-preview-webview'
 
-vi.mock('electron', () => ({ webFrameMain: { fromId: vi.fn() } }))
+const previewSession = Object.assign(new EventEmitter(), {
+  setPermissionRequestHandler: vi.fn<Electron.Session['setPermissionRequestHandler']>(),
+  setPermissionCheckHandler: vi.fn<Electron.Session['setPermissionCheckHandler']>(),
+  clearCache: vi.fn(async () => undefined),
+  clearStorageData: vi.fn(async () => undefined),
+  cookies: {
+    get: vi.fn(async (): Promise<Electron.Cookie[]> => []),
+    remove: vi.fn(async () => undefined)
+  }
+})
+previewSession.setMaxListeners(0)
+
+vi.mock('electron', () => ({
+  session: { fromPartition: vi.fn(() => previewSession) },
+  webFrameMain: { fromId: vi.fn() }
+}))
 
 const setup = (): {
   session: EventEmitter
@@ -18,6 +38,7 @@ const setup = (): {
     getZoomFactor: () => number
   }
   owner: EventEmitter
+  previewSession: EventEmitter
   guest: EventEmitter & {
     id: number
     session: EventEmitter
@@ -38,12 +59,19 @@ const setup = (): {
   installSourcePreviewWebviews(owner as unknown as Electron.BrowserWindow)
   const guest = Object.assign(new EventEmitter(), {
     id: 12,
-    session,
+    session: previewSession,
     isDestroyed: () => false,
     close: vi.fn(),
     setWindowOpenHandler: vi.fn()
   })
-  return { session, host, owner, guest, attach: () => host.emit('did-attach-webview', {}, guest) }
+  return {
+    session,
+    previewSession,
+    host,
+    owner,
+    guest,
+    attach: () => host.emit('did-attach-webview', {}, guest)
+  }
 }
 describe('source guest security', () => {
   it.each([
@@ -63,21 +91,33 @@ describe('source guest security', () => {
   ])('rejects unsafe attachment %j', (params) => {
     const { host } = setup()
     const event = { preventDefault: vi.fn() }
-    host.emit('will-attach-webview', event, {}, { src: 'https://example.com/paper', ...params })
+    host.emit(
+      'will-attach-webview',
+      event,
+      {},
+      {
+        src: 'https://example.com/paper',
+        partition: 'persist:open-science-source-preview-v1',
+        ...params
+      }
+    )
     expect(event.preventDefault).toHaveBeenCalledOnce()
   })
-  it('fixes secure preferences and retains the exact host Session', () => {
-    const { host, session } = setup()
+  it('fixes secure preferences and uses the exact dedicated Session', () => {
+    const { host, previewSession } = setup()
     const event = { preventDefault: vi.fn() }
     const preferences: Electron.WebPreferences = {
       sandbox: false,
       nodeIntegration: true,
       webSecurity: false
     }
-    host.emit('will-attach-webview', event, preferences, { src: 'https://example.com/paper' })
+    host.emit('will-attach-webview', event, preferences, {
+      src: 'https://example.com/paper',
+      partition: 'persist:open-science-source-preview-v1'
+    })
     expect(event.preventDefault).not.toHaveBeenCalled()
     expect(preferences).toMatchObject({
-      session,
+      session: previewSession,
       sandbox: true,
       contextIsolation: true,
       webSecurity: true,
@@ -87,6 +127,23 @@ describe('source guest security', () => {
       webviewTag: false
     })
     expect(preferences.preload).toBeUndefined()
+  })
+  it('rejects every partition except the exact shared source preview partition', () => {
+    const { host } = setup()
+    for (const partition of [
+      undefined,
+      'persist:untrusted',
+      'persist:open-science-source-preview-v2'
+    ]) {
+      const event = { preventDefault: vi.fn() }
+      host.emit(
+        'will-attach-webview',
+        event,
+        {},
+        { src: 'https://example.com/paper', ...(partition ? { partition } : {}) }
+      )
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+    }
   })
   it('rejects an inherited preload and mismatched session before granting guest behavior', () => {
     const s = setup()
@@ -180,7 +237,7 @@ describe('source guest security', () => {
   it('registers only live HTTPS guests for storage access and removes them on destroy', () => {
     const s = setup()
     const guest = s.guest as unknown as Electron.WebContents
-    const session = s.session as unknown as Electron.Session
+    const session = s.previewSession as unknown as Electron.Session
     expect(isRegisteredSourcePreviewGuest(guest, session)).toBe(false)
     s.attach()
     expect(isRegisteredSourcePreviewGuest(guest, session)).toBe(true)
@@ -193,7 +250,7 @@ describe('source guest security', () => {
   it('allows storage access only for HTTPS non-main frames of a live source guest', () => {
     const s = setup()
     const guest = s.guest as unknown as Electron.WebContents
-    const session = s.session as unknown as Electron.Session
+    const session = s.previewSession as unknown as Electron.Session
     s.attach()
     expect(
       isAllowedSourcePreviewStorageAccess(guest, session, {
@@ -229,7 +286,7 @@ describe('source guest security', () => {
     const s = setup()
     s.attach()
     const guest = s.guest as unknown as Electron.WebContents
-    const session = s.session as unknown as Electron.Session
+    const session = s.previewSession as unknown as Electron.Session
     const check = (origin: string, requestingUrl?: string): boolean =>
       isAllowedSourcePreviewStorageAccess(
         guest,
@@ -248,13 +305,13 @@ describe('source guest security', () => {
     const s = setup()
     s.attach()
     const event = { preventDefault: vi.fn() }
-    s.session.emit('will-download', event, {}, {})
+    s.previewSession.emit('will-download', event, {}, {})
     expect(event.preventDefault).not.toHaveBeenCalled()
-    s.session.emit('will-download', event, {}, s.guest)
+    s.previewSession.emit('will-download', event, {}, s.guest)
     expect(event.preventDefault).toHaveBeenCalledOnce()
     s.guest.emit('destroyed')
     event.preventDefault.mockClear()
-    s.session.emit('will-download', event, {}, s.guest)
+    s.previewSession.emit('will-download', event, {}, s.guest)
     expect(event.preventDefault).not.toHaveBeenCalled()
   })
   it('routes focused page find and shortcuts without intercepting composition', () => {
@@ -350,7 +407,98 @@ describe('source guest security', () => {
       }
     })
     s.owner.emit('closed')
-    expect(s.session.listenerCount('will-download')).toBe(0)
+    // The dedicated Session is process-scoped and remains configured for future windows.
+    expect(s.previewSession.listenerCount('will-download')).toBe(1)
     expect(s.guest.listenerCount('before-input-event')).toBe(0)
+  })
+})
+
+describe('source partition management', () => {
+  it('shares one dedicated session and installs policies once across host windows', () => {
+    const a = setup()
+    const b = setup()
+    expect(getSourcePreviewSession()).toBe(previewSession)
+    expect(getSourcePreviewSession()).not.toBe(a.host.session)
+    a.attach()
+    b.attach()
+    const check = previewSession.setPermissionCheckHandler.mock.calls[0][0]!
+    const request = previewSession.setPermissionRequestHandler.mock.calls[0][0]!
+    const details = { isMainFrame: false, requestingUrl: 'https://third-party.example/frame' }
+    const guest = a.guest as unknown as Electron.WebContents
+    expect(check(guest, 'storage-access', 'https://third-party.example', details)).toBe(true)
+    expect(check(guest, 'geolocation', 'https://third-party.example', details)).toBe(false)
+    expect(
+      check(
+        a.host as unknown as Electron.WebContents,
+        'storage-access',
+        'https://third-party.example',
+        details
+      )
+    ).toBe(false)
+    const callback = vi.fn()
+    request(guest, 'storage-access', callback, details)
+    expect(callback).toHaveBeenCalledWith(true)
+    a.owner.emit('closed')
+    expect(check(guest, 'storage-access', 'https://third-party.example', details)).toBe(false)
+    expect(
+      check(
+        b.guest as unknown as Electron.WebContents,
+        'storage-access',
+        'https://third-party.example',
+        details
+      )
+    ).toBe(true)
+    expect(previewSession.setPermissionCheckHandler).toHaveBeenCalledOnce()
+    expect(previewSession.listenerCount('will-download')).toBe(1)
+    b.owner.emit('closed')
+  })
+  it('queries and removes only the exact normalized Cookie domain through Electron', async () => {
+    const host = setup()
+    const hostCookieRemove = vi.fn()
+    Object.assign(host.session, { cookies: { remove: hostCookieRemove } })
+    const cookie = {
+      name: 'login',
+      value: 'secret',
+      domain: '.example.com',
+      path: '/account',
+      secure: true,
+      httpOnly: true,
+      session: false
+    } as Electron.Cookie
+    previewSession.cookies.get.mockResolvedValue([
+      cookie,
+      { ...cookie, domain: 'child.example.com' }
+    ])
+    expect(await getSourcePreviewCookies('.EXAMPLE.COM')).toEqual([cookie])
+    await removeSourcePreviewCookies('example.com')
+    expect(previewSession.cookies.remove).toHaveBeenCalledWith(
+      'https://example.com/account',
+      'login'
+    )
+    expect(previewSession.cookies.remove).toHaveBeenCalledTimes(1)
+    expect(hostCookieRemove).not.toHaveBeenCalled()
+    for (const invalid of ['', '*', 'https://example.com', 'example.com:443', 'example.com/path']) {
+      await expect(removeSourcePreviewCookies(invalid)).rejects.toThrow()
+    }
+    host.owner.emit('closed')
+  })
+  it('scopes origin cleanup and keeps Cookie and HTTP-cache cleanup explicit', async () => {
+    await clearSourcePreviewOriginStorage('https://example.com')
+    expect(previewSession.clearStorageData).toHaveBeenCalledWith({
+      origin: 'https://example.com',
+      storages: [
+        'filesystem',
+        'indexdb',
+        'localstorage',
+        'websql',
+        'serviceworkers',
+        'cachestorage'
+      ]
+    })
+    for (const origin of ['', 'https://example.com/path', 'http://example.com'])
+      await expect(clearSourcePreviewOriginStorage(origin)).rejects.toThrow()
+    await clearSourcePreviewPartitionData()
+    expect(previewSession.clearCache).toHaveBeenCalledOnce()
+    expect(previewSession.clearStorageData).toHaveBeenLastCalledWith({ storages: ['cookies'] })
   })
 })
