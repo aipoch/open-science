@@ -7477,6 +7477,11 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "Se muestran {{shown}} de {{total}} hallazgos. Revise el código completo a continuación.",
     "Current environment": "Entorno actual",
     "Selected environment": "Entorno seleccionado",
-    "Switching environments clears the current kernel's variables.": "Al cambiar de entorno se borran las variables del Kernel actual."
+    "Switching environments clears the current kernel's variables.": "Al cambiar de entorno se borran las variables del Kernel actual.",
+    "Delete skill?": "¿Eliminar la habilidad?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "«{{name}}» se eliminará permanentemente. Esta acción no se puede deshacer.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Esta habilidad está activada para {{count}} agente; ya no podrá usarla.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._many": "Esta habilidad está activada para {{count}} agentes; ya no podrán usarla.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Esta habilidad está activada para {{count}} agentes; ya no podrán usarla."
   }
 }

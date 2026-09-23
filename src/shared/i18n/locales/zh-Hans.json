@@ -7149,6 +7149,9 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "当前显示 {{total}} 项发现中的 {{shown}} 项。请审查下方完整代码。",
     "Current environment": "当前环境",
     "Selected environment": "所选环境",
-    "Switching environments clears the current kernel's variables.": "切换环境会清除当前内核中的变量。"
+    "Switching environments clears the current kernel's variables.": "切换环境会清除当前内核中的变量。",
+    "Delete skill?": "删除技能？",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "将永久删除“{{name}}”。此操作无法撤销。",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "此技能已对 {{count}} 个智能体启用；它们将无法再使用该技能。"
   }
 }

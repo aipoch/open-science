@@ -7149,6 +7149,9 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{total}} 件中 {{shown}} 件を表示しています。以下のコード全体を確認してください。",
     "Current environment": "現在の環境",
     "Selected environment": "選択した環境",
-    "Switching environments clears the current kernel's variables.": "環境を切り替えると、現在の Kernel の変数が消去されます。"
+    "Switching environments clears the current kernel's variables.": "環境を切り替えると、現在の Kernel の変数が消去されます。",
+    "Delete skill?": "スキルを削除しますか？",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "「{{name}}」は完全に削除されます。この操作は元に戻せません。",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "このスキルは {{count}} 個のエージェントで有効になっています。これらのエージェントはこのスキルを使用できなくなります。"
   }
 }

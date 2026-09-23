@@ -7147,6 +7147,9 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{total}}개 중 {{shown}}개를 표시합니다. 아래 전체 코드를 검토하세요.",
     "Current environment": "현재 환경",
     "Selected environment": "선택한 환경",
-    "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다."
+    "Switching environments clears the current kernel's variables.": "환경을 전환하면 현재 커널의 변수가 지워집니다.",
+    "Delete skill?": "스킬을 삭제하시겠습니까?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "\"{{name}}\"이(가) 영구적으로 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "이 스킬은 {{count}}개의 에이전트에서 활성화되어 있으며, 해당 에이전트는 더 이상 이 스킬을 사용할 수 없습니다."
   }
 }

@@ -7477,6 +7477,11 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "{{shown}} résultats sur {{total}} sont affichés. Vérifiez le code complet ci-dessous.",
     "Current environment": "Environnement actuel",
     "Selected environment": "Environnement sélectionné",
-    "Switching environments clears the current kernel's variables.": "Changer d’environnement efface les variables du noyau actuel."
+    "Switching environments clears the current kernel's variables.": "Changer d’environnement efface les variables du noyau actuel.",
+    "Delete skill?": "Supprimer la compétence ?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "« {{name}} » sera définitivement supprimée. Cette action est irréversible.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Cette compétence est activée pour {{count}} agent ; il ne pourra plus l'utiliser.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._many": "Cette compétence est activée pour {{count}} agents ; ils ne pourront plus l'utiliser.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Cette compétence est activée pour {{count}} agents ; ils ne pourront plus l'utiliser."
   }
 }

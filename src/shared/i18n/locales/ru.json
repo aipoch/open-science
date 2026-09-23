@@ -7616,6 +7616,12 @@
     "Showing {{shown}} of {{total}} findings. Review the full code below.": "Показано {{shown}} из {{total}} результатов. Проверьте полный код ниже.",
     "Current environment": "Текущая среда",
     "Selected environment": "Выбранная среда",
-    "Switching environments clears the current kernel's variables.": "При переключении среды переменные текущего ядра удаляются."
+    "Switching environments clears the current kernel's variables.": "При переключении среды переменные текущего ядра удаляются.",
+    "Delete skill?": "Удалить навык?",
+    "\"{{name}}\" will be permanently deleted. This action cannot be undone.": "«{{name}}» будет удалён без возможности восстановления. Это действие нельзя отменить.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._one": "Этот навык включён для {{count}} агента; он больше не сможет его использовать.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._few": "Этот навык включён для {{count}} агентов; они больше не смогут его использовать.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._many": "Этот навык включён для {{count}} агентов; они больше не смогут его использовать.",
+    "This skill is enabled for {{count}} agents; they will no longer be able to use it._other": "Этот навык включён для {{count}} агента; они больше не смогут его использовать."
   }
 }
