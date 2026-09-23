@@ -76,7 +76,8 @@
       "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
-      "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts"
+      "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts",
+      "src/renderer/web/project-archive.test.ts"
     ],
     "contract": [],
     "consumer": [
@@ -302,7 +303,8 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

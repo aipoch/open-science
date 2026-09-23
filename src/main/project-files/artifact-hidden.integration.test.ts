@@ -82,7 +82,9 @@ describe('hidden artifacts (isolated SQLite and files)', () => {
         versionId: adopted.versionId,
         encoding: 'base64' as const
       }
-      const read = (request: ReadHiddenArtifactRequest) =>
+      const read = (
+        request: ReadHiddenArtifactRequest
+      ): ReturnType<typeof readHiddenArtifactChunk> =>
         readHiddenArtifactChunk(request, (request) =>
           versions.openHiddenArtifactVersion(request, request.versionId)
         )
