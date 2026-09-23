@@ -94,9 +94,55 @@ export const captureNativeRecords = async (
   additionalVersionIds: readonly string[] = []
 ): Promise<PackageRecords> => {
   const scope = { projectId: request.projectId, sessionId: request.sessionId }
+  const hiddenArtifactIds = new Set<string>()
+  const hiddenArtifactsExist =
+    (await client.artifactLineage.count({ where: { hiddenAt: { not: null } } })) > 0
+  const readArtifactVisibility = async (
+    ids: readonly string[]
+  ): Promise<ReadonlyMap<string, boolean>> => {
+    const uniqueIds = [...new Set(ids)]
+    if (!uniqueIds.length) return new Map()
+    if (!hiddenArtifactsExist) return new Map(uniqueIds.map((id) => [id, false]))
+    const rows = await client.artifactVersion.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, artifact: { select: { hiddenAt: true } } }
+    })
+    const visibility = new Map(rows.map((row) => [row.id, Boolean(row.artifact.hiddenAt)]))
+    for (const [id, hidden] of visibility) if (hidden) hiddenArtifactIds.add(id)
+    return visibility
+  }
+  const addVisibleArtifactIds = async (
+    ids: readonly string[],
+    errorMessage: string
+  ): Promise<void> => {
+    const visibility = await readArtifactVisibility(ids)
+    if (ids.some((id) => !visibility.has(id))) throw new Error(errorMessage)
+    for (const [id, hidden] of visibility) if (!hidden) artifactIds.add(id)
+  }
+  const addResolvedVersionIds = async (ids: readonly string[], errorMessage: string) => {
+    const uniqueIds = [...new Set(ids)]
+    const artifacts = await client.artifactVersion.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, artifact: { select: { hiddenAt: true } } }
+    })
+    const uploads = await client.uploadVersion.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true }
+    })
+    const resolved = new Set([...artifacts.map((row) => row.id), ...uploads.map((row) => row.id)])
+    if (uniqueIds.some((id) => !resolved.has(id))) throw new Error(errorMessage)
+    for (const row of artifacts) {
+      if (row.artifact.hiddenAt) hiddenArtifactIds.add(row.id)
+      else artifactIds.add(row.id)
+    }
+    for (const row of uploads) uploadIds.add(row.id)
+  }
   const artifactIds = new Set(
     (
-      await client.artifactVersion.findMany({ where: { artifact: scope }, select: { id: true } })
+      await client.artifactVersion.findMany({
+        where: { artifact: { is: { ...scope, hiddenAt: null } } },
+        select: { id: true }
+      })
     ).map((row) => row.id)
   )
   const uploadIds = new Set(
@@ -107,17 +153,24 @@ export const captureNativeRecords = async (
   const reviewIds = new Set(
     (await client.review.findMany({ where: scope, select: { id: true } })).map((row) => row.id)
   )
-  for (const row of await client.artifactVersion.findMany({
+  const additionalArtifacts = await client.artifactVersion.findMany({
     where: { id: { in: [...additionalVersionIds] } },
-    select: { id: true }
-  }))
-    artifactIds.add(row.id)
+    select: { id: true, artifact: { select: { hiddenAt: true } } }
+  })
+  for (const row of additionalArtifacts) {
+    if (row.artifact.hiddenAt) hiddenArtifactIds.add(row.id)
+    else artifactIds.add(row.id)
+  }
   for (const row of await client.uploadVersion.findMany({
     where: { id: { in: [...additionalVersionIds] } },
     select: { id: true }
   }))
     uploadIds.add(row.id)
-  if (additionalVersionIds.some((id) => !artifactIds.has(id) && !uploadIds.has(id)))
+  if (
+    additionalVersionIds.some(
+      (id) => !additionalArtifacts.some((row) => row.id === id) && !uploadIds.has(id)
+    )
+  )
     throw new Error('Session or Notebook references missing file evidence.')
   // Visit each dependency once per capture. Do not cache across captures: export's final
   // consistency check must observe fresh source authority, including linked foreign Sessions.
@@ -155,7 +208,11 @@ export const captureNativeRecords = async (
     const inputs = nextArtifacts.length
       ? await client.artifactVersionInput.findMany({
           where: { artifactVersionId: { in: nextArtifacts } },
-          select: { sourceArtifactVersionId: true, sourceUploadVersionId: true }
+          select: {
+            sourceArtifactVersionId: true,
+            sourceUploadVersionId: true,
+            inputFileVersionId: true
+          }
         })
       : []
     const findings =
@@ -183,10 +240,14 @@ export const captureNativeRecords = async (
     const reviewSources = new Set<string>()
     for (const review of reviews) {
       const scope = JSON.parse(review.scope)
-      for (const id of scope.artifactVersionIds ?? []) {
+      const artifactVersionIds = scope.artifactVersionIds ?? []
+      for (const id of artifactVersionIds) {
         if (typeof id !== 'string') throw new Error('Invalid Review Artifact reference.')
-        artifactIds.add(id)
       }
+      await addResolvedVersionIds(
+        artifactVersionIds,
+        'Review references missing artifact evidence.'
+      )
       const sourceIds: string[] = scope.sourceDocumentVersionIds ?? []
       if (!Array.isArray(sourceIds) || sourceIds.some((id) => typeof id !== 'string'))
         throw new Error('Invalid Review source reference.')
@@ -194,33 +255,60 @@ export const captureNativeRecords = async (
     }
     if (reviewSources.size) {
       const sourceIds = [...reviewSources]
-      for (const row of await client.artifactVersion.findMany({
-        where: { id: { in: sourceIds } },
-        select: { id: true }
-      }))
-        artifactIds.add(row.id)
-      for (const row of await client.uploadVersion.findMany({
-        where: { id: { in: sourceIds } },
-        select: { id: true }
-      }))
-        uploadIds.add(row.id)
-      if (sourceIds.some((id) => !artifactIds.has(id) && !uploadIds.has(id)))
-        throw new Error('Review references missing source evidence.')
+      await addResolvedVersionIds(sourceIds, 'Review references missing source evidence.')
       for (const id of sourceIds) resolvedSources.add(id)
     }
-    for (const row of versions) if (row.basedOnVersionId) artifactIds.add(row.basedOnVersionId)
-    for (const row of uploads) if (row.basedOnVersionId) uploadIds.add(row.basedOnVersionId)
-    for (const row of inputs) {
-      if (row.sourceArtifactVersionId) artifactIds.add(row.sourceArtifactVersionId)
-      if (row.sourceUploadVersionId) uploadIds.add(row.sourceUploadVersionId)
+    for (const row of versions) {
+      if (!row.basedOnVersionId) continue
+      // basedOnVersionId is constrained to the same ArtifactLineage, so a visible version's
+      // derivation remains visible. Hidden lineages never enter artifactIds in the first place.
+      artifactIds.add(row.basedOnVersionId)
     }
+    for (const row of uploads) if (row.basedOnVersionId) uploadIds.add(row.basedOnVersionId)
+    const inputArtifactIds = inputs.flatMap((row) =>
+      [
+        row.sourceArtifactVersionId,
+        ...(row.sourceKind === 'artifact-version' ? [row.inputFileVersionId] : [])
+      ].filter((id): id is string => typeof id === 'string')
+    )
+    await addVisibleArtifactIds(
+      inputArtifactIds,
+      'Session package references a missing immutable Version.'
+    )
+    const inputUploadIds = [
+      ...new Set(
+        inputs.flatMap((row) =>
+          [
+            row.sourceUploadVersionId,
+            ...(row.sourceKind === 'upload-version' ? [row.inputFileVersionId] : [])
+          ].filter((id): id is string => typeof id === 'string')
+        )
+      )
+    ]
+    const inputUploads = inputUploadIds.length
+      ? await client.uploadVersion.findMany({
+          where: { id: { in: inputUploadIds } },
+          select: { id: true }
+        })
+      : []
+    if (inputUploads.length !== inputUploadIds.length)
+      throw new Error('Session package references a missing immutable Version.')
+    for (const row of inputUploads) uploadIds.add(row.id)
     for (const row of findings) {
       reviewIds.add(row.reviewId)
-      if (row.artifactVersionId) artifactIds.add(row.artifactVersionId)
+      if (row.artifactVersionId)
+        await addVisibleArtifactIds(
+          [row.artifactVersionId],
+          'Review references missing artifact evidence.'
+        )
     }
     for (const row of dispositions) {
       if (row.causeReviewId) reviewIds.add(row.causeReviewId)
-      if (row.assessedArtifactVersionId) artifactIds.add(row.assessedArtifactVersionId)
+      if (row.assessedArtifactVersionId)
+        await addVisibleArtifactIds(
+          [row.assessedArtifactVersionId],
+          'Review references missing artifact evidence.'
+        )
     }
     if (count === artifactIds.size + uploadIds.size + reviewIds.size) break
   }
@@ -247,10 +335,23 @@ export const captureNativeRecords = async (
     where: { id: { in: uploadVersions.map((row) => row.uploadFileId) } },
     orderBy: { id: 'asc' }
   })
-  const inputs = await client.artifactVersionInput.findMany({
+  const allInputs = await client.artifactVersionInput.findMany({
     where: { artifactVersionId: { in: [...artifactIds] } },
     orderBy: { id: 'asc' }
   })
+  const inputVisibility = await readArtifactVisibility(
+    allInputs.flatMap((row) =>
+      [row.inputFileVersionId, row.sourceArtifactVersionId].filter(
+        (id): id is string => typeof id === 'string'
+      )
+    )
+  )
+  const inputs = allInputs.filter(
+    (row) =>
+      ![row.inputFileVersionId, row.sourceArtifactVersionId].some(
+        (id) => id && inputVisibility.get(id) === true
+      )
+  )
   const messageSnapshots = await client.artifactMessageSnapshot.findMany({
     where: {
       id: { in: versions.flatMap((row) => (row.messageSnapshotId ? [row.messageSnapshotId] : [])) }
@@ -272,18 +373,64 @@ export const captureNativeRecords = async (
   })
   if (reviews.some((row) => row.lifecycle === 'running'))
     throw new Error('Wait for Reviews to finish before exporting.')
-  const findings = await client.finding.findMany({
+  const allFindings = await client.finding.findMany({
     where: { reviewId: { in: reviews.map((row) => row.id) } },
     orderBy: { id: 'asc' }
   })
-  const dispositions = await client.reviewFindingDisposition.findMany({
-    where: { sourceFindingId: { in: findings.map((row) => row.id) } },
-    orderBy: { id: 'asc' }
-  })
+  const findings = allFindings.filter(
+    (row) => !row.artifactVersionId || !hiddenArtifactIds.has(row.artifactVersionId)
+  )
+  const dispositions = (
+    await client.reviewFindingDisposition.findMany({
+      where: { sourceFindingId: { in: findings.map((row) => row.id) } },
+      orderBy: { id: 'asc' }
+    })
+  ).filter(
+    (row) => !row.assessedArtifactVersionId || !hiddenArtifactIds.has(row.assessedArtifactVersionId)
+  )
   const reviewSnapshots = await client.reviewScopeSnapshot.findMany({
     where: { reviewId: { in: reviews.map((row) => row.id) } },
     orderBy: { id: 'asc' }
   })
+  const sanitizedReviews = reviews.flatMap((row) => {
+    const scope = JSON.parse(row.scope) as Record<string, unknown>
+    const originalArtifactIds = Array.isArray(scope.artifactVersionIds)
+      ? scope.artifactVersionIds
+      : []
+    const originalSourceIds = Array.isArray(scope.sourceDocumentVersionIds)
+      ? scope.sourceDocumentVersionIds
+      : []
+    for (const key of ['artifactVersionIds', 'sourceDocumentVersionIds']) {
+      const ids = scope[key]
+      if (Array.isArray(ids))
+        scope[key] = ids.filter(
+          (id): id is string => typeof id === 'string' && !hiddenArtifactIds.has(id)
+        )
+    }
+    const retainedArtifactIds = Array.isArray(scope.artifactVersionIds)
+      ? scope.artifactVersionIds
+      : []
+    const retainedSourceIds = Array.isArray(scope.sourceDocumentVersionIds)
+      ? scope.sourceDocumentVersionIds
+      : []
+    if (
+      (originalArtifactIds.some((id) => typeof id === 'string' && hiddenArtifactIds.has(id)) ||
+        originalSourceIds.some((id) => typeof id === 'string' && hiddenArtifactIds.has(id))) &&
+      retainedArtifactIds.length === 0 &&
+      retainedSourceIds.length === 0
+    )
+      return []
+    return [{ ...row, scope: JSON.stringify(scope) }]
+  })
+  const retainedReviewIds = new Set(sanitizedReviews.map((row) => row.id))
+  const retainedFindings = findings.filter((row) => retainedReviewIds.has(row.reviewId))
+  const retainedFindingIds = new Set(retainedFindings.map((row) => row.id))
+  const retainedDispositions = dispositions.filter((row) =>
+    retainedFindingIds.has(row.sourceFindingId)
+  )
+  const retainedReviewSnapshots = reviewSnapshots.filter((row) =>
+    retainedReviewIds.has(row.reviewId)
+  )
   return {
     schemaVersion: 1,
     tables: {
@@ -293,12 +440,14 @@ export const captureNativeRecords = async (
       ArtifactMessageSnapshot: messageSnapshots.map((row) =>
         encodeRow('ArtifactMessageSnapshot', row)
       ),
-      Review: reviews.map((row) => encodeRow('Review', row)),
-      Finding: findings.map((row) => encodeRow('Finding', row)),
-      ReviewFindingDisposition: dispositions.map((row) =>
+      Review: sanitizedReviews.map((row) => encodeRow('Review', row)),
+      Finding: retainedFindings.map((row) => encodeRow('Finding', row)),
+      ReviewFindingDisposition: retainedDispositions.map((row) =>
         encodeRow('ReviewFindingDisposition', row)
       ),
-      ReviewScopeSnapshot: reviewSnapshots.map((row) => encodeRow('ReviewScopeSnapshot', row)),
+      ReviewScopeSnapshot: retainedReviewSnapshots.map((row) =>
+        encodeRow('ReviewScopeSnapshot', row)
+      ),
       FileOriginSession: origins.map((row) => encodeRow('FileOriginSession', row)),
       ArtifactLineage: lineages.map((row) => encodeRow('ArtifactLineage', row)),
       ArtifactVersion: versions.map((row) => encodeRow('ArtifactVersion', row))

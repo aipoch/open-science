@@ -16,7 +16,14 @@ describe('browser project archives', () => {
   it('downloads every Hidden chunk into its own safe category without ordinary acquisition', async () => {
     const invoke = vi.fn(async (channel: string, args: unknown[]) => {
       expect(channel).toBe('project-files:read-hidden-artifact')
-      const offset = (args[0] as { offset: number }).offset
+      const request = args[0] as { offset: number; validationOnly?: boolean }
+      const offset = request.offset
+      if (offset > 11) throw new Error('invalid hidden range')
+      if (request.validationOnly) {
+        expect(offset).toBe(0)
+        return { content: '', size: 11, encoding: 'base64', truncated: false }
+      }
+      if (offset === 11) throw new Error('readRange(size,size) is not a data read')
       return {
         content: btoa(offset === 0 ? 'first' : 'second'),
         size: 11,
@@ -30,6 +37,27 @@ describe('browser project archives', () => {
     const archive = unzipSync(new Uint8Array(await download.mock.calls[0]![0].arrayBuffer()))
     expect(Object.keys(archive)).toEqual(['hidden/secret.txt'])
     expect(strFromU8(archive['hidden/secret.txt']!)).toBe('firstsecond')
+  })
+
+  it('downloads an empty Hidden file and revalidates it without reading size,size', async () => {
+    const invoke = vi.fn(async (channel: string, args: unknown[]) => {
+      expect(channel).toBe('project-files:read-hidden-artifact')
+      const request = args[0] as { offset: number; validationOnly?: boolean }
+      if (!request.validationOnly && request.offset !== 0) throw new Error('invalid empty range')
+      return { content: '', size: 0, encoding: 'base64', truncated: false }
+    })
+    const download = vi.fn<(blob: Blob, name: string) => void>()
+    expect(
+      await saveWebProjectArchive(
+        { ...request, files: [{ ...file, suggestedName: 'empty.txt' }] },
+        invoke,
+        download,
+        100
+      )
+    ).toEqual({ saved: true })
+    expect(download).toHaveBeenCalledTimes(1)
+    const archive = unzipSync(new Uint8Array(await download.mock.calls[0]![0].arrayBuffer()))
+    expect(strFromU8(archive['hidden/empty.txt']!)).toBe('')
   })
 
   it('does not publish a truncated or revoked Hidden download', async () => {

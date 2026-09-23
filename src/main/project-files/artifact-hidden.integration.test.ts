@@ -12,6 +12,10 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from './repository'
 import { UploadRepository } from '../uploads/repository'
+import { readHiddenArtifactChunk } from './ipc'
+import { saveWebProjectArchive } from '../../renderer/web/project-archive'
+import { unzipSync, strFromU8 } from 'fflate'
+import type { ReadHiddenArtifactRequest } from '../../shared/project-files'
 
 describe('hidden artifacts (isolated SQLite and files)', () => {
   let root: string
@@ -56,6 +60,83 @@ describe('hidden artifacts (isolated SQLite and files)', () => {
     await client?.$disconnect()
     if (root) await rm(root, { recursive: true, force: true })
   })
+
+  it.each(['nonempty secret', ''])(
+    'downloads Hidden ZIP through real leases for %j',
+    async (content) => {
+      const adopted = await versions.adoptLegacyArtifact({
+        projectId: 'project-a',
+        sessionId: 'session-a',
+        sourceFileId: 'zip-file',
+        logicalFilename: 'zip.txt',
+        content: Buffer.from(content)
+      })
+      await files.setArtifactHidden({
+        projectId: 'project-a',
+        fileId: adopted.fileId,
+        hidden: true
+      })
+      const request = {
+        projectId: 'project-a',
+        fileId: adopted.fileId,
+        versionId: adopted.versionId,
+        encoding: 'base64' as const
+      }
+      const read = (request: ReadHiddenArtifactRequest) =>
+        readHiddenArtifactChunk(request, (request) =>
+          versions.openHiddenArtifactVersion(request, request.versionId)
+        )
+      const lease = await versions.openHiddenArtifactVersion(request, request.versionId)
+      try {
+        await expect(lease.readRange(lease.size, lease.size)).rejects.toBeDefined()
+      } finally {
+        await lease.close()
+      }
+      let downloaded: Blob | undefined
+      await saveWebProjectArchive(
+        {
+          projectId: 'project-a',
+          suggestedArchiveName: 'hidden',
+          files: [
+            {
+              source: 'artifact',
+              hidden: true,
+              sessionId: 'session-a',
+              fileId: adopted.fileId,
+              versionId: adopted.versionId,
+              suggestedName: 'zip.txt'
+            }
+          ]
+        },
+        async (channel, args) => {
+          expect(channel).toBe('project-files:read-hidden-artifact')
+          return read(args[0] as ReadHiddenArtifactRequest)
+        },
+        (blob) => {
+          downloaded = blob
+        },
+        100
+      )
+      expect(downloaded).toBeDefined()
+      const entries = unzipSync(new Uint8Array(await downloaded!.arrayBuffer()))
+      expect(strFromU8(entries['hidden/zip.txt']!)).toBe(content)
+      await expect(read({ ...request, offset: content.length })).resolves.toMatchObject({
+        content: '',
+        size: content.length
+      })
+      await files.setArtifactHidden({
+        projectId: 'project-a',
+        fileId: adopted.fileId,
+        hidden: false
+      })
+      await expect(read({ ...request, validationOnly: true })).rejects.toMatchObject({
+        code: 'FILE_NOT_FOUND'
+      })
+      await expect(read({ ...request, offset: content.length })).rejects.toMatchObject({
+        code: 'FILE_NOT_FOUND'
+      })
+    }
+  )
 
   it('excludes hidden files from ordinary catalogs and searches while keeping the Hidden collection', async () => {
     await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: true })

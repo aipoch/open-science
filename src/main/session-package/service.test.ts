@@ -108,6 +108,186 @@ it('resolves a copying file name once across progress chunks', async () => {
   expect(new Set(counts).size).toBe(1)
 })
 
+it('excludes hidden artifact metadata, records, and payloads from a Session package', async () => {
+  const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  fixtures.push(source)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Hidden export' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Hidden export',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  await source.stagePng('public payload', 'public.png')
+  const visible = await source.repository.createVersion(
+    createArtifactVersionRequest({ filename: 'public.png' })
+  )
+  await source.stagePng('hidden payload', 'hidden.png')
+  const hidden = await source.repository.createVersion(
+    createArtifactVersionRequest({ filename: 'hidden.png', writeOperationId: 'write-hidden' })
+  )
+  await source.client.artifactLineage.update({
+    where: { id: hidden.artifactId },
+    data: { hiddenAt: new Date() }
+  })
+
+  const archive = join(source.storageRoot, 'hidden-filter.science')
+  const service = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  try {
+    await service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+  } finally {
+    await service.close()
+  }
+  const expanded = join(source.storageRoot, 'hidden-filter-expanded')
+  await mkdir(expanded)
+  await extractTar({ cwd: expanded, file: archive })
+  const records = JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8')) as {
+    tables: Record<string, Array<Record<string, unknown>>>
+  }
+  const manifest = JSON.parse(await readFile(join(expanded, 'manifest.json'), 'utf8')) as {
+    inventory: Array<{ storageKey?: string }>
+  }
+  const serialized = JSON.stringify(records)
+  expect(serialized).toContain(visible.versionId)
+  expect(serialized).not.toContain(hidden.versionId)
+  expect(serialized).not.toContain('hidden.png')
+  expect(manifest.inventory.map((entry) => entry.storageKey)).not.toContain(
+    expect.stringContaining(hidden.versionId)
+  )
+  expect(manifest.inventory.map((entry) => entry.storageKey)).not.toContain(
+    expect.stringContaining('hidden')
+  )
+})
+
+it('rejects a Session package when the session still references a hidden artifact', async () => {
+  const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  fixtures.push(source)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Hidden reference' } })
+  const sessions = new SessionRepository(source.storageRoot)
+  await sessions.saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Hidden reference',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  await source.stagePng('hidden payload', 'hidden.png')
+  const hidden = await source.repository.createVersion(
+    createArtifactVersionRequest({ filename: 'hidden.png', writeOperationId: 'write-hidden-ref' })
+  )
+  await source.client.artifactLineage.update({
+    where: { id: hidden.artifactId },
+    data: { hiddenAt: new Date() }
+  })
+  const loaded = await sessions.loadSession('project-1', 'session-1')
+  if (!loaded) throw new Error('fixture session was not persisted')
+  await sessions.saveSession({
+    ...loaded,
+    messages: [
+      ...loaded.messages,
+      {
+        id: 'message-1',
+        role: 'user',
+        content: '',
+        status: 'complete',
+        parts: [
+          {
+            type: 'artifact',
+            id: 'hidden-ref',
+            name: 'hidden.png',
+            path: 'hidden.png',
+            source: 'artifact',
+            versionId: hidden.versionId
+          }
+        ],
+        createdAt: 2,
+        updatedAt: 2,
+        eventIds: []
+      }
+    ],
+    updatedAt: 2
+  })
+  const service = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  try {
+    await expect(
+      service.exportTo(
+        { projectId: 'project-1', sessionId: 'session-1' },
+        join(source.storageRoot, 'hidden-reference.science')
+      )
+    ).rejects.toThrow('Session package references a hidden artifact.')
+  } finally {
+    await service.close()
+  }
+})
+
+it('rejects forwarding a package after an imported artifact is hidden', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  initDataRoot(target.storageRoot)
+  fixtures.push(source, target)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Forward hidden' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Forward hidden',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  await source.stagePng('forward payload', 'forward.png')
+  await source.repository.createVersion(
+    createArtifactVersionRequest({ filename: 'forward.png', writeOperationId: 'write-forward' })
+  )
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const sourceArchive = join(source.storageRoot, 'forward-source.science')
+  try {
+    await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, sourceArchive)
+    const imported = await importer.importFrom(sourceArchive)
+    const lineage = await target.client.artifactLineage.findFirstOrThrow({
+      where: { projectId: imported.projectId, sessionId: imported.sessionId }
+    })
+    await target.client.artifactLineage.update({
+      where: { id: lineage.id },
+      data: { hiddenAt: new Date() }
+    })
+    expect(
+      await target.client.artifactVersion.count({
+        where: { artifact: { is: { id: lineage.id, hiddenAt: { not: null } } } }
+      })
+    ).toBeGreaterThan(0)
+    await expect(
+      importer.exportTo(imported, join(target.storageRoot, 'forward-hidden.science'))
+    ).rejects.toThrow('Session package references a hidden artifact.')
+  } finally {
+    await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
 it.each(['native', 'forward'] as const)(
   'imports a %s compact package with required duplicate evidence and the same safe selection',
   async (path) => {
