@@ -672,6 +672,7 @@ export const createSessionDetailsOwner = (
   }
 
   const retryFailedAdmission = async (session: SessionDetailsSession): Promise<boolean> => {
+    if (!acceptCompletions || stopping) return false
     const generation = session.sessionDetailsGeneration
     if (
       session.sessionDetailsSource !== 'fallback' ||
@@ -692,6 +693,7 @@ export const createSessionDetailsOwner = (
         session.projectId,
         session.id,
         (current) => {
+          if (!acceptCompletions || stopping) return { kind: 'unchanged' }
           const currentGeneration = current.sessionDetailsGeneration
           if (
             current.sessionDetailsSource !== 'fallback' ||
@@ -718,9 +720,14 @@ export const createSessionDetailsOwner = (
       )
     } catch {
       retriedAdmissionClaims.delete(claimKey)
-      if (pendingAdmissionRetries.delete(claimKey)) {
+      if (pendingAdmissionRetries.delete(claimKey) && acceptCompletions && !stopping) {
         void retryFailedAdmission(session)
       }
+      return false
+    }
+    if (!acceptCompletions || stopping) {
+      retriedAdmissionClaims.delete(claimKey)
+      pendingAdmissionRetries.delete(claimKey)
       return false
     }
     if (!queued) {
@@ -915,6 +922,8 @@ export const createSessionDetailsOwner = (
       stopping = true
       pendingSaves.length = 0
       admissionQueue.clear()
+      retriedAdmissionClaims.clear()
+      pendingAdmissionRetries.clear()
       const attempts = [...active.values()]
       for (const attempt of attempts) {
         attempt.controller.abort('Application shutdown.')
