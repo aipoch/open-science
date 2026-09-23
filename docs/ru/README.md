@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aipoch/open-science/releases/latest">
+  <a href="https://aipoch.com/open-science/download">
     <img alt="Скачать" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
@@ -72,7 +72,7 @@ AIPOCH Open-Science подходит для вычислительных исс�
 
 ### 1. Скачайте приложение
 
-Откройте страницу [последнего выпуска](https://github.com/aipoch/open-science/releases/latest), разверните раздел **Assets** и выберите установщик для своего компьютера:
+Откройте [официальную страницу загрузки](https://aipoch.com/open-science/download) и выберите установщик для своего компьютера:
 
 | Ваш компьютер                            | Что выбрать                             |
 | ---------------------------------------- | --------------------------------------- |
@@ -81,7 +81,7 @@ AIPOCH Open-Science подходит для вычислительных исс�
 | Windows x64                              | Установщик для Windows x64              |
 | Linux x64                                | AppImage или пакет Debian для Linux x64 |
 
-Скачивайте с официальной страницы выпусков; при необходимости см. [проверку загрузки](../../SECURITY.md#verifying-your-download).
+Скачивайте с [официальной страницы загрузки](https://aipoch.com/open-science/download); при необходимости см. [проверку загрузки](../../SECURITY.md#verifying-your-download).
 
 В macOS приложение также можно установить через [Homebrew](https://brew.sh):
 

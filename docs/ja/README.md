@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aipoch/open-science/releases/latest">
+  <a href="https://aipoch.com/open-science/download">
     <img alt="ダウンロード" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
@@ -72,7 +72,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 ### 1. アプリをダウンロードする
 
-[最新リリース](https://github.com/aipoch/open-science/releases/latest)を開いて **Assets** を展開し、コンピューターに合うインストーラーを選択します。
+[公式ダウンロードページ](https://aipoch.com/open-science/download)を開き、コンピューターに合うインストーラーを選択します。
 
 | コンピューター                       | 選択するもの                                |
 | ------------------------------------ | ------------------------------------------- |
@@ -81,7 +81,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 | Windows x64                          | Windows x64 インストーラー                  |
 | Linux x64                            | Linux x64 AppImage または Debian パッケージ |
 
-公式リリースページからダウンロードしてください。必要に応じて[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
+[公式ダウンロードページ](https://aipoch.com/open-science/download)からダウンロードしてください。必要に応じて[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
 
 macOS では [Homebrew](https://brew.sh) でもインストールできます：
 

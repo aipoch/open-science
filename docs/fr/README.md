@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aipoch/open-science/releases/latest">
+  <a href="https://aipoch.com/open-science/download">
     <img alt="Télécharger" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
@@ -72,7 +72,7 @@ AIPOCH Open-Science prend en charge la recherche computationnelle et intensive e
 
 ### 1. Télécharger l'application
 
-Ouvrez la [dernière version](https://github.com/aipoch/open-science/releases/latest), développez **Assets**, et choisissez l'installateur adapté à votre ordinateur :
+Ouvrez la [page officielle de téléchargement](https://aipoch.com/open-science/download) et choisissez l'installateur adapté à votre ordinateur :
 
 | Votre ordinateur                              | Choisissez                               |
 | --------------------------------------------- | ---------------------------------------- |
@@ -81,7 +81,7 @@ Ouvrez la [dernière version](https://github.com/aipoch/open-science/releases/la
 | Windows x64                                   | L'installateur Windows x64               |
 | Linux x64                                     | L'AppImage Linux x64 ou le paquet Debian |
 
-Téléchargez depuis la page officielle des versions ; consultez la [vérification du téléchargement](../../SECURITY.md#verifying-your-download) si nécessaire.
+Téléchargez depuis la [page officielle de téléchargement](https://aipoch.com/open-science/download) ; consultez la [vérification du téléchargement](../../SECURITY.md#verifying-your-download) si nécessaire.
 
 Sur macOS, vous pouvez aussi installer l’application avec [Homebrew](https://brew.sh) :
 

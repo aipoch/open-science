@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aipoch/open-science/releases/latest">
+  <a href="https://aipoch.com/open-science/download">
     <img alt="Herunterladen" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
@@ -73,7 +73,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 ### 1. Laden Sie die App herunter
 
-Öffnen Sie die [neueste Version](https://github.com/aipoch/open-science/releases/latest), klappen Sie **Assets** auf und wählen Sie das passende Installationspaket aus:
+Öffnen Sie die [offizielle Download-Seite](https://aipoch.com/open-science/download) und wählen Sie das passende Installationspaket aus:
 
 | Ihr Computer                              | Wählen Sie                                |
 | ----------------------------------------- | ----------------------------------------- |
@@ -82,7 +82,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 | Windows x64                               | Das Windows x64-Installationsprogramm     |
 | Linux x64                                 | Das Linux x64 AppImage- oder Debian-Paket |
 
-Laden Sie das Paket von der offiziellen Release-Seite herunter; bei Bedarf finden Sie Hinweise unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
+Laden Sie das Paket von der [offiziellen Download-Seite](https://aipoch.com/open-science/download) herunter; bei Bedarf finden Sie Hinweise unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
 
 Unter macOS können Sie die App auch mit [Homebrew](https://brew.sh) installieren:
 

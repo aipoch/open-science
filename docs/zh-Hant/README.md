@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aipoch/open-science/releases/latest">
+  <a href="https://aipoch.com/open-science/download">
     <img alt="下載" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
@@ -72,7 +72,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 ### 1. 下載應用程式
 
-開啟[最新版本](https://github.com/aipoch/open-science/releases/latest)，展開 **Assets**，並選擇適合你電腦的安裝程式：
+開啟[官方應用程式下載頁面](https://aipoch.com/open-science/download)，並選擇適合你電腦的安裝程式：
 
 | 你的電腦                                | 選擇                                      |
 | --------------------------------------- | ----------------------------------------- |
@@ -81,7 +81,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 | Windows x64                             | Windows x64 安裝程式                      |
 | Linux x64                               | Linux x64 AppImage 或 Debian 套件         |
 
-從官方版本頁下載安裝套件；如需驗證，請參閱[驗證下載](../../SECURITY.md#verifying-your-download)。
+從[官方應用程式下載頁面](https://aipoch.com/open-science/download)下載安裝套件；如需驗證，請參閱[驗證下載](../../SECURITY.md#verifying-your-download)。
 
 macOS 使用者也可以透過 [Homebrew](https://brew.sh) 安裝：
 
