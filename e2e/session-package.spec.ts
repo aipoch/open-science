@@ -151,11 +151,18 @@ test('shows redacted sensitive-content evidence after a failed export', async ({
     ]
   }
   await expect(async () => {
-    await app.emitSessionPackageProgress(failedExport)
-    await expect(
-      dialog.getByText('Sensitive content detected at objects/result.json @42.')
-    ).toBeVisible({ timeout: 1000 })
+    await app.emitSessionPackageProgress({
+      ...failedExport,
+      state: 'running',
+      error: undefined,
+      sensitiveContent: undefined
+    })
+    await expect(dialog).toBeVisible({ timeout: 1000 })
   }).toPass({ timeout: 10000 })
+  await app.emitSessionPackageProgress(failedExport)
+  await expect(
+    dialog.getByText('Sensitive content detected at objects/result.json @42.')
+  ).toBeVisible()
   await dialog.getByText('Details', { exact: true }).click()
   await expect(dialog.getByText('Sensitive-content evidence', { exact: true })).toBeVisible()
   await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
