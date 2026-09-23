@@ -6588,6 +6588,7 @@
     "locale": "locale langue",
     "log file": "journal fichier",
     "cli install path shell": "cli installer chemin terminal",
-    "update version release": "mise à jour version publication"
+    "update version release": "mise à jour version publication",
+    "Couldn't save this setting. It was reverted.": "Impossible d’enregistrer ce paramètre. La valeur précédente a été rétablie."
   }
 }

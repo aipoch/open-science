@@ -6588,6 +6588,7 @@
     "locale": "configuración regional idioma",
     "log file": "registro archivo",
     "cli install path shell": "cli instalar ruta línea de comandos",
-    "update version release": "actualización versión lanzamiento"
+    "update version release": "actualización versión lanzamiento",
+    "Couldn't save this setting. It was reverted.": "No se pudo guardar esta configuración. Se ha revertido."
   }
 }

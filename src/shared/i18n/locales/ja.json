@@ -6262,6 +6262,7 @@
     "locale": "ロケール 言語",
     "log file": "ログ ファイル",
     "cli install path shell": "cli インストール パス シェル",
-    "update version release": "アップデート バージョン リリース"
+    "update version release": "アップデート バージョン リリース",
+    "Couldn't save this setting. It was reverted.": "この設定を保存できませんでした。元に戻しました。"
   }
 }

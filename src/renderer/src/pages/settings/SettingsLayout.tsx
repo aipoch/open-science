@@ -1,12 +1,13 @@
 import { ErrorNotice } from '@/components/error-notice'
-import type { ComponentProps, ReactNode } from 'react'
-import { LoaderCircle, Plus, type LucideIcon } from 'lucide-react'
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { Check, LoaderCircle, Plus, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import type { PreferenceWriteResult } from '@/stores/settings-preferences-slice'
 
 type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
   title: ReactNode
@@ -179,6 +180,97 @@ const SettingsToggle = ({
   <Switch checked={enabled} onCheckedChange={onToggle} className={className} {...props} />
 )
 
+const SAVED_VISIBLE_MS = 1700
+const SAVED_FADE_MS = 300
+
+type SettingsPreferenceToggleProps = Omit<
+  ComponentProps<typeof Switch>,
+  'checked' | 'onCheckedChange' | 'onToggle'
+> & {
+  enabled: boolean
+  // Resolves with how the write settled; the promise never rejects (preference setters roll back
+  // optimistically and report through the result instead).
+  onToggle: (nextEnabled: boolean) => Promise<PreferenceWriteResult>
+}
+
+// Preference toggle with per-row save feedback: dimmed and non-interactive while the write is in
+// flight, a transient Saved check on success, and an inline revert notice with Retry on failure.
+// The value itself still flips optimistically via the store.
+const SettingsPreferenceToggle = ({
+  enabled,
+  onToggle,
+  disabled,
+  className,
+  ...props
+}: SettingsPreferenceToggleProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [phase, setPhase] = useState<'idle' | 'saving' | 'saved' | 'fading' | 'failed'>('idle')
+  const requestRef = useRef(0)
+
+  useEffect(() => {
+    if (phase !== 'saved' && phase !== 'fading') return
+    const timer = setTimeout(
+      () => setPhase(phase === 'saved' ? 'fading' : 'idle'),
+      phase === 'saved' ? SAVED_VISIBLE_MS : SAVED_FADE_MS
+    )
+    return () => clearTimeout(timer)
+  }, [phase])
+
+  const runToggle = (): void => {
+    // After a revert the store holds the previous value again, so !enabled re-attempts the same
+    // intended value — this is also what Retry does.
+    const next = !enabled
+    const request = ++requestRef.current
+    setPhase('saving')
+    void onToggle(next).then((result) => {
+      if (request !== requestRef.current) return
+      setPhase(result === 'saved' ? 'saved' : result === 'reverted' ? 'failed' : 'idle')
+    })
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col items-end gap-1">
+      <div className="flex items-center gap-2">
+        {phase === 'saved' || phase === 'fading' ? (
+          <span
+            role="status"
+            className={cn(
+              'inline-flex items-center gap-1 text-xs font-medium text-status-success-foreground transition-opacity duration-300 motion-reduce:transition-none dark:text-status-success-dark-foreground',
+              phase === 'fading' && 'opacity-0'
+            )}
+          >
+            <Check className="size-3.5" aria-hidden="true" />
+            {t('Saved')}
+          </span>
+        ) : null}
+        <Switch
+          checked={enabled}
+          disabled={disabled || phase === 'saving'}
+          aria-busy={phase === 'saving' || undefined}
+          onCheckedChange={runToggle}
+          className={className}
+          {...props}
+        />
+      </div>
+      {phase === 'failed' ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-end gap-x-2 text-xs text-status-failure-foreground dark:text-status-failure-dark-foreground"
+        >
+          <span>{t("Couldn't save this setting. It was reverted.")}</span>
+          <button
+            type="button"
+            className="cursor-pointer rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            onClick={runToggle}
+          >
+            {t('Retry')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 type SettingsLoadNoticeProps = {
   state: 'loading' | 'error'
   loadingLabel: string
@@ -271,6 +363,7 @@ export {
   SettingsListAddAction,
   SettingsIconAction,
   SettingsLoadNotice,
+  SettingsPreferenceToggle,
   SettingsRow,
   SettingsSection,
   SettingsToggle

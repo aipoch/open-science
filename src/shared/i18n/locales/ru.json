@@ -6726,6 +6726,7 @@
     "locale": "локаль язык",
     "log file": "журнал файл",
     "cli install path shell": "cli установить путь командная строка",
-    "update version release": "обновление версия релиз"
+    "update version release": "обновление версия релиз",
+    "Couldn't save this setting. It was reverted.": "Не удалось сохранить этот параметр. Значение было возвращено."
   }
 }

@@ -6421,6 +6421,7 @@
     "locale": "Locale Sprache",
     "log file": "Log Datei",
     "cli install path shell": "cli installieren Pfad Befehlszeile",
-    "update version release": "Update Version Release"
+    "update version release": "Update Version Release",
+    "Couldn't save this setting. It was reverted.": "Diese Einstellung konnte nicht gespeichert werden. Sie wurde zurückgesetzt."
   }
 }

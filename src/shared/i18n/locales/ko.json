@@ -6260,6 +6260,7 @@
     "locale": "로케일 언어",
     "log file": "로그 파일",
     "cli install path shell": "cli 설치 경로 셸",
-    "update version release": "업데이트 버전 릴리스"
+    "update version release": "업데이트 버전 릴리스",
+    "Couldn't save this setting. It was reverted.": "이 설정을 저장할 수 없습니다. 이전 값으로 되돌렸습니다."
   }
 }

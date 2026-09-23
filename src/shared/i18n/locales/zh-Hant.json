@@ -6262,6 +6262,7 @@
     "locale": "地區 語言",
     "log file": "記錄 檔案",
     "cli install path shell": "cli 安裝 路徑 命令列",
-    "update version release": "更新 版本 發布"
+    "update version release": "更新 版本 發布",
+    "Couldn't save this setting. It was reverted.": "無法儲存此設定，已還原原值。"
   }
 }
