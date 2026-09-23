@@ -258,6 +258,7 @@ export const createSessionDetailsOwner = (
   const admissionQueue = new Map<string, { projectId: string; sessionId: string }>()
   const admitting = new Set<string>()
   const retriedAdmissionClaims = new Set<string>()
+  const pendingAdmissionRetries = new Set<string>()
   const pendingSaves: SessionDetailsSession[] = []
   let started = false
   let stopping = false
@@ -680,7 +681,10 @@ export const createSessionDetailsOwner = (
       return false
     }
     const claimKey = `${keyOf(session.projectId, session.id)}\0${generation.requestId}`
-    if (retriedAdmissionClaims.has(claimKey)) return false
+    if (retriedAdmissionClaims.has(claimKey)) {
+      pendingAdmissionRetries.add(claimKey)
+      return false
+    }
     retriedAdmissionClaims.add(claimKey)
     let queued: SessionDetailsSession | undefined
     try {
@@ -714,12 +718,17 @@ export const createSessionDetailsOwner = (
       )
     } catch {
       retriedAdmissionClaims.delete(claimKey)
+      if (pendingAdmissionRetries.delete(claimKey)) {
+        void retryFailedAdmission(session)
+      }
       return false
     }
     if (!queued) {
       retriedAdmissionClaims.delete(claimKey)
+      pendingAdmissionRetries.delete(claimKey)
       return false
     }
+    pendingAdmissionRetries.delete(claimKey)
     await enqueueAdmission(session.projectId, session.id)
     return true
   }
