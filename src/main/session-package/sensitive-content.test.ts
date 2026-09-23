@@ -81,6 +81,15 @@ it('hashes and measures the sensitive value instead of the detector span', () =>
   expect(evidence.matchLength).toBeGreaterThan(evidence.valueLength!)
 })
 
+it('locates credentials in JSON-escaped URL authorities', () => {
+  const text = String.raw`https:\/\/[redacted]:secret-value@example.org`
+  const match = findSensitivePackageText(text)
+  expect(match).toMatchObject({ rule: 'url', valueLength: 'secret-value'.length })
+  expect(text.slice(match!.valueOffset, match!.valueOffset! + match!.valueLength!)).toBe(
+    'secret-value'
+  )
+})
+
 it('keeps oversized detector spans within the operation contract bounds', () => {
   const text = `apiKey=${'a'.repeat(12_000)}`
   const match = findSensitivePackageText(text)

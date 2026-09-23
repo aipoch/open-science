@@ -116,7 +116,9 @@ export const findSensitivePackageText = (
           return privateValue(value, match.index + rawUrl.length)
         }
       }
-      const authorityStart = rawUrl.indexOf('//') + 2
+      const authorityPrefix = /^[a-z][a-z0-9+.-]*:(?:\\?\/){2}/i.exec(rawUrl)
+      if (!authorityPrefix) continue
+      const authorityStart = authorityPrefix[0].length
       const authorityEnd = rawUrl.slice(authorityStart).search(/[/?#]/)
       const authority = rawUrl.slice(
         authorityStart,
