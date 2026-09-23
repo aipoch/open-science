@@ -26411,6 +26411,61 @@ describe('ACP runtime — model hot switch', () => {
     expect(process.killed).toBe(true)
   })
 
+  it('reconnects a Codex bridge before switching from text-only to vision capability', async () => {
+    const process = new FakeAgentProcess()
+    const setModelTarget = vi.fn()
+    const setProviderTarget = vi.fn(() => true)
+    const fakeAgent = startFakeAgent(process, ['s-vision-model'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      hasReplayableImageHistory: async () => false,
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-bridge',
+        executablePath: '/bin/codex-acp',
+        env: {},
+        sessionModel: CODEX_BRIDGE_MODEL,
+        supportsImageInput: false,
+        contextUsageModel: 'model-a',
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          setModelTarget,
+          release: vi.fn(async () => undefined)
+        },
+        providerTransportLease: {
+          setTarget: setProviderTarget,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.applyModelChange({
+      frameworkId: 'codex',
+      backendId: 'codex:provider-a',
+      route: 'codex-bridge',
+      model: 'model-vision',
+      sessionModel: CODEX_BRIDGE_MODEL,
+      sessionModelRequired: false,
+      supportsImageInput: true,
+      reasoningEffort: 'default',
+      providerTransportTargetId: JSON.stringify(['codex', 'provider-a', 'model-vision']),
+      bridge: { model: 'model-vision' }
+    })
+
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(setModelTarget).not.toHaveBeenCalled()
+    expect(setProviderTarget).not.toHaveBeenCalled()
+    expect(process.killed).toBe(true)
+  })
+
   it('reconnects native Codex before switching providers that share one model slug', async () => {
     const process = new FakeAgentProcess()
     const setProviderTarget = vi.fn(() => true)
