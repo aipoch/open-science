@@ -1,5 +1,5 @@
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp'
+import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp/url'
 import { hasEmbeddedConnectorCredentials } from './connector-template'
 import {
   assertStoredDeviceCredentialLimits,

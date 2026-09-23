@@ -1410,8 +1410,12 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
           const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
-          // A long intent text, chunked quickly so live pacing trails far behind arrival.
-          for (let chunk = 0; chunk < 30; chunk += 1) {
+          const layoutGate = prompt.match(/^Layout completion gate: (.+)$/m)
+          // The layout sampling variant needs the complete intent before the tool. The order
+          // assertion instead samples a tool emitted during the stream, before the remaining
+          // intent chunks arrive, so it does not depend on renderer scheduling speed.
+          const intentChunksBeforeTool = layoutGate ? 30 : 1
+          for (let chunk = 0; chunk < intentChunksBeforeTool; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
               sessionId: context.params.sessionId,
               update: {
@@ -1436,7 +1440,6 @@ if (process.argv.includes('--version')) {
             }
           })
           await delay(2_000)
-          const layoutGate = prompt.match(/^Layout completion gate: (.+)$/m)
           if (layoutGate) {
             const gatePath = JSON.parse(layoutGate[1])
             const deadline = Date.now() + 30_000
@@ -1460,6 +1463,21 @@ if (process.argv.includes('--version')) {
               status: 'completed'
             }
           })
+          if (!layoutGate) {
+            for (let chunk = 1; chunk < 30; chunk += 1) {
+              await context.client.notify(acp.methods.client.session.update, {
+                sessionId: context.params.sessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  messageId: intentMessageId,
+                  content: {
+                    type: 'text',
+                    text: `Intent paragraph ${chunk}: I will now run the slow tool for you.\n\n`
+                  }
+                }
+              })
+            }
+          }
           const followUpMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,

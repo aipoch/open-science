@@ -3542,6 +3542,66 @@ describe('production delegated-work composition', () => {
     ).toBe('accepted')
   })
 
+  it('retries an upward lane when a wake arrives during a parked dispatch', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-parent-wake-race-'))
+    let releaseFirst!: () => void
+    const firstParked = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let attempts = 0
+    const deliveries: string[] = []
+    const harness = await createCompositionHarness(root, 'opencode', undefined, undefined, {
+      parentMessages: {
+        deliver: async (delivery): Promise<'provider_prompt_accepted'> => {
+          if (attempts++ === 0) {
+            await firstParked
+            throw new DelegateMessageParkedError('root admission is still settling')
+          }
+          await delivery.startDispatch()
+          deliveries.push(delivery.messageId)
+          return 'provider_prompt_accepted'
+        }
+      }
+    })
+    const delegated = await harness.composition.host.delegate(
+      harness.caller,
+      [
+        { task: 'Ask the parent from lane A', name: 'Ask the parent from lane A' },
+        { task: 'Ask the parent from lane B', name: 'Ask the parent from lane B' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    for (const control of harness.execution.controls()) control.accept()
+
+    const send = (
+      child: (typeof delegated.children)[number],
+      requestId: string
+    ): ReturnType<typeof harness.composition.host.sendMessage> =>
+      harness.composition.host.sendMessage(
+        {
+          ...harness.caller,
+          frameId: child.frameId,
+          attemptId: child.attemptId,
+          role: 'delegate',
+          toolInvocationId: requestId
+        },
+        'parent',
+        requestId
+      )
+    const first = await send(delegated.children[0], 'parent-wake-race-a')
+    const second = await send(delegated.children[1], 'parent-wake-race-b')
+    await expect.poll(() => attempts).toBe(1)
+
+    const wake = harness.composition.root.wakeMessages?.(harness.session.id)
+    releaseFirst()
+    await wake
+    await expect
+      .poll(() => deliveries)
+      .toEqual(expect.arrayContaining([first.message_id, second.message_id]))
+    expect(deliveries).toHaveLength(2)
+  })
+
   it('discovers a durable queued parent message when a cold composition is woken after restart', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-parent-restart-wake-'))
     let branchActive = false

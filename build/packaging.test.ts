@@ -51,7 +51,9 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
       // ASAR resolves with a writable stream before its queued writes finish.
       const archiveStream = await createPackageWithOptions(source, archive, {})
       await finished(archiveStream)
-      expect(listPackage(archive)).toContain('/node_modules/tiktoken/tiktoken_bg.wasm')
+      expect(listPackage(archive).map((entry) => entry.replaceAll('\\', '/'))).toContain(
+        '/node_modules/tiktoken/tiktoken_bg.wasm'
+      )
       // Remove the source tree so the child can only load the archived JavaScript and WASM.
       rmSync(source, { recursive: true, force: true })
       const result = spawnSync(require('electron') as string, [join(archive, 'probe.cjs')], {
