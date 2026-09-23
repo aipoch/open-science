@@ -636,7 +636,11 @@ export const createSessionDetailsOwner = (
     retainIfAdmitting = false
   ): Promise<void> => {
     const key = keyOf(projectId, sessionId)
-    if (stopping || active.has(key)) return Promise.resolve()
+    if (stopping) return Promise.resolve()
+    if (active.has(key)) {
+      if (retainIfAdmitting) admissionQueue.set(key, { projectId, sessionId })
+      return Promise.resolve()
+    }
     if (admitting.has(key)) {
       if (retainIfAdmitting) admissionQueue.set(key, { projectId, sessionId })
       return Promise.resolve()
