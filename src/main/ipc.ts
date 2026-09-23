@@ -265,7 +265,7 @@ import {
   registerConversationExportIpcHandler
 } from './session-persistence/conversation-export'
 import { SessionProjectionDiagnostics } from './session-persistence/projection-diagnostics'
-import { createProjectFilesHandlers } from './project-files/ipc'
+import { createProjectFilesHandlers, readHiddenArtifactChunk } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
 import { createManagedFileVersionHandlers } from './managed-file-versions/ipc'
 import { ManagedFileVersionService } from './managed-file-versions/service'
@@ -1869,28 +1869,10 @@ const createApplicationModules = async (
     projectDeletionCoordinator,
     {
       onChanged: (event) => broadcastToRenderers('project-files:changed', event),
-      readHiddenArtifact: async (request) => {
-        const lease = await managedFileVersionService.openHiddenArtifactVersion(
-          request,
-          request.versionId
+      readHiddenArtifact: (request) =>
+        readHiddenArtifactChunk(request, (identity) =>
+          managedFileVersionService.openHiddenArtifactVersion(identity, identity.versionId)
         )
-        try {
-          const offset = request.offset ?? 0
-          if (!Number.isSafeInteger(offset) || offset < 0 || offset > lease.size)
-            throw new Error('Invalid hidden file offset.')
-          const limit = Math.min(lease.size - offset, 8 * 1024 * 1024)
-          const bytes = Buffer.from(await lease.readRange(offset, offset + limit))
-          const encoding = request.encoding === 'base64' ? 'base64' : 'utf8'
-          return {
-            content: bytes.toString(encoding),
-            encoding,
-            size: lease.size,
-            truncated: offset + limit < lease.size
-          }
-        } finally {
-          await lease.close()
-        }
-      }
     },
     (file) =>
       managedFileVersionService.openVersion(

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
 import { captureNativeRecords, projectIncludedHeads, type PackageRecords } from './native-snapshot'
+import { selectablePackageFiles } from './selection'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 let measuredClient: PrismaClient | undefined
@@ -233,6 +234,97 @@ it('still rejects missing and staging versions after dependency discovery', asyn
   await client.artifactVersion.update({ where: { id: 'version-0' }, data: { state: 'staging' } })
   await expect(captureNativeRecords(client, request, ['version-0'])).rejects.toThrow(
     'file writes to finish'
+  )
+})
+
+it('omits hidden artifacts from initial, additional, and dependency closure records', async () => {
+  const { client } = await createChain(1)
+  await client.fileOriginSession.create({
+    data: { projectId: 'project', sessionId: 'current', titleSnapshot: 'Current session' }
+  })
+  await client.artifactLineage.create({
+    data: {
+      id: 'hidden-lineage',
+      projectId: 'project',
+      sessionId: 'current',
+      normalizedFilename: 'hidden.txt',
+      filename: 'hidden.txt',
+      hiddenAt: new Date()
+    }
+  })
+  await client.artifactVersion.create({
+    data: {
+      id: 'hidden-version',
+      artifactId: 'hidden-lineage',
+      versionNumber: 1,
+      filename: 'hidden.txt',
+      state: 'finalized',
+      contentStorageKey: 'artifacts/project/current/hidden',
+      sizeBytes: 6n,
+      checksum: 'h'.repeat(64),
+      artifactRunId: 'hidden-run',
+      rootFrameId: 'hidden-frame',
+      agentFrameId: 'hidden-frame',
+      messageBranchId: 'hidden-branch',
+      runtimeSegmentId: 'hidden-runtime',
+      promptMessageId: 'hidden-prompt',
+      evidenceStorageKey: 'artifacts/project/current/hidden.json',
+      evidenceChecksum: 'i'.repeat(64),
+      evidenceSchemaVersion: 1,
+      evidenceJson: JSON.stringify({ evidence: 'hidden' })
+    }
+  })
+  await client.artifactVersionInput.create({
+    data: {
+      id: 'hidden-input',
+      artifactVersionId: 'version-0',
+      ordinal: 0,
+      inputFileVersionId: 'hidden-version',
+      sourceKind: 'artifact-version',
+      sourceFileId: 'hidden-lineage',
+      sourceArtifactVersionId: 'hidden-version',
+      sourceProjectId: 'project',
+      sourceSessionId: 'current',
+      filename: 'hidden.txt',
+      sizeBytes: 6n,
+      checksum: 'h'.repeat(64),
+      storageKey: 'artifacts/project/current/hidden',
+      strongestAssociation: 'captured-version'
+    }
+  })
+  await client.review.create({
+    data: {
+      id: 'hidden-review',
+      projectId: 'project',
+      sessionId: 'current',
+      turnMessageId: 'hidden-message',
+      lifecycle: 'complete',
+      outcome: 'flagged',
+      scope: JSON.stringify({ artifactVersionIds: ['hidden-version'] })
+    }
+  })
+
+  const records = await captureNativeRecords(
+    client,
+    { projectId: 'project', sessionId: 'current' },
+    ['version-0', 'hidden-version']
+  )
+
+  expect(records.tables.ArtifactVersion.map((row) => row.id)).toEqual(['version-0'])
+  expect(records.tables.ArtifactLineage.map((row) => row.id)).toEqual(['lineage'])
+  expect(records.tables.ArtifactVersionInput).toEqual([])
+  expect(records.tables.Review).toHaveLength(0)
+  expect(records.tables.Finding).toHaveLength(0)
+  expect(records.tables.ReviewFindingDisposition).toHaveLength(0)
+  expect(records.tables.ReviewScopeSnapshot).toHaveLength(0)
+  expect(selectablePackageFiles(records).map((file) => file.storageKey)).not.toContain(
+    'artifacts/project/current/hidden'
+  )
+  expect(Object.values(records.tables).flat()).not.toContainEqual(
+    expect.objectContaining({ id: 'hidden-version' })
+  )
+  expect(Object.values(records.tables).flat()).not.toContainEqual(
+    expect.objectContaining({ id: 'hidden-lineage' })
   )
 })
 

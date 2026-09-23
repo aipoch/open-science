@@ -66,6 +66,8 @@ export type ReadHiddenArtifactRequest = {
   versionId: string
   encoding?: 'utf8' | 'base64'
   offset?: number
+  // Revalidates Hidden visibility without asking the bounded reader for a size,size range.
+  validationOnly?: boolean
 }
 
 export type SetArtifactHiddenRequest = {
