@@ -673,8 +673,8 @@ class SessionPersistenceStateOwner {
     }
   }
 
-  // Restore reads synthesize restart recovery until a runtime attaches. Commit that
-  // evidence before attachment makes subsequent reads preserve the old runtime state.
+  // Commit restore normalization before attachment makes reads preserve runtime state.
+  // Parked/approved Plans also lose their stale run, without a resumeRecovery error.
   async prepareRuntimeResume(scope: { projectId: string; sessionId: string }): Promise<void> {
     const preserveRuntimeState =
       this.options.repository.hasLiveRuntimeSession?.(scope.projectId, scope.sessionId) ?? false
@@ -684,7 +684,16 @@ class SessionPersistenceStateOwner {
       { preserveRuntimeState }
     )
     if (restored.status !== 'found') throw new Error('Session could not be loaded for Resume.')
-    if (restored.session.resumeRecovery?.cause !== 'app-restart') return
+    if (preserveRuntimeState) return
+    if (restored.session.resumeRecovery?.cause !== 'app-restart') {
+      if (restored.session.activeRun) return
+      const authority = await loadAuthority(
+        this.options.repository,
+        scope.projectId,
+        scope.sessionId
+      )
+      if (authority.status !== 'found' || !authority.session.activeRun) return
+    }
     await this.mutateRuntimeSession(scope, (latest) => {
       if (sessionRevision(latest) !== sessionRevision(restored.session)) {
         throw new Error('Session changed before restart recovery could be committed.')

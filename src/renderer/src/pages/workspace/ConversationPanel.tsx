@@ -271,16 +271,26 @@ const ResizableCredentialComposer = ({ children }: React.PropsWithChildren): Rea
   )
 }
 
-const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+const ResizablePlanComposer = ({
+  children
+}: {
+  children: (expanded: boolean) => React.ReactNode
+}): React.JSX.Element => {
   const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(true)
   return (
     <ResizableBottomPanel
       ariaLabel={t('Resize Plan panel')}
       testId="plan-composer"
       scrollTestId="plan-composer-scroll"
       constrainGrowthToOverflow
+      collapsed={!expanded}
+      collapseControl={{
+        label: expanded ? t('Collapse Plan') : t('Expand Plan'),
+        onToggle: () => setExpanded((value) => !value)
+      }}
     >
-      {children}
+      {children(expanded)}
     </ResizableBottomPanel>
   )
 }
@@ -761,8 +771,18 @@ const ConversationPanel = ({
     : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend = canSendMessage && !isStopping
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
+  // Runtime-context revisions also advance for feedback and delivery receipts. They do
+  // not start a new review. An explicit review request, a different Plan, or a finished
+  // Agent attempt does: if the Agent leaves the Plan pending, the user must be able
+  // to respond again.
   const activePendingPlanKey = activePendingPlan
-    ? `${activePendingPlan.artifactVersionId}:${activePendingPlan.revision}`
+    ? JSON.stringify([
+        activeSession?.id,
+        activePendingPlan.artifactVersionId,
+        activePendingPlan.reviewRequestId,
+        activeSession?.runtimeTranscriptLastRun?.promptMessageId,
+        activeSession?.runtimeTranscriptLastRun?.startedAt
+      ])
     : undefined
   const [resolvedPlanKey, setResolvedPlanKey] = useState<string>()
   const pendingPlan =
@@ -1549,6 +1569,7 @@ const ConversationPanel = ({
                       (packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
+                        pendingPlan ||
                         specialistUnavailable) &&
                         'hidden'
                     )}
@@ -1666,15 +1687,18 @@ const ConversationPanel = ({
                         </ResizableElicitationComposer>
                       ) : pendingPlan ? (
                         <ResizablePlanComposer key={activePendingPlanKey}>
-                          <WorkspacePlanCard
-                            embedded
-                            enabled={canRespondToPlan}
-                            projection={pendingPlan}
-                            onOpen={openPendingPlan}
-                            onRespond={(decision) => respondToPendingPlan({ decision })}
-                            onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
-                            onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
-                          />
+                          {(expanded) => (
+                            <WorkspacePlanCard
+                              expanded={expanded}
+                              embedded
+                              enabled={canRespondToPlan}
+                              projection={pendingPlan}
+                              onOpen={openPendingPlan}
+                              onRespond={(decision) => respondToPendingPlan({ decision })}
+                              onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
+                              onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                            />
+                          )}
                         </ResizablePlanComposer>
                       ) : null}
                     </div>

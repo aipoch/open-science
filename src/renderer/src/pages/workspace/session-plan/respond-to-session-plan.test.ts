@@ -85,6 +85,33 @@ beforeEach(() => {
 })
 
 describe('respondToSessionPlan', () => {
+  it('releases the feedback submitter after commit without waiting for projection hydration', async () => {
+    respondPlan.mockResolvedValue({ kind: 'feedback', message: feedbackMessage })
+    let finishRefresh!: (value: ActivePlanProjection) => void
+    getPlanProjection.mockReturnValue(
+      new Promise<ActivePlanProjection>((resolve) => {
+        finishRefresh = resolve
+      })
+    )
+    let settled = false
+    const response = respondToSessionPlan(
+      { projectId: 'project-1', sessionId: 'session-1', projection },
+      { feedback: feedbackMessage.content }
+    ).then(() => {
+      settled = true
+    })
+
+    try {
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 100 })
+      expect(useSessionStore.getState().sessions[0].messages).toEqual([
+        expect.objectContaining({ id: feedbackMessage.id })
+      ])
+    } finally {
+      finishRefresh(durableFeedbackProjection)
+      await response
+    }
+  })
+
   it.each([false, true])(
     'P04 preserves submit failure when refresh failure is %s',
     async (refreshFails) => {
@@ -159,6 +186,32 @@ describe('respondToSessionPlan', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(approvedProjection)
   })
 
+  it.each(['version', 'review'] as const)(
+    'does not replace a newer %s event with a late response refresh',
+    async (change) => {
+      const newer =
+        change === 'version'
+          ? { ...projection, artifactVersionId: 'version-2', revision: 8 }
+          : { ...durableFeedbackProjection, reviewRequestId: 'new-review' }
+      respondPlan.mockResolvedValue({ kind: 'feedback', message: feedbackMessage })
+      let finishRefresh!: (value: ActivePlanProjection) => void
+      getPlanProjection.mockReturnValue(
+        new Promise<ActivePlanProjection>((resolve) => {
+          finishRefresh = resolve
+        })
+      )
+      await respondToSessionPlan(
+        { projectId: 'project-1', sessionId: 'session-1', projection },
+        { feedback: feedbackMessage.content }
+      )
+      useSessionStore.getState().setActivePlanProjection('session-1', newer)
+      finishRefresh(durableFeedbackProjection)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(newer)
+    }
+  )
+
   it('projects returned feedback immediately as a standard user Message', async () => {
     respondPlan.mockResolvedValue({
       kind: 'feedback',
@@ -209,14 +262,17 @@ describe('respondToSessionPlan', () => {
     expect(getPlanProjection).toHaveBeenCalledWith('project-1', 'session-1')
   })
 
-  it.each(['revision', 'version'] as const)(
+  it.each(['revision', 'version', 'review'] as const)(
     'preserves a newer %s projection received while feedback hydration fails',
     async (replacement) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       const newer = {
         ...projection,
         ...(replacement === 'revision'
           ? { revision: projection.revision + 1 }
-          : { artifactVersionId: 'version-2' })
+          : replacement === 'version'
+            ? { artifactVersionId: 'version-2' }
+            : { reviewRequestId: 'new-review' })
       }
       respondPlan.mockResolvedValue({ kind: 'feedback', message: feedbackMessage })
       getPlanProjection.mockImplementation(async () => {
@@ -227,6 +283,8 @@ describe('respondToSessionPlan', () => {
         { projectId: 'project-1', sessionId: 'session-1', projection },
         { feedback: feedbackMessage.content }
       )
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled())
+      warn.mockRestore()
       expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(newer)
       expect(useSessionStore.getState().sessions[0].messages).toEqual([
         expect.objectContaining({ id: feedbackMessage.id })
