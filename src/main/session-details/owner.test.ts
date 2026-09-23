@@ -818,7 +818,10 @@ describe('SessionDetailsOwner', () => {
       inference: async () => {
         calls += 1
         if (calls === 1) return firstInference.promise
-        return { stopReason: 'end_turn', output: '{"title":"Generated","description":"Generated summary"}' }
+        return {
+          stopReason: 'end_turn',
+          output: '{"title":"Generated","description":"Generated summary"}'
+        }
       }
     })
 
@@ -839,7 +842,10 @@ describe('SessionDetailsOwner', () => {
     }
     first.store.records.set('project-1:session-1', failed)
     first.owner.afterSessionSaved(failed)
-    firstInference.resolve({ stopReason: 'end_turn', output: '{"title":"Stale","description":"Stale"}' })
+    firstInference.resolve({
+      stopReason: 'end_turn',
+      output: '{"title":"Stale","description":"Stale"}'
+    })
     await waitFor(() => first.generate.mock.calls.length === 2)
     await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
     await first.owner.shutdown()
