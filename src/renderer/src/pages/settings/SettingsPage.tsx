@@ -26,6 +26,7 @@ import {
   Minimize2,
   MonitorSmartphone,
   ScrollText,
+  Search,
   Settings2,
   TerminalSquare,
   Tags as TagsIcon,
@@ -503,6 +504,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const mobileNavRef = useRef<HTMLElement | null>(null)
   const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
   const mobileNavWasOpenRef = useRef(false)
+  // Narrow viewports swap the header search field for an icon button that opens a full-width
+  // search overlay; the field only exists while the overlay is open, so ⌘K never targets an
+  // invisible input.
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false)
+  const mobileSearchTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const mobileSearchWasOpenRef = useRef(false)
   const codebuddyAutoDetectAttempted = useRef(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
@@ -573,6 +580,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     mobileNavWasOpenRef.current = false
     mobileNavTriggerRef.current?.focus()
   }, [isMobile, isMobileNavOpen])
+
+  // The search overlay belongs to the narrow layout; dropping it when the viewport crosses the md
+  // breakpoint keeps the desktop header field as the only mounted combobox.
+  if (!isMobile && isMobileSearchOpen) setIsMobileSearchOpen(false)
+
+  // Return focus to the header search button when the overlay closes.
+  useEffect(() => {
+    if (isMobile && isMobileSearchOpen) {
+      mobileSearchWasOpenRef.current = true
+      return
+    }
+    if (!mobileSearchWasOpenRef.current) return
+    mobileSearchWasOpenRef.current = false
+    mobileSearchTriggerRef.current?.focus()
+  }, [isMobile, isMobileSearchOpen])
 
   // External entry points publish one route intent with an event identity. Guard by request rather
   // than target value so two separate requests for the same route are both honored.
@@ -1072,6 +1094,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         setIsMobileNavOpen(false)
         return true
       }
+      if (isMobileSearchOpen) {
+        setIsMobileSearchOpen(false)
+        return true
+      }
       if (breadcrumb) {
         if (canGoBack) setHistoryIndex((index) => index - 1)
         else {
@@ -1357,6 +1383,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               event.preventDefault()
               return
             }
+            // Mobile search overlay: Escape reaches the overlay's own handler, which closes the
+            // results list first and only then the overlay — never the whole dialog.
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.closest('[data-slot="settings-mobile-search"]')
+            ) {
+              event.preventDefault()
+              return
+            }
             if (!isMobileNavOpenRef.current) return
             event.preventDefault()
             setIsMobileNavOpen(false)
@@ -1484,7 +1519,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               data-slot="settings-main"
               aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
               inert={isMobile && isMobileNavOpen ? true : undefined}
-              className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
+              className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-card"
             >
               <TooltipProvider delayDuration={300}>
                 <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
@@ -1580,7 +1615,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </h2>
                     )}
                   </div>
-                  {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
+                  {/* Below the md breakpoint this field moves into the mobile search overlay. */}
                   {!isMobile ? (
                     <div
                       data-slot="settings-global-search"
@@ -1590,6 +1625,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     </div>
                   ) : null}
                   <div className="flex shrink-0 items-center gap-1">
+                    {isMobile ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            ref={mobileSearchTriggerRef}
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setIsMobileSearchOpen(true)}
+                            aria-label={t('Search settings')}
+                            className="rounded-lg text-muted-foreground"
+                          >
+                            <Search className="size-4" aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('Search settings')}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -1666,6 +1719,48 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   </div>
                 ) : null}
               </TooltipProvider>
+
+              {/* Narrow viewports: full-width search surface over the panel content, opened from
+                  the header search button. Reuses the desktop combobox; Escape and the back button
+                  dismiss it and return focus to that button. */}
+              {isMobile && isMobileSearchOpen ? (
+                <div
+                  data-slot="settings-mobile-search"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={t('Search settings')}
+                  className="absolute inset-0 z-20 flex flex-col bg-card"
+                  onKeyDownCapture={(event) => {
+                    if (event.key !== 'Escape') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setIsMobileSearchOpen(false)
+                  }}
+                >
+                  <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setIsMobileSearchOpen(false)}
+                      aria-label={t('Back', { context: 'step' })}
+                      className="shrink-0 rounded-lg text-muted-foreground"
+                    >
+                      <ArrowLeft className="size-4" aria-hidden="true" />
+                    </Button>
+                    <div className="min-w-0 flex-1">
+                      <SettingsGlobalSearch
+                        panels={SETTINGS_PANELS}
+                        autoFocus
+                        onNavigate={(panel) => {
+                          setIsMobileSearchOpen(false)
+                          navigatePanel(panel)
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               <motion.div
                 layoutScroll

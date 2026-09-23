@@ -1861,6 +1861,88 @@ describe('SettingsPage layout', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('offers an icon-button search overlay on a narrow browser viewport', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query === '(max-width: 767px)',
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn()
+      }))
+    )
+    // Search navigation highlights the jump target via scrollIntoView, which jsdom lacks.
+    Element.prototype.scrollIntoView = vi.fn()
+
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(<SettingsPage open onClose={onClose} />)
+    })
+
+    // The desktop header field stays unmounted; an icon button takes its place.
+    expect(document.body.querySelector('[data-slot="settings-global-search"]')).toBeNull()
+    const searchTrigger = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button[aria-label="Search settings"]')
+    ).at(-1)!
+    expect(searchTrigger).not.toBeNull()
+
+    await act(async () => searchTrigger.click())
+
+    const overlay = document.body.querySelector<HTMLElement>('[data-slot="settings-mobile-search"]')
+    expect(overlay).not.toBeNull()
+    const overlayInput = overlay!.querySelector<HTMLInputElement>(
+      'input[aria-label="Search settings"]'
+    )!
+    expect(overlayInput).not.toBeNull()
+    expect(document.activeElement).toBe(overlayInput)
+
+    // The overlay runs the same combobox: typing filters and Enter navigates, closing the overlay.
+    await act(async () => {
+      fireEvent.change(overlayInput, { target: { value: 'proxy' } })
+    })
+    const option = overlay!.querySelector<HTMLElement>('[role="option"]')
+    expect(option?.textContent).toContain('Proxy')
+    await act(async () => fireEvent.keyDown(overlayInput, { key: 'Enter' }))
+    expect(document.body.querySelector('[data-slot="settings-mobile-search"]')).toBeNull()
+    expect(
+      document.body
+        .querySelector('[data-slot="settings-content-scroll"]')
+        ?.getAttribute('data-settings-active-panel')
+    ).toBe('network')
+
+    // Reopen and dismiss with Escape: the overlay closes, the dialog stays open, and focus
+    // returns to the search button.
+    await act(async () => searchTrigger.click())
+    const reopened = document.body.querySelector<HTMLElement>(
+      '[data-slot="settings-mobile-search"]'
+    )!
+    expect(reopened).not.toBeNull()
+    await act(async () => {
+      reopened
+        .querySelector<HTMLInputElement>('input[aria-label="Search settings"]')!
+        .dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+    })
+    expect(document.body.querySelector('[data-slot="settings-mobile-search"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(searchTrigger)
+
+    // The back affordance dismisses the overlay the same way.
+    await act(async () => searchTrigger.click())
+    const backButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-slot="settings-mobile-search"] button[aria-label="Back"]'
+    )!
+    await act(async () => backButton.click())
+    expect(document.body.querySelector('[data-slot="settings-mobile-search"]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(searchTrigger)
+  })
+
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
