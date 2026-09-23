@@ -13,7 +13,7 @@ import type {
   SessionPackageImportResult,
   SessionPackageRequest
 } from '../../shared/session-package'
-import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
+import type { SensitiveContentEvidence } from '../../shared/sensitive-content'
 import { sanitizeExportFilename } from '../../shared/conversation-export'
 import type { NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'

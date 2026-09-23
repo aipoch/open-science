@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, opendir, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import * as tar from 'tar'
 import type {
   SessionDiagnosticItem,
@@ -10,12 +10,27 @@ import type {
 import { arch, release } from 'node:os'
 import { projectDiagnosticSession, projectDiagnosticLog } from './projection'
 import { readDiagnosticDatabase } from './database'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
 
 const FILE_LIMIT = 8 * 1024 * 1024
 const TOTAL_LIMIT = 32 * 1024 * 1024
 const safeSegment = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(value)
 class DiagnosticCollectionError extends Error {}
+const resolveStorageKey = (root: string, key: string): string => {
+  if (!key || isAbsolute(key) || key.includes('\\')) {
+    throw new Error('Invalid diagnostic storage key.')
+  }
+  const segments = key.split('/')
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw new Error('Invalid diagnostic storage key.')
+  }
+
+  const candidate = resolve(root, ...segments)
+  const relativePath = relative(resolve(root), candidate)
+  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
+    throw new Error('Invalid diagnostic storage key.')
+  }
+  return candidate
+}
 const diagnosticFailure = (error: unknown): string => {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
   return typeof code === 'string' &&

@@ -5,7 +5,7 @@ import type { SessionRepository } from '../session-persistence/repository'
 import type { ProjectRepository } from '../projects/repository'
 import type { ApplicationEventPublisher } from '../application-events'
 import type { NativeTranslator } from '../locale/main-process-messages'
-import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
+import type { SensitiveContentEvidence } from '../../shared/sensitive-content'
 import type { SessionPackageRequest } from '../../shared/session-package'
 import {
   isMigrationInProgress,

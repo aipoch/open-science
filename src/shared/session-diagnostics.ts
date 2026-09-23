@@ -1,23 +1,10 @@
 /** Local diagnostic observations, never an import/restore format or an agent tool. */
+import type { SensitiveContentFailure } from './sensitive-content'
+
+export type { SensitiveContentEvidence, SensitiveContentFailure } from './sensitive-content'
+
 export type SessionDiagnosticIdentity = { projectId: string; sessionId: string }
 export type SessionDiagnosticRequest = SessionDiagnosticIdentity & { operationId: string }
-export type SensitiveContentEvidence = {
-  location: string
-  offset: number
-  rule: 'field' | 'assignment' | 'url' | 'token'
-  matchLength: number
-  label?: string
-  leftBoundary: 'start' | 'whitespace' | 'punctuation' | 'letter' | 'number' | 'mark' | 'other'
-  rightBoundary: 'end' | 'whitespace' | 'punctuation' | 'letter' | 'number' | 'mark' | 'other'
-  context: string
-  valueLength?: number
-  valueHash: string
-  sourceStorageKey?: string
-}
-export type SensitiveContentFailure = {
-  occurredAt: string
-  evidence: SensitiveContentEvidence[]
-}
 export type SessionDiagnosticItem = {
   id: string
   kind: 'session' | 'invalid-session' | 'log' | 'database' | 'sensitive-evidence' | 'sensitive-file'

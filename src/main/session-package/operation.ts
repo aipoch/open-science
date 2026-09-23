@@ -19,7 +19,7 @@ import type {
   SessionPackageRequest,
   SessionPackageImportRequest
 } from '../../shared/session-package'
-import type { SensitiveContentEvidence } from '../../shared/session-diagnostics'
+import type { SensitiveContentEvidence } from '../../shared/sensitive-content'
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
 export class SessionPackageOperation {

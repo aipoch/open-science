@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { PROJECT_NAME_MAX_LENGTH } from './projects'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
-import type { SensitiveContentEvidence } from './session-diagnostics'
+import type { SensitiveContentEvidence } from './sensitive-content'
 
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
