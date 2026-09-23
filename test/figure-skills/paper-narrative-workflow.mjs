@@ -6,7 +6,10 @@ import vm from 'node:vm'
 import test from 'node:test'
 
 // Execute the published examples, so the tested workflow is the one agents read.
-const skill = readFileSync(new URL('./SKILL.md', import.meta.url), 'utf8')
+const skill = readFileSync(
+  new URL('../../resources/skills/paper-narrative/SKILL.md', import.meta.url),
+  'utf8'
+)
 const examples = [...skill.matchAll(/```javascript\n([\s\S]*?)```/g)].map((match) => match[1])
 const initialize = examples[2]
 const plan = `(function () { ${examples[3]}; return compositionQueue })()`

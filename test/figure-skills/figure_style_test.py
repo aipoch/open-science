@@ -1,9 +1,11 @@
-"""Run: python -m unittest discover -s resources/skills/figure-style -v.
+"""Run: python test/figure-skills/figure_style_test.py.
 
 Requires NumPy, SciPy and Matplotlib; no GUI backend or scVI installation is needed.
 """
 import unittest
 from io import BytesIO
+from pathlib import Path
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -11,6 +13,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "resources/skills/figure-style"))
 from kernel import bar_with_points, end_of_line_labels, focal_palette, panel_crops, panel_letter, strip_with_median
 
 

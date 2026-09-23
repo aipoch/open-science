@@ -1,4 +1,4 @@
-"""Run: python -m unittest discover -s resources/skills/figure-composer -v.
+"""Run: python test/figure-skills/figure_composer_test.py.
 
 Requires Pillow and Matplotlib. Exercises real PNG pixels and generated code.
 """
@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -15,6 +16,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "resources/skills/figure-composer"))
 from kernel import apply_outline_revisions, compose_crops, compose_figure, grid_geom, panel_px, panel_task
 
 
