@@ -112,7 +112,8 @@ export const saveWebProjectArchive = async (
             fileId: file.fileId,
             versionId: file.versionId,
             encoding: 'base64',
-            offset: file.size
+            offset: 0,
+            validationOnly: true
           }
         ])
       } else {

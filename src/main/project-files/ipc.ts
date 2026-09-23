@@ -22,6 +22,37 @@ import type {
   SearchArtifactsResult
 } from '../../shared/project-files'
 
+// Kept outside the composition root so browser exports exercise the real bounded lease contract.
+export const readHiddenArtifactChunk = async (
+  request: ReadHiddenArtifactRequest,
+  open: (request: ReadHiddenArtifactRequest) => Promise<{
+    size: number
+    readRange(begin: number, end: number): Promise<Uint8Array>
+    verifyUnchanged(): Promise<void>
+    close(): Promise<void>
+  }>
+): Promise<ArtifactPreviewResult> => {
+  const lease = await open(request)
+  try {
+    const offset = request.offset ?? 0
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > lease.size)
+      throw new Error('Invalid hidden file offset.')
+    const limit = request.validationOnly ? 0 : Math.min(lease.size - offset, 8 * 1024 * 1024)
+    const bytes =
+      limit === 0 ? Buffer.alloc(0) : Buffer.from(await lease.readRange(offset, offset + limit))
+    await lease.verifyUnchanged()
+    const encoding = request.encoding === 'base64' ? 'base64' : 'utf8'
+    return {
+      content: bytes.toString(encoding),
+      encoding,
+      size: lease.size,
+      truncated: !request.validationOnly && offset + limit < lease.size
+    }
+  } finally {
+    await lease.close()
+  }
+}
+
 type ProjectFilesQueryRepository = {
   setArtifactHidden?(request: SetArtifactHiddenRequest): Promise<void>
   getHiddenArtifactIds?(projectId: string): Promise<HiddenArtifactIdentity[]>
