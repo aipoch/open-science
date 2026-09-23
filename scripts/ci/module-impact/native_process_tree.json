@@ -337,6 +337,7 @@
       "src/main/permission-grants/ipc.test.ts",
       "src/main/permission-grants/projection-controller.test.ts",
       "src/main/permission-grants/registry.test.ts",
+      "src/main/process-tree-evidence.macos.integration.test.ts",
       "src/main/process-tree.macos.integration.test.ts",
       "src/main/process-tree.test.ts",
       "src/main/project-files/content-search.test.ts",
@@ -542,7 +543,8 @@
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
-      "src/main/literature/smart-collections.test.ts"
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

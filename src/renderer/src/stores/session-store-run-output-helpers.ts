@@ -46,6 +46,7 @@ export type AppendAgentMessageChunkInput = {
   sessionId: string
   streamId: string
   eventId: string
+  timestamp?: number
   promptMessageId?: string
   content?: string
   image?: AcpMessageImage
@@ -375,7 +376,8 @@ export const projectAgentMessageChunks = (
           eventIds: [...baseEventIds, input.eventId],
           images: sanitizedImage ? [{ id: input.eventId, ...sanitizedImage }] : undefined,
           sortIndex: createSortIndex(),
-          createdAt: now,
+          // Presentation may lag behind tools; preserve the runtime timeline on first materialization.
+          createdAt: input.timestamp ?? now,
           updatedAt: now
         }
     clearStreamingEntry(messageId)

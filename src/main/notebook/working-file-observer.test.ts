@@ -2413,7 +2413,11 @@ describe('working-file evidence', () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const outsideRoot = join(storageRoot as string, 'outside')
     await mkdir(outsideRoot)
-    await symlink(outsideRoot, join(storageRoot as string, 'execution-file-evidence'), 'dir')
+    await symlink(
+      outsideRoot,
+      join(storageRoot as string, 'execution-file-evidence'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
     const observation = await startWorkingFileObservation(
       { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-symlink' },
       { watchDirectory: watcherUnavailable }
@@ -2435,13 +2439,19 @@ describe('working-file evidence', () => {
     const outsideRoot = join(storageRoot as string, 'outside-race')
     const displacedRoot = join(storageRoot as string, 'displaced-evidence')
     await mkdir(outsideRoot)
+    let rootReplaced = false
     const observation = await startWorkingFileObservation(
       { dataRoot, notebookSessionRoot: sessionRoot, runId: 'run-replaced-root' },
       {
         watchDirectory: watcherUnavailable,
         runEvidenceWorker: async (evidenceRoot) => {
           await rename(evidenceRoot, displacedRoot)
-          await symlink(outsideRoot, evidenceRoot, 'dir')
+          await symlink(
+            outsideRoot,
+            evidenceRoot,
+            process.platform === 'win32' ? 'junction' : 'dir'
+          )
+          rootReplaced = true
           return {
             ok: true,
             generations: [],
@@ -2472,6 +2482,7 @@ describe('working-file evidence', () => {
 
     const result = await observation.finish()
 
+    expect(rootReplaced).toBe(true)
     expect(result.fileEvidence).toMatchObject({
       state: 'unavailable',
       reasonCodes: expect.arrayContaining(['evidence-persistence-failed'])
@@ -3051,7 +3062,11 @@ describe('working-file evidence', () => {
       captureCancelled: false
     })
     await rm(join(evidenceRoot, 'staging-unsafe-final'), { recursive: true })
-    await symlink(outsideRoot, join(evidenceRoot, 'activity-unsafe-final'), 'dir')
+    await symlink(
+      outsideRoot,
+      join(evidenceRoot, 'activity-unsafe-final'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
 
     await expect(
       reconcileWorkingFileEvidence(
@@ -3860,7 +3875,11 @@ describe('working-file evidence', () => {
     await mkdir(evidenceRoot)
     await mkdir(outsideRoot)
     await writeFile(join(outsideRoot, 'keep.txt'), 'keep')
-    await symlink(outsideRoot, join(evidenceRoot, 'project-symlink'), 'dir')
+    await symlink(
+      outsideRoot,
+      join(evidenceRoot, 'project-symlink'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
 
     await expect(
       deleteWorkingFileEvidenceProject(storageRoot as string, 'project-symlink')
@@ -3874,7 +3893,7 @@ describe('working-file evidence', () => {
     await mkdir(outsideRoot)
     await writeFile(join(outsideRoot, 'keep.txt'), 'keep')
     const evidenceRoot = join(storageRoot as string, 'execution-file-evidence')
-    await symlink(outsideRoot, evidenceRoot, 'dir')
+    await symlink(outsideRoot, evidenceRoot, process.platform === 'win32' ? 'junction' : 'dir')
 
     await expect(
       reconcileWorkingFileEvidence(

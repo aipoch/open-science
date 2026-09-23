@@ -320,7 +320,7 @@ const ensureBookmarkHighlightStyle = (markKind: PdfMarkKind, color: PdfMarkColor
   if (document.getElementById(styleId)) return
   const style = document.createElement('style')
   style.id = styleId
-  const selector = `::highlight(${bookmarkHighlightKey(markKind, color)})`
+  const selector = `[data-preview-text-annotation-surface]::highlight(${bookmarkHighlightKey(markKind, color)})`
   const value = bookmarkColorValue(color)
   style.textContent =
     markKind === 'highlight'
@@ -362,7 +362,7 @@ const getDraftHighlight = (): Highlight | undefined => {
   if (!document.getElementById(DRAFT_HIGHLIGHT_STYLE_ID)) {
     const style = document.createElement('style')
     style.id = DRAFT_HIGHLIGHT_STYLE_ID
-    style.textContent = `::highlight(${DRAFT_HIGHLIGHT_NAME}) {
+    style.textContent = `[data-preview-text-annotation-surface]::highlight(${DRAFT_HIGHLIGHT_NAME}) {
       background-color: color-mix(in oklab, var(--primary) 22%, transparent);
       text-decoration: underline 0.125rem var(--primary);
     }`

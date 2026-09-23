@@ -129,6 +129,32 @@ describeMacOS('terminateProcessTree (real macOS processes)', () => {
   )
 
   it(
+    'reaps a descendant that execs after reparenting even when its parent identity becomes launchd',
+    async () => {
+      const { getDarwinProcess } = await import('@aipoch/process-tree-native')
+      const child = spawnTracked(
+        '/bin/sh',
+        [
+          '-c',
+          'sleep 0.05; /bin/sh -c \'sleep 0.1; exec /bin/sleep 30\' >/dev/null 2>&1 & printf "%s\\n" "$!"'
+        ],
+        { detached: true, stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+      if (child.pid !== undefined) liveProbePids.add(child.pid)
+      // Let fork, parent exit and exec all happen without the JS topology sampler seeing the child.
+      const until = Date.now() + 500
+      while (Date.now() < until) void process.hrtime.bigint()
+      const descendantPid = await readPid(child)
+      await waitForExit(child)
+      expect(getDarwinProcess(descendantPid)).toMatchObject({ ppid: 1, parentUniqueId: '1' })
+
+      await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+      await waitFor(() => !isAlive(descendantPid))
+    },
+    PROBE_TIMEOUT_MS
+  )
+
+  it(
     'reaps a detached descendant after its leader exits and escalates SIGTERM',
     async () => {
       for (let iteration = 0; iteration < PROBE_ITERATIONS; iteration += 1) {

@@ -1382,6 +1382,37 @@ describe('workspace message queue controller', () => {
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
   })
 
+  it.each(['idle', 'error'] as const)(
+    'steers Send now into the owned prompt despite a durable %s projection',
+    async (status) => {
+      const activeSession = { ...session(status), agentPromptInFlight: true }
+      const steerFollowUp = vi.fn(async () => ({
+        injected: true as const,
+        transport: 'acp-steering' as const,
+        messageId: 'steered-follow-up'
+      }))
+      const input = options(activeSession, {
+        promptInFlightSessionIds: [],
+        runtime: { sendMessage: vi.fn(), cancelRun: vi.fn(), steerFollowUp }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      await act(async () => {
+        hook.result.current.lifecycle.enqueue({ ...admission('follow up'), session: activeSession })
+      })
+      expect(hook.result.current.items).toHaveLength(1)
+      await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+      expect(steerFollowUp).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: activeSession.id, text: 'follow up' })
+      )
+      expect(hook.result.current.items).toEqual([])
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    }
+  )
+
   it('pauses dispatch while a permission request is pending', async () => {
     const idle = session('idle')
     let permissionPending = true

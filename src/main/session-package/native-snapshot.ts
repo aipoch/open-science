@@ -119,7 +119,10 @@ export const captureNativeRecords = async (
     if (ids.some((id) => !visibility.has(id))) throw new Error(errorMessage)
     for (const [id, hidden] of visibility) if (!hidden) artifactIds.add(id)
   }
-  const addResolvedVersionIds = async (ids: readonly string[], errorMessage: string) => {
+  const addResolvedVersionIds = async (
+    ids: readonly string[],
+    errorMessage: string
+  ): Promise<void> => {
     const uniqueIds = [...new Set(ids)]
     const artifacts = await client.artifactVersion.findMany({
       where: { id: { in: uniqueIds } },
@@ -211,7 +214,8 @@ export const captureNativeRecords = async (
           select: {
             sourceArtifactVersionId: true,
             sourceUploadVersionId: true,
-            inputFileVersionId: true
+            inputFileVersionId: true,
+            sourceKind: true
           }
         })
       : []

@@ -9,19 +9,23 @@
 
 @custom-variant dark (&:is(.dark *));
 
-::highlight(agent-annotation-draft) {
+/* Scope highlight inheritance to its text surface: global highlight styles make unrelated
+   token-heavy Notebook trees recalculate every named highlight during panel resizing. */
+[data-annotation-surface]::highlight(agent-annotation-draft) {
   background-color: color-mix(in oklab, var(--primary) 22%, transparent);
   text-decoration: underline 0.125rem var(--primary);
 }
 
-::highlight(personal-bookmark),
-::highlight(preview-personal-bookmark) {
+[data-annotation-surface]::highlight(personal-bookmark),
+[data-preview-text-annotation-surface]::highlight(preview-personal-bookmark) {
   background-color: color-mix(in oklab, var(--color-status-warning-foreground) 24%, transparent);
 }
 
 /* A short, stronger flash when a composer card jumps back to the quoted
    text; cleared by the reveal module after its timeout. */
-::highlight(agent-annotation-reveal) {
+:is([data-annotation-surface], [data-preview-text-annotation-surface])::highlight(
+  agent-annotation-reveal
+) {
   background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   text-decoration: underline 0.125rem var(--primary);
 }
@@ -181,11 +185,11 @@
 }
 
 /* Full-document find uses the browser Highlight API over PDF.js' text mapping. */
-::highlight(pdf-search-results) {
+.pdf-text-layer::highlight(pdf-search-results) {
   background-color: color-mix(in oklab, var(--primary) 17%, transparent);
 }
 
-::highlight(pdf-search-current) {
+.pdf-text-layer::highlight(pdf-search-current) {
   background-color: color-mix(in oklab, var(--primary) 32%, transparent);
   text-decoration: underline 0.1rem color-mix(in oklab, var(--primary) 75%, transparent);
 }

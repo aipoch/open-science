@@ -127,7 +127,9 @@ test('does not force unannotated transcript geometry during native layout change
         content:
           index % 2
             ? `## Result ${index}\n\n${'Historical paragraph for resizing. '.repeat(20)}\n\n| Column | Value |\n| --- | --- |\n| Data | 123 |\n\n\`\`\`python\nprint("layout")\n\`\`\``
-            : `Historical question ${index}. ${'Explain the data. '.repeat(10)}`,
+            : index === 380
+              ? 'Long historical prompt line.\n'.repeat(30)
+              : `Historical question ${index}. ${'Explain the data. '.repeat(10)}`,
         status: 'complete' as const,
         eventIds: [],
         createdAt: now + index,
@@ -201,4 +203,20 @@ test('does not force unannotated transcript geometry during native layout change
       Reflect.deleteProperty(window, '__unannotatedLayoutProbe')
     })
   }
+
+  // An offscreen user row must still measure and offer disclosure on entry.
+  const viewport = page.locator('[data-slot="message-scroller-viewport"]')
+  const longRow = viewport.locator('[data-message-id="layout-380"]')
+  await longRow.scrollIntoViewIfNeeded()
+  await expect(longRow).toBeInViewport()
+  await longRow.getByRole('button', { name: 'Show more', exact: true }).click()
+  await expect(longRow.getByRole('button', { name: 'Show less', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true'
+  )
+  await longRow.getByRole('button', { name: 'Show less', exact: true }).click()
+  await expect(longRow.getByRole('button', { name: 'Show more', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'false'
+  )
 })

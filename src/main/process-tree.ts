@@ -14,7 +14,19 @@ export type ProcessTreeLogger = { error: (message: string, error?: unknown) => v
 // Windows taskkill /T exited 0, or POSIX left no surviving descendant and the direct child exited.
 // A fallback path (taskkill failed → only the parent was direct-killed) reports reaped:false so a
 // caller that must guarantee released file handles (the update-install gate) can refuse to proceed.
-export type ProcessTreeKillResult = { reaped: boolean }
+export type ProcessTreeKillResult = {
+  reaped: boolean
+  diagnostics?: {
+    failureCategory:
+      | 'leader-identity-unavailable'
+      | 'process-table-history-incomplete'
+      | 'ownership-candidate-unresolved'
+      | 'owned-processes-still-running'
+    recovery: 'retry-owner' | 'stronger-ownership-proof-required'
+    ownedIdentityCount: number
+    ambiguousIdentityCount: number
+  }
+}
 
 type OwnedPosixProcessGroup = Readonly<{
   kind: 'owned-posix-process-group'
@@ -42,6 +54,10 @@ type PosixProcessTracker = {
   // absent. Null is permanent: a later process with the same pid is an unowned replacement.
   leaderIdentity: PosixProcessIdentity | null | undefined
   identities: Map<number, PosixProcessIdentity>
+  // A failed environment read is an unresolved observation about this exact birth identity, not
+  // evidence of ownership and not a permanent failure of every later snapshot. Retain vanished
+  // candidates: disappearance alone does not prove that they left no escaped descendants.
+  ambiguousIdentities: Map<string, PosixProcessIdentity>
   complete: boolean
   ownershipToken: string | undefined
 }
@@ -603,9 +619,9 @@ const captureTrackedDescendants = (
       stack.push(child.pid)
     }
   }
-  // Darwin retains an exact unique id for a process's original parent after reparenting. Walk from
-  // every identity previously proven to belong to this tree so a detached child remains attributable
-  // even when both its direct parent and the original leader have exited before the final sample.
+  // Darwin can retain its parent's unique id after reparenting (a later exec may replace it).
+  // Walk positive links from every identity proven to belong to this tree, including dead parents;
+  // absence of such a link never proves that a detached process is unrelated.
   const birthStack = [...tracker.identities.values()]
     .map(({ birthToken }) => birthToken)
     .filter((birthToken): birthToken is string => birthToken !== undefined)
@@ -657,11 +673,21 @@ const captureTrackedDescendants = (
       const candidateBirthOrder = BigInt(candidate.birthOrder)
       if (candidateBirthOrder <= leaderBirthOrder) continue
 
+      const birthToken = candidate.birthToken!
+      // parentBirthToken supplies positive ancestry evidence above, but never negative evidence:
+      // XNU pinsertchild(..., in_exec) can replace p_puniqueid with launchd's identity when an
+      // orphan execs. Even a parent generation older than our leader cannot exclude this candidate.
+
       const sameLeaderGroup =
         candidate.pgid === tracker.leaderPid && candidate.sid === tracker.leaderPid
       const orphanedSessionLeader =
         candidate.ppid === 1 && candidate.pgid === candidate.pid && candidate.sid === candidate.pid
-      if (!sameLeaderGroup && !orphanedSessionLeader) continue
+      if (
+        !sameLeaderGroup &&
+        !orphanedSessionLeader &&
+        !tracker.ambiguousIdentities.has(birthToken)
+      )
+        continue
 
       // KERN_PROCARGS2 omits inherited environment entries for some Apple system executables such
       // as /bin/sleep. An immediately-created member of the leader's private group still has two
@@ -671,19 +697,27 @@ const captureTrackedDescendants = (
         candidateBirthOrder - leaderBirthOrder <= DARWIN_SAME_GROUP_BIRTH_ORDER_WINDOW
       ) {
         tracker.identities.set(candidate.pid, candidate)
+        tracker.ambiguousIdentities.delete(birthToken)
         continue
       }
 
       if (!binding) {
-        tracker.complete = false
+        tracker.ambiguousIdentities.set(birthToken, candidate)
         continue
       }
       const ownershipToken = binding.getDarwinEnvironmentValue(
         candidate.pid,
         PROCESS_TREE_OWNERSHIP_ENV
       )
-      if (ownershipToken === null) {
-        tracker.complete = false
+      // The environment query and process table are separate observations. Revalidate the kernel
+      // identity before trusting a matching marker; a reused PID never transfers ownership.
+      const current = binding.getDarwinProcess(candidate.pid)
+      if (
+        ownershipToken === null ||
+        !current ||
+        !samePosixIdentity(candidate, normalizeDarwinProcess(current))
+      ) {
+        tracker.ambiguousIdentities.set(birthToken, candidate)
         continue
       }
       if (ownershipToken === tracker.ownershipToken) {
@@ -691,11 +725,19 @@ const captureTrackedDescendants = (
         // ownership link when every intermediary disappeared between topology samples; the unique id
         // still guards the later signal against PID reuse.
         tracker.identities.set(candidate.pid, candidate)
+        tracker.ambiguousIdentities.delete(birthToken)
       } else if (sameLeaderGroup) {
         // This may be a long-lived owned member whose environment is unavailable, or a later group
         // that reused the leader's numeric id. Do not signal an ambiguous process or claim success.
-        tracker.complete = false
+        tracker.ambiguousIdentities.set(birthToken, candidate)
       }
+      // A later nonmatching/absent marker cannot discharge an earlier unreadable observation:
+      // exec preserves the process birth identity while replacing its environment. Only positive
+      // ownership evidence (marker or ancestry), followed by teardown, resolves retained debt.
+    }
+    // Topology/original-parent evidence can prove ownership before the environment scan runs.
+    for (const identity of tracker.identities.values()) {
+      if (identity.birthToken) tracker.ambiguousIdentities.delete(identity.birthToken)
     }
   }
 }
@@ -753,6 +795,7 @@ export const trackOwnedPosixProcessTree = (child: ChildProcess, ownershipToken?:
     // replacement that happens to reuse the pid.
     leaderIdentity,
     identities: leaderIdentity ? new Map([[leaderPid, leaderIdentity]]) : new Map(),
+    ambiguousIdentities: new Map(),
     complete: true,
     ownershipToken
   }
@@ -1399,6 +1442,35 @@ const terminateTrackedPosixProcessTree = async (
   const finalSample = await stopTrackedProcessTree(tracker)
   const unsupportedPlatform = process.platform !== 'linux' && process.platform !== 'darwin'
   const unusableLinuxSnapshot = process.platform === 'linux' && !finalSample.complete
+  const outcome = (processesExited: boolean, observationComplete = true): ProcessTreeKillResult => {
+    const ambiguousIdentityCount = tracker.ambiguousIdentities.size
+    const failureCategory = !tracker.leaderIdentity
+      ? 'leader-identity-unavailable'
+      : !tracker.complete || !observationComplete
+        ? 'process-table-history-incomplete'
+        : ambiguousIdentityCount > 0
+          ? 'ownership-candidate-unresolved'
+          : !processesExited
+            ? 'owned-processes-still-running'
+            : undefined
+    if (!failureCategory) return { reaped: true }
+    const candidatesStillObservable = [...tracker.ambiguousIdentities.values()].every((identity) =>
+      samePosixIdentity(identity, finalSample.processes.get(identity.pid))
+    )
+    return {
+      reaped: false,
+      diagnostics: {
+        failureCategory,
+        recovery:
+          failureCategory === 'owned-processes-still-running' ||
+          (failureCategory === 'ownership-candidate-unresolved' && candidatesStillObservable)
+            ? 'retry-owner'
+            : 'stronger-ownership-proof-required',
+        ownedIdentityCount: tracker.identities.size,
+        ambiguousIdentityCount
+      }
+    }
+  }
   if (unsupportedPlatform || unusableLinuxSnapshot || tracker.leaderIdentity === null) {
     // A missing Darwin receipt still retains the explicit group as a best-effort cleanup path, but
     // it cannot prove that a descendant did not escape the group.
@@ -1406,7 +1478,7 @@ const terminateTrackedPosixProcessTree = async (
       const ownedGroup = ownedPosixProcessGroups.get(child)
       if (ownedGroup) {
         await terminateOwnedPosixProcessGroup(ownedGroup, signal, log)
-        return { reaped: false }
+        return outcome(false)
       }
     }
     killDirectChild(child, gracefulSignal)
@@ -1417,7 +1489,7 @@ const terminateTrackedPosixProcessTree = async (
       forceKillChild(child)
       await waitForExit(child, SIGKILL_GRACE_MS)
     }
-    return { reaped: false }
+    return outcome(false)
   }
   const live = [...tracker.identities.values()].filter((identity) =>
     samePosixIdentity(identity, finalSample.processes.get(identity.pid))
@@ -1446,7 +1518,7 @@ const terminateTrackedPosixProcessTree = async (
     ),
     ...[...gracefulGroups].map((pgid) => waitForProcessGroupExit(pgid, TERMINATE_GRACE_MS))
   ])
-  if (gracefulExit.every(Boolean)) return { reaped: tracker.complete && finalSample.complete }
+  if (gracefulExit.every(Boolean)) return outcome(true, finalSample.complete)
 
   const beforeForce = await collectPosixProcessTable()
   const survivors = live.filter((identity) =>
@@ -1473,10 +1545,7 @@ const terminateTrackedPosixProcessTree = async (
     ),
     ...[...forcedGroups].map((pgid) => waitForProcessGroupExit(pgid, SIGKILL_GRACE_MS))
   ])
-  return {
-    reaped:
-      tracker.complete && finalSample.complete && beforeForce.complete && forcedExit.every(Boolean)
-  }
+  return outcome(forcedExit.every(Boolean), finalSample.complete && beforeForce.complete)
 }
 
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually

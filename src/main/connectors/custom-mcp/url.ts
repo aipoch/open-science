@@ -1,3 +1,4 @@
+// Public, Electron-free admission entry for subprocess and persisted-credential validation.
 import { isIP } from 'node:net'
 
 const isLoopbackHost = (hostname: string): boolean => {

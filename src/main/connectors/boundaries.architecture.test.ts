@@ -12,7 +12,7 @@ import {
   readProductionSource
 } from '../../../test/architecture-source-index'
 
-it('keeps Custom MCP implementation imports behind its public facade', () => {
+it('keeps Custom MCP implementation imports behind its facade and pure URL admission entry', () => {
   const root = resolve(__dirname, '../../..')
   const moduleRoot = resolve(__dirname, 'custom-mcp')
   const violations: string[] = []
@@ -28,7 +28,7 @@ it('keeps Custom MCP implementation imports behind its public facade', () => {
       const target = resolve(dirname(file), specifier.text)
       if (
         target.startsWith(moduleRoot + sep) &&
-        !/^index(?:\.ts)?$/.test(relative(moduleRoot, target))
+        !/^(?:index|url)(?:\.ts)?$/.test(relative(moduleRoot, target))
       ) {
         violations.push(`${relative(root, file)} -> ${specifier.text}`)
       }

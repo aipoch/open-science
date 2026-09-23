@@ -32,6 +32,7 @@ import { createManagedPreviewProtocolHandler } from '../managed-preview-protocol
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { SessionRepository } from '../session-persistence/repository'
+import { ProjectFilesQueryOwner } from '../project-files/query-owner'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
 
@@ -96,12 +97,19 @@ it.each(['historical', 'native'] as const)(
         versions.openVersion({ source, ...request }, request.versionId)
     })
     const owners = createManagedPreviewOwnerRegistry(resources)
+    const projectFiles = new ProjectFilesQueryOwner(
+      () => Promise.resolve(fixture.client),
+      () => true
+    )
     const acquiredIds: string[] = []
     const tasks = new HeadlessTaskApi({
       commands: {
         commandNames: () => [],
         invoke: async (name, { args, callerLease }) => {
           if (name === 'sessions:load-all') return sessions.loadAll()
+          if (name === 'project-files:get-hidden-artifact-ids') {
+            return projectFiles.getHiddenArtifactIds((args[0] as { projectId: string }).projectId)
+          }
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(
               args[0] as ResolveArtifactVersionDescriptorsRequest
@@ -280,6 +288,20 @@ it.each(['historical', 'native'] as const)(
       for (const resourceId of acquiredIds) {
         await expect(resources.resolveProtocolResource(resourceId)).rejects.toThrow()
       }
+      await fixture.client.artifactLineage.update({
+        where: { id: version.artifactId },
+        data: { hiddenAt: new Date() }
+      })
+      expect(await client.listArtifacts(session.id)).toEqual([])
+      await expect(client.downloadArtifact(listed[0].id)).rejects.toMatchObject({
+        status: 500,
+        code: 'internal_error'
+      })
+      expect(acquiredIds).toHaveLength(3)
+      await fixture.client.artifactLineage.update({
+        where: { id: version.artifactId },
+        data: { hiddenAt: null }
+      })
       // The same Session record must not make finalized-but-unpublished bytes downloadable.
       await fixture.client.artifactVersion.update({
         where: { id: version.versionId },

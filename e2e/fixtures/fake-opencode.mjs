@@ -1414,8 +1414,7 @@ if (process.argv.includes('--version')) {
           // The layout sampling variant needs the complete intent before the tool. The order
           // assertion instead samples a tool emitted during the stream, before the remaining
           // intent chunks arrive, so it does not depend on renderer scheduling speed.
-          // A few initial chunks let the renderer materialize the intent row before the tool event.
-          const intentChunksBeforeTool = layoutGate ? 30 : 4
+          const intentChunksBeforeTool = layoutGate ? 30 : 1
           for (let chunk = 0; chunk < intentChunksBeforeTool; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
               sessionId: context.params.sessionId,

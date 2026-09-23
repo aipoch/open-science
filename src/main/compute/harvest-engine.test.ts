@@ -10,7 +10,7 @@
  *             §6 (enumeration), §9 (harvest_failed).
  */
 
-import { mkdir, readFile, readdir, rename, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -1385,7 +1385,9 @@ describe('harvestJob - bounded logs and disk reserve', () => {
   it('uses one canonical budget for aliases of the same storage root', async () => {
     const storageRoot = await mkTmp()
     const aliasRoot = `${storageRoot}-alias`
-    await symlink(storageRoot, aliasRoot, 'dir')
+    // Junctions exercise real directory aliasing without Windows symlink privileges.
+    await symlink(storageRoot, aliasRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(await realpath(aliasRoot)).toBe(await realpath(storageRoot))
     const firstJob = makeJob({
       job_id: 'job-budget-1',
       remote_workdir: '~/.openscience/jobs/job-budget-1',

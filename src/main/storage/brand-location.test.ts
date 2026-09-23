@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -160,6 +160,40 @@ it.each(['OpenScience', 'Custom research'])(
   }
 )
 
+it.each([true, false])(
+  'preserves completed pre-relocation installs in config root (packaged=%s)',
+  async (packaged) => {
+    state.packaged = packaged
+    const configRoot = resolveConfigRoot()
+    await seed(configRoot)
+    const json = '{"version":2,"providers":[],"onboardingCompletedAt":1234}'
+    await writeFile(join(configRoot, 'settings.json'), json)
+    await prepareApplicationLocations(configRoot)
+    expect(resolveDataRoot()).toBe(configRoot)
+    expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8'))).toMatchObject({
+      dataRoot: configRoot,
+      onboardingCompletedAt: 1234
+    })
+    expect(await readFile(join(configRoot, 'workspaces/history.json'), 'utf8')).toContain(
+      'retained'
+    )
+
+    // A failed historical relocation can leave a partial default tree behind.
+    await seed(join(fixture, packaged ? 'OpenScience' : 'OpenScience-DEV'))
+    await prepareApplicationLocations(configRoot)
+    expect(resolveDataRoot()).toBe(configRoot)
+  }
+)
+
+it('does not route completed installs back to runtime-only config leftovers', async () => {
+  const configRoot = resolveConfigRoot()
+  await mkdir(join(configRoot, 'runtime'), { recursive: true })
+  await seed(join(fixture, 'OpenScience'))
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1234}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(join(fixture, 'OpenScience'))
+})
+
 it('continues interrupted onboarding using saved settings and its existing runtime', async () => {
   const configRoot = resolveConfigRoot()
   const first = await prepareApplicationLocations(configRoot)
@@ -274,7 +308,7 @@ it.each([true, false])(
   async (packaged) => {
     state.packaged = packaged
     const configRoot = resolveConfigRoot()
-    const legacy = join(fixture, packaged ? 'OpenScience' : 'OpenScience-dev')
+    const legacy = join(fixture, packaged ? 'OpenScience' : 'OpenScience-DEV')
     const attachment = join(getSessionUploadDir(legacy, 'historical-session'), 'notes.txt')
     await mkdir(getSessionUploadDir(legacy, 'historical-session'), { recursive: true })
     await writeFile(attachment, 'historical attachment')
@@ -284,13 +318,13 @@ it.each([true, false])(
     await writeFile(join(configRoot, 'settings.json'), json)
     const { repository } = await prepareApplicationLocations(configRoot)
     expect(resolveDataRoot()).toBe(legacy)
-    expect((await repository.getSettings()).dataRoot).toBeUndefined()
+    expect((await repository.getSettings()).dataRoot).toBe(legacy)
     const resolved = await new ManagedUploadResolver(resolveDataRoot()).resolveSessionUploadPath(
       'historical-session',
       { path: attachment }
     )
     expect(await readFile(resolved, 'utf8')).toBe('historical attachment')
-    expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+    expect((await repository.getSettings()).onboardingCompletedAt).toBe(1234)
   }
 )
 
@@ -304,8 +338,8 @@ it.each([null, '', '   ', '\t\n'])(
     await writeFile(join(configRoot, 'settings.json'), json)
     const { repository } = await prepareApplicationLocations(configRoot)
     expect(resolveDataRoot()).toBe(join(fixture, 'OpenScience'))
-    expect((await repository.getSettings()).dataRoot).toBeUndefined()
-    expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+    expect((await repository.getSettings()).dataRoot).toBe(join(fixture, 'OpenScience'))
+    expect((await repository.getSettings()).onboardingCompletedAt).toBe(0)
   }
 )
 
@@ -425,4 +459,322 @@ it('does not collapse a saved absolute path across a symlink and parent segment'
   const { repository } = await prepareApplicationLocations(configRoot)
   expect((await repository.getSettings()).dataRoot).toBe(selected)
   expect(resolveDataRoot()).toBe(selected)
+})
+
+it.each([1, 2])(
+  'preserves version %s legacy config roots for every unset pointer encoding',
+  async (version) => {
+    const configRoot = resolveConfigRoot()
+    await seed(configRoot)
+    for (const dataRoot of [undefined, null, '', '   ']) {
+      const json = JSON.stringify({ version, dataRoot, onboardingCompletedAt: 0 })
+      await writeFile(join(configRoot, 'settings.json'), json)
+      await prepareApplicationLocations(configRoot)
+      expect(resolveDataRoot()).toBe(configRoot)
+      expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8'))).toMatchObject({
+        dataRoot: configRoot,
+        onboardingCompletedAt: 0
+      })
+    }
+  }
+)
+
+it.each([true, false])(
+  'resolves completed historical defaults inside isolated overrides (packaged=%s)',
+  async (packaged) => {
+    state.packaged = packaged
+    const configRoot = join(fixture, 'override')
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', configRoot)
+    const legacy = join(configRoot, packaged ? 'OpenScience' : 'OpenScience-DEV')
+    await seed(legacy)
+    await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+    await prepareApplicationLocations(configRoot)
+    expect(resolveDataRoot()).toBe(legacy)
+  }
+)
+
+it('never falls back to legacy config data when an explicit saved root is missing', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  await seed(join(fixture, 'OpenScience'))
+  const dataRoot = join(fixture, 'disconnected-drive', 'research')
+  const json = JSON.stringify({ version: 2, dataRoot, onboardingCompletedAt: 1 })
+  await writeFile(join(configRoot, 'settings.json'), json)
+  await expect(prepareApplicationLocations(configRoot)).rejects.toThrow(/missing/)
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+  expect(existsSync(dataRoot)).toBe(false)
+})
+
+it('preserves historical empty data-directory markers instead of switching locations', async () => {
+  const configRoot = resolveConfigRoot()
+  await mkdir(join(configRoot, 'uploads'), { recursive: true })
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(configRoot)
+})
+
+it('does not hide config-root research behind an empty nested branded folder', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  await mkdir(join(configRoot, 'OpenScience'))
+  const legacy = join(fixture, 'OpenScience')
+  await seed(legacy)
+  const json = '{"version":2,"onboardingCompletedAt":1}'
+  await writeFile(join(configRoot, 'settings.json'), json)
+  await expect(prepareApplicationLocations(configRoot)).rejects.toThrow(configRoot)
+  await expect(prepareApplicationLocations(configRoot)).rejects.toThrow(legacy)
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+  expect(await readFile(join(configRoot, 'workspaces/history.json'), 'utf8')).toContain('retained')
+})
+
+it('selects populated config-root research despite an empty nested branded folder', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  await mkdir(join(configRoot, 'OpenScience'))
+  await mkdir(join(fixture, 'OpenScience'))
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(configRoot)
+  expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8')).dataRoot).toBe(
+    configRoot
+  )
+})
+
+it('retains the historical nested-folder guard for empty config-root markers', async () => {
+  const configRoot = resolveConfigRoot()
+  await mkdir(join(configRoot, 'uploads'), { recursive: true })
+  await mkdir(join(configRoot, 'OpenScience'))
+  const legacy = join(fixture, 'OpenScience')
+  await mkdir(legacy)
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(legacy)
+})
+
+it('pins a legacy root once and honors a later explicit relocation', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  await writeFile(
+    join(configRoot, 'settings.json'),
+    JSON.stringify({
+      version: 2,
+      onboardingCompletedAt: 1234,
+      localePreference: 'zh-Hans'
+    })
+  )
+  const { repository } = await prepareApplicationLocations(configRoot)
+  const pinned = await readFile(join(configRoot, 'settings.json'), 'utf8')
+  await initializeDataLocation(repository)
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(pinned)
+  expect((await repository.getSettings()).localePreference).toBe('zh-Hans')
+  const moved = join(fixture, 'relocated')
+  await seed(moved)
+  await repository.setDataRoot({ dataRoot: moved, previousDataRoot: configRoot })
+  await initializeDataLocation(repository)
+  expect(resolveDataRoot()).toBe(moved)
+  expect((await repository.getSettings()).dataRoot).toBe(moved)
+})
+
+it('does not overwrite a selection queued after startup reads legacy settings', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  const moved = join(fixture, 'selected')
+  await seed(moved)
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1234}')
+  const repository = new SettingsRepository(configRoot)
+  const read = repository.getSettings.bind(repository)
+  vi.spyOn(repository, 'getSettings').mockImplementationOnce(async () => {
+    const stale = await read()
+    await repository.setDataRoot({ dataRoot: moved })
+    return stale
+  })
+  await expect(initializeDataLocation(repository)).rejects.toThrow('data location changed')
+  expect((await read()).dataRoot).toBe(moved)
+})
+
+it('stops startup when persisting the verified legacy pointer fails, then retries safely', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  const json = '{"version":2,"onboardingCompletedAt":1234}'
+  await writeFile(join(configRoot, 'settings.json'), json)
+  const store = new SettingsDocumentStore(configRoot)
+  const repository = new SettingsRepository(store)
+  const failure = vi.spyOn(store, 'mutate').mockRejectedValueOnce(new Error('disk full'))
+  await expect(initializeDataLocation(repository)).rejects.toThrow('disk full')
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+  failure.mockRestore()
+  await initializeDataLocation(repository)
+  expect((await repository.getSettings()).dataRoot).toBe(configRoot)
+})
+
+it('rechecks root availability before publishing the legacy pointer', async () => {
+  const configRoot = resolveConfigRoot()
+  const root = join(fixture, 'OpenScience')
+  await seed(root)
+  await mkdir(configRoot)
+  const json = '{"version":2,"onboardingCompletedAt":1234}'
+  await writeFile(join(configRoot, 'settings.json'), json)
+  const store = new SettingsDocumentStore(configRoot)
+  const repository = new SettingsRepository(store)
+  const mutate = store.mutate.bind(store)
+  vi.spyOn(store, 'mutate').mockImplementationOnce(
+    (update, beforePublish, preserveDocumentExcept) =>
+      mutate(
+        (settings) => {
+          const result = update(settings)
+          rmSync(root, { recursive: true })
+          return result
+        },
+        beforePublish,
+        preserveDocumentExcept
+      )
+  )
+  await expect(initializeDataLocation(repository)).rejects.toThrow('missing')
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+  expect((await readdir(configRoot)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  await seed(root)
+  await prepareApplicationLocations(configRoot)
+  expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8')).dataRoot).toBe(root)
+})
+
+it.each(['workspaces', 'uploads', 'models'])(
+  'refuses competing historical data in %s without writing a pointer',
+  async (directory) => {
+    const configRoot = resolveConfigRoot()
+    await seed(configRoot)
+    const homeRoot = join(fixture, 'OpenScience')
+    await mkdir(join(homeRoot, directory), { recursive: true })
+    await writeFile(join(homeRoot, directory, 'existing-data'), 'preserve')
+    const json = '{"version":2,"onboardingCompletedAt":1234}'
+    await writeFile(join(configRoot, 'settings.json'), json)
+    await expect(prepareApplicationLocations(configRoot)).rejects.toThrow(configRoot)
+    await expect(prepareApplicationLocations(configRoot)).rejects.toThrow(homeRoot)
+    expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+  }
+)
+
+it('chooses the only populated candidate over empty historical config markers', async () => {
+  const configRoot = resolveConfigRoot()
+  await mkdir(join(configRoot, 'uploads'), { recursive: true })
+  const homeRoot = join(fixture, 'OpenScience')
+  await seed(homeRoot)
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(homeRoot)
+})
+
+it('keeps a populated lowercase development root created by 0.31', async () => {
+  state.packaged = false
+  const configRoot = resolveConfigRoot()
+  await mkdir(configRoot, { recursive: true })
+  const homeRoot = join(fixture, 'OpenScience-dev')
+  await seed(homeRoot)
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(await readFile(join(resolveDataRoot(), 'workspaces/history.json'), 'utf8')).toContain(
+    'retained'
+  )
+})
+
+it('treats durable symbolic links in a competing candidate as data to preserve', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  const homeRoot = join(fixture, 'OpenScience')
+  await mkdir(homeRoot)
+  await symlink(join(configRoot, 'workspaces'), join(homeRoot, 'uploads'), 'junction')
+  const json = '{"version":2,"onboardingCompletedAt":1}'
+  await writeFile(join(configRoot, 'settings.json'), json)
+  await expect(prepareApplicationLocations(configRoot)).rejects.toThrow('Multiple data locations')
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+})
+
+it('does not mistake two paths to the same historical root for conflicting data', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  await symlink(configRoot, join(fixture, 'OpenScience'), 'junction')
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(configRoot)
+})
+
+it('does not pin a stale legacy root after onboarding state changes', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  const json = '{"version":2,"onboardingCompletedAt":2}'
+  await writeFile(join(configRoot, 'settings.json'), json)
+  const repository = new SettingsRepository(configRoot)
+  await expect(repository.persistLegacyDataRoot(configRoot, 1)).rejects.toThrow(
+    'data location changed'
+  )
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
+})
+
+it('backfills only dataRoot and preserves opaque historical configuration exactly', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  const original = {
+    version: 1,
+    onboardingCompletedAt: 1234,
+    unknownFutureField: { secretReference: 'opaque', numbers: [1, 2] },
+    pythonPath: '/historical/python',
+    providers: []
+  }
+  await writeFile(join(configRoot, 'settings.json'), JSON.stringify(original))
+  await prepareApplicationLocations(configRoot)
+  expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8'))).toEqual({
+    ...original,
+    dataRoot: configRoot
+  })
+})
+
+it.each([true, false])(
+  'recovers the historical home candidate for an ordinary config override (packaged=%s)',
+  async (packaged) => {
+    state.packaged = packaged
+    const configRoot = join(fixture, 'config-override')
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', configRoot)
+    await mkdir(configRoot)
+    const homeRoot = join(fixture, packaged ? 'OpenScience' : 'OpenScience-DEV')
+    await seed(homeRoot)
+    await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+    await prepareApplicationLocations(configRoot)
+    expect(resolveDataRoot()).toBe(homeRoot)
+  }
+)
+
+it('never inspects home data outside a dedicated E2E storage override', async () => {
+  const configRoot = join(fixture, 'isolated')
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', configRoot)
+  await seed(configRoot)
+  await seed(join(fixture, 'OpenScience'))
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(configRoot)
+})
+
+it('retains legacy config data when a failed move left only empty default directories', async () => {
+  const configRoot = resolveConfigRoot()
+  await seed(configRoot)
+  await mkdir(join(fixture, 'OpenScience', 'workspaces'), { recursive: true })
+  await writeFile(join(configRoot, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+  await prepareApplicationLocations(configRoot)
+  expect(resolveDataRoot()).toBe(configRoot)
+  expect(JSON.parse(await readFile(join(configRoot, 'settings.json'), 'utf8')).dataRoot).toBe(
+    configRoot
+  )
+})
+
+it('preserves a dangling legacy data link when the default also has research', async () => {
+  const configRoot = resolveConfigRoot()
+  await mkdir(configRoot)
+  await symlink(
+    join(fixture, 'disconnected-research'),
+    join(configRoot, 'workspaces'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
+  await seed(join(fixture, 'OpenScience'))
+  const json = '{"version":2,"onboardingCompletedAt":1}'
+  await writeFile(join(configRoot, 'settings.json'), json)
+  await expect(prepareApplicationLocations(configRoot)).rejects.toThrow('Multiple data locations')
+  expect(await readFile(join(configRoot, 'settings.json'), 'utf8')).toBe(json)
 })
