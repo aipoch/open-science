@@ -724,6 +724,9 @@ const CollapsibleUserMessageContent = ({
 
     setIsExpanded(false)
     const measureOverflow = (): void => {
+      // Reading a skipped subtree's geometry defeats content-visibility containment.
+      // ResizeObserver measures it again when the browser resumes rendering the row.
+      if (measurement.checkVisibility?.({ contentVisibilityAuto: true }) === false) return
       const style = window.getComputedStyle(measurement)
       const parsedLineHeight = Number.parseFloat(style.lineHeight)
       const parsedFontSize = Number.parseFloat(style.fontSize)

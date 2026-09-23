@@ -751,6 +751,39 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(content.classList.contains('max-h-[12.5lh]')).toBe(false)
   })
 
+  it('defers skipped row measurements and preserves expansion until rendering resumes', async () => {
+    await renderItem(createMessage({ content: 'Long prompt line\n'.repeat(13) }))
+    const measurement = container.querySelector<HTMLElement>(
+      '[data-slot="user-message-measurement"]'
+    )!
+    measurement.style.lineHeight = '20px'
+    const readHeight = vi.fn(() => 260)
+    Object.defineProperty(measurement, 'scrollHeight', { get: readHeight })
+    const checkVisibility = vi.fn(() => false)
+    measurement.checkVisibility = checkVisibility
+
+    act(() => notifyResize?.())
+    expect(checkVisibility).toHaveBeenCalledWith({ contentVisibilityAuto: true })
+    expect(readHeight).not.toHaveBeenCalled()
+    expect(container.querySelector('[aria-label="Show more"]')).toBeNull()
+
+    checkVisibility.mockReturnValue(true)
+    act(() => notifyResize?.())
+    await click(getButton('Show more'))
+    expect(getButton('Show less').getAttribute('aria-expanded')).toBe('true')
+
+    checkVisibility.mockReturnValue(false)
+    readHeight.mockClear()
+    act(() => notifyResize?.())
+    expect(readHeight).not.toHaveBeenCalled()
+    expect(getButton('Show less').getAttribute('aria-expanded')).toBe('true')
+
+    checkVisibility.mockReturnValue(true)
+    readHeight.mockReturnValue(240)
+    act(() => notifyResize?.())
+    expect(container.querySelector('[data-slot="user-message-collapse-toggle"]')).toBeNull()
+  })
+
   it('remeasures structured content and uses a non-interactive summary while collapsed', async () => {
     const text = 'Structured prompt line\n'.repeat(13)
     const contentText = `${text}/forecast @evidence.csv`
