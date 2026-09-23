@@ -2789,6 +2789,29 @@ describe('DefaultRuntimeProvisioner prefix-block self-guard (startup gate path)'
     expect(runArgv).toHaveBeenCalled()
   })
 
+  it('does not publish terminal completion before runtime repair verification succeeds', async () => {
+    const root = makeRoot()
+    const events: ProvisionProgress[] = []
+    const runArgv = vi.fn(async (argv: string[]) => {
+      const prefix = argv[argv.findIndex((arg) => arg === '-p' || arg === '--prefix') + 1]
+      const bin = pythonBin(prefix)
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'x')
+    })
+    const provisioner = new DefaultRuntimeProvisioner(makeDeps(root, { runArgv }))
+
+    await expect(
+      provisioner.repair('python', (progress) => events.push(progress), {
+        onVerified: () => {
+          throw new Error('runtime binding verification failed')
+        }
+      })
+    ).rejects.toThrow('runtime binding verification failed')
+
+    expect(events.some((event) => event.phase === 'done')).toBe(false)
+    expect(readReadyMarker(root)).toBeUndefined()
+  })
+
   it.each(['provisioner', 'lifecycle'] as const)(
     'E05 cancels an unprepared repair waiting for a package mutation lease through %s',
     async (entry) => {

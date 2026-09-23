@@ -965,7 +965,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
   // The provision work only — the language run (cancel check, provisioning flag) is owned by the caller
   // (runLanguage), so repair can wrap its rm + this rebuild in ONE run without a double beginLanguageRun.
-  private async doProvisionPython(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
+  private async doProvisionPython(
+    rawProgress: (p: ProvisionProgress) => void,
+    emitCompletion = true
+  ): Promise<void> {
     const onProgress = withLanguage(rawProgress, 'python')
     await this.materialize(DEFAULT_PYTHON_SPEC, onProgress)
     // Python is the app gate: stamp the ready marker only after create+verify succeed.
@@ -976,7 +979,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.markerPrefixDirectory(DEFAULT_PY_ENV)
     )
     this.cleanupLegacyDefaultPrefix(DEFAULT_PY_ENV)
-    onProgress({ phase: 'done', event: { code: 'python-ready' }, progress: 1 })
+    if (emitCompletion) {
+      onProgress({ phase: 'done', event: { code: 'python-ready' }, progress: 1 })
+    }
   }
 
   async provisionR(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
@@ -985,7 +990,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     )
   }
 
-  private async doProvisionR(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
+  private async doProvisionR(
+    rawProgress: (p: ProvisionProgress) => void,
+    emitCompletion = true
+  ): Promise<void> {
     const onProgress = withLanguage(rawProgress, 'r')
     // R is lazy, but once present it has its own version marker. A legacy/stale R prefix is upgraded
     // from the current explicit pack instead of being accepted merely because R.exe exists.
@@ -1004,7 +1012,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.markerPrefixDirectory(DEFAULT_R_ENV)
     )
     this.cleanupLegacyDefaultPrefix(DEFAULT_R_ENV)
-    onProgress({ phase: 'done', event: { code: 'r-ready' }, progress: 1 })
+    if (emitCompletion) {
+      onProgress({ phase: 'done', event: { code: 'r-ready' }, progress: 1 })
+    }
   }
 
   async upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void> {
@@ -1095,10 +1105,12 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           })
           if (lang === 'python') {
             rmSync(readyMarkerPath(this.deps.root), { force: true })
-            await this.doProvisionPython(onProgress)
+            // The terminal progress event belongs to the complete repair operation, so defer it
+            // until the runtime-service binding callback below has also succeeded.
+            await this.doProvisionPython(onProgress, false)
           } else {
             rmSync(rReadyMarkerPath(this.deps.root), { force: true })
-            await this.doProvisionR(onProgress)
+            await this.doProvisionR(onProgress, false)
           }
           try {
             await opts?.onVerified?.()
@@ -1113,6 +1125,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             )
             throw error
           }
+          onProgress({
+            phase: 'done',
+            event: { code: lang === 'python' ? 'python-ready' : 'r-ready' },
+            progress: 1
+          })
         })
       } finally {
         this.uninterruptible.delete(lang)
