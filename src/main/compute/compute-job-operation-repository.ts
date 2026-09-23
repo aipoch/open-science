@@ -11,16 +11,18 @@ const isExpiredTransactionError = (error: unknown): boolean =>
 
 const runOperationTransaction = async <Result>(
   client: Pick<PrismaClient, '$transaction'>,
-  operation: (transaction: Prisma.TransactionClient) => Promise<Result>
+  operation: (transaction: Prisma.TransactionClient, attempt: number) => Promise<Result>
 ): Promise<Result> => {
   try {
-    return await client.$transaction(operation, { maxWait: 10_000 })
+    return await client.$transaction((transaction) => operation(transaction, 0), {
+      maxWait: 10_000
+    })
   } catch (error) {
     // Interactive transactions can outlive the process suspension that started them. Prisma then
     // reports P2028 when the client resumes; the callback only contains fenced database mutations,
     // so replaying it once starts from a fresh transaction without repeating remote work.
     if (!isExpiredTransactionError(error)) throw error
-    return client.$transaction(operation, { maxWait: 10_000 })
+    return client.$transaction((transaction) => operation(transaction, 1), { maxWait: 10_000 })
   }
 }
 
@@ -203,7 +205,8 @@ class ComputeJobOperationRepository {
     claimToken: string
   ): Promise<ClaimedComputeJobOperation | null> {
     const client = await this.getClient()
-    return runOperationTransaction(client, async (transaction) => {
+    return runOperationTransaction(client, async (transaction, attempt) => {
+      const attemptNow = attempt === 0 ? now : new Date()
       switch (kind) {
         case 'cancel': {
           const terminal = await transaction.computeJobOperation.findFirst({
@@ -224,8 +227,8 @@ class ComputeJobOperationRepository {
                 eligibleAt: null,
                 claimToken: null,
                 claimExpiresAt: null,
-                settledAt: now,
-                updatedAt: now
+                settledAt: attemptNow,
+                updatedAt: attemptNow
               }
             })
           }
@@ -242,9 +245,9 @@ class ComputeJobOperationRepository {
             {
               claimToken: null,
               claimExpiresAt: null,
-              OR: [{ eligibleAt: null }, { eligibleAt: { lte: now } }]
+              OR: [{ eligibleAt: null }, { eligibleAt: { lte: attemptNow } }]
             },
-            { claimToken: { not: null }, claimExpiresAt: { lte: now } }
+            { claimToken: { not: null }, claimExpiresAt: { lte: attemptNow } }
           ]
         },
         orderBy: { createdAt: 'asc' }
@@ -258,8 +261,8 @@ class ComputeJobOperationRepository {
           attemptCount: { increment: 1 },
           eligibleAt: null,
           claimToken,
-          claimExpiresAt: new Date(now.getTime() + leaseMs),
-          updatedAt: now
+          claimExpiresAt: new Date(attemptNow.getTime() + leaseMs),
+          updatedAt: attemptNow
         }
       })
       if (claimed.count === 0) return null
