@@ -90,6 +90,17 @@ it('locates credentials in JSON-escaped URL authorities', () => {
   )
 })
 
+it.each([
+  'https://example.org/#token=secret-value',
+  'https://example.org/#view?token=secret-value'
+])('scans sensitive query values in URL fragments: %s', (text) => {
+  const match = findSensitivePackageText(text)
+  expect(match).toMatchObject({ rule: 'url', valueLength: 'secret-value'.length })
+  expect(text.slice(match!.valueOffset, match!.valueOffset! + match!.valueLength!)).toBe(
+    'secret-value'
+  )
+})
+
 it('keeps oversized detector spans within the operation contract bounds', () => {
   const text = `apiKey=${'a'.repeat(12_000)}`
   const match = findSensitivePackageText(text)

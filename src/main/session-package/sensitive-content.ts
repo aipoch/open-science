@@ -159,9 +159,14 @@ export const findSensitivePackageText = (
         })
       }
       const fragmentStart = rawUrl.indexOf('#')
-      const fragmentQuery = fragmentStart < 0 ? -1 : rawUrl.indexOf('?', fragmentStart)
-      if (fragmentQuery >= 0)
-        queryRegions.push({ start: fragmentQuery + 1, value: rawUrl.slice(fragmentQuery + 1) })
+      if (fragmentStart >= 0) {
+        const fragmentQuery = rawUrl.indexOf('?', fragmentStart)
+        queryRegions.push(
+          fragmentQuery >= 0
+            ? { start: fragmentQuery + 1, value: rawUrl.slice(fragmentQuery + 1) }
+            : { start: fragmentStart + 1, value: rawUrl.slice(fragmentStart + 1) }
+        )
+      }
       for (const region of queryRegions) {
         let cursor = 0
         for (const part of region.value.split('&')) {
