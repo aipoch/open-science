@@ -98,7 +98,7 @@ describe('ProvidersPanel: unexpected command failures', () => {
     await act(async () => deleteButtons[1]?.click())
     const dialog = document.body.querySelector('[role="alertdialog"]')
     const confirmDelete = Array.from(dialog?.querySelectorAll('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Delete'
+      (button) => button.textContent?.trim() === 'Delete provider'
     )
     await act(async () => confirmDelete?.click())
 

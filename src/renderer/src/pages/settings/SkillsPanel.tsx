@@ -918,21 +918,24 @@ const SkillsPanel = ({
         title={t('Delete skill?')}
         description={
           skillPendingDeletion
-            ? `${t('"{{name}}" will be permanently deleted. This action cannot be undone.', {
+            ? t('"{{name}}" will be permanently deleted. This action cannot be undone.', {
                 name: skillPendingDeletion.name
-              })}${
-                skillPendingDeletion.enabledAgentCount > 0
-                  ? ` ${t(
-                      'This skill is enabled for {{count}} agents; they will no longer be able to use it.',
-                      {
-                        count: skillPendingDeletion.enabledAgentCount,
-                        defaultValue_one:
-                          'This skill is enabled for {{count}} agent; they will no longer be able to use it.'
-                      }
-                    )}`
-                  : ''
-              }`
+              })
             : ''
+        }
+        content={
+          skillPendingDeletion && skillPendingDeletion.enabledAgentCount > 0 ? (
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              {t(
+                'This skill is enabled for {{count}} agents; they will no longer be able to use it.',
+                {
+                  count: skillPendingDeletion.enabledAgentCount,
+                  defaultValue_one:
+                    'This skill is enabled for {{count}} agent; they will no longer be able to use it.'
+                }
+              )}
+            </p>
+          ) : undefined
         }
         cancelLabel={t('Cancel')}
         confirmLabel={t('Delete')}

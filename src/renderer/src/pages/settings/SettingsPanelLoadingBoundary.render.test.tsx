@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
+import { lazyWithRetry } from './settings-panel-loader'
 
 let container: HTMLDivElement
 let root: Root
@@ -130,11 +131,80 @@ describe('SettingsPanelLoadingBoundary', () => {
     }
   })
 
-  it('escalates to a reload action after two failed retries and still offers close', async () => {
+  it('re-invokes the panel import on each retry and escalates after two failed retries', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const onClose = vi.fn()
     const onReload = vi.fn()
-    const Panel = lazy(() => Promise.reject(new Error('chunk unavailable')))
+    const loader = vi
+      .fn<() => Promise<{ default: () => React.JSX.Element }>>()
+      .mockRejectedValueOnce(new Error('chunk unavailable'))
+      .mockRejectedValueOnce(new Error('chunk unavailable'))
+      .mockRejectedValueOnce(new Error('chunk unavailable'))
+      .mockResolvedValue({ default: () => <div>Loaded panel</div> })
+    const Panel = lazyWithRetry(loader)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SettingsPanelLoadingBoundary panelKey="skills" onClose={onClose} onReload={onReload}>
+            <Panel />
+          </SettingsPanelLoadingBoundary>
+        )
+        await Promise.resolve()
+      })
+      expect(loader).toHaveBeenCalledTimes(1)
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "Settings panel couldn't be loaded."
+      )
+
+      // Each retry creates a fresh lazy instance, so the import really runs again.
+      await act(async () => {
+        findButton('Retry')?.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(loader).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "Settings panel couldn't be loaded."
+      )
+      expect(findButton('Reload')).toBeUndefined()
+
+      await act(async () => {
+        findButton('Retry')?.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(loader).toHaveBeenCalledTimes(3)
+      const alert = container.querySelector('[role="alert"]')
+      expect(alert?.textContent).toContain("Retrying didn't fix it")
+      expect(alert?.textContent).toContain('Reload Open-Science to try loading this panel again.')
+      expect(findButton('Retry')).toBeDefined()
+
+      act(() => findButton('Reload')?.click())
+      expect(onReload).toHaveBeenCalledOnce()
+
+      // The escalated state still allows an in-place retry, which recovers once the import succeeds.
+      await act(async () => {
+        findButton('Retry')?.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(loader).toHaveBeenCalledTimes(4)
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.textContent).toContain('Loaded panel')
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('keeps close and reload recovery available for a permanently rejected chunk', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onClose = vi.fn()
+    const onReload = vi.fn()
+    const Panel = lazyWithRetry(
+      (): Promise<{ default: () => React.JSX.Element }> =>
+        Promise.reject(new Error('chunk unavailable'))
+    )
 
     try {
       await act(async () => {
@@ -149,18 +219,16 @@ describe('SettingsPanelLoadingBoundary', () => {
         "Settings panel couldn't be loaded."
       )
 
-      // The rejected lazy chunk keeps failing; each retry remounts and fails again.
-      await act(async () => findButton('Retry')?.click())
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Settings panel couldn't be loaded."
-      )
-      expect(findButton('Reload')).toBeUndefined()
-
-      await act(async () => findButton('Retry')?.click())
-      const alert = container.querySelector('[role="alert"]')
-      expect(alert?.textContent).toContain("Retrying didn't fix it")
-      expect(alert?.textContent).toContain('Reload Open-Science to try loading this panel again.')
-      expect(findButton('Retry')).toBeDefined()
+      await act(async () => {
+        findButton('Retry')?.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      await act(async () => {
+        findButton('Retry')?.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
 
       act(() => findButton('Reload')?.click())
       act(() => findButton('Close')?.click())

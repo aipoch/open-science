@@ -32,7 +32,9 @@ describe('SettingsPage loading boundaries', () => {
       'ArchivedPanel',
       'TokenUsagePanel'
     ]) {
-      expect(source).toContain(`const ${panel} = lazy(`)
+      // lazyWithRetry keeps each panel code-split while letting the boundary's in-place Retry
+      // re-invoke the import after a chunk-load failure.
+      expect(source).toContain(`const ${panel} = lazyWithRetry(`)
       expect(source).not.toContain(`import { ${panel} } from`)
     }
 

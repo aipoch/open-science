@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
+import { SettingsPanelRetryContext } from './settings-panel-loader'
 
 type ErrorBoundaryProps = {
   children: ReactNode
@@ -101,8 +102,9 @@ const SettingsPanelLoadingBoundary = ({
   const resetToken = `${panelKey} ${resetKey ?? ''}`
   if (previousResetToken !== resetToken) {
     setPreviousResetToken(resetToken)
-    setRetryKey(0)
     setFailureCount(0)
+    // retryKey deliberately survives navigation: panels cache their lazy instance per retry count,
+    // so resetting it would re-select a previously failed instance on revisit.
   }
 
   // Escalate once two in-place retries have also failed (third consecutive failure surface).
@@ -151,7 +153,9 @@ const SettingsPanelLoadingBoundary = ({
         </div>
       }
     >
-      <Suspense fallback={<PanelLoadingSkeleton />}>{children}</Suspense>
+      <SettingsPanelRetryContext.Provider value={retryKey}>
+        <Suspense fallback={<PanelLoadingSkeleton />}>{children}</Suspense>
+      </SettingsPanelRetryContext.Provider>
     </SettingsPanelErrorBoundary>
   )
 }

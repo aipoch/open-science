@@ -112,14 +112,20 @@ import {
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
 import { ProviderTestResultCard } from './ProviderTestResultCard'
-import { loadSettingsPanel } from './settings-panel-loader'
+import { lazyWithRetry, loadSettingsPanel } from './settings-panel-loader'
 import { SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsWriteErrorCode } from '../../../../shared/settings'
 
-const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
-const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
-const NetworkPanel = lazy(async () => ({ default: (await import('./NetworkPanel')).NetworkPanel }))
-const StoragePanel = lazy(async () => {
+const AgentPanel = lazyWithRetry(async () => ({
+  default: (await import('./AgentPanel')).AgentPanel
+}))
+const GeneralPanel = lazyWithRetry(async () => ({
+  default: (await import('./GeneralPanel')).GeneralPanel
+}))
+const NetworkPanel = lazyWithRetry(async () => ({
+  default: (await import('./NetworkPanel')).NetworkPanel
+}))
+const StoragePanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./StoragePanel'),
     () =>
@@ -129,7 +135,7 @@ const StoragePanel = lazy(async () => {
   )
   return { default: module.StoragePanel }
 })
-const RuntimesPanel = lazy(async () => {
+const RuntimesPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./RuntimesPanel'),
     () =>
@@ -139,37 +145,37 @@ const RuntimesPanel = lazy(async () => {
   )
   return { default: module.RuntimesPanel }
 })
-const RemoteControlPanel = lazy(async () => {
+const RemoteControlPanel = lazyWithRetry(async () => {
   const module = await import('./RemoteControlPanel')
   await module.RemoteControlPanel.preload().catch(() => undefined)
   return { default: module.RemoteControlPanel }
 })
-const SkillsPanel = lazy(async () => {
+const SkillsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./SkillsPanel'),
     () => useSettingsStore.getState().loadSkills()
   )
   return { default: module.SkillsPanel }
 })
-const ConnectorsPanel = lazy(async () => {
+const ConnectorsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./ConnectorsPanel'),
     () => useSettingsStore.getState().loadConnectors()
   )
   return { default: module.ConnectorsPanel }
 })
-const SpecialistsPanel = lazy(async () => {
+const SpecialistsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./SpecialistsPanel'),
     () => useSpecialistStore.getState().load()
   )
   return { default: module.SpecialistsPanel }
 })
-const MemoryPanel = lazy(async () => {
+const MemoryPanel = lazyWithRetry(async () => {
   const module = await import('./MemoryPanel')
   return { default: module.MemoryPanel }
 })
-const TagsPanel = lazy(async () => {
+const TagsPanel = lazyWithRetry(async () => {
   const tagState = useTagStore.getState()
   const module = await loadSettingsPanel(
     () => import('./TagsPanel'),
@@ -183,32 +189,32 @@ const TagsPanel = lazy(async () => {
   )
   return { default: module.TagsPanel }
 })
-const ConnectorDetailView = lazy(async () => ({
+const ConnectorDetailView = lazyWithRetry(async () => ({
   default: (await import('./ConnectorDetailView')).ConnectorDetailView
 }))
-const ConnectorAddForm = lazy(async () => ({
+const ConnectorAddForm = lazyWithRetry(async () => ({
   default: (await import('./ConnectorAddForm')).ConnectorAddForm
 }))
-const ConnectorExportView = lazy(async () => ({
+const ConnectorExportView = lazyWithRetry(async () => ({
   default: (await import('./ConnectorExportView')).ConnectorExportView
 }))
-const ConnectorImportView = lazy(async () => ({
+const ConnectorImportView = lazyWithRetry(async () => ({
   default: (await import('./ConnectorImportView')).ConnectorImportView
 }))
-const ComputePanel = lazy(async () => {
+const ComputePanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./ComputePanel'),
     () => preloadComputeHosts()
   )
   return { default: module.ComputePanel }
 })
-const ComputeAddForm = lazy(async () => ({
+const ComputeAddForm = lazyWithRetry(async () => ({
   default: (await import('./ComputeAddForm')).ComputeAddForm
 }))
-const ComputeHostDetail = lazy(async () => ({
+const ComputeHostDetail = lazyWithRetry(async () => ({
   default: (await import('./ComputeHostDetail')).ComputeHostDetail
 }))
-const PermissionsPanel = lazy(async () => {
+const PermissionsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./PermissionsPanel'),
     () =>
@@ -218,13 +224,13 @@ const PermissionsPanel = lazy(async () => {
   )
   return { default: module.PermissionsPanel }
 })
-const CredentialsPanel = lazy(async () => ({
+const CredentialsPanel = lazyWithRetry(async () => ({
   default: (await import('./CredentialsPanel')).CredentialsPanel
 }))
-const ArchivedPanel = lazy(async () => ({
+const ArchivedPanel = lazyWithRetry(async () => ({
   default: (await import('./ArchivedPanel')).ArchivedPanel
 }))
-const TokenUsagePanel = lazy(async () => ({
+const TokenUsagePanel = lazyWithRetry(async () => ({
   default: (await import('./TokenUsagePanel')).TokenUsagePanel
 }))
 
