@@ -81,6 +81,13 @@ type NotebookMcpEnvironment = NotebookRpcConnection &
     wslSetupTools?: boolean
   }
 
+export type NotebookToolEnvironmentOptions = Readonly<{
+  memoryTools?: boolean
+  shellRuntime?: ShellRuntimeBinding
+  wslSetupTools?: boolean
+  [key: string]: unknown
+}>
+
 type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'> & {
   command: string
   entryPath: string
@@ -1582,6 +1589,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,
+    progressMessage: 'Shell command is still running.',
     mapResult: (raw, input) =>
       asRecord(input)?.background === true
         ? compactBackgroundRunSubmissionReceipt(raw)
@@ -1770,7 +1778,7 @@ const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
 ]
 
 const notebookRpcToolsForEnvironment = (
-  environment: NotebookMcpEnvironment
+  environment: NotebookToolEnvironmentOptions
 ): readonly NotebookRpcToolDefinition[] => {
   const definitions = environment.wslSetupTools
     ? [...NOTEBOOK_RPC_TOOLS, ...WSL_SETUP_RPC_TOOLS]

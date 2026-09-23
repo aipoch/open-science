@@ -211,6 +211,7 @@ export class AcpProviderSessionAdopter {
         }
         if (hasAuthoritativeSpecialistBinding) aggregate.setSpecialistId(specialistId)
         capability.commit(stableAppSessionId)
+        capability.registerBridgeMcpSession?.(stableAppSessionId, provisionalSession.sessionId)
         this.deps.commitClaudeReplay(stableAppSessionId)
         provisionalSession = undefined
         capability = undefined

@@ -10,6 +10,7 @@ type SessionPersistenceAlertProps = {
   inline?: boolean
   className?: string
   onDismiss?: () => void
+  dismissLabel?: string
   onRetry?: () => void
   retryLabel?: string
   onAction?: () => void
@@ -23,6 +24,7 @@ const SessionPersistenceAlert = ({
   inline = false,
   className,
   onDismiss,
+  dismissLabel,
   onRetry,
   retryLabel,
   onAction,
@@ -51,7 +53,7 @@ const SessionPersistenceAlert = ({
         dismissButton={
           onDismiss
             ? {
-                label: t('Dismiss storage warning'),
+                label: dismissLabel ?? t('Dismiss storage warning'),
                 onClick: onDismiss,
                 testId: 'session-persistence-dismiss'
               }

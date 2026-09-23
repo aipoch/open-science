@@ -176,7 +176,7 @@ const silentLog: Logger = {
 }
 
 const createService = (
-  detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
+  detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.118' },
   options: {
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
@@ -2406,7 +2406,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
 
     // Seed an existing executable path so the launch re-check passes.
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -2446,7 +2446,7 @@ describe('SettingsService: preflight & spawn config', () => {
     'checks the provider gate after discovery changes for $vendorId',
     async ({ vendorId, model, ready }) => {
       const service = createService()
-      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
       const created = (
         await service.upsertProvider({
           type: 'official',
@@ -2488,7 +2488,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
     await service.loginClaudeShared()
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
@@ -2514,7 +2514,7 @@ describe('SettingsService: preflight & spawn config', () => {
         cancelLogin: vi.fn()
       }
       const service = createService(undefined, { claudeSharedAuth })
-      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
       await repository.upsertProvider({
         id: CLAUDE_SHARED_PROVIDER_ID,
         type: 'claude-shared',
@@ -2554,7 +2554,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2595,7 +2595,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2627,7 +2627,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2653,7 +2653,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2680,7 +2680,7 @@ describe('SettingsService: preflight & spawn config', () => {
       cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2705,7 +2705,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // Executable-but-corrupt runtime: execPath is a real file (X_OK passes) yet `--version` fails.
     // Preflight must validate via --version like the env check, so this must NOT pass as ready.
     const service = createService({ found: false })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
 
     const preflight = await service.getPreflight()
 
@@ -2716,7 +2716,7 @@ describe('SettingsService: preflight & spawn config', () => {
   it('does not report opencode ready when the recorded binary exists but fails --version', async () => {
     // Same for OpenCode: the recorded path is a real executable, but its --version probe fails
     // (no opencodeDetected declared, so the injected getVersion returns undefined for it).
-    const service = createService({ found: true, path: '/bin/claude', version: '2.1.0' })
+    const service = createService({ found: true, path: '/bin/claude', version: '2.1.118' })
     await repository.setOpencodeInfo(execPath, '1.18.3')
 
     const preflight = await service.getPreflight()
@@ -3911,7 +3911,7 @@ describe('SettingsService: preflight & spawn config', () => {
   it('builds spawn env from the active provider with the decrypted key', async () => {
     const service = createService()
 
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -3947,7 +3947,7 @@ describe('SettingsService: preflight & spawn config', () => {
   it('does not inject WebFetch preflight settings into isolated Claude sessions', async () => {
     const service = createService()
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-isolated'),
       keyMask: maskKey('sk-ant-isolated')
@@ -3962,7 +3962,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
   it('throws a clear error when no active provider is configured', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
 
     await expect(resolveActiveBackend(service)).rejects.toThrow(/active model provider/i)
   })
@@ -4044,7 +4044,7 @@ describe('SettingsService: official vendors', () => {
 
   it('builds spawn env from the registry base URL and the active model', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'official',
@@ -4107,7 +4107,7 @@ describe('SettingsService: official vendors', () => {
 
   it('carries the upstream model through the Claude backend for context tokenization', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.setAgentFramework('claude-code')
     const provider = (
       await service.upsertProvider({
@@ -4173,7 +4173,7 @@ describe('SettingsService: official vendors', () => {
 
   it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'official',
@@ -4894,7 +4894,7 @@ describe('SettingsService: skills', () => {
   it('force-loads a disabled picked skill for the turn without mutating stored settings', async () => {
     const service = await createSkillService()
 
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -4975,7 +4975,7 @@ describe('SettingsService: skills', () => {
       availability: () => undefined,
       isRefreshing: () => false
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
 
@@ -5033,7 +5033,7 @@ describe('SettingsService: skills', () => {
 
   it('injects the selected shared Claude model context window into the spawn config', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-8' })
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID, 'claude-opus-4-8')
 
@@ -5673,7 +5673,7 @@ describe('detectOpencode', () => {
 
 describe('detectClaude hardening', () => {
   it('forgets the recorded claude when its binary is gone from disk (uninstall)', async () => {
-    await repository.setClaudeInfo({ resolvedPath: '/gone/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/gone/bin/claude', version: '2.1.118' })
     // found:false + version:undefined makes the injected probe report nothing runnable.
     const service = createService({ found: false, path: undefined, version: undefined })
 
@@ -5687,7 +5687,7 @@ describe('detectClaude hardening', () => {
     const present = join(storageRoot, 'claude-present')
     await writeFile(present, '', 'utf8')
     await chmod(present, 0o755)
-    await repository.setClaudeInfo({ resolvedPath: present, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: present, version: '2.1.118' })
     const service = createService({ found: false, path: undefined, version: undefined })
 
     await service.detectClaude()
@@ -5695,14 +5695,14 @@ describe('detectClaude hardening', () => {
     // A GUI PATH gap must not wipe a still-installed claude.
     expect((await repository.getSettings()).claude).toEqual({
       resolvedPath: present,
-      version: '2.1.0'
+      version: '2.1.118'
     })
   })
 })
 
 describe('checkEnvironment', () => {
   it('keeps a cached executable that still runs when a GUI PATH cannot rediscover it', async () => {
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const service = new SettingsService({
       repository,
       configRoot: storageRoot,
@@ -5712,14 +5712,14 @@ describe('checkEnvironment', () => {
         platform: 'linux',
         // PATH scan finds nothing, but the cached path still reports a version.
         isExecutable: () => Promise.resolve(false),
-        getVersion: (path) => Promise.resolve(path === execPath ? '2.1.0' : undefined),
+        getVersion: (path) => Promise.resolve(path === execPath ? '2.1.118' : undefined),
         resolveNpmBinDirs: () => Promise.resolve([])
       }
     })
 
     const result = await service.checkEnvironment()
 
-    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.118' })
     expect(result.checks.find((check) => check.id === 'agent')?.status).toBe('passed')
   })
 
@@ -5727,7 +5727,7 @@ describe('checkEnvironment', () => {
     // Pinned platform is 'linux', so use posix literals; a host join() would splice a win32 drive
     // letter into PATH and be mis-split on ':' by the posix delimiter.
     const other = '/other-bin/claude'
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const service = new SettingsService({
       repository,
       configRoot: storageRoot,
@@ -5738,7 +5738,7 @@ describe('checkEnvironment', () => {
         // A different claude is discoverable on PATH, but the cached one is still healthy.
         isExecutable: (path) => Promise.resolve(path === other),
         getVersion: (path) =>
-          Promise.resolve(path === execPath ? '2.1.0' : path === other ? '9.9.9' : undefined),
+          Promise.resolve(path === execPath ? '2.1.118' : path === other ? '9.9.9' : undefined),
         resolveNpmBinDirs: () => Promise.resolve([])
       }
     })
@@ -5746,7 +5746,7 @@ describe('checkEnvironment', () => {
     const result = await service.checkEnvironment()
 
     // The recorded runtime is retained rather than being replaced by the PATH discovery.
-    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.118' })
     expect((await repository.getSettings()).claude?.resolvedPath).toBe(execPath)
   })
 
@@ -5754,7 +5754,7 @@ describe('checkEnvironment', () => {
     // Pinned platform is 'linux', so use posix literals (see the note above about PATH splitting).
     const stale = '/stale/claude'
     const found = '/found-bin/claude'
-    await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.118' })
     const service = new SettingsService({
       repository,
       configRoot: storageRoot,
@@ -5867,7 +5867,7 @@ describe('SettingsService: managed-runtime flags', () => {
   it('reports claudeManaged when the resolved path is the app-managed install, opencode as non-managed', async () => {
     await repository.setClaudeInfo({
       resolvedPath: join(managedClaudeDir(storageRoot), 'claude'),
-      version: '2.1.0'
+      version: '2.1.118'
     })
     // A user's own PATH opencode is never treated as managed.
     await repository.setOpencodeInfo('/usr/local/bin/opencode', '1.18.3')
@@ -5888,7 +5888,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.setAgentFramework('codex')
     const service = createService()
 
@@ -5901,13 +5901,13 @@ describe('SettingsService: uninstall managed runtime', () => {
   })
 
   it('uninstallClaude is a no-op for a non-managed (PATH/npm) install', async () => {
-    await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.118' })
     const service = createService()
 
     const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
     // The install we did not own is left untouched, and nothing about the active backend changed.
-    expect(snapshot.claude).toEqual({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
+    expect(snapshot.claude).toEqual({ resolvedPath: '/usr/local/bin/claude', version: '2.1.118' })
     expect(snapshot.claudeManaged).toBe(false)
     expect(activeBackendAffected).toBe(false)
   })
@@ -5924,7 +5924,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
     await chmod(claudeBin, 0o755)
-    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.118' })
     await repository.setAgentFramework('opencode')
     const service = createService()
 
@@ -5963,7 +5963,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     const claudeBin = join(storageRoot, 'fake-claude', 'claude')
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
-    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.118' })
     await repository.setAgentFramework('opencode')
     // getVersion resolves undefined for every path, so Claude reads as not ready (like preflight).
     const service = createService({ found: false, path: undefined, version: undefined })
@@ -6146,7 +6146,7 @@ describe('SettingsService: reasoning effort', () => {
   it('does not guess an effort profile for an unpinned Claude subscription model', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const claude = (await service.upsertProvider({ type: 'claude-shared' })).providers.find(
       (provider) => provider.type === 'claude-shared'
     )!
@@ -6218,7 +6218,7 @@ describe('SettingsService: reasoning effort', () => {
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const provider = (
       await service.upsertProvider({
         type: 'custom',
@@ -6249,7 +6249,7 @@ describe('SettingsService: reasoning effort', () => {
   it("leaves sessionEffort undefined when the level is 'default' or unset", async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const provider = (
       await service.upsertProvider({
         type: 'custom',
@@ -7608,7 +7608,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7640,7 +7640,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7668,7 +7668,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/missing/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/missing/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7691,7 +7691,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7713,7 +7713,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7733,7 +7733,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7764,7 +7764,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
         })
     )
     const service = createService(undefined, { executeClaudeProbe: probe })
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertProvider({
       id: 'builtin-claude-isolated',
       type: 'claude-isolated',
@@ -7802,7 +7802,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       })
     const service = createService(undefined, { executeClaudeProbe: probe })
     const { encryptKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertProvider({
       id: 'builtin-claude-isolated',
       type: 'claude-isolated',
@@ -7846,7 +7846,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     // Seed the provider card. The loginIsolatedClaude path requires an existing record to find
     // (the early-return for a missing card is the "applied: false" branch).
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7934,7 +7934,7 @@ describe('SettingsService: claude-isolated validation flow', () => {
       claudeIsolatedAuth: successAuth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await seedStoredToken()
 
     const storedId = 'builtin-claude-isolated'
@@ -7959,7 +7959,7 @@ describe('SettingsService: claude-isolated edit preserves expiresAt + keyRef', (
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('test-token-seed'),
       keyMask: maskKey('test-token-seed')
@@ -8432,7 +8432,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({
       type: 'claude-shared',
       name: 'Claude subscription',
@@ -8470,7 +8470,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
     const gateway = (
       await service.upsertProvider({
@@ -8508,7 +8508,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
 
     const login = service.loginClaudeShared()
@@ -8556,7 +8556,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: vi.fn().mockRejectedValue(new Error('temporary network failure'))
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
     await service.logoutClaudeShared()
     expect(
@@ -8585,7 +8585,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-bad-model' })
 
     const result = await service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
@@ -8622,7 +8622,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
 
     const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
@@ -8653,7 +8653,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-sonnet-4-5' })
     const first = await service.upsertProvider({
       type: 'custom',
@@ -8694,7 +8694,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', name: 'Claude subscription' })
     await service.loginClaudeShared()
     const validatedAt = (await service.getSettingsView()).providers.find(
@@ -8727,7 +8727,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', name: 'Claude subscription' })
     await service.loginClaudeShared()
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)

@@ -1333,7 +1333,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         data-testid="kernel-notebook-pane"
       >
         {gated ? (
-          <EnvProvisionOverlay ui={provisionUi} onRetry={() => void retryProvision()} />
+          <EnvProvisionOverlay
+            key={provisionUi.kind}
+            ui={provisionUi}
+            onRetry={() => void retryProvision()}
+          />
         ) : null}
         {frameOptions.length > 0 ? (
           <div className="flex max-w-full shrink-0 items-center gap-2 overflow-hidden border-b border-border-100 px-2 py-1.5">

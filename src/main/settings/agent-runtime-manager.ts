@@ -5,6 +5,10 @@ import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
+import {
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  isSupportedClaudeCliVersion
+} from '../../shared/claude-runtime'
 
 import type {
   ClaudeDetectResult,
@@ -488,7 +492,7 @@ export class AgentRuntimeManager {
       signal.throwIfAborted()
       return computePreflight({
         settings,
-        claudePathExists: runtimeProbe.claudeVersion !== null,
+        claudePathExists: isSupportedClaudeCliVersion(runtimeProbe.claudeVersion),
         opencodePathExists: runtimeProbe.opencodeVersion !== null,
         codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
         codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
@@ -1046,10 +1050,18 @@ export class AgentRuntimeManager {
   }
 
   async resolveClaudeExecutable(storedPath: string | undefined): Promise<string> {
-    if (storedPath && (await this.pathExists(storedPath))) return storedPath
+    if (storedPath && (await this.pathExists(storedPath))) {
+      const version = await this.detectDeps.getVersion(storedPath).catch(() => undefined)
+      if (!isSupportedClaudeCliVersion(version)) throw new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+      return storedPath
+    }
 
     const detected = await detectClaude(this.detectDeps)
-    if (detected.found && detected.path) return detected.path
+    if (detected.found && detected.path) {
+      if (!isSupportedClaudeCliVersion(detected.version))
+        throw new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+      return detected.path
+    }
     throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
   }
 
@@ -1590,9 +1602,11 @@ export class AgentRuntimeManager {
             isSupportedCodexAcpVersion(parseCodexVersion(version) ?? '') &&
             !!settings.codex?.nativePath &&
             !!(await this.codexDetectDeps.getCodexVersion(settings.codex.nativePath))
-          : candidate === 'codebuddy'
-            ? isSupportedCodeBuddyVersion(version)
-            : !!version
+          : candidate === 'claude-code'
+            ? isSupportedClaudeCliVersion(version)
+            : candidate === 'codebuddy'
+              ? isSupportedCodeBuddyVersion(version)
+              : !!version
       if (ready) {
         await this.repository.setAgentFramework(candidate)
         return

@@ -19,7 +19,11 @@ import {
   prepareArtifactReproducibilityExecutionPlan,
   sealArtifactReproducibilityRecipe
 } from '../artifacts/artifact-reproducibility-recipe'
-import { environmentCaptureProcessEnv, EnvironmentStateTracker } from './environment-state-tracker'
+import {
+  environmentCaptureProcessEnv,
+  EnvironmentStateTracker,
+  type EnvironmentStateTrackerOptions
+} from './environment-state-tracker'
 
 let dataRoot: string | undefined
 
@@ -99,7 +103,14 @@ describe('EnvironmentStateTracker', () => {
       vi.stubEnv('R_LIBS_USER', '/host-user-r')
       vi.stubEnv('R_LIBS_SITE', '/host-site-r')
       try {
-        const execute = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+        const execute = vi.fn<NonNullable<EnvironmentStateTrackerOptions['execFile']>>((_, args) =>
+          Promise.resolve({
+            stdout: args.at(-1)?.includes('installed.packages')
+              ? 'RUNTIME\t4.4\twin32\tx86-64\n'
+              : '',
+            stderr: ''
+          })
+        )
         const tracker = new EnvironmentStateTracker({ dataRoot: root, platform, execFile: execute })
         for (const language of ['python', 'r'] as const) {
           await tracker.inspectPackages(
@@ -119,6 +130,8 @@ describe('EnvironmentStateTracker', () => {
             expect(options.env.R_LIBS_USER).toBe(
               join(condaPrefix, platform === 'win32' ? 'Lib' : 'lib', 'R', 'library')
             )
+            expect(args.at(-1)).toContain('installed.packages()')
+            expect(args.at(-1)).not.toContain('\n')
           }
         }
       } finally {
@@ -126,6 +139,26 @@ describe('EnvironmentStateTracker', () => {
       }
     }
   )
+
+  it('rejects an empty R inventory probe instead of publishing a clean empty cache', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'empty-r-inventory-probe-'))
+    const execute = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const tracker = new EnvironmentStateTracker({ dataRoot, platform: 'win32', execFile: execute })
+
+    await expect(
+      tracker.inspectPackages(
+        {
+          language: 'r',
+          environmentName: 'default-r',
+          runtimeSource: 'managed',
+          command: 'Rscript.exe',
+          condaPrefix: 'C:\\runtime\\envs\\.r'
+        },
+        ['survey'],
+        { fresh: true }
+      )
+    ).rejects.toThrow('R package inventory probe returned no runtime marker')
+  })
   it.each(['python', 'r'] as const)(
     'fresh %s inspection bypasses cache and does not publish state',
     async (language) => {

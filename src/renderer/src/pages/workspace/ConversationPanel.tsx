@@ -1,6 +1,5 @@
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { sideChatBlock, sideChatBlockMessage } from './side-chat-availability'
-import { InlineNotice } from '@/components/ui/inline-notice'
 import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
 import { SessionInfoPopover } from './SessionInfoPopover'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
@@ -63,6 +62,7 @@ import {
   RotateCcw,
   ScanEye,
   Square,
+  Stethoscope,
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -125,6 +125,7 @@ import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { ReadingContextPicker } from './ReadingContextPicker'
 import { normalizeRunFailureError } from './error-report'
+import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -400,6 +401,7 @@ type ConversationPanelWorkflows = {
 }
 
 type ConversationPanelSessionTools = {
+  exportDiagnostics?: (session: ChatSession) => void
   togglePin?: (session: ChatSession) => void
   editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
@@ -770,10 +772,20 @@ const ConversationPanel = ({
       ? activePendingPlan
       : undefined
   const resolvedRunError =
+    (isClaudeCliCompatibilityError(activeSession?.error ?? '')
+      ? t(
+          'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+        )
+      : undefined) ??
     localizeImageAnnotationSourceError(activeSession?.error, t) ??
     localizeVisionRunFailure(activeSession?.error, t) ??
     normalizeRunFailureError(activeSession?.error)
   const resolvedActionError =
+    (isClaudeCliCompatibilityError(actionError ?? '')
+      ? t(
+          'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+        )
+      : undefined) ??
     localizeImageAnnotationSourceError(actionError, t) ??
     localizeVisionRunFailure(actionError, t) ??
     actionError
@@ -1175,6 +1187,40 @@ const ConversationPanel = ({
               <span className="block truncate">{t('New conversation')}</span>
             )}
           </h1>
+          {activeSession && sessionTools.exportDiagnostics && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger
+                  asChild
+                  onFocus={(event) => {
+                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 transition-colors hover:bg-surface-control-hover hover:text-text-000 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={t('Export diagnostics…')}
+                    onClick={() => sessionTools.exportDiagnostics?.(activeSession)}
+                  >
+                    <Stethoscope className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end" className="space-y-2 p-3 leading-relaxed">
+                  <p className="font-medium">{t('Export diagnostics…')}</p>
+                  <p>
+                    {t(
+                      'If this session fails or behaves unexpectedly, export a diagnostic package to help developers investigate.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Choose diagnostic metadata to include. Private content fields are excluded. Saved locally; nothing is uploaded or sent to an LLM.'
+                    )}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <NotificationBell className="md:hidden" />
           <button
             type="button"
@@ -1386,6 +1432,21 @@ const ConversationPanel = ({
                   />
                 ) : null}
 
+                {activeSession && specialistUnavailable ? (
+                  <ErrorNotice
+                    role="status"
+                    aria-live="polite"
+                    data-testid="specialist-unavailable-notice"
+                    className="mb-3"
+                    title={t('This Specialist is no longer available')}
+                    description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
+                    primaryButton={{
+                      label: t('Choose Specialist'),
+                      onClick: () => setAgentControlsOpenRequest((request) => request + 1)
+                    }}
+                  />
+                ) : null}
+
                 {/* The expanded ledger opens above the strip; the strip (Notebook entry, chip,
                     message queue) stays in place. */}
                 {backgroundTasksExpanded && activeSession ? (
@@ -1402,7 +1463,9 @@ const ConversationPanel = ({
                   />
                 ) : null}
 
-                {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
+                {/* Keep guidance above this joined strip/composer dock: the negative margin below
+                    tucks the strip behind the composer, so a notice between them would overlap.
+                    Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
                 {notebookReference ||
                 messageQueue.items.length > 0 ||
@@ -1490,34 +1553,6 @@ const ConversationPanel = ({
                         'hidden'
                     )}
                   />
-
-                  {activeSession && specialistUnavailable ? (
-                    <InlineNotice
-                      role="status"
-                      aria-live="polite"
-                      data-testid="specialist-unavailable-notice"
-                      className="relative z-10 mb-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-foreground">
-                          {t('This Specialist is no longer available')}
-                        </div>
-                        <div className="text-sm leading-6 text-muted-foreground">
-                          {t('Choose another Specialist before sending a message.')}{' '}
-                          {t('Your draft is preserved.')}
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        className="mt-2"
-                        onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
-                      >
-                        {t('Choose Specialist')}
-                      </Button>
-                    </InlineNotice>
-                  ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}

@@ -72,6 +72,37 @@ describe('registry + catalog', () => {
     expect(descriptor.required).toBeUndefined()
     expect(() => validateToolArguments(descriptor, {})).toThrow(/doi.*required/i)
   })
+
+  it('validates the UniProt mapping schemas without importing the registry from descriptor tests', () => {
+    const submit = getDescriptor('genes', 'submit_uniprot_id_mapping')!
+    const status = getDescriptor('genes', 'get_uniprot_id_mapping_status')!
+    const results = getDescriptor('genes', 'get_uniprot_id_mapping_results')!
+    expect(() =>
+      validateToolArguments(submit, {
+        from_db: 'UniProtKB_AC-ID',
+        to_db: 'GeneID',
+        ids: ['P04637']
+      })
+    ).not.toThrow()
+    expect(() =>
+      validateToolArguments(submit, {
+        from_db: 'UniProtKB_AC-ID',
+        to_db: 'GeneID',
+        ids: ['P04637,P00533']
+      })
+    ).toThrow(/invalid_arguments/)
+    expect(() => validateToolArguments(status, { job_id: '../job' })).toThrow(/invalid_arguments/)
+    expect(() => validateToolArguments(results, { job_id: 'job', page_size: 501 })).toThrow(
+      /invalid_arguments/
+    )
+    expect(() =>
+      validateToolArguments(submit, {
+        from_db: 'UniProtKB_AC-ID',
+        to_db: 'GeneID',
+        ids: Array.from({ length: 100_000 }, (_, i) => `id${i}`)
+      })
+    ).not.toThrow()
+  })
 })
 
 describe('PRIDE project file input contract', () => {
@@ -187,6 +218,44 @@ describe('bundled tool contracts', () => {
         { timeout: 1000 }
       )
       expect(mcp).toHaveBeenCalledTimes(1)
+    }
+  )
+})
+
+describe('Zenodo input contracts', () => {
+  it.each([
+    {},
+    { query: '' },
+    { query: '\u3000 ' },
+    { query: 'x'.repeat(1001) },
+    { query: 'x', page: 0 },
+    { query: 'x', page: '2' },
+    { query: 'x', page: 1.5 },
+    { query: 'x', page_size: 26 },
+    { query: 'x', page_size: 0 },
+    { query: 'x', all_versions: 'true' },
+    { query: 'x', sort: 'unknown' },
+    { query: 'x', url: 'https://example.com' }
+  ])('rejects invalid search arguments: %j', (args) => {
+    expect(() => validateToolArguments(getDescriptor('zenodo', 'search_records')!, args)).toThrow(
+      /invalid_arguments/
+    )
+  })
+
+  it('counts the query limit in Unicode code points', () => {
+    const descriptor = getDescriptor('zenodo', 'search_records')!
+    expect(() => validateToolArguments(descriptor, { query: '😀'.repeat(1000) })).not.toThrow()
+    expect(() => validateToolArguments(descriptor, { query: '😀'.repeat(1001) })).toThrow(
+      /invalid_arguments/
+    )
+  })
+
+  it.each(['0', '../1', '8435696?download=1', '01', '10.5281/zenodo.8435696', 8435696])(
+    'rejects noncanonical record IDs: %s',
+    (recordId) => {
+      expect(() =>
+        validateToolArguments(getDescriptor('zenodo', 'get_record')!, { record_id: recordId })
+      ).toThrow(/invalid_arguments/)
     }
   )
 })

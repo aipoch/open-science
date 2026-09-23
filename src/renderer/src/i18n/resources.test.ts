@@ -937,7 +937,7 @@ describe('mandatory product glossary', () => {
       keepWaiting: de.native['Keep waiting'],
       quitAnyway: de.native['Quit anyway'],
       moveInProgress: de.native['Move in progress'],
-      model: de.renderer['grok-4.6 · 500K'],
+      model: de.renderer['Default model: grok-4.7 · 500K'],
       archive: de.renderer.Archive_verb,
       block: de.renderer.Block,
       clear: de.renderer.Clear,
@@ -977,7 +977,7 @@ describe('mandatory product glossary', () => {
       keepWaiting: 'Weiter warten',
       quitAnyway: 'Trotzdem beenden',
       moveInProgress: 'Datenverschiebung läuft',
-      model: 'grok-4.6 · 500K',
+      model: 'Standardmodell: grok-4.7 · 500K',
       archive: 'Archivieren',
       block: 'Blockieren',
       clear: 'Löschen',
@@ -1029,7 +1029,6 @@ describe('mandatory product glossary', () => {
       scratch: de.renderer.Scratch,
       scratchRoot: de.renderer['Scratch root'],
       scratchRootPath: de.renderer['Scratch root path'],
-      mainOnly: de.renderer['Main only'],
       tool: de.renderer.Tool,
       tools: de.renderer.Tools,
       review: de.renderer.Review,
@@ -1052,7 +1051,6 @@ describe('mandatory product glossary', () => {
       scratch: 'Scratch',
       scratchRoot: 'Scratch-Verzeichnis',
       scratchRootPath: 'Pfad zum Scratch-Verzeichnis',
-      mainOnly: 'Nur Hauptagent',
       tool: 'Tool',
       tools: 'Tools',
       review: 'Review',
@@ -3000,65 +2998,15 @@ describe('Russian catalog quality', () => {
       'Этот коннектор больше не существует. Черновик не сохранён.'
     ],
     ['Used by', 'Используют'],
-    ['Available to Main Agent', 'Доступен главному агенту'],
-    ['Unavailable to Main Agent', 'Недоступен главному агенту'],
     ['Filter Connectors by agent', 'Фильтровать коннекторы по агенту'],
     ['Filter Skills by agent', 'Фильтровать навыки по агенту'],
     ['All Agents/Specialists', 'Все агенты и специалисты'],
     ['Export', 'Экспортировать'],
     ['Remove', 'Удалить'],
-    ['Agents with access', 'Агенты с доступом'],
-    [
-      'Hover to preview. Click to view every agent.',
-      'Наведите курсор для предпросмотра. Нажмите, чтобы увидеть всех агентов.'
-    ],
     [
       'This Provider no longer exists. Your draft has not been saved.',
       'Этот поставщик моделей больше не существует. Черновик не сохранён.'
     ],
-    ['Deleted {{count}} Skills._one', 'Удалён {{count}} навык.'],
-    ['Deleted {{count}} Skills._few', 'Удалено {{count}} навыка.'],
-    ['Deleted {{count}} Skills._many', 'Удалено {{count}} навыков.'],
-    ['Deleted {{count}} Skills._other', 'Удалено {{count}} навыка.'],
-    [
-      'Some selected Skills could not be deleted. They remain selected.',
-      'Не удалось удалить некоторые выбранные навыки. Они остались выбранными.'
-    ],
-    ['Delete…', 'Удалить…'],
-    ['Delete selected Skills?', 'Удалить выбранные навыки?'],
-    [
-      'Deleted Skills are removed from this device and cannot be recovered.',
-      'Навыки будут удалены с этого устройства без возможности восстановления.'
-    ],
-    ['{{count}} selected Skills can be deleted._one', 'Можно удалить {{count}} выбранный навык.'],
-    ['{{count}} selected Skills can be deleted._few', 'Можно удалить {{count}} выбранных навыка.'],
-    [
-      '{{count}} selected Skills can be deleted._many',
-      'Можно удалить {{count}} выбранных навыков.'
-    ],
-    [
-      '{{count}} selected Skills can be deleted._other',
-      'Можно удалить {{count}} выбранного навыка.'
-    ],
-    ['{{count}} protected Skills will be kept._one', '{{count}} защищённый навык будет сохранён.'],
-    [
-      '{{count}} protected Skills will be kept._few',
-      '{{count}} защищённых навыка будут сохранены.'
-    ],
-    [
-      '{{count}} protected Skills will be kept._many',
-      '{{count}} защищённых навыков будут сохранены.'
-    ],
-    [
-      '{{count}} protected Skills will be kept._other',
-      '{{count}} защищённого навыка будет сохранено.'
-    ],
-    ['Owned by a Specialist.', 'Принадлежит специалисту.'],
-    ['Used by a Specialist.', 'Используется специалистом.'],
-    ['Delete {{count}} Skills_one', 'Удалить {{count}} навык'],
-    ['Delete {{count}} Skills_few', 'Удалить {{count}} навыка'],
-    ['Delete {{count}} Skills_many', 'Удалить {{count}} навыков'],
-    ['Delete {{count}} Skills_other', 'Удалить {{count}} навыка'],
     [
       'View Connector availability for {{count}} agents_one',
       'Показать доступность коннектора для {{count}} агента'

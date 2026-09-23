@@ -43,6 +43,9 @@ const analyzeNotebookSourceFileAccess = async (
               ...(context.staticCollectionAliases
                 ? { staticCollectionAliases: context.staticCollectionAliases }
                 : {}),
+              ...(context.pythonHelperModules
+                ? { pythonHelperModules: context.pythonHelperModules }
+                : {}),
               ...(context.resolvedKernelNames
                 ? {
                     resolvedKernelNames: context.resolvedKernelNames.filter(
@@ -85,6 +88,15 @@ const analyzeNotebookSourceFileAccess = async (
   for (const { name } of activeContext?.staticCollections ?? []) unresolvedPriorNames.delete(name)
   for (const { name } of activeContext?.localFileWrappers ?? []) unresolvedPriorNames.delete(name)
   for (const name of activeContext?.resolvedKernelNames ?? []) unresolvedPriorNames.delete(name)
+  const shadowedNames = new Set([
+    ...(dependencyFacts?.definedNames ?? []),
+    ...(dependencyFacts?.conditionallyDefinedNames ?? [])
+  ])
+  const replayedHelperNames = new Set(fileAccess.replayedHelperNames ?? [])
+  for (const name of fileAccess.context.pythonHelperModules?.flatMap(({ exports }) => exports) ??
+    []) {
+    if (!shadowedNames.has(name) && replayedHelperNames.has(name)) unresolvedPriorNames.delete(name)
+  }
   const dependencyAnalysisUnavailable =
     !dependencyFacts ||
     (dependencyFacts.state === 'unknown' &&

@@ -9,6 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
+import { MINIMUM_CLAUDE_CLI_VERSION } from '../../../../shared/claude-runtime'
 import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
@@ -1205,6 +1206,30 @@ describe('SettingsPage layout', () => {
 
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
     expect(document.body.querySelector('[data-slot="settings-write-error"]')).toBeNull()
+  })
+
+  it('jumps from settings search to in-place Skill selection after retiring Manage', async () => {
+    // jsdom has no scrolling layout; keep the real search navigation and focus behavior.
+    Element.prototype.scrollIntoView = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Skills')?.click())
+    const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+    await act(async () => {
+      fireEvent.change(search, { target: { value: 'Manage skills' } })
+      search.focus()
+    })
+    await act(async () => fireEvent.keyDown(search, { key: 'Enter' }))
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Manage skills')
+    const select = document.activeElement?.querySelector<HTMLButtonElement>(
+      '[aria-label="Select multiple in Featured"]'
+    )
+    expect(select).not.toBeNull()
+    await act(async () => select!.click())
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
   it('keeps the dialog open when Escape closes the global search results', async () => {
@@ -3965,29 +3990,24 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
-  it('opens Connector management through the shared breadcrumb and returns to the catalog', async () => {
+  it('selects Connectors in their category without leaving the catalog', async () => {
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Connectors')?.click())
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+        .click()
     )
-    expect(manage).toBeDefined()
-    await act(async () => manage?.click())
-    expect(document.body.textContent).toContain('Manage connectors')
-    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).not.toBeNull()
-    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')
-    expect(
-      layout
-        ?.closest('[data-slot="settings-content-scroll"]')
-        ?.firstElementChild?.classList.contains('h-full')
-    ).toBe(true)
-    expect(document.body.querySelector('[data-slot="batch-manage-dock"]')).toBeNull()
-    const crumb = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Back to connectors"]'
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Chemistry"]')!.click()
     )
-    expect(crumb).not.toBeNull()
-    await act(async () => crumb?.click())
-    expect(document.body.querySelector('[aria-label="Bulk Connector controls"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Back to connectors"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')!.click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
     expect(document.body.querySelector('[data-slot="connectors-action-bar"]')).not.toBeNull()
   })
 
@@ -4006,24 +4026,17 @@ describe('SettingsPage layout', () => {
     const onClose = vi.fn()
     await act(async () => root.render(<SettingsPage open onClose={onClose} />))
     await act(async () => navButton('Skills')?.click())
-    const clickText = async (label: string): Promise<void> => {
-      const button = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
-        (item) => item.textContent?.trim() === label
-      )!
-      expect(button).toBeDefined()
-      await act(async () => button.click())
-    }
-    await clickText('Manage')
-    const layout = document.body.querySelector('[data-slot="batch-manage-layout"]')!
-    expect(
-      layout
-        .closest('[data-slot="settings-content-scroll"]')
-        ?.firstElementChild?.classList.contains('h-full')
-    ).toBe(true)
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Personal"]')!
+        .click()
+    )
     await act(async () =>
       document.body.querySelector<HTMLInputElement>('[aria-label="Select Test skill"]')!.click()
     )
-    await clickText('Delete…')
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Delete selected"]')!.click()
+    )
     const title = document.body.querySelector<HTMLElement>('[data-slot="batch-review-title"]')!
     expect(document.activeElement).toBe(title)
     await act(async () =>
@@ -4033,7 +4046,9 @@ describe('SettingsPage layout', () => {
     )
     expect(onClose).not.toHaveBeenCalled()
     expect(document.body.querySelector('[data-slot="batch-manage-review"]')).toBeNull()
-    expect(document.activeElement).toBe(document.body.querySelector('[data-batch-delete-trigger]'))
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[aria-label="Delete selected"]')
+    )
   })
 
   it('integrates batch mode with Marketplace breadcrumbs and shared Back/Forward history', async () => {
@@ -4212,29 +4227,27 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[data-slot="skill-marketplace"]')).toBeNull()
   })
 
-  it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-    })
-
+  it('selects Featured Skills in place while keeping deletion unavailable', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => navButton('Skills')?.click())
-    await act(async () => {
-      await Promise.resolve()
-    })
-    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Manage'
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Select multiple in Featured"]')!
+        .click()
     )
-    await act(async () => manage?.click())
-
-    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')
-    expect(crumb).not.toBeNull()
-    expect(document.body.textContent).toContain('Manage skills')
-    expect(document.body.textContent).toContain('Featured Skills are not changed.')
-    expect(document.body.textContent).not.toContain('Alpha')
-
-    await act(async () => crumb?.click())
+    await act(async () =>
+      document.body.querySelector<HTMLInputElement>('[aria-label="Select Alpha"]')!.click()
+    )
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Delete selected"]')).toBeNull()
     expect(document.body.textContent).toContain('Alpha')
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Finish selection in Featured"]')!
+        .click()
+    )
+    expect(document.body.querySelector('[data-slot="resource-selection-bar"]')).toBeNull()
   })
 
   it('opens directly on a skill detail when the store has a pending skill', async () => {
@@ -4417,109 +4430,147 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
   })
 
-  it('navigates from a Skill usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-usage',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
-      revision: 1
+  it.each(['usage', 'access'])(
+    'navigates from a Skill %s popover to Specialist Settings and back',
+    async (entry) => {
+      const researcher: SpecialistView = {
+        id: 'spc-usage',
+        name: 'RESEARCHER',
+        displayName: 'Researcher',
+        description: 'Conducts systematic literature reviews.',
+        systemPrompt: 'You are a literature review specialist.',
+        iconKey: 'search',
+        colorKey: 'blue',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: ['alpha'], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        items: [{ kind: 'custom', ...researcher }],
+        integrity: { status: 'ok' }
+      })
+      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+      useSettingsStore.getState().openSettingsToSkill('alpha')
+
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      await act(async () => {
+        if (entry === 'access') {
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
+          )
+        } else {
+          fireEvent.focus(
+            document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
+          )
+        }
+      })
+      await act(async () => {
+        fireEvent.click(
+          document.body.querySelector<HTMLElement>(
+            '[aria-label="Open Researcher in Specialist Settings"]'
+          )!
+        )
+      })
+
+      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+      })
+      expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.textContent).toContain('Test Author')
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToSkill('alpha')
+  )
 
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
+  it.each(['usage', 'access', 'detail access'])(
+    'navigates from a Connector %s popover to Specialist Settings and back',
+    async (entry) => {
+      const researcher: SpecialistView = {
+        id: 'spc-connector-usage',
+        name: 'RESEARCHER',
+        displayName: 'Researcher',
+        description: 'Conducts systematic literature reviews.',
+        systemPrompt: 'You are a literature review specialist.',
+        iconKey: 'search',
+        colorKey: 'blue',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
+        revision: 1
+      }
+      ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+        items: [{ kind: 'custom', ...researcher }],
+        integrity: { status: 'ok' }
+      })
+      useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
+      window.api.settings.getConnectorDetail = vi.fn().mockResolvedValue({
+        id: 'chemistry',
+        name: 'chemistry',
+        displayName: 'Chemistry',
+        description: 'Small-molecule chemistry via PubChem.',
+        sources: ['PubChem'],
+        requiresNcbi: false,
+        enabled: true,
+        autoAllow: false,
+        tools: []
+      })
+      useSettingsStore.getState().openSettingsToPanel('connectors')
 
-    await act(async () => {
-      fireEvent.focus(
-        document.body.querySelector<HTMLElement>('[data-slot="skill-usage-agents-trigger"]')!
-      )
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>(
-          '[aria-label="Open Researcher in Specialist Settings"]'
-        )!
-      )
-    })
+      await act(async () => {
+        root.render(<SettingsPage open onClose={vi.fn()} />)
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
 
-    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
+      if (entry === 'detail access') {
+        await act(async () =>
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[aria-label="View details for Chemistry"]')!
+          )
+        )
+      }
+      await act(async () => {
+        if (entry === 'usage') {
+          fireEvent.focus(
+            document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!
+          )
+        } else {
+          fireEvent.click(
+            document.body.querySelector<HTMLElement>('[data-slot="resource-assignment-trigger"]')!
+          )
+        }
+      })
+      await act(async () => {
+        fireEvent.click(
+          document.body.querySelector<HTMLElement>(
+            '[aria-label="Open Researcher in Specialist Settings"]'
+          )!
+        )
+      })
 
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(navButton('Skills')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Test Author')
-  })
+      expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
 
-  it('navigates from a Connector usage popover to Specialist Settings and back', async () => {
-    const researcher: SpecialistView = {
-      id: 'spc-connector-usage',
-      name: 'RESEARCHER',
-      displayName: 'Researcher',
-      description: 'Conducts systematic literature reviews.',
-      systemPrompt: 'You are a literature review specialist.',
-      iconKey: 'search',
-      colorKey: 'blue',
-      enabled: true,
-      capabilityMode: 'selected',
-      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
-      selectedCapabilities: { skillIds: [], connectorIds: ['chemistry'], connectorTools: [] },
-      revision: 1
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
+      })
+      expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
+      expect(document.body.textContent).toContain('Chemistry')
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ kind: 'custom', ...researcher }],
-      integrity: { status: 'ok' }
-    })
-    useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
-    useSettingsStore.getState().openSettingsToPanel('connectors')
-
-    await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    await act(async () => {
-      fireEvent.focus(document.body.querySelector<HTMLElement>('[data-resource-kind="connector"]')!)
-    })
-    await act(async () => {
-      fireEvent.click(
-        document.body.querySelector<HTMLElement>(
-          '[aria-label="Open Researcher in Specialist Settings"]'
-        )!
-      )
-    })
-
-    expect(navButton('Specialists')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.querySelector<HTMLInputElement>('#sp-name')?.value).toBe('Researcher')
-
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.click()
-    })
-    expect(navButton('Connectors')?.getAttribute('aria-current')).toBe('page')
-    expect(document.body.textContent).toContain('Chemistry')
-  })
+  )
 
   it('routes connector capability rows to detail or edit by server kind', async () => {
     const researcher: SpecialistView = {
@@ -4617,9 +4668,14 @@ describe('SettingsPage layout', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(document.body.textContent).toContain('Specialists')
-    expect(document.body.textContent).toContain('Researcher')
-    expect(document.body.querySelector('[data-slot="skill-usage-agents-trigger"]')).toBeNull()
+    await act(async () =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Manage access for Chemistry"]')!
+        .click()
+    )
+    const researcherSwitch = document.body.querySelector('[role="switch"][aria-label="Researcher"]')
+    expect(researcherSwitch?.getAttribute('aria-checked')).toBe('true')
+    await act(async () => fireEvent.keyDown(researcherSwitch!, { key: 'Escape' }))
 
     // Back to the editor (capability tabs reset to Skills on remount), then a
     // custom server lands on its edit page.
@@ -5093,7 +5149,7 @@ describe('SettingsPage uninstall confirmation', () => {
     // Claude is managed but NOT the active framework (OpenCode is), so its Uninstall is enabled.
     // OpenCode carries a path so the "auto-detect when active + missing" effect doesn't run.
     const snapshot = {
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'opencode',
@@ -5140,7 +5196,7 @@ describe('SettingsPage uninstall confirmation', () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     // Claude is both managed and the active framework — its Uninstall must be disabled.
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5168,7 +5224,7 @@ describe('SettingsPage uninstall confirmation', () => {
       .fn()
       .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5217,7 +5273,7 @@ describe('SettingsPage uninstall confirmation', () => {
       .fn()
       .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     const readySnapshot = {
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5263,7 +5319,7 @@ describe('SettingsPage uninstall confirmation', () => {
 
   // An inactive but managed Claude (OpenCode active) whose Uninstall would otherwise be enabled.
   const inactiveManagedClaudeSnapshot = {
-    claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+    claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
     opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
     providers: [],
     agentFrameworkId: 'opencode',
@@ -5458,7 +5514,7 @@ describe('SettingsPage Codex framework', () => {
   it('offers Codex as a selectable framework behind the switch confirmation', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: {
         resolvedPath: '/data/codex-managed/adapter/dist/index.js',
@@ -5515,7 +5571,7 @@ describe('SettingsPage Codex framework', () => {
   it('switches to a ready CodeBuddy framework after confirmation', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
@@ -5570,7 +5626,7 @@ describe('SettingsPage Codex framework', () => {
   it('does not show the obsolete Skill limitation for active CodeBuddy', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
@@ -5606,7 +5662,7 @@ describe('SettingsPage Codex framework', () => {
   it('routes the default app-managed install action to installCodex', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
       codebuddy: {},
@@ -5662,7 +5718,7 @@ describe('SettingsPage Codex framework', () => {
   it('groups cards by install state and re-detects every framework from the section action', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
       providers: [],
@@ -5721,7 +5777,7 @@ describe('SettingsPage Codex framework', () => {
   it('keeps detected CodeBuddy in Installed even while preflight still needs repair', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: {},
       codebuddy: {
@@ -5765,7 +5821,7 @@ describe('SettingsPage Codex framework', () => {
   it('auto-detects a user-installed CodeBuddy when the Agent panel is shown', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const initialSnapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: {},
@@ -5812,7 +5868,7 @@ describe('SettingsPage Codex framework', () => {
   it('re-detects CodeBuddy after Settings is reopened', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const initialSnapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: {},
@@ -5869,7 +5925,7 @@ describe('SettingsPage Codex framework', () => {
   it('keeps an outdated Codex ACP install in Installed and offers an update', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
       codebuddy: {},

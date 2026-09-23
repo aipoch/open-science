@@ -115,7 +115,11 @@ test('merge review has one main scroller at small heights', async ({ page }) => 
     })
     .check()
   await page.getByRole('checkbox', { name: 'Select Second reference', exact: true }).check()
-  await page.getByRole('button', { name: 'More actions', exact: true }).first().click()
+  await page
+    .locator('[data-slot="literature-selection-toolbar"]')
+    .getByRole('button', { name: 'More actions', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Actions', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Merge', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Merge references', exact: true })
   await expect(dialog).toBeVisible()

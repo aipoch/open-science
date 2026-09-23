@@ -238,6 +238,37 @@ describe('find overlay manager', () => {
     expect(manager.isOpen()).toBe(false)
   })
 
+  it('returns focus to the source guest that opened find, falling back to the main renderer', () => {
+    const { view, mainWindow, registerOwner, manager } = createFakes()
+    manager.open()
+    const focusSource = vi.fn(() => true)
+    const owner = registerOwner.mock.calls[0]?.[1] as {
+      focusSource?: () => boolean
+    }
+    owner.focusSource = focusSource
+    registerFindOverlayOwner(view.webContents, owner as never)
+    view.webContents.focus.mockClear()
+    mainWindow.webContents.focus.mockClear()
+
+    manager.close()
+
+    expect(focusSource).toHaveBeenCalledOnce()
+    expect(mainWindow.webContents.focus).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the main renderer when the source guest has closed', () => {
+    const { view, mainWindow, registerOwner, manager } = createFakes()
+    manager.open()
+    const owner = registerOwner.mock.calls[0]?.[1] as { focusSource?: () => boolean }
+    owner.focusSource = () => false
+    registerFindOverlayOwner(view.webContents, owner as never)
+    mainWindow.webContents.focus.mockClear()
+
+    manager.close()
+
+    expect(mainWindow.webContents.focus).toHaveBeenCalledOnce()
+  })
+
   it('close() is a no-op when the overlay is already hidden', () => {
     const { mainWindow, manager } = createFakes()
 

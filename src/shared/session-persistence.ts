@@ -1011,6 +1011,9 @@ export type SessionUsageProjection = Readonly<{
   runsAt: number[]
   usageEvents: Array<
     Readonly<{
+      source?: 'classification' | 'literature-classification'
+      scenario?: string
+      usageIncomplete?: boolean
       timestamp: number
       inputTokens: number
       cacheTokens: number

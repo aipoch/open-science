@@ -332,8 +332,8 @@ jobs:
           OPEN_SCIENCE_ENV_CDN_BASE: https://statics.aipoch.com/open-science
         run: node scripts/verify-runtime-bundle.mjs "${{ matrix.subdir }}"
 
-      # The schema's binaryTargets generates Prisma engines for several platforms; keep only the one
-      # this build ships so each installer stays lean. Fails loudly if the expected engine is missing.
+      # Keep the engines this platform ships: Linux needs both Debian and RHEL OpenSSL 3 engines
+      # for the portable AppImage; macOS/Windows keep one. Fail if no matching engine was generated.
       # The glob is `*query_engine-*` (not `libquery_engine-*`) so it also matches Windows' engine,
       # which is named `query_engine-windows.dll.node` without the `lib` prefix.
       - name: Prune foreign Prisma engines

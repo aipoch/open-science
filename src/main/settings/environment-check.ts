@@ -10,6 +10,10 @@ import type {
   ManagedClaudeRegistry
 } from '../../shared/settings'
 import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
+import {
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  isSupportedClaudeCliVersion
+} from '../../shared/claude-runtime'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
 import { netFetchStandard } from '../skills/net-fetch'
 import { getManagedPlatform } from './managed-claude'
@@ -379,12 +383,18 @@ const runEnvironmentCheck = async ({
 
     // For other frameworks or when Codex doesn't have component info, show single runtime row
     if (runtime.found) {
+      const incompatibleClaude =
+        id === 'claude-code' && !isSupportedClaudeCliVersion(runtime.version)
       return [
         {
           id: 'agent',
           label: `${label} runtime`,
-          status: 'passed',
-          summary: runtime.version ? `${label} ${runtime.version} is ready.` : `${label} is ready.`,
+          status: incompatibleClaude ? (id === agentFrameworkId ? 'failed' : 'warning') : 'passed',
+          summary: incompatibleClaude
+            ? CLAUDE_CLI_INCOMPATIBLE_MESSAGE
+            : runtime.version
+              ? `${label} ${runtime.version} is ready.`
+              : `${label} is ready.`,
           detail: runtime.path
         }
       ]

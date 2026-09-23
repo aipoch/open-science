@@ -6,7 +6,7 @@ import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
-import { englishNativeTranslator } from '../locale/main-process-messages'
+import { englishNativeTranslator, translateNativeMessage } from '../locale/main-process-messages'
 import { SessionPackageService } from './service'
 import { SessionPackageDesktop } from './desktop'
 import { sessionPackageCommandContracts } from '../../shared/session-package'
@@ -589,12 +589,13 @@ it.each(['insufficient', 'exact', 'unavailable'] as const)(
         defaultPath: expect.stringMatching(/^Capacity-\d{4}-\d{2}-\d{2}\.science$/)
       })
     )
-    expect(capacity).toHaveBeenCalledTimes(4)
+    expect(capacity).toHaveBeenCalledTimes(5)
     expect(queried.every((query) => query.afterPicker)).toBe(true)
     expect(queried[0].path).toContain('open-science-package-export-')
-    expect(queried[1].path).toContain('open-science-package-validation-')
-    expect(queried[2].path).toContain('open-science-package-dialog-')
-    expect(dirname(queried[3].path)).toBe(fixture.storageRoot)
+    expect(queried[1].path).toContain('open-science-package-export-')
+    expect(queried[2].path).toContain('open-science-package-validation-')
+    expect(queried[3].path).toContain('open-science-package-dialog-')
+    expect(dirname(queried[4].path)).toBe(fixture.storageRoot)
     expect(release).toHaveBeenCalledTimes(1)
     expect(
       (await readdir(fixture.storageRoot)).filter((name) => name.startsWith('.open-science-save-'))
@@ -1508,3 +1509,76 @@ it.each(['committed', 'unconfirmed'] as const)(
     await desktop.close()
   }
 )
+
+it.each(['en', 'zh-Hans'] as const)(
+  'asks the user to update before importing a future package (%s)',
+  async (locale) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    await writeFile(
+      join(fixture.storageRoot, 'manifest.json'),
+      JSON.stringify({
+        format: 'open-science-session',
+        schemaVersion: 2
+      })
+    )
+    const archive = join(fixture.storageRoot, 'future.science')
+    await createTar({ cwd: fixture.storageRoot, file: archive, gzip: true }, ['manifest.json'])
+    const getClient = vi.fn(async () => fixture.client)
+    const afterImport = vi.fn(async () => undefined)
+    const service = new SessionPackageService({ storageRoot: fixture.storageRoot, getClient })
+    const desktop = createDesktop({
+      service,
+      afterImport,
+      withDataRootWrite: async (work) => work(),
+      translate: (key, options) => translateNativeMessage(locale, key, options)
+    })
+    try {
+      const message =
+        locale === 'en'
+          ? 'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+          : '此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。'
+      await expect(
+        desktop.import(undefined, undefined, { projectName: 'Research' }, archive)
+      ).rejects.toThrow(message)
+      expect(desktop.operations.snapshot).toMatchObject({ state: 'failed', error: message })
+      expect(afterImport).not.toHaveBeenCalled()
+      expect(getClient).not.toHaveBeenCalled()
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
+  }
+)
+
+it('reports a localized location and rule without exposing the matched value', async () => {
+  const { PackageSensitiveContentError } = await import('./sensitive-content')
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const failure = new PackageSensitiveContentError(
+    'notebooks/project/session/data.txt @17?token=synthetic-private-value',
+    'assignment'
+  )
+  vi.spyOn(service, 'exportTo').mockRejectedValue(failure)
+  const desktop = createDesktop({
+    service,
+    translate: (key, options) => translateNativeMessage('zh-Hans', key, options),
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => {}
+  })
+  try {
+    await expect(desktop.export({ projectId: 'project', sessionId: 'session' })).rejects.toThrow(
+      '疑似凭据的赋值'
+    )
+    expect(desktop.operations.snapshot?.error).toContain('data.txt @17')
+    expect(desktop.operations.snapshot?.error).not.toContain('synthetic-private-value')
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})

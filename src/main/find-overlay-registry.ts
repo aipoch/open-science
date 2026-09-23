@@ -8,6 +8,7 @@
 export type FindOverlayOwner = {
   mainWindow: unknown
   closeOverlay: () => void
+  focusSource?: () => boolean
   clearSearch?: () => void
 }
 

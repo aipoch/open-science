@@ -12,6 +12,7 @@ import { DRUG_REGULATORY_TOOLS } from './descriptors/drug-regulatory'
 import { EXPRESSION_TOOLS } from './descriptors/expression'
 import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
+import { GDC_TOOLS } from './descriptors/gdc'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { MOLECULE_TOOLS } from './descriptors/molecule'
@@ -23,6 +24,7 @@ import { RESEARCH_RESOURCES_TOOLS } from './descriptors/research-resources'
 import { RNA_TOOLS } from './descriptors/rna'
 import { STRUCTURES_TOOLS } from './descriptors/structures'
 import { VARIANTS_TOOLS } from './descriptors/variants'
+import { ZENODO_TOOLS } from './descriptors/zenodo'
 import { ZINC_TOOLS } from './descriptors/zinc'
 import type { ToolDescriptor } from './types'
 
@@ -39,6 +41,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...EXPRESSION_TOOLS,
   ...GENES_TOOLS,
   ...GENOMES_TOOLS,
+  ...GDC_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
   ...LITERATURE_TOOLS,
   ...MOLECULE_TOOLS,
@@ -50,6 +53,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...RNA_TOOLS,
   ...STRUCTURES_TOOLS,
   ...VARIANTS_TOOLS,
+  ...ZENODO_TOOLS,
   ...ZINC_TOOLS
 ]
 

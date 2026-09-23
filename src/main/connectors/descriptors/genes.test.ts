@@ -11,6 +11,9 @@ const EXPECTED_IDS = [
   'get_go_annotations',
   'search_uniprot_entries',
   'get_uniprot_entries',
+  'submit_uniprot_id_mapping',
+  'get_uniprot_id_mapping_status',
+  'get_uniprot_id_mapping_results',
   'map_reactome_pathways',
   'list_enrichment_sources',
   'enrich_gene_set'

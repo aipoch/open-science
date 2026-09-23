@@ -636,7 +636,11 @@
     "src/main/literature/pdf-structure/fixtures/outlined-diagonal-watermark-with-table-witnesses.jsonl",
     "src/main/literature/pdf-structure/fixtures/centered-group-parent-above-cohort-samples.jsonl",
     "src/main/literature/pdf-structure/fixtures/ruled-population-title-above-sample-count.jsonl",
-    "src/main/literature/pdf-structure/fixtures/centered-variable-stubs-with-repeated-summary-statistics.jsonl"
+    "src/main/literature/pdf-structure/fixtures/centered-variable-stubs-with-repeated-summary-statistics.jsonl",
+    "src/main/literature/smart-collections.test.ts",
+    "src/main/literature/smart-collections.ts",
+    "src/main/literature/smart-evidence.ts",
+    "src/main/literature/smart-rule-history.ts"
   ],
   "interfacePaths": [
     "src/main/literature/agent-pdf-acquisition.ts",
@@ -831,7 +835,8 @@
       "src/main/literature/scale-regressions.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
       "src/main/literature/citation-exchange.test.ts",
-      "src/main/literature/pdf-structure/table-native-record-boundaries.test.ts"
+      "src/main/literature/pdf-structure/table-native-record-boundaries.test.ts",
+      "src/main/literature/smart-collections.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1088,7 +1093,25 @@
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
       "src/main/pdf-annotations/service.test.ts",
-      "src/main/pdf-annotations/repository.integration.test.ts"
+      "src/main/pdf-annotations/repository.integration.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/settings/backend-route-planner.test.ts",
+      "src/main/settings/claude-provider-configuration.integration.test.ts",
+      "src/main/settings/provider-runtime-health-owner.test.ts",
+      "src/main/settings/provider-transport-owner.test.ts",
+      "src/main/settings/service.test.ts",
+      "src/main/settings/session-details-model-owner.test.ts",
+      "src/main/settings/connector-credential-recovery.integration.test.ts",
+      "src/main/settings/ipc.test.ts",
+      "src/main/settings/network-proxy-settings.test.ts",
+      "src/main/settings/service.connectors.test.ts",
+      "src/main/settings/service.providers.test.ts",
+      "src/main/settings/workflows.test.ts",
+      "src/main/settings/runtime-application-commands.test.ts",
+      "src/main/settings/workflows/connectors-diagnostic.test.ts",
+      "src/main/settings/application-commands.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

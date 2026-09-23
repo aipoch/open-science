@@ -199,65 +199,13 @@ export const ClassificationPanel = ({
         )
       ) : (
         <>
-          <TooltipProvider delayDuration={200}>
-            <SettingsSection
-              title={t('Feature settings')}
-              description={t(
-                'Choose relevant skills and connectors before the agent starts working.'
-              )}
-              action={
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={t('About classification models')}
-                      className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <Info className="size-4" aria-hidden="true" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="end"
-                    aria-label={t('About classification models')}
-                    className="max-w-xs space-y-3 p-3 text-left leading-5"
-                  >
-                    <p>
-                      {t(
-                        'Classification is optional. If the model is unavailable or the result is unclear, the default method continues. Only the current request and capability names and descriptions are sent.'
-                      )}
-                    </p>
-                    <p>
-                      {t(
-                        'Available for main conversations using Codex Chat Completions or CodeBuddy.'
-                      )}
-                    </p>
-                  </PopoverContent>
-                </Popover>
-              }
-            >
-              <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-                <ClassificationBindingRow
-                  snapshot={snapshot}
-                  busy={busy || Boolean(failed)}
-                  pending={pending}
-                  onChange={(binding) =>
-                    void mutate({ kind: 'bind', revision: snapshot.revision, binding })
-                  }
-                />
-              </div>
-            </SettingsSection>
-          </TooltipProvider>
           <SettingsSection
-            separated
             title={t('Model services')}
-            description={t('Connect a classification model for automatic routing.')}
+            description={t('Connect a service, then choose a model for each feature.')}
           >
             {snapshot.services.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                 <p>{t('No model services added')}</p>
-                <p className="mt-1 text-xs">
-                  {t('Optional. Skills and connectors work without a classification model.')}
-                </p>
               </div>
             ) : (
               <TooltipProvider delayDuration={200}>
@@ -363,6 +311,34 @@ export const ClassificationPanel = ({
               {t('Add service')}
             </SettingsListAddAction>
           </SettingsSection>
+          <TooltipProvider delayDuration={200}>
+            <SettingsSection separated title={t('Feature settings')}>
+              <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+                <ClassificationBindingRow
+                  snapshot={snapshot}
+                  busy={busy || Boolean(failed)}
+                  pending={pending}
+                  onChange={(binding) =>
+                    void mutate({ kind: 'bind', revision: snapshot.revision, binding })
+                  }
+                />
+                <ClassificationBindingRow
+                  snapshot={snapshot}
+                  feature="smart-collections"
+                  busy={busy || Boolean(failed)}
+                  pending={pending}
+                  onChange={(binding) =>
+                    void mutate({
+                      kind: 'bind',
+                      feature: 'smart-collections',
+                      revision: snapshot.revision,
+                      binding
+                    })
+                  }
+                />
+              </div>
+            </SettingsSection>
+          </TooltipProvider>
         </>
       )}
     </div>
@@ -373,38 +349,94 @@ const ClassificationBindingRow = ({
   snapshot,
   busy,
   pending,
-  onChange
+  onChange,
+  feature = 'capability-selection'
 }: {
+  feature?: 'capability-selection' | 'smart-collections'
   snapshot: ClassificationSnapshot
   busy: boolean
   pending?: string
   onChange: (binding: ClassificationBinding | undefined) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const binding = snapshot.capabilitySelection
+  const smart = feature === 'smart-collections'
+  const label = smart ? t('Smart collections') : t('Automatic capability selection')
+  const binding = smart ? snapshot.smartCollections : snapshot.capabilitySelection
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <label
-        htmlFor="capability-classifier"
-        className="min-w-0 flex-1 text-sm font-medium text-foreground"
-      >
-        {t('Automatic capability selection')}
-      </label>
+      <div className="min-w-0 flex-1 basis-56">
+        <div className="flex items-center gap-1">
+          <label htmlFor={feature} className="text-sm font-medium text-foreground">
+            {label}
+          </label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={smart ? t('Smart collections') : t('About classification models')}
+                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Info className="size-4" aria-hidden="true" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              aria-label={smart ? t('Smart collections') : t('About classification models')}
+              className="max-w-xs space-y-3 p-3 text-left leading-5"
+            >
+              {smart ? (
+                <>
+                  <p>
+                    {t(
+                      'Shared by all smart collections. Choose a model independently of automatic capability selection; no model is selected by default.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Evaluate references against your collection rules using the evidence selected for each collection.'
+                    )}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p>
+                    {t(
+                      'Classification is optional. If the model is unavailable or the result is unclear, the default method continues. Only the current request and capability names and descriptions are sent.'
+                    )}
+                  </p>
+                  <p>
+                    {t(
+                      'Available for main conversations using Codex Chat Completions or CodeBuddy.'
+                    )}
+                  </p>
+                </>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          {smart
+            ? t('Organize references using your collection rules.')
+            : t('Choose relevant skills and connectors before the agent starts working.')}
+        </p>
+      </div>
       <Select
         disabled={busy}
         value={binding ? JSON.stringify(binding) : 'default'}
         onValueChange={(value) => onChange(value === 'default' ? undefined : JSON.parse(value))}
       >
         <SelectTrigger
-          id="capability-classifier"
-          aria-label={t('Automatic capability selection')}
+          id={feature}
+          aria-label={label}
           aria-busy={pending === 'bind'}
           className="w-full sm:w-72"
         >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="default">{t('Use default method')}</SelectItem>
+          <SelectItem value="default">
+            {smart ? t('Not configured') : t('Use default method')}
+          </SelectItem>
           {snapshot.services.flatMap((service) =>
             classificationModelsForService(service).map((model) => (
               <SelectItem

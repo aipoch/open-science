@@ -336,3 +336,61 @@ describe('token usage analytics', () => {
     expect(selectTokenUsageSummary(analytics, 'all').newArtifacts).toBe(1)
   })
 })
+
+it('counts classification once and filters both scenario subtotals and incomplete requests by period', () => {
+  const now = localTime(2026, 8, 15)
+  const analytics = buildTokenUsageAnalyticsFromProjection(
+    {
+      projectCreatedAt: [],
+      sessionCreatedAt: [],
+      artifactCreatedAt: [],
+      runsAt: [],
+      totalArtifacts: 0,
+      usageEvents: [
+        {
+          timestamp: now,
+          inputTokens: 10,
+          outputTokens: 2,
+          cacheTokens: 0,
+          source: 'classification',
+          scenario: 'probe'
+        },
+        {
+          timestamp: now,
+          inputTokens: 20,
+          outputTokens: 3,
+          cacheTokens: 0,
+          source: 'literature-classification',
+          scenario: 'literature-update'
+        },
+        {
+          timestamp: now,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheTokens: 0,
+          source: 'literature-classification',
+          usageIncomplete: true
+        },
+        {
+          timestamp: localTime(2026, 6, 1),
+          inputTokens: 8,
+          outputTokens: 1,
+          cacheTokens: 0,
+          source: 'classification',
+          usageIncomplete: true
+        }
+      ]
+    },
+    now
+  )
+  expect(selectTokenUsageSummary(analytics, 'today')).toMatchObject({
+    totalTokens: 35,
+    classificationTokens: { conversation: 12, literature: 23 },
+    incompleteRequests: 1,
+    totalSessions: 0
+  })
+  expect(selectTokenUsageSummary(analytics, 'all')).toMatchObject({
+    totalTokens: 44,
+    incompleteRequests: 2
+  })
+})

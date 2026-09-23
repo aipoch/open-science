@@ -1,3 +1,13 @@
+import { SMART_RULE_STORAGE_MAX_LENGTH, serializedSmartRuleSchema } from './smart-collection-rule'
+import {
+  smartCollectionCommandSchemas,
+  smartHistorySchema,
+  smartCollectionPreviewSchema,
+  smartCollectionViewSchema,
+  smartCollectionRowSchema,
+  smartEvidenceModeSchema,
+  smartScopeSchema
+} from './literature-smart-collections'
 import {
   LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX,
   createLiteratureAttachmentVersionReference,
@@ -316,6 +326,7 @@ const literatureItemViewSchema = z
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
     deletedAt: z.number().int().nonnegative().optional(),
+    smartDecision: smartCollectionRowSchema.optional(),
     mergedIntoItemId: nonEmptyTextSchema.optional()
   })
   .strict()
@@ -358,10 +369,14 @@ const LITERATURE_COLLECTION_REVISION_CONFLICT = 'literature_collection_revision_
 
 const literatureCollectionViewSchema = z
   .object({
+    smart: z.boolean().optional(),
+    smartScope: smartScopeSchema.optional(),
+    smartEvidenceMode: smartEvidenceModeSchema.optional(),
+    smartAutoUpdate: z.boolean().optional(),
     revision: z.number().int().positive(),
     id: nonEmptyTextSchema,
     name: nonEmptyTextSchema.max(LITERATURE_COLLECTION_NAME_MAX_LENGTH),
-    description: z.string().max(LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH),
+    description: z.string().max(SMART_RULE_STORAGE_MAX_LENGTH),
     parentId: nonEmptyTextSchema.optional(),
     itemCount: z.number().int().nonnegative(),
     createdAt: z.number().int().nonnegative(),
@@ -407,6 +422,8 @@ const literatureCatalogSearchRequestSchema = z
     query: optionalTextSchema,
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
+    smartFilter: z.enum(['match', 'review', 'no-match', 'pending']).optional(),
+    smartDecisionSource: z.enum(['all', 'ai', 'manual']).optional(),
     parentId: optionalTextSchema,
     itemId: optionalTextSchema,
     inboxState: z.enum(LITERATURE_INBOX_STATES).optional(),
@@ -487,6 +504,7 @@ const mergeGroupPreviewSchema = z
   .strict()
 
 const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
+  ...smartCollectionCommandSchemas,
   z
     .object({
       kind: z.literal('delete-attachment'),
@@ -562,12 +580,22 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('update-collection'),
+      smartScope: smartScopeSchema.optional(),
+      smartEvidenceMode: smartEvidenceModeSchema.optional(),
+      smartAutoUpdate: z.boolean().optional(),
       expectedRevision: z.number().int().positive(),
       collectionId: nonEmptyTextSchema,
       name: nonEmptyTextSchema.max(LITERATURE_COLLECTION_NAME_MAX_LENGTH),
-      description: z.string().trim().max(LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH)
+      description: z.string().trim().max(SMART_RULE_STORAGE_MAX_LENGTH)
     })
-    .strict(),
+    .strict()
+    .refine(
+      (value) =>
+        serializedSmartRuleSchema.safeParse(value.description).success ||
+        (!value.smartScope &&
+          value.description.length <= LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH),
+      { path: ['description'], message: 'Invalid collection description.' }
+    ),
   z
     .object({
       kind: z.literal('delete-collection'),
@@ -635,6 +663,15 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
 
 const literatureCatalogReceiptSchema = z
   .object({
+    smartHistory: smartHistorySchema.optional(),
+    smart: smartCollectionViewSchema.optional(),
+    smartPreview: smartCollectionPreviewSchema.optional(),
+    smartRefreshFailed: z.boolean().optional(),
+    smartDecisions: z.array(smartCollectionRowSchema).max(100).optional(),
+    smartDecisionBatch: z
+      .object({ saved: z.array(z.string()).max(100), failed: z.array(z.string()).max(100) })
+      .strict()
+      .optional(),
     cleanupPending: z.boolean().optional(),
     kind: z.enum(['candidate', 'collection', 'item']),
     id: nonEmptyTextSchema,

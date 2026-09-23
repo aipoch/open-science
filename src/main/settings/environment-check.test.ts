@@ -22,6 +22,27 @@ const baseDeps = (): EnvironmentCheckDeps => ({
 })
 
 describe('runEnvironmentCheck', () => {
+  it('keeps an old Claude installation visible but blocks readiness', async () => {
+    const result = await runEnvironmentCheck({
+      storageRoot: '/data',
+      agentFrameworkId: 'claude-code',
+      frameworks: [
+        {
+          id: 'claude-code',
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude', version: '2.1.117' }
+        }
+      ],
+      encryptionAvailable: true,
+      deps: baseDeps()
+    })
+    expect(result.runtime).toMatchObject({ found: true, version: '2.1.117' })
+    expect(result.ready).toBe(false)
+    expect(result.checks.find((check) => check.id === 'agent')).toMatchObject({
+      status: 'failed',
+      summary: expect.stringContaining('Update Claude Code to 2.1.118 or later')
+    })
+  })
   it('probes the codex-acp package when Codex is selected', async () => {
     const probeRegistry = vi.fn().mockResolvedValue(20)
 
@@ -91,7 +112,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code' as const,
           label: 'Claude',
-          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+          runtime: { found: true, path: '/bin/claude', version: '2.1.118' }
         },
         { id: 'opencode' as const, label: 'OpenCode', runtime: { found: false } }
       ],
@@ -118,7 +139,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code' as const,
           label: 'Claude',
-          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+          runtime: { found: true, path: '/bin/claude', version: '2.1.118' }
         },
         { id: 'opencode' as const, label: 'OpenCode', runtime: { found: false } }
       ],
@@ -190,7 +211,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code' as const,
           label: 'Claude',
-          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+          runtime: { found: true, path: '/bin/claude', version: '2.1.118' }
         }
       ],
       encryptionAvailable: true,
@@ -215,7 +236,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code' as const,
           label: 'Claude',
-          runtime: { found: true, path: '/bin/claude', version: '2.1.0' }
+          runtime: { found: true, path: '/bin/claude', version: '2.1.118' }
         }
       ],
       encryptionAvailable: true,
@@ -236,7 +257,11 @@ describe('runEnvironmentCheck', () => {
       storageRoot: '/data',
       agentFrameworkId: 'claude-code',
       frameworks: [
-        { id: 'claude-code', label: 'Claude', runtime: { found: true, path: '/bin/claude' } }
+        {
+          id: 'claude-code',
+          label: 'Claude',
+          runtime: { found: true, path: '/bin/claude', version: '2.1.118' }
+        }
       ],
       encryptionAvailable: false,
       credentialStore: 'file',
@@ -257,7 +282,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code' as const,
           label: 'Claude',
-          runtime: { found: true, path: '/bin/claude' }
+          runtime: { found: true, path: '/bin/claude', version: '2.1.118' }
         }
       ],
       encryptionAvailable: false,
@@ -307,7 +332,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code' as const,
           label: 'Claude',
-          runtime: { found: true, path: '/opt/claude', version: '2.1.0' }
+          runtime: { found: true, path: '/opt/claude', version: '2.1.118' }
         }
       ],
       encryptionAvailable: true,
@@ -547,7 +572,7 @@ describe('runEnvironmentCheck', () => {
         {
           id: 'claude-code',
           label: 'Claude',
-          runtime: { found: true, path: '/usr/local/bin/claude', version: '2.1.0' }
+          runtime: { found: true, path: '/usr/local/bin/claude', version: '2.1.118' }
         },
         {
           id: 'codex',

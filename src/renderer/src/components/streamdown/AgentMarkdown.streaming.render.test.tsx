@@ -50,6 +50,19 @@ describe('AgentMarkdown streaming presentation', () => {
     container.remove()
   })
 
+  it('survives an oversized streamed update and reopening its complete persisted text', async () => {
+    const content = 'a'.repeat(220_000) + '👩‍🔬e\u0301'.repeat(32)
+    await act(async () => root.render(<AgentMarkdown content="prefix" isAnimating />))
+    await act(async () => root.render(<AgentMarkdown content={'prefix' + content} isAnimating />))
+    await act(async () => vi.advanceTimersByTimeAsync(600))
+    expect(container.textContent!.length).toBeGreaterThan(0)
+    await act(async () => root.render(<AgentMarkdown content={'prefix' + content} />))
+    expect(container.textContent).toBe('prefix' + content)
+    await act(async () => root.render(null))
+    await act(async () => root.render(<AgentMarkdown content={'prefix' + content} />))
+    expect(container.textContent).toBe('prefix' + content)
+  })
+
   it('keeps the rendered Mermaid diagram when later paragraphs stream and the message finishes', async () => {
     vi.useRealTimers()
     renderMermaid.mockClear()

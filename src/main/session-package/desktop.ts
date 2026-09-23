@@ -1,3 +1,5 @@
+import { PACKAGE_REQUIRES_UPDATE } from './archive'
+import { PackageSensitiveContentError } from './sensitive-content'
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { formatPackageBytes } from '../../shared/session-package'
@@ -329,6 +331,13 @@ export class SessionPackageDesktop {
       )
       const detail = error instanceof Error ? error.message : ''
       const translate = this.options.translate
+      if (detail === PACKAGE_REQUIRES_UPDATE)
+        throw new Error(
+          translate(
+            'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+          ),
+          { cause: error }
+        )
       if (error instanceof PackageSourceUnavailableError)
         throw new Error(
           translate(
@@ -356,6 +365,24 @@ export class SessionPackageDesktop {
           ),
           { cause: error }
         )
+      if (error instanceof PackageSensitiveContentError) {
+        const rules = {
+          field: translate('Credential-like field value'),
+          assignment: translate('Credential-like assignment'),
+          url: translate('Credential-like URL'),
+          token: translate('Credential-like token')
+        }
+        throw new Error(
+          translate(
+            'Sensitive content detected at {{location}}. Check: {{rule}}. Review it before exporting the Session package.',
+            {
+              location: error.location,
+              rule: rules[error.rule]
+            }
+          ),
+          { cause: error }
+        )
+      }
       if (detail.includes('Sensitive content detected'))
         throw new Error(
           translate('Sensitive content detected. Remove it before exporting the Session package.'),

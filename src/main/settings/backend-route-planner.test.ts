@@ -739,7 +739,18 @@ describe('BackendRoutePlanner provider candidates', () => {
       expect.arrayContaining([
         'mcp__open_science_notebook/notebook_execute',
         'mcp__open_science_artifacts/write_artifact_file',
-        'mcp__open_science_skills/request_skill_import'
+        'mcp__open_science_skills/request_skill_import',
+        'mcp__open_science_library/search_library',
+        'mcp__open_science_library/read_library_abstract',
+        'mcp__open_science_library/read_library_pdf',
+        'mcp__open_science_library/format_references',
+        'mcp__open_science_library/format_citation_document',
+        'mcp__open_science_library/prepare_latex_bundle',
+        'mcp__open_science_library/save_to_inbox',
+        'mcp__open_science_library/acquire_pdf',
+        'mcp__open_science_literature/read_document',
+        'mcp__open_science_literature/list_pdf_elements',
+        'mcp__open_science_literature/read_pdf_element'
       ])
     )
     expect(plan.reviewerBridgeTools?.map(({ namespace, name }) => `${namespace}/${name}`)).toEqual(

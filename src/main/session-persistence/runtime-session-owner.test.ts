@@ -113,6 +113,18 @@ const messageEvent = (
   text
 })
 
+const thoughtEvent = (turn: RuntimeSessionTurnScope, id: string): AcpRuntimeEvent => ({
+  id,
+  timestamp: 2,
+  kind: 'thought',
+  level: 'info',
+  sessionId: turn.sessionId,
+  promptMessageId: turn.promptMessageId,
+  messageId: `thought-${turn.promptMessageId}`,
+  role: 'assistant',
+  text: 'private reasoning'
+})
+
 // The app-owned `ask_user_question` activity as it reaches the runtime: pending while the card
 // waits, answered once the user submits an answer.
 const questionEvent = (
@@ -244,6 +256,20 @@ const parentMessageSession = (): PersistedChatSession => {
 }
 
 describe('RuntimeSessionOwner', () => {
+  it('does not queue private thought chunks for durable runtime persistence', async () => {
+    const turn = scope()
+    const { owner, mutateSession } = harness()
+    await owner.begin(turn)
+    const mutationsAfterBegin = mutateSession.mock.calls.length
+
+    for (let index = 0; index < 1_000; index += 1) {
+      owner.accept(thoughtEvent(turn, `thought-${index}`))
+    }
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+
+    expect(mutateSession).toHaveBeenCalledTimes(mutationsAfterBegin)
+  })
+
   it('rejects an execution identity already admitted on a different prompt path', async () => {
     const turn = scope()
     const durable = session(turn)

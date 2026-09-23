@@ -6,7 +6,7 @@ import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
 import type { NamedElectronSurfaceAdapter } from './runtime-electron-wiring'
 import { disposeIpcHandlerRegistry } from './ipc-handler-registry'
 
-import { registerFindOverlayOwner } from './find-overlay-registry'
+import { registerFindOverlayOwner, resolveFindOverlayOwner } from './find-overlay-registry'
 import {
   WINDOW_FIND_CLEAR_CHANNEL,
   WINDOW_FIND_CLOSE_CHANNEL,
@@ -30,6 +30,7 @@ type TargetWindow = {
   webContents: EventEmitter & {
     findInPage: Mock<(text: string, options: FindInPageOptions) => number>
     stopFindInPage: Mock<(action: 'clearSelection') => void>
+    focus: Mock<() => void>
   }
   emitFoundInPage: (result: FoundInPageResult) => void
 }
@@ -43,7 +44,8 @@ type OverlaySender = {
 const createTargetWindow = (): TargetWindow => {
   const webContents = Object.assign(new EventEmitter(), {
     findInPage: vi.fn<(text: string, options: FindInPageOptions) => number>(() => 17),
-    stopFindInPage: vi.fn<(action: 'clearSelection') => void>()
+    stopFindInPage: vi.fn<(action: 'clearSelection') => void>(),
+    focus: vi.fn()
   })
   return {
     webContents,
@@ -169,6 +171,26 @@ describe('window find IPC', () => {
     ipcMain.emit(WINDOW_FIND_CLOSE_CHANNEL, { sender: overlay }, undefined)
 
     expect(closeOverlay).toHaveBeenCalledTimes(1)
+  })
+
+  it('records the searched source guest so closing find restores its focus', () => {
+    const target = createTargetWindow()
+    const overlay = createOverlay()
+    const closeOverlay = vi.fn()
+    registerFindOverlayOwner(overlay, { mainWindow: target, closeOverlay })
+    registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
+
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    const owner = resolveFindOverlayOwner(overlay)
+    expect(owner?.focusSource?.()).toBe(true)
+    ipcMain.emit(WINDOW_FIND_CLOSE_CHANNEL, { sender: overlay }, undefined)
+
+    expect(target.webContents.focus).toHaveBeenCalledOnce()
+    expect(closeOverlay).toHaveBeenCalledOnce()
   })
 
   it('ignores a request when no main window can be resolved for the overlay', () => {

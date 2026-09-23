@@ -6,13 +6,13 @@ import type {
   ArtifactVersionProvenance
 } from '../../shared/artifact-provenance'
 import type { ArtifactVersionReviewProjection } from '../../shared/reviewer'
-import { outputFilename } from './artifact-reproducibility-export'
+import { outputFilename } from './export-filename'
 import { sha256 } from './provenance-canonical'
 
 const RO_CRATE_CONTEXT = 'https://w3id.org/ro/crate/1.1/context'
 const RO_CRATE_SPECIFICATION = 'https://w3id.org/ro/crate/1.1'
 // Lightweight profile: metadata + provenance records only. Data payloads are referenced by
-// SHA-256 checksum and are not packaged. The complete profile (step 2 of issue #925) will add them.
+// SHA-256 checksum and are not packaged. The complete profile includes verified available bytes.
 const LIGHTWEIGHT_PROFILE = 'urn:open-science:ro-crate-profile:artifact-version-lightweight'
 const COMPLETE_PROFILE = 'urn:open-science:ro-crate-profile:artifact-version-complete'
 const ZIP_MTIME = new Date('1980-01-02T00:00:00.000Z')
@@ -31,6 +31,15 @@ type ArtifactVersionRoCrateSource = Pick<
 type ArtifactVersionRoCrateContentReaders = {
   readVersionContent: (versionId: string) => Promise<Uint8Array | undefined>
   readInputContent: (input: ArtifactVersionInputEvidence) => Promise<Uint8Array | undefined>
+}
+
+// Package snapshots can provide the same immutable evidence without loading renderer projections.
+type ArtifactVersionRoCrateMetadataSource = Pick<
+  ArtifactVersionRoCrateSource,
+  'contentStatus' | 'evidence' | 'review'
+> & {
+  descriptor: Pick<ArtifactVersionRoCrateSource['descriptor'], 'originKind'>
+  execution?: Pick<ArtifactExecutionSnapshot, 'runs'>
 }
 
 type RoCrateMetadataOptions = {
@@ -113,7 +122,7 @@ const provenanceSidecars = (source: ArtifactVersionRoCrateSource): Map<string, s
 }
 
 const buildArtifactVersionRoCrateMetadata = (
-  source: ArtifactVersionRoCrateSource,
+  source: ArtifactVersionRoCrateMetadataSource,
   sidecars: ReadonlyMap<string, string> = new Map(),
   options: RoCrateMetadataOptions = {}
 ): RoCrateMetadataDocument => {
@@ -425,9 +434,12 @@ const buildArtifactVersionRoCrateMetadata = (
   const packageEntities: RoCrateEntity[] = environment
     ? environment.packages
         .filter(
-          (pkg, index) =>
-            packageIds.indexOf(`#package/${fragment(pkg.ecosystem)}/${fragment(pkg.name)}`) ===
-            index
+          (pkg, index, packages) =>
+            packages.findIndex(
+              (candidate) =>
+                fragment(candidate.ecosystem) === fragment(pkg.ecosystem) &&
+                fragment(candidate.name) === fragment(pkg.name)
+            ) === index
         )
         .map((pkg) => ({
           '@type': 'SoftwareApplication',
@@ -456,14 +468,13 @@ const buildArtifactVersionRoCrateMetadata = (
           : 'Open Science Artifact Version provenance crate (complete profile). Includes the Artifact Version payload and exact input file bytes together with their provenance as RO-Crate 1.1 metadata. Provenance is an audit and traceability record, not a deterministic replay contract.',
     mainEntity: reference(payloadId),
     conformsTo: reference(profile === 'complete' ? COMPLETE_PROFILE : LIGHTWEIGHT_PROFILE),
-    ...(sidecarEntities.length || packagedDataPaths.size
-      ? {
-          hasPart: [
-            ...sidecarEntities.map((entity) => reference(entity['@id'])),
-            ...[...new Set(packagedDataPaths.values())].map(reference)
-          ]
-        }
-      : {}),
+    hasPart: [
+      ...new Set([
+        ...sidecarEntities.map((entity) => entity['@id']),
+        payloadId,
+        ...inputEntities.map((entity) => entity['@id'])
+      ])
+    ].map(reference),
     ...(contextualIds.length ? { mentions: contextualIds.map(reference) } : {})
   }
 

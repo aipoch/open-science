@@ -223,6 +223,46 @@ class LiteratureDocumentReader {
     return this.search([await this.resolveDocument(request.projectId, binding)], request.query)
   }
 
+  async classificationEvidence(
+    request: Omit<SearchLiteratureAttachmentRequest, 'projectId'>
+  ): Promise<{
+    coverage: 'full-text' | 'passages'
+    passages: { pageStart: number; pageEnd: number; content: string }[]
+  }> {
+    if (request.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES) throw new Error('PDF_SIZE_LIMIT_EXCEEDED')
+    const document = await this.resolveDocument('', {
+      version: 1,
+      bindingId: request.attachmentVersionId,
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: request.attachmentId,
+      sourceVersionId: request.attachmentVersionId,
+      name: request.filename,
+      mimeType: 'application/pdf',
+      sizeBytes: request.sizeBytes,
+      checksum: request.checksum,
+      linkedAt: 0
+    })
+    const chunks = indexChunks(document.text)
+    const complete =
+      Buffer.byteLength(JSON.stringify(chunks), 'utf8') <= 32000 && chunks.length <= 8
+    const candidates = complete
+      ? chunks
+      : (
+          (await this.search([document], request.query)) as {
+            passages: { pageStart: number; pageEnd: number; content: string }[]
+          }
+        ).passages
+    const passages: { pageStart: number; pageEnd: number; content: string }[] = []
+    let bytes = 0
+    for (const { pageStart, pageEnd, content } of candidates) {
+      const next = Buffer.byteLength(content, 'utf8')
+      if (bytes + next > 32000 || passages.length >= 8) continue
+      passages.push({ pageStart, pageEnd, content })
+      bytes += next
+    }
+    return { coverage: complete ? 'full-text' : 'passages', passages }
+  }
+
   private selectSearchBindings(
     context: MessagePdfContextSnapshot,
     documentIds: readonly string[] | undefined

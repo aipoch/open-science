@@ -1,5 +1,5 @@
 import { DOMParser } from '@xmldom/xmldom'
-import { ncbiEtiquette } from '../engine'
+import { ncbiEtiquette } from './ncbi'
 import type { ToolContext, ToolDescriptor } from '../types'
 
 // PubMed connector over NCBI E-utilities, the NCBI/PMC ID Converter, and Europe PMC. Threads NCBI

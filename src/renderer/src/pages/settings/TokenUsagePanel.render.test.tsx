@@ -575,3 +575,35 @@ describe('TokenUsagePanel', () => {
     expect(latestDayLabel()).toContain('Aug 16, 2026')
   })
 })
+
+it('shows classification consumption and incomplete reporting without any conversations', async () => {
+  const now = localTime(2026, 8, 15, 18)
+  window.api = {
+    sessions: {
+      loadUsage: vi.fn().mockResolvedValue({
+        projectCreatedAt: [],
+        sessionCreatedAt: [],
+        artifactCreatedAt: [],
+        runsAt: [],
+        totalArtifacts: 0,
+        usageEvents: [
+          {
+            timestamp: now,
+            inputTokens: 20,
+            outputTokens: 3,
+            cacheTokens: 0,
+            source: 'literature-classification',
+            usageIncomplete: true
+          }
+        ]
+      })
+    }
+  } as unknown as Window['api']
+  await act(async () => root.render(<TokenUsagePanel sessions={[]} projects={[]} now={now} />))
+  expect(container.querySelector('[data-slot="classification-usage"]')?.textContent).toContain(
+    'Literature classification tokens23'
+  )
+  expect(container.textContent).toContain(
+    'Some classification requests have no reported token usage. Totals may be incomplete.'
+  )
+})

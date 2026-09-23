@@ -62,6 +62,7 @@ test('retains source cookies, cache and local storage while session storage ends
       ]
     }).end(`<!doctype html><html><body><h1>Source storage fixture</h1>
       <button id="access">Allow storage</button><output id="result"></output>
+      <iframe id="third-party" src="https://third-party.example/storage"></iframe>
       <script>document.getElementById('access').onclick = async () => {
         try { await document.requestStorageAccess(); document.getElementById('result').textContent = 'granted'; }
         catch (error) { document.getElementById('result').textContent = error.name; }
@@ -109,7 +110,24 @@ test('retains source cookies, cache and local storage while session storage ends
   try {
     let page = await app.completeOnboarding()
     await app.trustSourcePreviewCertificate(pem)
+    await page.context().route('https://third-party.example/storage', async (route) => {
+      await route.fulfill({
+        contentType: 'text/html',
+        headers: {
+          'Set-Cookie': 'thirdParty=retained; Secure; SameSite=None; Max-Age=3600; Path=/'
+        },
+        body: `<!doctype html><html><body><button id="access">Allow third-party storage</button><output id="result"></output><script>
+          document.getElementById('access').onclick = async () => {
+            try { await document.requestStorageAccess(); document.getElementById('result').textContent = document.cookie.includes('thirdParty=retained') ? 'granted' : 'missing'; }
+            catch (error) { document.getElementById('result').textContent = error.name; }
+          };
+        </script></body></html>`
+      })
+    })
     await mountSource(page)
+    const thirdParty = sourceFrame(page).frameLocator('#third-party')
+    await thirdParty.getByRole('button', { name: 'Allow third-party storage' }).click()
+    await expect(thirdParty.locator('#result')).toHaveText('granted')
     const initial = await sourceFrame(page).evaluate(async () => {
       document.cookie = 'cookieCheck=accepted; Secure; Path=/'
       localStorage.setItem('source-persistent', 'retained')
@@ -201,7 +219,9 @@ test('retains source cookies, cache and local storage while session storage ends
     expect(await sourceFrame(page).evaluate(async () => (await fetch('/cache')).text())).toBe(
       'cached evidence'
     )
-    expect(cacheRequests).toBe(1)
+    // A deliberate reload revalidates the resource; remounting the same host Session then serves
+    // the fresh response from disk cache without another request.
+    expect(cacheRequests).toBe(2)
 
     page = await app.restart()
     await app.trustSourcePreviewCertificate(pem)
@@ -216,7 +236,7 @@ test('retains source cookies, cache and local storage while session storage ends
     expect(restored.session).toBeNull()
     expect(restored.cookies).toContain('clientCookie=retained')
     expect(restored.cached).toBe('cached evidence')
-    expect(cacheRequests).toBe(1)
+    expect(cacheRequests).toBe(2)
   } finally {
     server.closeAllConnections()
     await new Promise<void>((resolve, reject) =>

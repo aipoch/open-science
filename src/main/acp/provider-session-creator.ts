@@ -174,6 +174,7 @@ export class AcpProviderSessionCreator {
         aggregate.setSpecialistPrefix(specialist.prefix || undefined)
         aggregate.setSpecialistId(request.specialistId)
         provisionedCapability.commit(session.sessionId)
+        provisionedCapability.registerBridgeMcpSession?.(session.sessionId, session.sessionId)
         provisionalSession = undefined
         identityReservation.release()
         reservation = undefined

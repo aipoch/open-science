@@ -45,7 +45,7 @@ const render = async (title = 'Paper'): Promise<void> => {
 describe('source webview lifetime', () => {
   it('ignores guest broadcasts while a connected tag is still attaching', async () => {
     const listeners: {
-      blocked: (request: { guestId: number; url: string }) => void
+      blocked: (request: { guestId: number; url: string; navigationId: number }) => void
       menu: (request: { guestId: number; x: number; y: number }) => void
     } = { blocked: vi.fn(), menu: vi.fn() }
     window.api.sourcePreview!.onNavigationBlocked = (callback) => {
@@ -64,9 +64,42 @@ describe('source webview lifetime', () => {
       },
       getClientRects: () => [{}]
     })
-    expect(() => listeners.blocked({ guestId: 20, url: 'http://blocked.example' })).not.toThrow()
+    expect(() =>
+      listeners.blocked({ guestId: 20, url: 'http://blocked.example', navigationId: 0 })
+    ).not.toThrow()
     expect(() => listeners.menu({ guestId: 20, x: 10, y: 10 })).not.toThrow()
     expect(container.querySelector('[data-source-preview-error]')).toBeNull()
+  })
+  it('ignores a blocked event from an older navigation generation', async () => {
+    let blocked:
+      ((request: { guestId: number; url: string; navigationId: number }) => void) | undefined
+    window.api.sourcePreview!.onNavigationBlocked = (callback) => {
+      blocked = callback
+      return () => {}
+    }
+    await render()
+    const webview = container.querySelector('webview')!
+    Object.assign(webview, { getWebContentsId: () => 12, getClientRects: () => [{}] })
+    await act(async () => {
+      fire(webview, 'did-start-navigation', {
+        isMainFrame: true,
+        isInPlace: false,
+        url: 'https://example.com/one'
+      })
+      fire(webview, 'did-start-navigation', {
+        isMainFrame: true,
+        isInPlace: false,
+        url: 'https://example.com/two'
+      })
+    })
+    await act(async () => {
+      blocked?.({ guestId: 12, url: 'http://old.example', navigationId: 1 })
+    })
+    expect(container.querySelector('[data-source-preview-error]')).toBeNull()
+    await act(async () => {
+      blocked?.({ guestId: 12, url: 'http://current.example', navigationId: 2 })
+    })
+    expect(container.querySelector('[data-source-preview-error]')).not.toBeNull()
   })
   it('keeps one connected guest and writes src only once across StrictMode and rerenders', async () => {
     const setAttribute = vi.spyOn(Element.prototype, 'setAttribute')

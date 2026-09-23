@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  getOfficialVendorModelIds,
+  resolveVendorModelApiEndpoints
+} from '../../../../shared/provider-registry'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -616,8 +620,15 @@ describe('ProviderStep', () => {
 
     expect(container.textContent).not.toContain("isn't compatible with Claude Code")
     expect(saveAndActivateProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ vendorId: 'opencode', model: 'claude-fable-5' })
+      expect.objectContaining({
+        vendorId: 'opencode',
+        model: expect.any(String),
+        apiEndpoints: ['anthropic']
+      })
     )
+    const { model } = saveAndActivateProvider.mock.calls[0][0]
+    expect(getOfficialVendorModelIds('opencode')).toContain(model)
+    expect(resolveVendorModelApiEndpoints('opencode', model)).toContain('anthropic')
   })
 
   // Switches the auth picker to the isolated "Sign in with Open-Science" mode — the only path that
@@ -811,7 +822,7 @@ describe('ProviderStep', () => {
 
     await vi.waitFor(() => {
       expect(persistProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.6' })
+        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.7' })
       )
       expect(validateProvider).toHaveBeenCalledWith({
         providerId: 'builtin-xai-subscription'

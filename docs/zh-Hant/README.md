@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.32.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.32.0 讓 PDF 證據得以持久保存，並讓產物匯出更具互通性：持久的註解與每個檔案專屬的文件 Notebook 會將文字樣式、區域標記、筆記、評論、顏色與標籤跟隨所屬的檔案版本保存，並可匯出為已註解的 PDF 或 Markdown/CSV，而不更動原始位元組；已驗證的產物版本現在可連同其確切輸入封裝為完整的 RO-Crate 封存檔。序列與體學工作新增非同步的 NCBI BLAST 搜尋、可取得原始提交檔案的 ENA run 探索、PRIDE 專案檔案清單，以及依基因或生物體探索 UniProt 蛋白質。本機 PDF 解析模型安裝藉由已驗證的鏡像來源不再依賴單一下載來源，能力選擇可指向自訂的自行架設分類服務，無人值守的 CLI 執行也可禁止等待人工介入。批次化的證據恢復、延後的 Markdown 處理與更低的觀察器負擔讓啟動與長篇對話更為流暢。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.33.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.33.0 為文獻工作帶來篩選級的把關：智能文獻集合會依你的納入與排除條件評估參考文獻，提供已納入 / 待審閱 / 已排除狀態、PDF 證據與可自行開啟的自動更新。研究套件現在內嵌 RO-Crate 中繼資料（新匯出的套件需要支援 ro-crate 能力的讀取器；既有套件仍可讀取），連接器家族也新增 Zenodo 公開紀錄探索、GDC 專案與檔案中繼資料，以及 UniProt 批次識別碼對映。每個智能體的資源存取控制將主智能體與專家的技能和連接器權限整合到同一處，工作階段新增本機診斷匯出，模型服務商目錄則隨 Xiaomi MiMo v2.6、Grok 4.7，以及 Zen 與 Go 的當代模型一併更新。Notebook 環境與復原通知現在可以關閉，Windows 套件重設會清除唯讀屬性，Linux 套件內建 Fedora 查詢引擎，且設有上限的詞元估算讓串流維持流暢。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

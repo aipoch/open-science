@@ -41,7 +41,8 @@ const fileContext = async (
   scripts: string[],
   overrides: Array<Partial<NotebookRunRecord>> = [],
   precompute = true,
-  corruptCache?: (json: string) => string
+  corruptCache?: (json: string) => string,
+  currentKernelEpochId = 'epoch-1'
 ): Promise<NotebookSourceFileAccessContext | undefined> => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'notebook-file-context-'))
   roots.push(storageRoot)
@@ -85,11 +86,1182 @@ const fileContext = async (
     currentRunId: 'next-run',
     language,
     environment: `default-${language}`,
-    kernelEpochId: 'epoch-1'
+    kernelEpochId: currentKernelEpochId
   })
 }
 
 describe('file context after mutable path collections', () => {
+  it.each([
+    'reader = lambda: None',
+    'for reader in [None]:\n        pass',
+    'del reader',
+    'from custom_reader import read as reader'
+  ])('invalidates module helper bindings shadowed inside a callable: %s', async (binding) => {
+    const source = `def reader():\n    return open("old.csv")\ndef read_inputs():\n    ${binding}\n    return reader()`
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'read_inputs()', {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+      })
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it.each(['failed', 'timeout', 'cancelled'] as const)(
+    'keeps invalidated helpers unavailable across intervening cells after %s',
+    async (status) => {
+      const helper = {
+        helperId: 'csv-helper',
+        skillIdentity: 'skill://csv-helper',
+        packageOrigin: 'test',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: ['read_inputs'],
+        source: 'def read_inputs():\n    return open("old.csv")',
+        sourceDigest: 'digest-csv-helper'
+      }
+      const context = await fileContext(
+        'python',
+        ['read_inputs = lambda: None\nraise RuntimeError()', 'value = 1', 'read_inputs()'],
+        [
+          {
+            status,
+            kernelDispatched: true,
+            helperModules: [helper],
+            helperEvidenceStatus: { state: 'complete' }
+          },
+          {},
+          { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } }
+        ]
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+    }
+  )
+
+  it.each([
+    'def _read():\n    return open("old.csv")\n_read = lambda: open("new.csv")\ndef read_inputs():\n    return _read()',
+    'def read_inputs():\n    def _read():\n        return open("old.csv")\n    _read = lambda: None\n    return _read()'
+  ])('does not replay rebound private or nested helper functions: %s', async (source) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'read_inputs()', {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+      })
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it('resolves a captured helper function before a same-named module function', async () => {
+    const source =
+      'def reader():\n    return open("global.csv")\ndef read_inputs():\n    def reader():\n        return open("local.csv")\n    def invoke():\n        return reader()\n    return invoke()'
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'read_inputs()', {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+      })
+    ).toMatchObject({ reads: ['local.csv'], readState: 'complete', externalState: 'complete' })
+  })
+
+  it.each([true, false])(
+    'does not restore a helper rebound in a failed run (precompute=%s)',
+    async (precompute) => {
+      const helper = {
+        helperId: 'csv-helper',
+        skillIdentity: 'skill://csv-helper',
+        packageOrigin: 'test',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: ['read_inputs'],
+        source: 'def read_inputs():\n    return open("old.csv")',
+        sourceDigest: 'digest-csv-helper'
+      }
+      const context = await fileContext(
+        'python',
+        ['read_inputs = lambda: None\nraise RuntimeError()', 'read_inputs()'],
+        [
+          {
+            status: 'failed',
+            kernelDispatched: true,
+            helperModules: [helper],
+            helperEvidenceStatus: { state: 'complete' }
+          },
+          { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } }
+        ],
+        precompute
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+    }
+  )
+
+  it('keeps helper analysis partial when the runtime records more modules than the replay budget', async () => {
+    const helperModules = Array.from({ length: 33 }, (_, index) => ({
+      helperId: `helper-${index}`,
+      skillIdentity: 'skill://readers',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: [`reader_${index}`],
+      source: `def reader_${index}():\n    return open("input-${index}.csv")`,
+      sourceDigest: `digest-${index}`
+    }))
+    const context = await fileContext(
+      'python',
+      ['reader_0()'],
+      [{ helperModules, helperEvidenceStatus: { state: 'complete' } }]
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', 'reader_0()', context)).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    [
+      'unreachable statements after return',
+      'def read_inputs():\n    return 1\n    open("dead.csv")'
+    ],
+    ['lazy generator bodies', 'def read_inputs():\n    yield open("lazy.csv")']
+  ])('keeps helper replay partial for %s', async (_label, source) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it('does not attribute top-level helper import I/O to a later call', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'open("import.csv")\ndef read_inputs():\n    return 1',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    'try:\n    raise Exception()\nexcept Exception as read_inputs:\n    pass',
+    'match replacement:\n    case read_inputs:\n        pass'
+  ])('does not replay helper exports overwritten by capture bindings: %s', async (suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs():\n    return open("old.csv")\ndef replacement():\n    return open("new.csv")\n${suffix}`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each(['nonlocal', 'global'])(
+    'does not certify stale helper reads after %s rebinding',
+    async (scope) => {
+      const reader = 'def read():\n    return open("old.csv")'
+      const source =
+        scope === 'global'
+          ? `${reader}\ndef read_inputs():\n    def mutate():\n        global read\n        read = lambda: None\n    mutate()\n    return read()`
+          : `def read_inputs():\n    ${reader.replaceAll('\n', '\n    ')}\n    def mutate():\n        nonlocal read\n        read = lambda: None\n    mutate()\n    return read()`
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [{ source, exports: ['read_inputs'] }]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('invalidates an exception alias before replaying a later notebook call', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        { source: 'def read_inputs():\n    return open("old.csv")', exports: ['read_inputs'] }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'try:\n    raise Exception()\nexcept Exception as read_inputs:\n    pass\nread_inputs()',
+        context
+      )
+    ).toMatchObject({ reads: [], readState: 'partial' })
+  })
+
+  it('does not restore module globals on a later exported helper call', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'path = "old.csv"\ndef mutate():\n    global path\n    path = "new.csv"\ndef read_inputs():\n    return open(path)',
+          exports: ['mutate', 'read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'mutate()\nread_inputs()', context)
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it('keeps ordinary exception handling without rebinding a helper analyzable', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    try:\n        return open("input.csv")\n    except Exception:\n        pass',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: ['input.csv'], readState: 'complete' }
+    )
+  })
+
+  it('keeps private functions in their defining helper module', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def _read():\n    return open("first.csv")\ndef first():\n    return _read()',
+          exports: ['first']
+        },
+        {
+          source: 'def _read():\n    return open("second.csv")\ndef second():\n    return _read()',
+          exports: ['second']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'first()', context)).toMatchObject({
+      reads: ['first.csv']
+    })
+  })
+
+  it('resolves a nested helper reader against its enclosing local bindings', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    path = "nested.csv"\n    def read():\n        return open(path)\n    return read()',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: ['nested.csv'], readState: 'complete' }
+    )
+  })
+
+  it('keeps conditional nested helper definitions partial', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    if enabled:\n        def read():\n            return open("first.csv")\n    else:\n        def read():\n            return open("second.csv")\n    return read()',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: [], readState: 'partial', externalState: 'partial' }
+    )
+  })
+
+  it.each([
+    ['path = "global.csv"', 'path = "local.csv"', 'return open(path)', ['local.csv']],
+    [
+      'paths = ["global.csv"]',
+      'paths = ["local.csv"]',
+      'for path in paths:\n            open(path)',
+      ['local.csv']
+    ]
+  ])(
+    'preserves captured locals over same-named module bindings: %s',
+    async (global, local, body, reads) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `${global}\ndef read_inputs():\n    ${local}\n    def read():\n        ${body}\n    return read()`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({
+        reads,
+        readState: 'complete'
+      })
+    }
+  )
+
+  it('loads globals from a separately recorded helper module during nested calls', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def first():\n    return second()',
+          exports: ['first']
+        },
+        {
+          source: 'INPUT_PATH = "second.csv"\ndef second():\n    return open(INPUT_PATH)',
+          exports: ['second']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'first()', context)).toMatchObject({
+      reads: ['second.csv'],
+      readState: 'complete'
+    })
+  })
+
+  it('keeps caller namespace taints while replaying recorded helpers', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['pandas'],
+      pythonHelperModules: [
+        {
+          source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("input.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it('does not expand a helper after a loop target rebinds its export', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return open("input.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'for read_inputs in [None]:\n    pass\nvalue = read_inputs()',
+        context
+      )
+    ).toMatchObject({ reads: [] })
+  })
+
+  it('does not certify an export without a matching callable body', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [{ source: 'value = 1', exports: ['read_inputs'] }]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { readState: 'partial', externalState: 'partial' }
+    )
+  })
+
+  it('drops recorded helper evidence after an unsafe entry', () => {
+    const context = projectNotebookFileContext('python', [
+      {
+        facts: { state: 'available', definedNames: [], usedNames: [], mutatedNames: [] },
+        fileContext: {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonHelperModules: [{ source: 'def read_inputs(): pass', exports: ['read_inputs'] }]
+        }
+      },
+      {
+        facts: { state: 'unknown', reasons: ['opaque-mutation'] },
+        fileContext: { staticStrings: [], staticCollections: [], localFileWrappers: [] }
+      }
+    ])
+    expect(context?.pythonHelperModules).toBeUndefined()
+  })
+
+  it('preserves a pure Python helper across cells and cache reload', async () => {
+    const context = await fileContext('python', [
+      'scale = 2\ndef label(value):\n    return str(value * scale)'
+    ])
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'text = label(3)', context)
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('does not replay an async helper before it is awaited', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'async def read_inputs():\n    return open("async.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({ reads: [], readState: 'partial' })
+  })
+
+  it('keeps helper aliases unresolved when the alias is not replayed', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return open("aliased.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'reader = read_inputs\nvalue = reader()',
+        context
+      )
+    ).toMatchObject({ reads: [], readState: 'partial' })
+  })
+
+  it('does not certify decorated helper exports from their raw function body', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def decorate(fn):\n    return fn\n@decorate\ndef read_inputs():\n    return open("decorated.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it('keeps helper delegation to opaque callables partial', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return transform("input.dat")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    ['path="input.csv"', '', ['input.csv']],
+    ['unused, path="input.csv"', '1', ['input.csv']],
+    ['path="input.csv", /', '', ['input.csv']],
+    ['*, path="input.csv"', '', ['input.csv']],
+    ['path="input.csv"', '"override.csv"', ['override.csv']],
+    ['*, path="input.csv"', 'path="override.csv"', ['override.csv']]
+  ])('binds literal helper defaults: %s (%s)', async (parameters, arguments_, reads) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs(${parameters}):\n    return open(path)`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `read_inputs(${arguments_})`, context)
+    ).toMatchObject({
+      reads,
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('does not resolve helper defaults against caller bindings', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [{ name: 'DEFAULT_PATH', value: 'caller.csv' }],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'DEFAULT_PATH = "module.csv"\ndef read_inputs(path=DEFAULT_PATH):\n    return open(path)',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    'import custom_loader',
+    'from custom_loader import value',
+    'import pandas.custom_plugin',
+    'from . import custom_loader',
+    'if enabled:\n    import custom_loader'
+  ])('keeps unknown helper imports partial: %s', async (imports) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `${imports}\ndef read_inputs():\n    return open("input.csv")`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: ['input.csv'],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    ['path', '"a.csv", "b.csv"'],
+    ['path', 'path="a.csv", extra=1'],
+    ['path', '"a.csv", path="b.csv"'],
+    ['path', 'path="a.csv", path="b.csv"'],
+    ['path', ''],
+    ['*, path', '"a.csv"'],
+    ['path, /', 'path="a.csv"'],
+    ['path', '*["a.csv"]'],
+    ['path', '**{"path": "a.csv"}'],
+    ['path, *, required', '"a.csv"']
+  ])(
+    'does not replay invalid or ambiguous helper arguments: %s (%s)',
+    async (parameters, arguments_) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `def read_inputs(${parameters}):\n    return open("body.csv")`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', `read_inputs(${arguments_})`, context)
+      ).toMatchObject({
+        reads: [],
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it.each([
+    ['path, *args', '"input.csv", 1'],
+    ['path, **kwargs', 'path="input.csv", extra=1'],
+    ['path, /, **kwargs', '"input.csv", path="other.csv"'],
+    ['path="input.csv", /, **kwargs', 'path="other.csv"']
+  ])('accepts supported variadic helper arguments: %s (%s)', async (parameters, arguments_) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs(${parameters}):\n    return open(path)`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', `read_inputs(${arguments_})`, context)
+    ).toMatchObject({
+      reads: ['input.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('keeps recursive helper replay partial', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs(path):\n    if path == "done":\n        return open(path)\n    return read_inputs("done")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs("start")', context)
+    ).toMatchObject({ readState: 'partial', externalState: 'partial' })
+  })
+
+  it('does not leak helper-local possible aliases into caller analysis', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [
+        { name: 'paths', values: ['old.txt'] },
+        { name: 'alias', values: ['alias.txt'] }
+      ],
+      staticCollectionAliases: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    if enabled:\n        alias = paths\n    return open("input.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'value = read_inputs()\nalias.append("new.txt")\nfor path in paths:\n    open(path, "w").close()',
+        context
+      )
+    ).toMatchObject({
+      reads: ['input.csv'],
+      writes: ['old.txt'],
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it.each([
+    'class Loader:\n    source = open("class.csv")',
+    'def decorate(fn):\n    open("decorator.csv")\n    return fn\n@decorate\ndef registered():\n    pass',
+    'def registered(value=open("default.csv")):\n    pass',
+    'def registered(value: factory()):\n    pass',
+    'def registered() -> factory():\n    pass'
+  ])('keeps unmodeled helper import effects partial: %s', async (definition) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `${definition}\ndef read_inputs():\n    return open("input.csv")`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['input.csv'],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    ['reader', 'reader', 'lambda: open("callback.csv")'],
+    ['*, reader', 'reader', 'reader=lambda: open("callback.csv")'],
+    ['open', 'open', 'lambda: open("callback.csv")']
+  ])(
+    'does not dispatch a callable helper parameter to a same-named binding: %s',
+    async (signature, name, argument) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `def reader():\n    return open("private.csv")\ndef read_inputs(${signature}):\n    return ${name}()`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      const result = await analyzeNotebookSourceFileAccess(
+        'python',
+        `value = read_inputs(${argument})`,
+        context
+      )
+      expect(result).toMatchObject({ readState: 'partial', externalState: 'partial' })
+      expect(result?.reads).not.toContain('private.csv')
+    }
+  )
+
+  it('replays an async helper when its call is awaited', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'async def read_inputs():\n    return open("async.csv")',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = await read_inputs()', context)
+    ).toMatchObject({ reads: ['async.csv'], readState: 'complete', externalState: 'complete' })
+  })
+
+  it('does not inherit await status inside an async helper body', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'async def outer():\n    return inner()\nasync def inner():\n    return open("inner.csv")',
+          exports: ['outer', 'inner']
+        }
+      ]
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = await outer()', context)
+    ).toMatchObject({ reads: [], readState: 'partial', externalState: 'partial' })
+  })
+
+  it('captures fixed input paths inside a recorded Python helper called in a later cell', async () => {
+    const helperSource =
+      'import pandas as pd\ndef read_inputs():\n    left = pd.read_csv("left.csv")\n    right = pd.read_csv("right.csv")\n    return left'
+    const context = await fileContext(
+      'python',
+      ['data = read_inputs()'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: helperSource,
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'data = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['left.csv', 'right.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('does not reuse prior helper evidence after an incomplete helper load', async () => {
+    const helper = {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("left.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+    const context = await fileContext(
+      'python',
+      ['value = read_inputs()', 'value = read_inputs()\nlabel = "retained"'],
+      [
+        { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } },
+        {
+          helperModules: [helper],
+          helperEvidenceStatus: { state: 'incomplete', reasons: ['payload-limit'] }
+        }
+      ]
+    )
+    const sidecar = JSON.parse(
+      await readFile(
+        join(roots.at(-1)!, 'notebooks/default-project/session-1/cache/dependency-analysis.json'),
+        'utf8'
+      )
+    )
+    expect(sidecar.runs['run-1'].fileContext.pythonHelperModules).toBeUndefined()
+    expect(sidecar.runs['run-1'].fileContext.staticStrings).toContainEqual({
+      name: 'label',
+      value: 'retained'
+    })
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not suppress helper evidence recorded by an unsuccessful run', async () => {
+    const helper = {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("left.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+    const context = await fileContext(
+      'python',
+      ['value = 1', 'value = read_inputs()'],
+      [
+        {
+          status: 'failed',
+          kernelDispatched: true,
+          helperModules: [helper],
+          helperEvidenceStatus: { state: 'complete' }
+        },
+        { helperModules: [helper], helperEvidenceStatus: { state: 'complete' } }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['left.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('replays helper module constants and private reader functions', async () => {
+    const helperSource = `import pandas as pd
+INPUT_PATH = "left.csv"
+def _read(path):
+    return pd.read_csv(path)
+def read_inputs():
+    return _read(INPUT_PATH)`
+    const context = await fileContext(
+      'python',
+      ['data = read_inputs()'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: helperSource,
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        }
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'data = read_inputs()', context)
+    ).toMatchObject({
+      reads: ['left.csv'],
+      readState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it('does not expand a recorded helper after its exported name is rebound', async () => {
+    const context = await fileContext(
+      'python',
+      ['read_inputs = lambda: None\nvalue = read_inputs()'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("left.csv")',
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        }
+      ]
+    )
+    expect(context?.pythonHelperModules).toBeUndefined()
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: [] }
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'read_inputs = lambda: None\nvalue = read_inputs()',
+        context
+      )
+    ).toMatchObject({ reads: [], writeState: 'complete' })
+  })
+
+  it('does not replay a helper whose export is rebound to another callable', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source:
+            'def read_inputs():\n    return open("old.csv")\ndef replacement():\n    return open("new.csv")\nread_inputs = replacement',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it('does not replay an exported helper after a class rebind', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: 'def read_inputs():\n    return open("old.csv")\nclass read_inputs:\n    pass',
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      { reads: [], readState: 'partial', externalState: 'partial' }
+    )
+  })
+
+  it.each([
+    'if True:\n    read_inputs = replacement',
+    'if enabled:\n    def read_inputs():\n        return open("new.csv")',
+    'try:\n    read_inputs = replacement\nexcept Exception:\n    pass',
+    'try:\n    pass\nfinally:\n    read_inputs = replacement',
+    'while enabled:\n    read_inputs = replacement\n    break',
+    'with manager() as resource:\n    read_inputs = replacement',
+    'with manager() as read_inputs:\n    pass',
+    'match value:\n    case 1:\n        read_inputs = replacement',
+    'for item in items:\n    read_inputs = replacement',
+    'if enabled:\n    read_inputs, other = replacement, None',
+    'if enabled:\n    import custom_reader as read_inputs',
+    'if enabled:\n    from custom_reader import reader as read_inputs',
+    'if enabled:\n    del read_inputs',
+    '@decorate\ndef read_inputs():\n    return open("new.csv")'
+  ])('does not replay an export that may be rebound in module control flow: %s', async (rebind) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonHelperModules: [
+        {
+          source: `def read_inputs():\n    return open("old.csv")\ndef replacement():\n    return open("new.csv")\n${rebind}`,
+          exports: ['read_inputs']
+        }
+      ]
+    }
+    expect(await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)).toMatchObject(
+      {
+        reads: [],
+        readState: 'partial',
+        externalState: 'partial'
+      }
+    )
+  })
+
+  it.each([
+    'def unrelated():\n    read_inputs = None',
+    'if enabled:\n    unrelated = None',
+    'if enabled:\n    read_inputs = None\ndef read_inputs():\n    return open("old.csv")'
+  ])(
+    'preserves a proven final export after unrelated or overwritten bindings: %s',
+    async (suffix) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonHelperModules: [
+          {
+            source: `def read_inputs():\n    return open("old.csv")\n${suffix}`,
+            exports: ['read_inputs']
+          }
+        ]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'read_inputs()', context)
+      ).toMatchObject({
+        reads: ['old.csv'],
+        readState: 'complete'
+      })
+    }
+  )
+
+  it('drops helper evidence after a cross-cell export rebind', async () => {
+    const context = await fileContext(
+      'python',
+      ['value = 1', 'read_inputs = lambda: None'],
+      [
+        {
+          helperModules: [
+            {
+              helperId: 'csv-helper',
+              skillIdentity: 'skill://csv-helper',
+              packageOrigin: 'test',
+              interfaceRevision: '1',
+              registeredGeneration: 'generation-1',
+              exports: ['read_inputs'],
+              source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("left.csv")',
+              sourceDigest: 'digest-csv-helper'
+            }
+          ],
+          helperEvidenceStatus: { state: 'complete' }
+        },
+        {}
+      ]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({ reads: [] })
+  })
+
+  it('does not restore invalidated helper evidence from sticky run metadata', async () => {
+    const helperModules = [
+      {
+        helperId: 'csv-helper',
+        skillIdentity: 'skill://csv-helper',
+        packageOrigin: 'test',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: ['read_inputs'],
+        source: 'import pandas as pd\ndef read_inputs():\n    return pd.read_csv("left.csv")',
+        sourceDigest: 'digest-csv-helper'
+      }
+    ]
+    const context = await fileContext(
+      'python',
+      ['value = 1', 'read_inputs = lambda: None', 'value = read_inputs()'],
+      [
+        { helperModules, helperEvidenceStatus: { state: 'complete' } },
+        { helperModules, helperEvidenceStatus: { state: 'complete' } },
+        { helperModules, helperEvidenceStatus: { state: 'complete' } }
+      ]
+    )
+    expect(context?.pythonHelperModules).toBeUndefined()
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+    ).toMatchObject({
+      reads: []
+    })
+  })
+
   it.each(['python', 'r'] as const)(
     'restores %s diagnostic path bindings after cache reload',
     async (language) => {
@@ -651,6 +1823,46 @@ it.each([
   expect(
     await analyzeNotebookSourceFileAccess('python', 'sitk.ReadImage("unused.nii.gz")', context)
   ).toMatchObject({ reads: [] })
+})
+
+it('rebuilds helper evidence after a kernel epoch restart', async () => {
+  const helperModules = [
+    {
+      helperId: 'csv-helper',
+      skillIdentity: 'skill://csv-helper',
+      packageOrigin: 'test',
+      interfaceRevision: '1',
+      registeredGeneration: 'generation-1',
+      exports: ['read_inputs'],
+      source: 'def read_inputs():\n    return open("restarted.csv")',
+      sourceDigest: 'digest-csv-helper'
+    }
+  ]
+  const context = await fileContext(
+    'python',
+    ['value = 1', 'value = read_inputs()'],
+    [
+      {
+        kernelEpochId: 'epoch-old',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      },
+      {
+        kernelEpochId: 'epoch-new',
+        helperModules,
+        helperEvidenceStatus: { state: 'complete' }
+      }
+    ],
+    true,
+    undefined,
+    'epoch-new'
+  )
+  expect(context?.pythonHelperModules).toEqual([
+    { source: helperModules[0]!.source, exports: ['read_inputs'] }
+  ])
+  expect(
+    await analyzeNotebookSourceFileAccess('python', 'value = read_inputs()', context)
+  ).toMatchObject({ reads: ['restarted.csv'], readState: 'complete' })
 })
 
 it('keeps a read before same-cell reassignment, but does not apply it after reassignment', async () => {

@@ -1041,7 +1041,8 @@ describe('notebook_execute tool', () => {
       'manage_environments',
       { action: 'create', language: 'python', name: 'analysis' },
       'Environment operation is still running.'
-    ]
+    ],
+    ['bash_execute', { command: 'long_running_analysis' }, 'Shell command is still running.']
   ])(
     'keeps a long-running %s call alive with MCP progress',
     async (toolName, args, progressMessage) => {

@@ -41,6 +41,10 @@ const projectNotebookFileContext = (
     string,
     NonNullable<NotebookSourceFileAccessContext['pythonBindings']>[number]
   >()
+  const pythonHelperModules = new Map<
+    string,
+    NonNullable<NotebookSourceFileAccessContext['pythonHelperModules']>[number]
+  >()
   const rFunctions = new Map<
     string,
     NonNullable<NotebookSourceFileAccessContext['rFunctions']>[number]['summary']
@@ -59,6 +63,7 @@ const projectNotebookFileContext = (
       pythonTaintedNamespaces.clear()
       pythonTaintedNamespaces.add('*')
       pythonBindings.clear()
+      pythonHelperModules.clear()
     }
   }
   let available = true
@@ -102,6 +107,8 @@ const projectNotebookFileContext = (
     }
     for (const namespace of entry?.fileContext.pythonTaintedNamespaces ?? [])
       pythonTaintedNamespaces.add(namespace)
+    for (const module of entry?.fileContext.pythonHelperModules ?? [])
+      pythonHelperModules.set(`${module.source}\0${module.exports.join('\0')}`, module)
     if (
       !entry ||
       (entry.facts.state === 'unknown' &&
@@ -118,6 +125,7 @@ const projectNotebookFileContext = (
       staticStrings.clear()
       staticCollections.clear()
       localFileWrappers.clear()
+      pythonHelperModules.clear()
       resolvedKernelNames.clear()
       replContainerNames.clear()
       rAtomicValueNames.clear()
@@ -159,6 +167,9 @@ const projectNotebookFileContext = (
       }
     }
     const invalidatedNames = new Set([...definedNames, ...mutatedNames])
+    for (const [key, module] of pythonHelperModules) {
+      if (module.exports.some((name) => invalidatedNames.has(name))) pythonHelperModules.delete(key)
+    }
     for (const name of invalidatedNames) replContainerNames.delete(name)
     for (const name of facts.builtinContainerNames ?? []) {
       if (!conditionalNames.has(name)) replContainerNames.add(name)
@@ -339,7 +350,8 @@ const projectNotebookFileContext = (
     ...(rFunctions.size
       ? { rFunctions: [...rFunctions].map(([name, summary]) => ({ name, summary })) }
       : {}),
-    ...(staticCollectionAliases.length ? { staticCollectionAliases } : {})
+    ...(staticCollectionAliases.length ? { staticCollectionAliases } : {}),
+    ...(pythonHelperModules.size ? { pythonHelperModules: [...pythonHelperModules.values()] } : {})
   }
 }
 

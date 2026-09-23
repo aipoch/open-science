@@ -1,9 +1,7 @@
 import { getTokenizer as getAnthropicTokenizer } from '@anthropic-ai/tokenizer'
 import type { ContentBlock, SessionNotification } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
-import { Tiktoken } from 'js-tiktoken/lite'
-import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
-import o200kBase from 'js-tiktoken/ranks/o200k_base'
+import { get_encoding, type Tiktoken } from 'tiktoken'
 
 import type {
   AcpContextUsage,
@@ -128,7 +126,8 @@ const cloneSessionEstimate = (state: SessionEstimate): SessionEstimate => ({
 })
 
 // Tokenizers are stateless and intentionally shared across tracker/runtime instances; constructing
-// their encoding tables per session would add avoidable startup and memory cost.
+// their encoding tables per session would add avoidable startup and memory cost. Use the WASM
+// implementation: JavaScript BPE merging can block the main loop for seconds on unbroken output.
 let o200kTokenizer: Tiktoken | undefined
 let cl100kTokenizer: Tiktoken | undefined
 // Anthropic documents its public tokenizer as a rough approximation for Claude 3+. Keep category
@@ -137,26 +136,49 @@ let anthropicTokenizer: ReturnType<typeof getAnthropicTokenizer> | undefined
 
 const tiktoken = (profile: Extract<TokenizerProfile, 'o200k_base' | 'cl100k_base'>): Tiktoken => {
   if (profile === 'o200k_base') {
-    o200kTokenizer ??= new Tiktoken(o200kBase)
+    o200kTokenizer ??= get_encoding('o200k_base')
     return o200kTokenizer
   }
 
-  cl100kTokenizer ??= new Tiktoken(cl100kBase)
+  cl100kTokenizer ??= get_encoding('cl100k_base')
   return cl100kTokenizer
 }
+
+// Category counts are estimates, not admission limits. Even WASM BPE has quadratic behavior on
+// long unbroken text. Bound synchronous tokenization in the main process; outside this budget use
+// the existing whole-text byte estimate (never truncate content). This trades category precision
+// for responsiveness while provider-reported usage remains authoritative.
+const MAX_TOKENIZER_CHARS = 32 * 1024
+const MAX_TOKENIZER_RUN_CHARS = 1024
+
+const withinTokenizerBudget = (text: string): boolean => {
+  if (text.length > MAX_TOKENIZER_CHARS) return false
+  // Both whitespace and non-whitespace can form expensive BPE pieces. This intentionally
+  // conservative guard does not duplicate model-specific tokenizer expressions.
+  for (const [run] of text.matchAll(/\s+|\S+/gu)) {
+    if (run.length > MAX_TOKENIZER_RUN_CHARS) return false
+  }
+  return true
+}
+
+const byteTokenEstimate = (text: string): number => Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
 
 const defaultTokenCounter: TokenCounter = {
   count(text, profile) {
     if (!text) return 0
+    if (!withinTokenizerBudget(text)) return byteTokenEstimate(text)
     try {
-      return profile === 'anthropic'
-        ? (anthropicTokenizer ??= getAnthropicTokenizer()).encode(text.normalize('NFKC'), 'all')
-            .length
-        : tiktoken(profile).encode(text).length
+      if (profile === 'anthropic') {
+        const normalized = text.normalize('NFKC')
+        // Compatibility normalization can expand text beyond the raw-input budget.
+        if (!withinTokenizerBudget(normalized)) return byteTokenEstimate(text)
+        return (anthropicTokenizer ??= getAnthropicTokenizer()).encode(normalized, 'all').length
+      }
+      return tiktoken(profile).encode(text).length
     } catch {
       // A malformed string or tokenizer regression must never block a prompt. UTF-8 bytes / 4 is only
       // a last-resort estimate and remains visible as estimated data reconciled against the Agent total.
-      return Math.ceil(Buffer.byteLength(text, 'utf8') / 4)
+      return byteTokenEstimate(text)
     }
   }
 }

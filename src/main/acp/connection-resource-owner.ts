@@ -2,6 +2,7 @@ import type { ClientConnection } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
 import { createLogger, errorLogFields } from '../logger'
 import { terminateProcessTree } from '../process-tree'
 
@@ -312,6 +313,18 @@ export class AcpConnectionResourceOwner {
 
   unregisterBridgeReviewerSession(sessionId: string): boolean | undefined {
     return this.current?.bridgeLease?.unregisterReviewerSession(sessionId)
+  }
+
+  registerBridgeMcpSession(
+    sessionId: string,
+    tools: ResponsesBridgeNamespacedTool[],
+    namespaces: readonly string[]
+  ): void {
+    this.currentResource()?.bridgeLease?.registerMcpSession?.(sessionId, tools, namespaces)
+  }
+
+  unregisterBridgeMcpSession(sessionId: string): boolean | undefined {
+    return this.current?.bridgeLease?.unregisterMcpSession?.(sessionId)
   }
 
   setBridgeReasoningEffort(

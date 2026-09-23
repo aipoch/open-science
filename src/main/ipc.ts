@@ -1,3 +1,6 @@
+import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
+import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
+import { LiteratureSmartCollections } from './literature/smart-collections'
 import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
 import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
@@ -140,8 +143,8 @@ import { parseSystemProxyRules } from './settings/system-proxy'
 import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
-import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
-import { createMoleculePreviewHandler } from './connectors/molecule-preview'
+import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp'
+import { createMoleculePreviewHandler } from './connectors/molecule'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
 import { ImmutableInputAuthority } from './immutable-input-authority'
@@ -180,7 +183,7 @@ import {
   buildConnectorCredentialRequestBroadcast,
   buildTaskNotificationShow
 } from './notifications/electron-wiring'
-import { createLogger, diagnosticErrorFields, errorLogFields } from './logger'
+import { createLogger, diagnosticErrorFields, errorLogFields, getLogFilePath } from './logger'
 import { startDiagnosticOperation, type DiagnosticOperation } from './diagnostics/operation'
 import { broadcastNotebookEnvProgress, registerNotebookEnvIpcHandlers } from './notebook/env-ipc'
 import {
@@ -1163,6 +1166,22 @@ const createApplicationModules = async (
       })
     }
   }
+  const sessionDiagnosticsDesktop = await modules.add(undefined, () => {
+    const owner = createSessionDiagnosticsDesktop({
+      createWorker: createDiagnosticsWorker,
+      resolveSources: () => ({
+        dataRoot: resolveDataRoot(),
+        configRoot: resolveConfigRoot(),
+        logPath: getLogFilePath(),
+        appVersion: app.getVersion()
+      }),
+      chooseDestination: async (defaultName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+        return result.canceled ? undefined : result.filePath
+      }
+    })
+    return { name: 'session-diagnostics', capability: owner, dispose: () => owner.close() }
+  })
   const projectRepository = createDefaultProjectRepository()
   const sessionPackageDesktopLifecycle = {
     close: async (): Promise<void> => undefined,
@@ -1926,6 +1945,7 @@ const createApplicationModules = async (
     loadUsage: async () => {
       await ensureSessionProjection()
       await auxiliaryUsageRecorder.flush()
+      await settingsService.classification.flushUsage()
       return sessionRepository.loadSessionUsageProjection()
     },
     loadOne: async ({ projectId, sessionId }) => {
@@ -2122,12 +2142,34 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
+  let smartCollectionRevision = 0
+  const smartCollections = new LiteratureSmartCollections(
+    () => getProjectDbClient(configRoot),
+    settingsService.classification,
+    (id) =>
+      applicationEvents.publish('literature:changed', {
+        revision: ++smartCollectionRevision,
+        collectionIds: [id]
+      }),
+    (request) => literatureDocumentReader.classificationEvidence(request)
+  )
+  await modules.add({ smartCollections }, ({ smartCollections: owner }) => ({
+    name: 'literature-smart-collections',
+    capability: owner,
+    start: () => owner.start(),
+    dispose: () => owner.dispose()
+  }))
   const literatureCatalog = new LiteratureCatalog(
     () => getProjectDbClient(configRoot),
     () => tagService.notifyAssignmentsChanged(),
     contentRepository,
     (remove) => sessionPersistenceCoordinator.withLiteratureAttachmentRemoval(remove),
-    (event) => applicationEvents.publish('literature:changed', event)
+    (event) =>
+      applicationEvents.publish('literature:changed', {
+        ...event,
+        revision: ++smartCollectionRevision
+      }),
+    smartCollections
   )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')
@@ -4977,6 +5019,12 @@ const createApplicationModules = async (
       runtimeWriter,
       artifacts: artifactHandlers,
       electron: {
+        inspectSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.inspect(invocation.args[0]),
+        exportSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.export(invocation.args[0]),
+        cancelSessionDiagnostics: (invocation) =>
+          sessionDiagnosticsDesktop.cancel(invocation.args[0]),
         sessionPackageOperation: async (invocation) =>
           sessionPackageDesktop.respond(invocation.args[0]),
         forkSession: (invocation) =>

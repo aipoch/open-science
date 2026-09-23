@@ -287,6 +287,7 @@ class AcpPromptPreparationOwner {
                 text,
                 catalog,
                 signal: input.signal,
+                usageContext: { projectId: context.projectId, sessionId: context.sessionId },
                 observeUsage: (entry) => usage.push(entry)
               })
             } catch (error) {
@@ -455,6 +456,7 @@ class AcpPromptPreparationOwner {
           classified = await this.options.classifyReadingRoute({
             text: input.request.text,
             signal: input.signal,
+            usageContext: { projectId: context.projectId, sessionId: context.sessionId },
             observeUsage: (entry) => usage.push(entry)
           })
         } catch (error) {

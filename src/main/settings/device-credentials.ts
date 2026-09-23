@@ -14,7 +14,7 @@ import type {
   UpdateDeviceCredentialRequest
 } from '../../shared/settings'
 import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp-url'
+import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp'
 import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
 import { hasEmbeddedConnectorCredentials } from './connector-template'
 import { encryptKey, tryDecryptKey } from './crypto'

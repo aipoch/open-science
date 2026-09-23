@@ -69,7 +69,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways and g:Profiler.',
     useWhen:
-      'Use when you need to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, or run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction.',
+      'Use when you need to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, submit batch UniProt ID mapping jobs and check status or page through mapping pairs and unmatched IDs, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, or run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction.',
     sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
@@ -209,6 +209,17 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'gdc',
+    displayName: 'GDC',
+    description: 'Cancer project, case and file inventories via the Genomic Data Commons API.',
+    useWhen:
+      'Use when you need GDC project, case or file metadata and data inventories — including project summaries, case identifiers, file formats, checksums, access classification and Data Transfer Tool manifests. GDC file discovery distinguishes open-access files from controlled-access files; controlled data requires the user’s GDC authorization, so finding a file or creating a manifest does not guarantee that it can be downloaded. No file bytes are downloaded by this connector.',
+    sources: ['Genomic Data Commons (GDC)'],
+    termsUrl: 'https://docs.gdc.cancer.gov/API/Users_Guide/Getting_Started/',
+    requiresNcbi: false,
+    group: 'directory'
+  },
+  {
     id: 'rna',
     displayName: 'RNA',
     description: 'Non-coding RNA family data (metadata, alignments, models, structures) via Rfam.',
@@ -281,6 +292,16 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use when you need purchasable small molecules from ZINC22 — look up compounds by ZINC id, search by SMILES (exact or analog/similarity), resolve vendor catalog codes, draw a random compound sample, or locate docking-ready 3D structures. Sourced from ZINC22 / CartBlanche22.',
     sources: ['ZINC'],
     termsUrl: 'https://zinc.docking.org/',
+    requiresNcbi: false
+  },
+  {
+    id: 'zenodo',
+    displayName: 'Zenodo',
+    description: 'Public research records, versions and file metadata from Zenodo.',
+    useWhen:
+      'Use when discovering datasets, software or publications deposited in Zenodo, inspecting record and concept DOIs, or listing file names, sizes, checksums and download links for a record. Searches fetch one page of public metadata; file access may be restricted. No uploads or file downloads.',
+    sources: ['Zenodo'],
+    termsUrl: 'https://about.zenodo.org/terms/',
     requiresNcbi: false
   }
 ]

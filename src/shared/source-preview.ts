@@ -5,7 +5,7 @@ const SOURCE_PREVIEW_SANDBOX =
 const SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL = 'source-preview:navigation-blocked'
 const SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL = 'source-preview:context-menu'
 
-type SourcePreviewNavigationBlocked = { guestId: number; url: string }
+type SourcePreviewNavigationBlocked = { guestId: number; url: string; navigationId: number }
 type SourcePreviewContextMenuRequest = { guestId: number; x: number; y: number }
 
 type SourcePreviewLoadBase = {

@@ -458,6 +458,25 @@ const assertValidModelLimits = () => {
   }
 }
 
+const inlineThinkingModelOptions = () => {
+  const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+  const route = Object.entries(config.provider ?? {}).find(
+    ([, provider]) => provider?.models?.['MiniMax-M3']
+  )
+  if (!route) return []
+  const value = `${route[0]}/MiniMax-M3`
+  return [
+    {
+      type: 'select',
+      id: 'model',
+      category: 'model',
+      name: 'Model',
+      currentValue: value,
+      options: [{ value, name: 'MiniMax-M3' }]
+    }
+  ]
+}
+
 const verifyNotebookLifecycle = async (sessionId, delayMs = 0) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const initial = toolResult(
@@ -1010,8 +1029,11 @@ if (process.argv.includes('--version')) {
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
-      return { sessionId }
+      return { sessionId, configOptions: inlineThinkingModelOptions() }
     })
+    .onRequest(acp.methods.agent.session.setConfigOption, () => ({
+      configOptions: inlineThinkingModelOptions()
+    }))
     .onRequest(acp.methods.agent.session.resume, async (context) => {
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(context.params.sessionId, {
@@ -1388,8 +1410,13 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
           const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
-          // A long intent text, chunked quickly so live pacing trails far behind arrival.
-          for (let chunk = 0; chunk < 30; chunk += 1) {
+          const layoutGate = prompt.match(/^Layout completion gate: (.+)$/m)
+          // The layout sampling variant needs the complete intent before the tool. The order
+          // assertion instead samples a tool emitted during the stream, before the remaining
+          // intent chunks arrive, so it does not depend on renderer scheduling speed.
+          // A few initial chunks let the renderer materialize the intent row before the tool event.
+          const intentChunksBeforeTool = layoutGate ? 30 : 4
+          for (let chunk = 0; chunk < intentChunksBeforeTool; chunk += 1) {
             await context.client.notify(acp.methods.client.session.update, {
               sessionId: context.params.sessionId,
               update: {
@@ -1414,7 +1441,6 @@ if (process.argv.includes('--version')) {
             }
           })
           await delay(2_000)
-          const layoutGate = prompt.match(/^Layout completion gate: (.+)$/m)
           if (layoutGate) {
             const gatePath = JSON.parse(layoutGate[1])
             const deadline = Date.now() + 30_000
@@ -1438,6 +1464,21 @@ if (process.argv.includes('--version')) {
               status: 'completed'
             }
           })
+          if (!layoutGate) {
+            for (let chunk = intentChunksBeforeTool; chunk < 30; chunk += 1) {
+              await context.client.notify(acp.methods.client.session.update, {
+                sessionId: context.params.sessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  messageId: intentMessageId,
+                  content: {
+                    type: 'text',
+                    text: `Intent paragraph ${chunk}: I will now run the slow tool for you.\n\n`
+                  }
+                }
+              })
+            }
+          }
           const followUpMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
@@ -1485,6 +1526,33 @@ if (process.argv.includes('--version')) {
             await delay(30)
           }
           reply = 'Runtime resource stress journey complete.'
+        } else if (prompt.includes('Render the sanitized message images.')) {
+          // The fixture is generated 1024 × 1024 geometry, with no user content or metadata.
+          const stored = await withMcpClient(
+            context.params.sessionId,
+            'open-science-artifacts',
+            async (client) =>
+              toolResult(
+                'write_artifact_file',
+                await client.callTool({
+                  name: 'write_artifact_file',
+                  arguments: {
+                    filename: 'sanitized-performance.png',
+                    mimeType: 'image/png',
+                    content: (
+                      await readFile(new URL('./sanitized-performance.png', import.meta.url))
+                    ).toString('base64'),
+                    encoding: 'base64'
+                  }
+                })
+              )
+          )
+          reply = [1, 2, 3]
+            .map(
+              (index) =>
+                `Synthetic figure ${index}. This image contains generated geometry only.\n\n![Sanitized message figure ${index}]({{artifact:${stored.artifact.artifact_id}}})`
+            )
+            .join('\n\n')
         } else if (prompt.includes(LONG_STREAM_PROMPT)) {
           // Mirror a real agent turn: text segment -> tool call -> second text segment ->
           // tool completion -> trailing segment, with separate message ids per segment.
@@ -2256,11 +2324,25 @@ if (process.argv.includes('--version')) {
         reply = `E2E fixture failure: ${error instanceof Error ? error.message : String(error)}`
       }
 
+      const replyMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
+      if (prompt.includes('Replay inline thinking.')) {
+        for (const text of ['<thi', 'nk>Synthetic reasoning only.', '</thi', 'nk>']) {
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: replyMessageId,
+              content: { type: 'text', text }
+            }
+          })
+          await delay(40)
+        }
+      }
       await context.client.notify(acp.methods.client.session.update, {
         sessionId: context.params.sessionId,
         update: {
           sessionUpdate: 'agent_message_chunk',
-          messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+          messageId: replyMessageId,
           content: { type: 'text', text: reply }
         }
       })

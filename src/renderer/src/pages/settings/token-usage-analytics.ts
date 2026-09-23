@@ -31,12 +31,7 @@ export type TokenUsageDailyPoint = {
   runs: number
 }
 
-type TokenUsageEvent = {
-  timestamp: number
-  inputTokens: number
-  cacheTokens: number
-  outputTokens: number
-}
+type TokenUsageEvent = SessionUsageProjection['usageEvents'][number]
 
 export type TokenUsageAnalytics = {
   now: number
@@ -50,6 +45,8 @@ export type TokenUsageAnalytics = {
 }
 
 export type TokenUsageSummary = {
+  classificationTokens?: { conversation: number; literature: number }
+  incompleteRequests?: number
   inputTokens: number
   cacheTokens: number
   outputTokens: number
@@ -256,7 +253,16 @@ export const selectTokenUsageSummary = (
   ).length
   const totalArtifactsThroughNow = analytics.totalArtifacts - futureArtifactCount
 
+  const classificationEvents = usageEvents.filter((event) => event.source)
+  const incompleteRequests = usageEvents.filter((event) => event.usageIncomplete).length
+  const classificationTokens = { conversation: 0, literature: 0 }
+  for (const event of classificationEvents) {
+    classificationTokens[event.source === 'classification' ? 'conversation' : 'literature'] +=
+      event.inputTokens + event.cacheTokens + event.outputTokens
+  }
   return {
+    ...(classificationEvents.length ? { classificationTokens } : {}),
+    ...(incompleteRequests ? { incompleteRequests } : {}),
     inputTokens,
     cacheTokens,
     outputTokens,

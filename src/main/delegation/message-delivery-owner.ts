@@ -132,6 +132,7 @@ export class ReliableMessageDeliveryOwner {
   private readonly preparedContinuations = new Map<string, PreparedContinuation>()
   private readonly lanePumps = new Map<string, Promise<void>>()
   private upwardPump?: Promise<void>
+  private upwardWakePending = false
 
   constructor(private readonly options: MessageDeliveryOwnerOptions) {}
 
@@ -477,9 +478,16 @@ export class ReliableMessageDeliveryOwner {
 
   private wakeLane(command: DurableMessageCommand, session: SessionKey): void {
     if (command.direction === 'to_parent') {
-      if (this.upwardPump) return
+      if (this.upwardPump) {
+        this.upwardWakePending = true
+        return
+      }
       const pump = this.pumpUpward(session).finally(() => {
         if (this.upwardPump === pump) this.upwardPump = undefined
+        if (this.upwardWakePending) {
+          this.upwardWakePending = false
+          this.wakeLane(command, session)
+        }
       })
       this.upwardPump = pump
       void pump.catch(() => undefined)

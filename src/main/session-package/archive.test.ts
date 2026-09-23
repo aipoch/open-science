@@ -1,3 +1,4 @@
+import { readPackageArchive, PACKAGE_REQUIRES_UPDATE } from './archive'
 import { mkdir, mkdtemp, open, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -199,3 +200,65 @@ it('normalizes only a valid legacy Notebook evidence owner', () => {
   expect(() => readExecutionEvidence({ ...legacy, activityKind: 'compute-job' })).toThrow()
   expect(() => readExecutionEvidence(null)).toThrow()
 })
+
+// Unknown future members may precede the compatibility header; none may be extracted.
+it.each(
+  [
+    { schemaVersion: 2 },
+    { schemaVersion: 1, requiredFeatures: ['future-capability'] },
+    { schemaVersion: 1, requiredFeatures: ['literature', 'ro-crate', 'future-capability'] }
+  ].flatMap((header) => [true, false].map((manifestFirst) => ({ header, manifestFirst })))
+)(
+  'requires an update before accepting future package $header (manifest first: $manifestFirst)',
+  async ({ header, manifestFirst }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'science-package-future-'))
+    directories.push(directory)
+    await writeFile(
+      join(directory, 'manifest.json'),
+      JSON.stringify({ format: 'open-science-session', ...header })
+    )
+    await mkdir(join(directory, 'future'))
+    await writeFile(join(directory, 'future', 'metadata.json'), '{}')
+    const archive = join(directory, 'future.science')
+    await c(
+      { cwd: directory, file: archive, gzip: true },
+      manifestFirst ? ['manifest.json', 'future'] : ['future', 'manifest.json']
+    )
+    const extracted = join(directory, 'extracted')
+    await expect(readPackageArchive(archive, extracted)).rejects.toThrow(PACKAGE_REQUIRES_UPDATE)
+    await expect(stat(join(extracted, 'future'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const getClient = vi.fn(async () => {
+      throw new Error('Application database must not be reached')
+    })
+    const service = new SessionPackageService({ storageRoot: directory, getClient })
+    try {
+      await expect(service.importFrom(archive)).rejects.toThrow(PACKAGE_REQUIRES_UPDATE)
+      expect(getClient).not.toHaveBeenCalled()
+    } finally {
+      await service.close()
+    }
+  }
+)
+
+it.each([
+  { format: 'another-format', schemaVersion: 2 },
+  { format: 'open-science-session', schemaVersion: '2' },
+  { format: 'open-science-session', schemaVersion: 1, requiredFeatures: [123] },
+  { format: 'open-science-session', schemaVersion: 1 }
+])(
+  'does not label malformed, foreign or unsupported undeclared entries as a newer package: %j',
+  async (header) => {
+    const directory = await mkdtemp(join(tmpdir(), 'science-package-invalid-header-'))
+    directories.push(directory)
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(header))
+    await writeFile(join(directory, 'future.json'), '{}')
+    const archive = join(directory, 'invalid.science')
+    await c({ cwd: directory, file: archive, gzip: true }, ['future.json', 'manifest.json'])
+    const result = readPackageArchive(archive, join(directory, 'extracted'))
+    await expect(result).rejects.toThrow()
+    await expect(result).rejects.not.toThrow(PACKAGE_REQUIRES_UPDATE)
+    await expect(stat(join(directory, 'extracted', 'future.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  }
+)

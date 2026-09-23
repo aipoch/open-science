@@ -52,8 +52,13 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
       await scroller.hover()
       await page.mouse.wheel(0, 300)
       await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
-      // The preview owns the top scroll lock: its PDF scrolls while the background stays locked.
-      await expect(page.locator('body')).toHaveAttribute('data-scroll-locked', '1')
+      // Preview scroll isolation keeps the already-hidden body stable without a scrollbar lock.
+      await expect(page.locator('body')).not.toHaveAttribute('data-scroll-locked')
+      await expect(page.locator('body')).toHaveCSS('overflow-y', 'hidden')
+      await expect(page.locator('#root')).toHaveAttribute('inert', '')
+      await page.mouse.move(4, 450)
+      await page.mouse.wheel(0, 300)
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
       if (close === 'button') {
         await page.screenshot({ path: testInfo.outputPath('attachment-preview.png') })
         await preview.getByRole('button', { name: 'Close preview of paper.pdf' }).click()
@@ -267,10 +272,13 @@ for (const area of [false, true]) {
         const note = page.getByRole('dialog', { name: 'Annotation note', exact: true })
         await expect(note).toContainText('Saved selection note')
         await page.keyboard.press('Escape')
+        // Dismissal includes an exit animation and deferred focus return. Finish it before
+        // testing a new selection and keyboard activation instead of racing that lifecycle.
+        await expect(note).toHaveCount(0)
+        await expect(marker).toBeFocused()
         await highlight.click()
         await expect(highlight).toHaveAttribute('aria-pressed', 'true')
-        await marker.focus()
-        await page.keyboard.press('Enter')
+        await marker.press('Enter')
         await expect(note).toContainText('Saved selection note')
       })
     }

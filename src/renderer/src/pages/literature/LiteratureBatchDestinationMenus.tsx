@@ -1,4 +1,5 @@
-import { ChevronDown, FolderOpen, FolderPlus, LoaderCircle, Plus } from 'lucide-react'
+import { useLiteratureHoverMenu } from './LiteratureHoverMenus'
+import { ChevronRight, FolderOpen, FolderPlus, LoaderCircle, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -47,12 +48,15 @@ const LiteratureBatchDestinationMenus = ({
     collection.name.toLocaleLowerCase().includes(collectionQuery.trim().toLocaleLowerCase())
   )
   const [projectQuery, setProjectQuery] = useState('')
-  const [projectOpen, setProjectOpen] = useState(false)
+  const collectionMenu = useLiteratureHoverMenu(disabled)
+  const projectMenu = useLiteratureHoverMenu(disabled)
 
   return (
     <>
       <Popover
+        open={collectionMenu.open}
         onOpenChange={(open) => {
+          collectionMenu.setOpen(open)
           if (!open) {
             setCollectionCreateMode(false)
             setCollectionName('')
@@ -60,7 +64,7 @@ const LiteratureBatchDestinationMenus = ({
           }
         }}
       >
-        <PopoverTrigger asChild>
+        <PopoverTrigger asChild {...collectionMenu.triggerProps}>
           <Button
             type="button"
             variant="outline"
@@ -71,13 +75,12 @@ const LiteratureBatchDestinationMenus = ({
           >
             <FolderOpen className="size-3.5" aria-hidden="true" />
             {moveBetweenCollections ? t('Move to collection') : t('Add to collection')}
-            <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
+            <ChevronRight className="ml-auto size-3.5 opacity-60" aria-hidden="true" />
           </Button>
         </PopoverTrigger>
         <PopoverContent
           data-slot="literature-batch-collection-popover"
-          align="start"
-          sideOffset={6}
+          {...collectionMenu.contentProps}
           className="w-72 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
         >
           <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
@@ -188,13 +191,13 @@ const LiteratureBatchDestinationMenus = ({
         </PopoverContent>
       </Popover>
       <Popover
-        open={projectOpen}
+        open={projectMenu.open}
         onOpenChange={(open) => {
-          setProjectOpen(open)
+          projectMenu.setOpen(open)
           if (!open) setProjectQuery('')
         }}
       >
-        <PopoverTrigger asChild>
+        <PopoverTrigger asChild {...projectMenu.triggerProps}>
           <Button
             type="button"
             variant="outline"
@@ -204,13 +207,12 @@ const LiteratureBatchDestinationMenus = ({
           >
             <FolderPlus className="size-3.5" aria-hidden="true" />
             {t('Add to project')}
-            <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
+            <ChevronRight className="ml-auto size-3.5 opacity-60" aria-hidden="true" />
           </Button>
         </PopoverTrigger>
         <PopoverContent
           data-slot="literature-batch-project-popover"
-          align="start"
-          sideOffset={6}
+          {...projectMenu.contentProps}
           className={cn(
             'max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu',
             projectsLoaded && projects.length === 0 ? 'w-max' : 'w-72'
@@ -226,7 +228,7 @@ const LiteratureBatchDestinationMenus = ({
             loaded={projectsLoaded}
             disabled={disabled}
             onSelect={(id) => {
-              setProjectOpen(false)
+              projectMenu.setOpen(false)
               setProjectQuery('')
               onSelectProject(id)
             }}

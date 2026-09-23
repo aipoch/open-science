@@ -19,7 +19,9 @@
     "src/main/settings/service.test.ts",
     "src/main/settings/settings-snapshot-commit-owner.test.ts",
     "src/main/settings/classification-settings.ts",
-    "src/main/settings/classification-settings.test.ts"
+    "src/main/settings/classification-settings.test.ts",
+    "src/main/settings/classification-usage.ts",
+    "src/main/settings/classification-usage.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/service.ts",
@@ -41,7 +43,8 @@
       "src/main/settings/service.test.ts",
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/service.connectors.test.ts",
-      "src/main/settings/classification-settings.test.ts"
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/settings/classification-usage.test.ts"
     ],
     "contract": [
       "src/main/settings/application-commands.test.ts",
@@ -94,7 +97,8 @@
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",
       "src/main/web-service/controller.test.ts",
-      "src/main/web-service/task-api.test.ts"
+      "src/main/web-service/task-api.test.ts",
+      "src/main/literature/smart-collections.test.ts"
     ]
   },
   "capabilityOverlays": [

@@ -31,6 +31,8 @@
       "src/renderer/src/main.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureAttachments.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenanceMessages.integration.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
@@ -76,6 +78,7 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
+      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-registry.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/CsvPreview.test.tsx",
@@ -89,9 +92,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
       "src/renderer/src/pages/workspace/session-action-menu.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/workspace/previews/SourceWebPreview.webview.test.tsx",
-      "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": [],

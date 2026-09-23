@@ -105,6 +105,12 @@
       "capabilities": ["documentation"]
     },
     {
+      "id": "issue_template",
+      "role": "owner",
+      "paths": [".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml"],
+      "capabilities": ["issue_template"]
+    },
+    {
       "id": "native_runtime_packages",
       "role": "owner",
       "paths": ["packages/process-tree-native/**", "packages/safe-file-publisher-native/**"],
@@ -346,6 +352,8 @@
         "src/main/local-fs/**",
         "src/main/ipc-surfaces/**",
         "src/main/connectors/*.ts",
+        "src/main/connectors/custom-mcp/**",
+        "src/main/connectors/molecule/**",
         "src/main/*runtime*.ts",
         "src/main/*lifecycle*.ts",
         "src/main/*window*.ts",
@@ -519,6 +527,10 @@
         "e2e_visual_macos",
         "e2e_browser_windows"
       ]
+    },
+    "issue_template": {
+      "consumers": [],
+      "lanes": ["docs", "format"]
     }
   }
 }

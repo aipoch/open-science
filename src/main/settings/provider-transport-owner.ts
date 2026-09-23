@@ -755,6 +755,9 @@ class ProviderTransportOwner {
         registerHostMessageSession: (key, tools, options) =>
           entry.bridge.registerHostMessageSession(key, tools, options),
         unregisterHostMessageSession: (key) => entry.bridge.unregisterHostMessageSession(key),
+        registerMcpSession: (key, tools, namespaces) =>
+          entry.bridge.registerMcpSession?.(key, tools, namespaces),
+        unregisterMcpSession: (key) => entry.bridge.unregisterMcpSession?.(key) ?? false,
         setReasoningEffort: (effort) => entry.bridge.setReasoningEffort(effort),
         setModelTarget: (target) => entry.bridge.setModelTarget(target),
         release

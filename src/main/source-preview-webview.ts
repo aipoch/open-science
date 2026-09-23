@@ -7,16 +7,36 @@ import {
 } from '../shared/source-preview'
 
 const activeSources = new WeakMap<object, WebContents>()
+const registeredSourceGuests = new WeakSet<WebContents>()
 export const getActiveSourceContents = (owner: object): WebContents | undefined => {
   const contents = activeSources.get(owner)
   return contents && !contents.isDestroyed() ? contents : undefined
 }
 
+export const isRegisteredSourcePreviewGuest = (
+  webContents: WebContents | null,
+  session: Electron.Session
+): boolean =>
+  webContents !== null &&
+  registeredSourceGuests.has(webContents) &&
+  !webContents.isDestroyed() &&
+  webContents.session === session
+
+export const isAllowedSourcePreviewStorageAccess = (
+  webContents: WebContents | null,
+  session: Electron.Session,
+  details: { isMainFrame: boolean; requestingUrl?: string },
+  permission = 'storage-access'
+): boolean =>
+  permission === 'storage-access' &&
+  !details.isMainFrame &&
+  parseHttpsSourceUrl(details.requestingUrl ?? '') !== undefined &&
+  isRegisteredSourcePreviewGuest(webContents, session)
+
 // The DOM owns guest lifetime. Main owns security and the focused source used by page find.
 export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
   const host = window.webContents
   const session = host.session
-  const guests = new Set<WebContents>()
   const cleanups = new Map<WebContents, () => void>()
   const willAttach = (
     event: Electron.Event,
@@ -61,15 +81,22 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       guest.close({ waitForBeforeUnload: false })
       return
     }
-    guests.add(guest)
-    const alive = (): boolean => guests.has(guest) && !guest.isDestroyed() && !host.isDestroyed()
+    registeredSourceGuests.add(guest)
+    const alive = (): boolean => cleanups.has(guest) && !guest.isDestroyed() && !host.isDestroyed()
     guest.setWindowOpenHandler(() => ({ action: 'deny' }))
+    let navigationId = 0
     const blocked = (url: string): void => {
-      if (alive()) host.send(SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL, { guestId: guest.id, url })
+      if (alive())
+        host.send(SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL, {
+          guestId: guest.id,
+          url,
+          navigationId
+        })
     }
     const navigate = (
       event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>
     ): void => {
+      if (event.isMainFrame) navigationId += 1
       if (
         !(event.isMainFrame
           ? parseHttpsSourceUrl(event.url)
@@ -97,6 +124,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       if (alive() && !value.isComposing && value.key !== 'Process')
         host.emit('before-input-event', event, value)
     }
+    const contextSnapshotKey = `__openScienceSourceContextMenu_${guest.id}_${Math.random().toString(36).slice(2)}`
     const rememberContextTarget = (
       _event: Electron.Event,
       _url: string,
@@ -113,12 +141,22 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       void frame
         .executeJavaScript(
           `(() => {
-        const key = '__openScienceSourceContextMenu';
-        if (Object.hasOwn(window, key)) return;
-        window[key] = null;
+        const key = ${JSON.stringify(contextSnapshotKey)};
+        if (Object.prototype.hasOwnProperty.call(window, key)) return;
+        let passthrough = false;
+        Object.defineProperty(window, key, {
+          configurable: false,
+          enumerable: false,
+          get() {
+            const value = passthrough;
+            passthrough = false;
+            return value;
+          },
+          set() {}
+        });
         window.addEventListener('contextmenu', (event) => {
           if (!event.isTrusted) return;
-          window[key] = event.composedPath().some(target =>
+          passthrough = event.composedPath().some(target =>
             target instanceof Element && target.closest('[data-preview-context-menu-passthrough]')
           );
         }, true);
@@ -148,9 +186,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       try {
         // Consume the clicked frame's snapshot, never a later frame with the same URL.
         const passthrough = await frame.executeJavaScript(`(() => {
-          const value = window.__openScienceSourceContextMenu;
-          window.__openScienceSourceContextMenu = null;
-          return value;
+          return window[${JSON.stringify(contextSnapshotKey)}];
         })()`)
         if (
           passthrough !== false ||
@@ -172,7 +208,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       }
     }
     const cleanup = (): void => {
-      guests.delete(guest)
+      registeredSourceGuests.delete(guest)
       cleanups.delete(guest)
       if (activeSources.get(host) === guest) activeSources.delete(host)
       guest.removeListener('will-frame-navigate', navigate)
@@ -197,7 +233,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
     _item: Electron.DownloadItem,
     guest: WebContents
   ): void => {
-    if (guests.has(guest)) event.preventDefault()
+    if (cleanups.has(guest) && registeredSourceGuests.has(guest)) event.preventDefault()
   }
   const hostFocus = (): void => {
     activeSources.delete(host)

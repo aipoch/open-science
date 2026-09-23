@@ -1,3 +1,4 @@
+import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -82,6 +83,10 @@ import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
 } from './sqlite-schema-migrations'
+
+// Schema work can exceed Prisma's 5-second default under disk/scanner contention.
+// Keep the existing heavy-migration budget for every atomic migration, including baseline adoption.
+const MIGRATION_TRANSACTION_TIMEOUT_MS = 120_000
 
 type MigrationVerifierDescriptor =
   | {
@@ -842,6 +847,17 @@ const MIGRATION_MANIFEST = [
       pdfAnnotationsMigration.statements,
       pdfAnnotationsMigration.verifiers,
       pdfAnnotationsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureSmartCollectionsMigration,
+    checksum: checksumMigrationPayload(
+      literatureSmartCollectionsMigration.id,
+      literatureSmartCollectionsMigration.statements,
+      literatureSmartCollectionsMigration.verifiers,
+      literatureSmartCollectionsMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
@@ -1747,24 +1763,27 @@ const applyBaselineMigration = async (
   try {
     foreignKeysWereEnabled = disableForeignKeys && (await readForeignKeyState(client)) === 1
     if (foreignKeysWereEnabled) await setForeignKeys(client, false)
-    await client.$transaction(async (transaction) => {
-      const transactionClient = transaction as unknown as PrismaClient
-      try {
-        await applyRuntimeSchemaBaseline(transactionClient, prepared)
-      } catch (error) {
-        if (
-          !deferPreviewStateForeignKeyViolations ||
-          !(await hasOnlyDeferredPreviewStateForeignKeyViolations(transactionClient, error))
-        ) {
-          throw error
+    await client.$transaction(
+      async (transaction) => {
+        const transactionClient = transaction as unknown as PrismaClient
+        try {
+          await applyRuntimeSchemaBaseline(transactionClient, prepared)
+        } catch (error) {
+          if (
+            !deferPreviewStateForeignKeyViolations ||
+            !(await hasOnlyDeferredPreviewStateForeignKeyViolations(transactionClient, error))
+          ) {
+            throw error
+          }
+          // The pinned 0005 suffix owns pruning these rows before the migration run completes.
         }
-        // The pinned 0005 suffix owns pruning these rows before the migration run completes.
-      }
-      if (prepared.verificationTarget === 'baseline') {
-        await runMigrationVerifiers(transactionClient, migration.verifiers, allowedSuffixChecks)
-      }
-      await insertLedgerRow(transactionClient, migration)
-    })
+        if (prepared.verificationTarget === 'baseline') {
+          await runMigrationVerifiers(transactionClient, migration.verifiers, allowedSuffixChecks)
+        }
+        await insertLedgerRow(transactionClient, migration)
+      },
+      { timeout: MIGRATION_TRANSACTION_TIMEOUT_MS }
+    )
   } catch (error) {
     migrationFailure = error
   }
@@ -1971,10 +1990,7 @@ const applyManifestMigration = async (
         }
         await insertLedgerRow(transactionClient, migration)
       },
-      migration.id === numericAndNullConstraintsMigration.id ||
-        migration.id === literatureSearchTextMigration.id
-        ? { timeout: 120_000 }
-        : undefined
+      { timeout: MIGRATION_TRANSACTION_TIMEOUT_MS }
     )
   } catch (error) {
     migrationFailure = error

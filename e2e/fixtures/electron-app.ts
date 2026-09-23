@@ -355,7 +355,7 @@ type ElectronApp = {
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
   showMainWindow: () => Promise<void>
   restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
-  restartAfterCrash: () => Promise<Page>
+  restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   restartWithSessionFixture: (session: PersistedChatSession) => Promise<Page>
   sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
@@ -1277,7 +1277,7 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async restartAfterCrash(): Promise<Page> {
+  async restartAfterCrash(options: { force?: boolean } = {}): Promise<Page> {
     const application = this.application
     if (!application) throw new Error('No Electron process is available to terminate.')
     const child = application.process()
@@ -1285,7 +1285,7 @@ class ElectronAppHarness implements ElectronApp {
       process.platform === 'win32' && child.pid !== undefined
         ? await readProcessTree(child.pid)
         : undefined
-    const result = await terminateProcessTree(child)
+    const result = await terminateProcessTree(child, options.force ? 'SIGKILL' : undefined)
     let reaped = result.reaped
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
     // a shell, so wait for the observed Electron descendants too before reusing the profile lock.

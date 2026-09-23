@@ -61,6 +61,23 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
+  it('publishes discovery, version and file-access contracts in the generated skill', () => {
+    const doc = renderSkillDoc('zenodo')
+    for (const contract of [
+      'name: mcp-zenodo',
+      '### search_records',
+      '### get_record',
+      'next_page',
+      'pagination_limited',
+      '(page - 1) * page_size',
+      'all_versions',
+      'concept_record_id',
+      'No uploads or file downloads',
+      'not sanitized',
+      'empty file list does not establish'
+    ])
+      expect(doc).toContain(contract)
+  })
   it('documents ENA discovery limits and original submitted file locations', () => {
     const md = renderSkillDoc('omics-archives')
     expect(md).toContain('### ena_query_runs')
@@ -253,5 +270,20 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('identical filters and page_size')
     expect(md).toContain('not offsets or durable snapshots')
     expect(md).toContain('Pass accession values to get_uniprot_entries')
+  })
+
+  it('documents the UniProt mapping workflow and page-scoped interpretation', () => {
+    const md = renderSkillDoc('genes')
+    expect(md).toContain('### submit_uniprot_id_mapping')
+    expect(md).toContain('### get_uniprot_id_mapping_status')
+    expect(md).toContain('### get_uniprot_id_mapping_results')
+    expect(md).toContain('never automatically retries or polls')
+    expect(md).toContain('Merge pairs by from across ALL pages')
+    expect(md).toContain('never infer unmatched IDs from absence on a page')
+    expect(md).toContain('one_to_many_in_page')
+    expect(md).toContain('UniProt expires results after up to 7 days')
+    expect(md).toContain('Upstream ERROR is normalized to FAILED')
+    expect(md).toContain('HTTP 400/500 job failures are read without automatic retries')
+    expect(md).toContain('errors are preserved in messages as "[code] message"')
   })
 })

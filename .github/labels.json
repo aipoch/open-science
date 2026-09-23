@@ -1,0 +1,108 @@
+[
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "New feature or request",
+    "type": "feat"
+  },
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Something isn't working",
+    "type": "fix"
+  },
+  {
+    "name": "documentation",
+    "color": "0075ca",
+    "description": "Improvements or additions to documentation",
+    "type": "docs"
+  },
+  {
+    "name": "chore",
+    "color": "ededed",
+    "description": "Maintenance, cleanup, or tooling — no product behavior change",
+    "type": "chore"
+  },
+  {
+    "name": "style",
+    "color": "c5def5",
+    "description": "Formatting or style changes without behavior changes",
+    "type": "style"
+  },
+  {
+    "name": "refactor",
+    "color": "c5def5",
+    "description": "Restructure code without changing its behavior",
+    "type": "refactor"
+  },
+  {
+    "name": "performance",
+    "color": "c5def5",
+    "description": "Improve runtime performance or resource use",
+    "type": "perf"
+  },
+  {
+    "name": "tests",
+    "color": "c5def5",
+    "description": "Add or improve test coverage",
+    "type": "test"
+  },
+  {
+    "name": "build",
+    "color": "c5def5",
+    "description": "Build system, packaging, or dependency configuration",
+    "type": "build"
+  },
+  {
+    "name": "ci",
+    "color": "c5def5",
+    "description": "Continuous integration and repository automation",
+    "type": "ci"
+  },
+  {
+    "name": "revert",
+    "color": "c5def5",
+    "description": "Revert an earlier change",
+    "type": "revert"
+  },
+  {
+    "name": "size:XS",
+    "color": "c2e0c6",
+    "description": "0–9 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:S",
+    "color": "7bc96f",
+    "description": "10–29 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:M",
+    "color": "f9d0c4",
+    "description": "30–99 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:L",
+    "color": "f4b183",
+    "description": "100–499 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:XL",
+    "color": "e99695",
+    "description": "500–999 added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "size:XXL",
+    "color": "d73a4a",
+    "description": "1000+ added/deleted lines, excluding lockfiles"
+  },
+  {
+    "name": "needs-triage",
+    "color": "fbca04",
+    "description": "New issue awaiting initial maintainer assessment"
+  },
+  {
+    "name": "reproducibility",
+    "color": "d4c5f9",
+    "description": "A contributed reproducibility case for a scientific analysis"
+  }
+]

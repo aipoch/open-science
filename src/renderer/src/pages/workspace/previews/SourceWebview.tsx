@@ -105,7 +105,12 @@ export const SourceWebview = ({
     guest.addEventListener('did-fail-load', fail)
     guest.addEventListener('render-process-gone', gone)
     const unsubscribeBlocked = window.api.sourcePreview?.onNavigationBlocked?.((request) => {
-      if (!guest.isConnected || request.guestId !== getGuestId(guest)) return
+      if (
+        !guest.isConnected ||
+        request.guestId !== getGuestId(guest) ||
+        request.navigationId !== navigationId
+      )
+        return
       publish({
         sourceUrl,
         currentUrl: request.url,

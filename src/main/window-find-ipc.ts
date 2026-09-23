@@ -15,6 +15,7 @@ import {
 // send(): results are delivered to the OVERLAY that issued the request, not echoed to the main window.
 type FindTargetWebContents = {
   isDestroyed?: () => boolean
+  focus?: () => void
   findInPage: (
     text: string,
     options: { findNext: boolean; forward: boolean; matchCase: boolean }
@@ -119,7 +120,14 @@ const registerWindowFindIpcHandlers = (deps: WindowFindIpcDeps = {}): (() => voi
     }
     searchedTargets.set(event.sender, webContents)
     const owner = resolveFindOverlayOwner(event.sender)
-    if (owner) owner.clearSearch = () => onClear(event)
+    if (owner) {
+      owner.clearSearch = () => onClear(event)
+      owner.focusSource = () => {
+        if (webContents.isDestroyed?.()) return false
+        webContents.focus?.()
+        return true
+      }
+    }
     installResultListener(webContents)
     activeRequests.set(webContents, {
       nativeRequestId: webContents.findInPage(request.text, {

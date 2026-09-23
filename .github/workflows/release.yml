@@ -17,7 +17,7 @@ on:
 # Required to create a Release and upload assets.
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -206,3 +206,13 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches"
           --field event_type=windows-upgrade-smoke
           --field "client_payload[tag]=$GITHUB_REF_NAME"
+
+  # Releases created with GITHUB_TOKEN do not emit a downstream release workflow run. Invoke the
+  # read-only PoC directly after publication so every normal stable release is measured.
+  release-sbom-poc:
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-sbom-poc.yml
+    with:
+      tag: ${{ github.ref_name }}

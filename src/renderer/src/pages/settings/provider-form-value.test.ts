@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import {
+  getOfficialVendorModelIds,
+  resolveVendorModelApiEndpoints
+} from '../../../../shared/provider-registry'
 
 import {
   LOCAL_MODEL_PRESETS,
@@ -307,8 +311,12 @@ describe('provider-kind helpers', () => {
   it('chooses a directly compatible official model before onboarding validation', () => {
     const zen = createEmptyProviderFormValue({ type: 'official', vendorId: 'opencode' })
 
-    expect(providerFormModelForFramework(zen, ['anthropic'])).toBe('claude-fable-5')
-    expect(providerFormModelForFramework(zen, ['responses'])).toBe('gpt-5.6-sol')
+    const anthropicModel = providerFormModelForFramework(zen, ['anthropic'])!
+    expect(getOfficialVendorModelIds('opencode')).toContain(anthropicModel)
+    expect(resolveVendorModelApiEndpoints('opencode', anthropicModel)).toContain('anthropic')
+    const responsesModel = providerFormModelForFramework(zen, ['responses'])!
+    expect(getOfficialVendorModelIds('opencode')).toContain(responsesModel)
+    expect(resolveVendorModelApiEndpoints('opencode', responsesModel)).toContain('responses')
     expect(providerFormModelForFramework(zen, ['anthropic', 'openai'])).toBe('kimi-k2.7-code')
 
     const minimax = createEmptyProviderFormValue({
@@ -351,6 +359,14 @@ describe('provider-kind helpers', () => {
     expect(groupKeys('claude')).toEqual(['claude-subscription'])
     expect(apiKeys).not.toContain('claude-subscription')
     expect(groupKeys('other')).toEqual(['custom'])
+  })
+
+  it('defaults new xAI subscriptions to Grok 4.7', () => {
+    expect(providerKindPatch('xai-subscription')).toMatchObject({
+      type: 'xai-subscription',
+      model: 'grok-4.7',
+      apiEndpoint: 'responses'
+    })
   })
 
   it('uses one provider kind while keeping the auth mode in the form value', () => {

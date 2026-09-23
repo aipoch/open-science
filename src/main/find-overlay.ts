@@ -130,7 +130,8 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
     if (clearSearch) clearSearch()
     else deps.mainWindow.webContents.stopFindInPage('clearSelection')
     deps.mainWindow.webContents.send(WINDOW_FIND_HIDE_CHANNEL)
-    deps.mainWindow.webContents.focus()
+    const focusSource = view && resolveFindOverlayOwner(view.webContents)?.focusSource
+    if (!focusSource || !focusSource()) deps.mainWindow.webContents.focus()
   }
 
   const appearancesEqual = (left: WindowFindAppearance, right: WindowFindAppearance): boolean =>

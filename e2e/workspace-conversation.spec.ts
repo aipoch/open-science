@@ -519,7 +519,6 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await app.showMainWindow()
   let sourceDocumentRequestCount = 0
   let replicationDocumentRequestCount = 0
-  const sourceRequestCount = (): Promise<number> => Promise.resolve(sourceDocumentRequestCount)
   await page.context().route('https://citation.example/paper', async (route) => {
     sourceDocumentRequestCount++
     await route.fulfill({
@@ -563,7 +562,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await sourceLink.dispatchEvent('pointerdown', { pointerType: 'touch' })
   await sourceLink.evaluate((element) => (element as HTMLElement).click())
   await expect(hoverCard).toBeVisible()
-  expect(await sourceRequestCount()).toBe(0)
+  expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(hoverCard).toHaveCount(0)
@@ -641,7 +640,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   expect(hoverLayout.iconColumnHeightDelta).toBeLessThanOrEqual(1)
   expect(hoverLayout.actionCenterDelta).toBeLessThanOrEqual(1)
   await expect(hoverCard.locator('[data-session-link-favicon-skeleton]')).toHaveCount(0)
-  expect(await sourceRequestCount()).toBe(0)
+  expect(sourceDocumentRequestCount).toBe(0)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(0)
   const hoverAccessibility = (await hoverCard.evaluate(async (element) => {
     const axe = (
@@ -662,7 +661,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await page.screenshot({ path: testInfo.outputPath('source-link-hover-card.png') })
   await externalButton.hover()
   await expect(page.getByRole('tooltip')).toHaveText('Open source in browser')
-  expect(await sourceRequestCount()).toBe(0)
+  expect(sourceDocumentRequestCount).toBe(0)
   await sourceLink.focus()
   await page.keyboard.press('Tab')
   await expect(hoverUrl).toBeFocused()
@@ -677,7 +676,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     '[data-source-preview-frame][data-source-url="https://citation.example/paper"]'
   )
   await expect(sourceFrame).toHaveAttribute('data-source-url', 'https://citation.example/paper')
-  await expect.poll(sourceRequestCount).toBe(1)
+  await expect.poll(() => sourceDocumentRequestCount).toBe(1)
   const sourceProgress = page.locator('[data-source-preview-progress]')
   const sourceSkeleton = page.locator('[data-source-preview-skeleton]')
   expect(await sourceFrame.evaluate((element) => element.tagName)).toBe('WEBVIEW')
@@ -843,7 +842,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     session: 'retained',
     form: '页面表单保留'
   })
-  expect(await sourceRequestCount()).toBe(1)
+  expect(sourceDocumentRequestCount).toBe(1)
   await app.setMainWindowSize(1400, 950)
   await app.setMainWindowZoomFactor(1.25)
   await expect(sourceFrame).toBeVisible()
@@ -921,6 +920,21 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(findPage.locator('#find-overlay-count')).toHaveText('1 / 1')
   await findPage.getByRole('textbox').press('Escape')
   await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await expect.poll(() => nativePage.evaluate(() => document.hasFocus())).toBe(true)
+  await app.pressSourcePreviewShortcut(
+    nativePage.url(),
+    'F',
+    process.platform === 'darwin' ? ['meta'] : ['control']
+  )
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  const reopenedFindPage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url().includes('/find-overlay/'))!
+  await reopenedFindPage.getByRole('textbox').fill('Fixture source')
+  await expect(reopenedFindPage.locator('#find-overlay-count')).toHaveText('1 / 1')
+  await reopenedFindPage.getByRole('textbox').press('Escape')
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
 
   // Use real Chromium same-document navigations; IPC injection cannot verify this adapter.
   const sourceDocument = nativePage.locator('body')
@@ -959,7 +973,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await fixtureTab.click()
   await expect(fixtureTab).toHaveAttribute('aria-selected', 'true')
   await expect(sourceFrame).toBeVisible()
-  expect(await sourceRequestCount()).toBe(1)
+  expect(sourceDocumentRequestCount).toBe(1)
 
   await sourcePanel.locator('[data-source-preview-header-close]').click()
   await expect(sourceFrame).toHaveCount(0)
@@ -968,7 +982,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await page.keyboard.press('Tab')
   await expect(page.locator('[data-source-preview-hover-url]')).toBeFocused()
   await page.keyboard.press('Enter')
-  await expect.poll(sourceRequestCount).toBe(2)
+  await expect.poll(() => sourceDocumentRequestCount).toBe(2)
 })
 
 test('shows the Electron failure reason when a source request fails', async ({ app }, testInfo) => {

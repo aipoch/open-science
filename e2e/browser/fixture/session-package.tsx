@@ -21,7 +21,8 @@ import { useProjectStore } from '@/stores/project-store'
 import type { PackageOperationSnapshot } from '../../../src/shared/session-package'
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
-import { initI18n } from '@/i18n'
+import { initI18n, prepareI18nLocale } from '@/i18n'
+import zhHans from '../../../src/shared/i18n/locales/zh-Hans.json'
 import {
   PackageOperationIndicator,
   SessionPackageOperation
@@ -29,7 +30,10 @@ import {
 import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { SessionPackageImportError } from '@/components/SessionPackageImportError'
 
-initI18n('en')
+const locale = new URLSearchParams(location.search).get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
+const localeReady = Promise.resolve(prepareI18nLocale(locale)).then(() => initI18n(locale))
+const updateMessage =
+  'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
 const empty = new URLSearchParams(location.search).has('empty')
 usePackageOperationStore.getState().receive({
   id: 'layout-fixture',
@@ -124,14 +128,21 @@ if (mode) {
     id: 'import-fixture',
     kind: 'import',
     state:
-      mode === 'error'
+      mode === 'error' || mode === 'update-required'
         ? 'failed'
         : mode === 'cleanup'
           ? 'succeeded'
           : mode === 'progress'
             ? 'running'
             : 'awaiting-selection',
-    error: mode === 'error' ? 'The package could not be imported.' : undefined,
+    error:
+      mode === 'update-required'
+        ? locale === 'zh-Hans'
+          ? zhHans.native[updateMessage]
+          : updateMessage
+        : mode === 'error'
+          ? 'The package could not be imported.'
+          : undefined,
     cleanupPending: mode === 'cleanup',
     importQueueFull: new URLSearchParams(location.search).has('queue-full'),
     importRequestId: 'file-open',
@@ -139,11 +150,13 @@ if (mode) {
     importTarget: mode === 'project' ? undefined : { projectId: 'cancer' },
     importPreview: mode === 'review' ? preview : undefined,
     progress:
-      mode === 'error' || mode === 'cleanup'
-        ? { phase: mode === 'cleanup' ? 'cleaning' : 'importing' }
-        : mode === 'progress'
-          ? { phase: 'importing', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
-          : { phase: mode === 'review' ? 'confirming' : 'selecting' },
+      mode === 'update-required'
+        ? { phase: 'validating' }
+        : mode === 'error' || mode === 'cleanup'
+          ? { phase: mode === 'cleanup' ? 'cleaning' : 'importing' }
+          : mode === 'progress'
+            ? { phase: 'importing', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
+            : { phase: mode === 'review' ? 'confirming' : 'selecting' },
     pendingImports: [{ id: 'next', filename: 'follow-up-study.science' }]
   }
   useProjectStore.setState({
@@ -284,14 +297,16 @@ export const SessionMenuFixture = (): React.JSX.Element => (
     </ActionMenuProvider>
   </div>
 )
-createRoot(document.getElementById('root')!).render(
-  <>
-    {menuMode ? <SessionMenuFixture /> : null}
-    {backgroundMode ? (
-      <div className="mx-auto max-w-4xl p-4">
-        <PackageOperationIndicator />
-      </div>
-    ) : null}
-    {mode === 'early-error' ? <SessionPackageImportError /> : <SessionPackageOperation />}
-  </>
+void localeReady.then(() =>
+  createRoot(document.getElementById('root')!).render(
+    <>
+      {menuMode ? <SessionMenuFixture /> : null}
+      {backgroundMode ? (
+        <div className="mx-auto max-w-4xl p-4">
+          <PackageOperationIndicator />
+        </div>
+      ) : null}
+      {mode === 'early-error' ? <SessionPackageImportError /> : <SessionPackageOperation />}
+    </>
+  )
 )

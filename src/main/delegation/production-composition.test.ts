@@ -1174,7 +1174,7 @@ describe('production delegated-work composition', () => {
       provenanceContext: { promptMessageId: harness.caller.originMessageId }
     })
     if (!staggered) throw new Error('Background model turn did not delegate children.')
-    await expect.poll(() => harness.execution.controls()).toHaveLength(4)
+    await expect.poll(() => harness.execution.controls(), { timeout: 10_000 }).toHaveLength(4)
     for (const child of staggered.children) harness.execution.control(child.attemptId).accept()
     let releaseAdmission!: () => void
     const admission = new Promise<void>((resolve) => {
@@ -1874,12 +1874,17 @@ describe('production delegated-work composition', () => {
         { wait: false }
       )
       if (dispatched.kind !== 'receipts') throw new Error('Question child was not dispatched.')
-      await expect.poll(() => harness.controls.size).toBe(1)
+      // Preparation and durable continuation writes can exceed the default 1s poll on Windows.
+      const waitOptions = { timeout: 10_000 }
+      await expect.poll(() => harness.controls.size, waitOptions).toBe(1)
       const source = [...harness.controls.values()][0]
       await source.askUser()
       await source.complete({ submit: false, text: 'Waiting for the user.' })
       await expect
-        .poll(() => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status)
+        .poll(
+          () => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status,
+          waitOptions
+        )
         .toBe('pending')
       const question = harness.durable().runtimeContext!.delegatedWork!.questionRequests![0]
 
@@ -1891,7 +1896,7 @@ describe('production delegated-work composition', () => {
         answers: [{ questionIndex: 0, value: 'Focused' }]
       })
 
-      await expect.poll(() => harness.controls.size).toBe(2)
+      await expect.poll(() => harness.controls.size, waitOptions).toBe(2)
       const continuation = [...harness.controls.values()].find(
         (control) => control.input.attemptId !== source.input.attemptId
       )!
@@ -1899,7 +1904,10 @@ describe('production delegated-work composition', () => {
       expect(continuation.input.task).toContain('Answer: Focused')
       await continuation.complete({ submit: false, text: 'Framework question continued.' })
       await expect
-        .poll(() => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status)
+        .poll(
+          () => harness.durable().runtimeContext?.delegatedWork?.questionRequests?.[0]?.status,
+          waitOptions
+        )
         .toBe('confirmed')
       expect(
         harness
@@ -3532,6 +3540,66 @@ describe('production delegated-work composition', () => {
     expect(
       harness.durable().runtimeContext?.delegatedWork?.messageCommands?.[0].receipt.status
     ).toBe('accepted')
+  })
+
+  it('retries an upward lane when a wake arrives during a parked dispatch', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-parent-wake-race-'))
+    let releaseFirst!: () => void
+    const firstParked = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let attempts = 0
+    const deliveries: string[] = []
+    const harness = await createCompositionHarness(root, 'opencode', undefined, undefined, {
+      parentMessages: {
+        deliver: async (delivery): Promise<'provider_prompt_accepted'> => {
+          if (attempts++ === 0) {
+            await firstParked
+            throw new DelegateMessageParkedError('root admission is still settling')
+          }
+          await delivery.startDispatch()
+          deliveries.push(delivery.messageId)
+          return 'provider_prompt_accepted'
+        }
+      }
+    })
+    const delegated = await harness.composition.host.delegate(
+      harness.caller,
+      [
+        { task: 'Ask the parent from lane A', name: 'Ask the parent from lane A' },
+        { task: 'Ask the parent from lane B', name: 'Ask the parent from lane B' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    for (const control of harness.execution.controls()) control.accept()
+
+    const send = (
+      child: (typeof delegated.children)[number],
+      requestId: string
+    ): ReturnType<typeof harness.composition.host.sendMessage> =>
+      harness.composition.host.sendMessage(
+        {
+          ...harness.caller,
+          frameId: child.frameId,
+          attemptId: child.attemptId,
+          role: 'delegate',
+          toolInvocationId: requestId
+        },
+        'parent',
+        requestId
+      )
+    const first = await send(delegated.children[0], 'parent-wake-race-a')
+    const second = await send(delegated.children[1], 'parent-wake-race-b')
+    await expect.poll(() => attempts).toBe(1)
+
+    const wake = harness.composition.root.wakeMessages?.(harness.session.id)
+    releaseFirst()
+    await wake
+    await expect
+      .poll(() => deliveries)
+      .toEqual(expect.arrayContaining([first.message_id, second.message_id]))
+    expect(deliveries).toHaveLength(2)
   })
 
   it('discovers a durable queued parent message when a cold composition is woken after restart', async () => {

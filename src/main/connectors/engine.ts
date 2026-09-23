@@ -16,14 +16,6 @@ const DEFAULT_BACKOFF_MS = 400
 const USER_AGENT =
   'Mozilla/5.0 (compatible; Open-Science/1.0; +https://github.com/aipoch/open-science)'
 
-// Builds the NCBI E-utilities etiquette query suffix; empty when unset (calls still work).
-export function ncbiEtiquette(credentials: ConnectorCredentials): string {
-  const parts: string[] = []
-  if (credentials.ncbiEmail) parts.push(`email=${encodeURIComponent(credentials.ncbiEmail)}`)
-  if (credentials.ncbiApiKey) parts.push(`api_key=${encodeURIComponent(credentials.ncbiApiKey)}`)
-  return parts.length ? `&${parts.join('&')}` : ''
-}
-
 // Strips credential query params (NCBI email/api_key) from a URL before it can land in an error
 // message or log. Falls back to the raw string if it doesn't parse as a URL.
 function redactUrl(url: string): string {

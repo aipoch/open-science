@@ -874,6 +874,46 @@
       "tableName": "pdf_annotation_imports",
       "name": "PdfAnnotationImport_json_check",
       "expression": "json_valid(\"resultJson\")"
+    },
+    {
+      "tableName": "LiteratureSmartCollection",
+      "name": "LiteratureSmartCollection_scope_check",
+      "expression": "\"scopeKind\" IN ('library', 'project', 'collection') AND ((\"scopeKind\" = 'library' AND \"scopeId\" IS NULL) OR (\"scopeKind\" != 'library' AND \"scopeId\" IS NOT NULL AND length(trim(\"scopeId\")) > 0)) AND \"ruleRevision\" > 0"
+    },
+    {
+      "tableName": "LiteratureSmartAssessment",
+      "name": "LiteratureSmartAssessment_decision_check",
+      "expression": "\"verdict\" IN ('match', 'no-match', 'uncertain') AND \"ruleRevision\" > 0 AND json_valid(\"probabilitiesJson\") AND json_type(\"probabilitiesJson\") = 'object'"
+    },
+    {
+      "tableName": "LiteratureSmartOverride",
+      "name": "LiteratureSmartOverride_decision_check",
+      "expression": "\"decision\" IN ('include', 'exclude')"
+    },
+    {
+      "tableName": "LiteratureSmartRun",
+      "name": "LiteratureSmartRun_state_check",
+      "expression": "\"kind\" IN ('preview', 'refresh') AND \"state\" IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted') AND \"ruleRevision\" > 0"
+    },
+    {
+      "tableName": "ClassificationUsage",
+      "name": "ClassificationUsage_values_check",
+      "expression": "length(trim(\"eventId\")) > 0 AND length(trim(\"providerId\")) > 0 AND length(trim(\"model\")) > 0\n      AND \"scenario\" IN ('save-validation', 'probe', 'capability-selection', 'reading-route', 'literature-live-preview', 'literature-trial', 'literature-update', 'literature-reevaluate', 'literature-automatic', 'legacy-classification')\n      AND \"status\" IN ('started', 'completed', 'failed', 'interrupted')\n      AND ((\"inputTokens\" IS NULL AND \"outputTokens\" IS NULL AND \"usageIncomplete\" = true)\n        OR (\"inputTokens\" IS NOT NULL AND \"outputTokens\" IS NOT NULL AND \"inputTokens\" >= 0 AND \"outputTokens\" >= 0 AND \"usageIncomplete\" = false))"
+    },
+    {
+      "tableName": "LiteratureSmartRuleRevision",
+      "name": "LiteratureSmartRuleRevision_values_check",
+      "expression": "\"revision\" > 0 AND length(trim(\"inclusionCriteria\")) > 0 AND \"evidenceMode\" IN ('abstract', 'full-text') AND \"scopeKind\" IN ('library', 'project', 'collection') AND ((\"scopeKind\" = 'library' AND \"scopeId\" IS NULL) OR (\"scopeKind\" != 'library' AND \"scopeId\" IS NOT NULL))"
+    },
+    {
+      "tableName": "LiteratureSmartRunItem",
+      "name": "LiteratureSmartRunItem_values_check",
+      "expression": "\"state\" IN ('pending', 'done', 'error') AND (\"failure\" IS NULL OR \"failure\" IN ('auth', 'rate-limit', 'timeout', 'network', 'invalid-response', 'configuration', 'service', 'unknown')) AND (\"resultJson\" IS NULL OR (json_valid(\"resultJson\") AND json_type(\"resultJson\") = 'object'))"
+    },
+    {
+      "tableName": "LiteratureSmartCollection",
+      "name": "LiteratureSmartCollection_pause_check",
+      "expression": "\"automaticPauseReason\" IS NULL OR \"automaticPauseReason\" IN ('run-limit', 'daily-limit', 'storage-error', 'interrupted')"
     }
   ],
   "indexes": [

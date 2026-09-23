@@ -51,7 +51,8 @@
       "src/main/web-service/task-api.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-package/fork.test.ts"
+      "src/main/session-package/fork.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

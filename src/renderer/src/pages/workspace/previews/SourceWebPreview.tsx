@@ -28,8 +28,6 @@ const MAX_LOADING_PROGRESS = 0.9
 const PROGRESS_TICK_MS = 350
 const COMPLETION_DELAY_MS = 250
 
-type SourcePreviewDisplayState = SourcePreviewLoadState | { phase: 'loading' }
-
 const getFailureCode = (
   state: Extract<SourcePreviewLoadState, { phase: 'failed' }>
 ): string | undefined => {
@@ -84,7 +82,12 @@ const SourceWebPreviewContent = ({
   const webviewRef = useRef<WebviewTag | null>(null)
   const [frameAttempt, setFrameAttempt] = useState(0)
   const [progressRun, setProgressRun] = useState(0)
-  const [loadState, setLoadState] = useState<SourcePreviewDisplayState>({ phase: 'loading' })
+  const [loadState, setLoadState] = useState<SourcePreviewLoadState>({
+    navigationId: 0,
+    sourceUrl: sourceUrl.href,
+    currentUrl: sourceUrl.href,
+    phase: 'loading'
+  })
   const [progress, setProgress] = useState(INITIAL_PROGRESS)
   const [isProgressVisible, setIsProgressVisible] = useState(true)
   const progressTimerRef = useRef<number | undefined>(undefined)
@@ -151,7 +154,7 @@ const SourceWebPreviewContent = ({
   }
 
   const retry = (): void => {
-    setLoadState({ phase: 'loading' })
+    setLoadState((current) => ({ ...current, phase: 'loading' }))
     setProgress(INITIAL_PROGRESS)
     setIsProgressVisible(true)
     setProgressRun((current) => current + 1)

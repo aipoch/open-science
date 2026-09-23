@@ -19,7 +19,9 @@ test('offers Side chat while idle and hides its new-chat entry while main awaits
   await expect(
     page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
   ).toBeVisible()
-  await page.getByTestId('branch-send-menu-trigger').click()
+  const idleSendMenu = page.getByTestId('branch-send-menu-trigger')
+  await expect(idleSendMenu).toBeVisible({ timeout: 60_000 })
+  await idleSendMenu.click()
   const sideChatItem = page.getByTestId('menu-side-chat')
   await expect(sideChatItem).toHaveText('New side chat')
   await expect(page.getByTestId('menu-send-side-chat')).toHaveCount(0)

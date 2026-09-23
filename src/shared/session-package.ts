@@ -4,6 +4,7 @@ import { defineApplicationCommandContract, validationCodec } from './application
 
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
+export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
 export const PACKAGE_MAX_BYTES = 256 * 1024 ** 3
 export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 16 * 1024 ** 2
@@ -153,18 +154,25 @@ export type SessionPackageRequest = z.infer<typeof sessionPackageRequestSchema>
 
 export const packageInventoryEntrySchema = z
   .object({
-    path: z.string().regex(/^(session\.json|records\.json|README\.md|objects\/[a-f0-9]{64})$/),
+    path: z
+      .string()
+      .regex(
+        /^(session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
+      ),
     sizeBytes: z.number().int().nonnegative().max(PACKAGE_MAX_FILE_BYTES),
     checksum,
     storageKey: z.string().max(2048).optional(),
-    kind: z.enum(['session', 'records', 'file', 'notebook', 'readme'])
+    kind: z.enum(['session', 'records', 'file', 'notebook', 'readme', 'metadata'])
   })
   .strict()
 
 export const sessionPackageManifestSchema = z
   .object({
     format: z.literal('open-science-session'),
-    requiredFeatures: z.array(z.literal('literature')).max(1).optional(),
+    requiredFeatures: z
+      .array(z.enum(['literature', 'ro-crate']))
+      .max(2)
+      .optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),
     source: z

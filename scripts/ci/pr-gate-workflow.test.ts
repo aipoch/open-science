@@ -935,6 +935,47 @@ describe('PR Gate workflow', () => {
     }
   })
 
+  it('blocks on actionlint and reports pinned zizmor findings during static checks', () => {
+    const actionlint = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Check GitHub Actions correctness'
+    )
+    const zizmor = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Audit GitHub Actions security with zizmor'
+    )
+    const enforce = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Enforce selected static checks'
+    )
+
+    expect(workflow.jobs.static['timeout-minutes']).toBe(15)
+    expect(actionlint).toMatchObject({
+      id: 'actionlint',
+      'continue-on-error': true
+    })
+    expect(actionlint?.run).toContain(
+      'releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz'
+    )
+    expect(actionlint?.run).toContain(
+      '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+    )
+    expect(actionlint?.run).toContain('-shellcheck= -pyflakes=')
+    expect(zizmor).toMatchObject({
+      'continue-on-error': true,
+      uses: 'zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482',
+      with: {
+        'advanced-security': false,
+        annotations: true,
+        'min-confidence': 'high',
+        'min-severity': 'medium',
+        version: 'v1.30.1'
+      }
+    })
+    expect(enforce?.env).toMatchObject({
+      ACTIONLINT_OUTCOME: '${{ steps.actionlint.outcome }}'
+    })
+    expect(enforce?.run).toContain('check actionlint "$ACTIONLINT_OUTCOME"')
+    expect(enforce?.run).not.toContain('check zizmor')
+  })
+
   it('uses runner-local concurrency while preserving separate static outcomes', () => {
     const lint = workflow.jobs.static.steps?.find(({ name }) => name === 'Lint')
     const typechecks = workflow.jobs.static.steps?.find(

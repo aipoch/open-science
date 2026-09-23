@@ -25,7 +25,8 @@ export type ProviderResponsesBridgePort = Pick<
   | 'setReasoningEffort'
   | 'setModelTarget'
   | 'setTarget'
->
+> &
+  Partial<Pick<ResponsesBridge, 'registerMcpSession' | 'unregisterMcpSession'>>
 
 export function createCodeBuddySkillSelectorTransport(input: {
   activeTarget: ProviderRuntimeTarget

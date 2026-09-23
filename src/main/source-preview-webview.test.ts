@@ -1,6 +1,11 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import { installSourcePreviewWebviews, getActiveSourceContents } from './source-preview-webview'
+import {
+  installSourcePreviewWebviews,
+  getActiveSourceContents,
+  isRegisteredSourcePreviewGuest,
+  isAllowedSourcePreviewStorageAccess
+} from './source-preview-webview'
 
 vi.mock('electron', () => ({ webFrameMain: { fromId: vi.fn() } }))
 
@@ -117,8 +122,81 @@ describe('source guest security', () => {
     expect(s.guest.setWindowOpenHandler.mock.calls[0][0]()).toEqual({ action: 'deny' })
     expect(s.host.send).toHaveBeenCalledWith('source-preview:navigation-blocked', {
       guestId: 12,
-      url: 'http://example.com'
+      url: 'http://example.com',
+      navigationId: 2
     })
+  })
+  it('assigns a new navigation id to each consecutive top-level navigation', () => {
+    const s = setup()
+    s.attach()
+    s.guest.emit('will-frame-navigate', {
+      preventDefault: vi.fn(),
+      isMainFrame: true,
+      url: 'http://one.example'
+    })
+    s.guest.emit('will-frame-navigate', {
+      preventDefault: vi.fn(),
+      isMainFrame: true,
+      url: 'http://two.example'
+    })
+    expect(s.host.send).toHaveBeenNthCalledWith(1, 'source-preview:navigation-blocked', {
+      guestId: 12,
+      url: 'http://one.example',
+      navigationId: 1
+    })
+    expect(s.host.send).toHaveBeenNthCalledWith(2, 'source-preview:navigation-blocked', {
+      guestId: 12,
+      url: 'http://two.example',
+      navigationId: 2
+    })
+  })
+  it('registers only live HTTPS guests for storage access and removes them on destroy', () => {
+    const s = setup()
+    const guest = s.guest as unknown as Electron.WebContents
+    const session = s.session as unknown as Electron.Session
+    expect(isRegisteredSourcePreviewGuest(guest, session)).toBe(false)
+    s.attach()
+    expect(isRegisteredSourcePreviewGuest(guest, session)).toBe(true)
+    expect(
+      isRegisteredSourcePreviewGuest(guest, new EventEmitter() as unknown as Electron.Session)
+    ).toBe(false)
+    s.guest.emit('destroyed')
+    expect(isRegisteredSourcePreviewGuest(guest, session)).toBe(false)
+  })
+  it('allows storage access only for HTTPS non-main frames of a live source guest', () => {
+    const s = setup()
+    const guest = s.guest as unknown as Electron.WebContents
+    const session = s.session as unknown as Electron.Session
+    s.attach()
+    expect(
+      isAllowedSourcePreviewStorageAccess(guest, session, {
+        isMainFrame: false,
+        requestingUrl: 'https://third-party.example/frame'
+      })
+    ).toBe(true)
+    expect(
+      isAllowedSourcePreviewStorageAccess(guest, session, {
+        isMainFrame: true,
+        requestingUrl: 'https://third-party.example/frame'
+      })
+    ).toBe(false)
+    expect(
+      isAllowedSourcePreviewStorageAccess(guest, session, {
+        isMainFrame: false,
+        requestingUrl: 'http://third-party.example/frame'
+      })
+    ).toBe(false)
+    expect(
+      isAllowedSourcePreviewStorageAccess(
+        guest,
+        session,
+        {
+          isMainFrame: false,
+          requestingUrl: 'https://third-party.example/frame'
+        },
+        'top-level-storage-access'
+      )
+    ).toBe(false)
   })
   it('blocks only registered guest downloads and unregisters when the guest dies', () => {
     const s = setup()

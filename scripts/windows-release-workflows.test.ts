@@ -453,7 +453,8 @@ describe('post-merge Windows validation', () => {
     const regression = readWorkflow('desktop-regression.yml')
 
     expect(release.jobs.build.uses).toBe('./.github/workflows/build.yml')
-    expect(release).toMatchObject({ permissions: { actions: 'read', contents: 'write' } })
+    expect(release).toMatchObject({ permissions: { actions: 'read', contents: 'read' } })
+    expect(release.jobs.publish.permissions.contents).toBe('write')
     expect(release.jobs['package-smoke']).toMatchObject({
       needs: 'build',
       uses: './.github/workflows/package-smoke.yml'

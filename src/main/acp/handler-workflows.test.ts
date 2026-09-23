@@ -194,6 +194,27 @@ describe('ACP resume Session workflow', () => {
     )
   })
 
+  it('clears the interrupted run before admitting the next prompt after restart', async () => {
+    const harness = createHarness(undefined, archiveAvailability)
+    harness.hasLiveSession.mockReturnValue(false)
+    harness.prepareRuntimeResume.mockImplementationOnce(async () => {
+      harness.session.status = 'idle'
+      harness.session.activeRun = undefined
+    })
+    harness.startPrompt.mockImplementationOnce(async () => {
+      if (harness.session.status === 'running' || harness.session.activeRun) {
+        throw new Error('Cannot append a user Message while the Session run is active.')
+      }
+    })
+
+    await harness.workflows.resumeSession({ sessionId: 'session-1', cwd: '/workspace' })
+    await expect(
+      harness.workflows.sendPrompt({ sessionId: 'session-1', text: 'Continue the work.' })
+    ).resolves.toEqual({ status: 'connected' })
+
+    expect(harness.prepareRuntimeResume).toHaveBeenCalledBefore(harness.startPrompt)
+  })
+
   it('does not attach the provider when restart recovery cannot be persisted', async () => {
     const harness = createHarness(undefined, archiveAvailability)
     harness.hasLiveSession.mockReturnValue(false)

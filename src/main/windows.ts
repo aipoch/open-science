@@ -1,4 +1,7 @@
-import { installSourcePreviewWebviews } from './source-preview-webview'
+import {
+  installSourcePreviewWebviews,
+  isAllowedSourcePreviewStorageAccess
+} from './source-preview-webview'
 import {
   app,
   BrowserWindow,
@@ -105,7 +108,17 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     permission: string,
     details: { isMainFrame: boolean; requestingUrl?: string }
   ): boolean => {
-    if (window.isDestroyed() || requestingWebContents !== window.webContents) return false
+    if (window.isDestroyed()) return false
+    if (
+      isAllowedSourcePreviewStorageAccess(
+        requestingWebContents,
+        window.webContents.session,
+        details,
+        permission
+      )
+    )
+      return true
+    if (requestingWebContents !== window.webContents) return false
     const rendererUrl = window.webContents.getURL()
     return (
       rendererUrl !== '' &&

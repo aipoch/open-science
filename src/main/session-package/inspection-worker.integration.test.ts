@@ -1,3 +1,5 @@
+import { c as createTar } from 'tar'
+import { PACKAGE_REQUIRES_UPDATE } from './archive'
 import { initDataRoot } from '../storage-root'
 import * as fsPromises from 'node:fs/promises'
 import { PackageCleanupPendingError } from './cleanup'
@@ -344,4 +346,28 @@ it('contains a worker heap limit failure and removes its validation directory', 
     code: 'ERR_WORKER_OUT_OF_MEMORY'
   })
   await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('preserves the update-required diagnostic across the bundled inspection worker', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'package-worker-future-'))
+  roots.push(root)
+  await writeFile(
+    join(root, 'manifest.json'),
+    JSON.stringify({
+      format: 'open-science-session',
+      schemaVersion: 1,
+      requiredFeatures: ['future-capability']
+    })
+  )
+  const archive = join(root, 'future.science')
+  await createTar({ cwd: root, file: archive, gzip: true }, ['manifest.json'])
+  await expect(
+    createPackageInspector(createWorker)(
+      archive,
+      join(root, 'source'),
+      new AbortController().signal
+    )
+  ).rejects.toThrow(PACKAGE_REQUIRES_UPDATE)
+  for (const path of validationRoots)
+    await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
 })

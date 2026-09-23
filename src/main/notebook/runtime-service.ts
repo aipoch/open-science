@@ -649,6 +649,7 @@ class NotebookRuntimeService {
                 mirror,
                 runtimeRoot,
                 storageRoot: options.dataRoot,
+                getGrantedLocalRoots: options.getGrantedLocalRoots,
                 interpreter: target.interpreter
               })
           }

@@ -182,10 +182,11 @@ describe('database JSON constraints migration', () => {
           '0040_literature_collection_revision',
           '0041_bookmarks',
           '0042_classification_usage',
-          '0043_pdf_annotations'
+          '0043_pdf_annotations',
+          '0044_literature_smart_collections'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0043_pdf_annotations'
+        to: '0044_literature_smart_collections'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(

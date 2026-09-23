@@ -896,6 +896,29 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
 }
 
 describe('ConversationPanel header spacing', () => {
+  it('opens diagnostics from the header even while a running Session is not hydrated', () => {
+    const session: ChatSession = {
+      id: 'diagnostic-session',
+      projectId: 'project-1',
+      title: 'Session diagnostics',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      contentLoaded: false
+    }
+    const exportDiagnostics = vi.fn()
+    renderPanel({ view: { activeSession: session }, sessionTools: { exportDiagnostics } })
+    const button = getConversationHeader().querySelector<HTMLButtonElement>(
+      '[aria-label="Export diagnostics…"]'
+    )!
+    expect(button).not.toBeNull()
+    expect(button.disabled).toBe(false)
+    act(() => button.click())
+    expect(exportDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ id: session.id }))
+  })
+
   it('opens Session information and routes editing through the owner', () => {
     const session: ChatSession = {
       id: 'info-session',
@@ -6099,6 +6122,26 @@ describe('ConversationPanel notebook bar', () => {
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="background-tasks-chip"]')).toBeNull()
+  })
+
+  it('keeps unavailable Specialist guidance above the joined Notebook and composer dock', () => {
+    renderPanel({
+      view: { activeSession: { ...session, specialistId: 'deleted-specialist' } },
+      sessionTools: { notebookReference },
+      conversation: { availability: { submit: false } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+
+    const notice = container.querySelector('[data-testid="specialist-unavailable-notice"]')!
+    const notebookBar = container.querySelector('[aria-label="Open notebook"]')!.parentElement!
+    expect(
+      notice.compareDocumentPosition(notebookBar) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(notebookBar.nextElementSibling?.contains(getComposerForm())).toBe(true)
+    expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+    ).toBe(true)
   })
 
   it('places the queue disclosure at the right edge of the Notebook bar', () => {

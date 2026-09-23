@@ -15,7 +15,7 @@ const FOLLOW_UP = 'Follow-up after the reveal.'
 // The fake agent replies with this fixed text for any prompt without a journey route.
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
-test('holds the queued message until the previous reply finishes revealing', async ({
+test('flushes a large completed reply before releasing the queued message', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
@@ -50,20 +50,38 @@ test('holds the queued message until the previous reply finishes revealing', asy
   await queueSubmit.click()
   const queueTrigger = page.getByTestId('composer-queue-trigger')
   await expect(queueTrigger).toBeVisible()
-
-  await writeFile(releaseFile, '')
-
-  // The fake agent's stream ends almost immediately (the session goes idle), but the giant
-  // final chunk keeps the paced reveal busy for seconds afterwards. Well past store-complete
-  // the follow-up must still be queued — an ungated queue dispatches the moment the session
-  // turns idle, mid-reveal.
-  await page.waitForTimeout(2000)
-  await expect(queueTrigger).toBeVisible()
   await expect(conversation.getByText(FOLLOW_UP)).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('queued-during-reveal.png') })
 
-  // Once the reveal settles, the queue drains and the follow-up turn completes.
+  // A completed source now flushes a backlog over 600 graphemes. Observe the actual DOM at
+  // queue release: even without a long catch-up animation, the previous reply must be complete
+  // before the follow-up appears. Polling only the eventual text could miss a premature release.
+  await conversation.evaluate((element, followUp) => {
+    const state = { previousReplyComplete: false, observed: false }
+    Object.assign(window, { __queueReleaseEvidence: state })
+    const observer = new MutationObserver(() => {
+      const text = element.textContent ?? ''
+      if (!text.includes(followUp)) return
+      state.observed = true
+      state.previousReplyComplete = text.split('Queue gate backlog paragraph:').length - 1 === 200
+      observer.disconnect()
+    })
+    observer.observe(element, { childList: true, characterData: true, subtree: true })
+  }, FOLLOW_UP)
+  await writeFile(releaseFile, '')
+
   await expect(conversation.getByText(FOLLOW_UP)).toBeVisible({ timeout: 30000 })
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __queueReleaseEvidence: { previousReplyComplete: boolean; observed: boolean }
+          }
+        ).__queueReleaseEvidence
+    )
+  ).toEqual({ previousReplyComplete: true, observed: true })
+  await expect(queueTrigger).toHaveCount(0)
   await expect(conversation.getByText(AGENT_REPLY, { exact: true }).last()).toBeVisible()
 })
 

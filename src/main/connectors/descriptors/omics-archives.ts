@@ -1,4 +1,4 @@
-import { ncbiEtiquette } from '../engine'
+import { ncbiEtiquette } from './ncbi'
 import type { ToolContext, ToolDescriptor } from '../types'
 import { ENA_OMICS_TOOLS } from './omics-ena'
 

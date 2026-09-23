@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
+import { outputFilename, WINDOWS_RESERVED_BASENAME } from './export-filename'
 import { conditionalRestoreScript } from '../notebook/conditional-restore-script'
 
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
@@ -36,15 +37,6 @@ import { outputPreview } from './artifact-reproducibility-outputs'
 import { compareReproducedContent } from './output-comparison'
 
 const SHA256 = /^[0-9a-f]{64}$/u
-const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/iu
-const outputFilename = (path: string): string => {
-  const name = basename(path.replaceAll('\\', '/'))
-    .replace(/[<>:"/\\|?*\p{Cc}]/gu, '-')
-    .replace(/^[. ]+|[. ]+$/gu, '')
-  return !name || WINDOWS_RESERVED_BASENAME.test(name.split('.')[0]!)
-    ? 'reproduced-output.bin'
-    : name
-}
 const ZIP_MTIME = new Date('1980-01-02T00:00:00.000Z')
 const MAX_ENVIRONMENT_LOCK_ARCHIVE_BYTES = 16 * 1024 * 1024
 const MAX_ENVIRONMENT_LOCK_ARCHIVE_ENTRIES = 16

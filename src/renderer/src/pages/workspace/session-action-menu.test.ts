@@ -297,3 +297,27 @@ it.each([
   expect(entry).toMatchObject({ disabled: state.disabled })
   if (state.disabled) expect(entry).toHaveProperty('disabledDescription', expect.any(String))
 })
+
+it.each([undefined, false] as const)(
+  'keeps diagnostics available with contentLoaded=%s when storage and ordinary exports are blocked',
+  async (contentLoaded) => {
+    const onExportDiagnostics = vi.fn()
+    const bindings = createSessionActionBindings({
+      canMutateConversations: false,
+      canDeleteConversations: false,
+      canDownloadArtifacts: false,
+      packageBusy: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onExportDiagnostics
+    })
+    const context = invocation(createSession({ status: 'running', messages: [], contentLoaded }))
+    expect(bindings['export-diagnostics'].hidden).toBe(false)
+    expect(bindings['export-diagnostics'].disabled).toBeUndefined()
+    await bindings['export-diagnostics'].execute(context)
+    expect(onExportDiagnostics).toHaveBeenCalledWith(context.session)
+  }
+)

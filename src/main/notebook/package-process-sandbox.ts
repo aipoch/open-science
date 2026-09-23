@@ -23,6 +23,7 @@ import {
 } from 'node:path'
 
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { validateCustomAllowedDomain } from '../../shared/notebook-network'
 import {
   defaultSpawn,
@@ -44,6 +45,7 @@ type PackageProcessSandboxOptions = Readonly<{
   interpreter?: Readonly<{ command: string; condaPrefix?: string; library?: string }>
   platform?: NodeJS.Platform
   terminateTree?: typeof terminateProcessTree
+  getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
 }>
 
 const packageMirrorHosts = (mirror: PackageMirror | undefined): string[] => {
@@ -274,6 +276,7 @@ export const sandboxedPackageSpawn =
     const { processSandbox, request, runtimeRoot } = options
     const platform = options.platform ?? process.platform
     assertProcessTreeSupport(platform)
+    const grantedRoots = options.getGrantedLocalRoots ? await options.getGrantedLocalRoots() : []
     const projectedEnv = packageEnvironment(env ?? {}, platform)
     const externalR = request.language === 'r' && Boolean(options.interpreter?.library)
     // External R consent covers one library and the workload cache, never managed environments
@@ -302,6 +305,7 @@ export const sandboxedPackageSpawn =
       superviseProcessTree: platform === 'win32',
       filesystem: {
         readOnlyRoots: [
+          ...grantedRoots.map((root) => root.path),
           ...(externalR ? [runtimeRoot] : []),
           ...absolutePath(dirname(command)),
           ...absolutePath(request.workspaceCwd),
@@ -313,6 +317,7 @@ export const sandboxedPackageSpawn =
             : [])
         ],
         readWriteRoots: [
+          ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path),
           ...(externalR ? [] : [runtimeRoot]),
           ...absolutePath(
             options.interpreter?.library ??

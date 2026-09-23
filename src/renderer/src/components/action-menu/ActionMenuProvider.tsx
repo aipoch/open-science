@@ -12,6 +12,7 @@ import { resolveActionMenuEntries, type ResolvedActionMenuEntry } from './action
 
 type OpenActionMenuState = Readonly<{
   pointer: { x: number; y: number }
+  align?: 'start' | 'end'
   snapshot: ActionMenuSnapshot
 }>
 
@@ -87,7 +88,8 @@ export const ActionMenuProvider = ({
       registration: ActionMenuRegistration,
       invocation: unknown,
       pointer: { x: number; y: number },
-      focusTarget?: Element | null
+      focusTarget?: Element | null,
+      align?: 'start' | 'end'
     ): boolean => {
       if (registrationsRef.current.get(registration.targetId) !== registration) return false
       const snapshot = registration.snapshot(invocation)
@@ -105,7 +107,7 @@ export const ActionMenuProvider = ({
           : document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null
-      const nextState = { pointer, snapshot }
+      const nextState = { pointer, snapshot, align }
       const previousTargetId = openStateRef.current?.snapshot.targetId
       if (previousTargetId && previousTargetId !== snapshot.targetId) {
         onOpenChangeRef.current?.(previousTargetId, false)
@@ -139,7 +141,13 @@ export const ActionMenuProvider = ({
       const invocation = Object.prototype.hasOwnProperty.call(options, 'invocation')
         ? options.invocation
         : registration.defaultInvocation()
-      return openSnapshot(registration, invocation, options.pointer, options.focusTarget)
+      return openSnapshot(
+        registration,
+        invocation,
+        options.pointer,
+        options.focusTarget,
+        options.align
+      )
     },
     [openSnapshot]
   )
@@ -204,6 +212,7 @@ export const ActionMenuProvider = ({
         <PointerActionMenu
           entries={resolveEntries(openState.snapshot)}
           pointer={openState.pointer}
+          align={openState.align}
           testId={testId}
           contentClassName={contentClassName}
           compact={openState.snapshot.compact}
