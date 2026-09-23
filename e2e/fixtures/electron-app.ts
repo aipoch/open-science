@@ -313,7 +313,9 @@ type BrandState = {
 }
 type ElectronApp = {
   captureBrandState: () => Promise<BrandState>
-  restartWithBrandFixture: (mode: 'legacy' | 'custom' | 'onboarding') => Promise<Page>
+  restartWithBrandFixture: (
+    mode: 'legacy' | 'legacy-config' | 'custom' | 'onboarding'
+  ) => Promise<Page>
 
   readonly page: Page
   openAdditionalRenderer: () => Promise<Page>
@@ -1252,7 +1254,9 @@ class ElectronAppHarness implements ElectronApp {
     }))
   }
 
-  async restartWithBrandFixture(mode: 'legacy' | 'custom' | 'onboarding'): Promise<Page> {
+  async restartWithBrandFixture(
+    mode: 'legacy' | 'legacy-config' | 'custom' | 'onboarding'
+  ): Promise<Page> {
     await this.close()
     await prepareBrandStorageFixture(
       this.roots.storageRoot,

@@ -1,3 +1,4 @@
+import { createLogger } from '../logger'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -283,12 +284,11 @@ type ProcState = {
   beginSandboxExecution: () => () => void
   stderrTail: string
   annotateStderr: (stderr: string) => string
-  confirmTermination?: () => Promise<boolean>
+  teardownProcess: () => Promise<ProcessTreeKillResult>
   cleanupSandbox: (
     reason: NotebookSandboxCleanupReason,
     processOutcome: NotebookSandboxProcessOutcome
   ) => Promise<NotebookSandboxCleanupResult>
-  processTeardownPromise?: Promise<ProcessTreeKillResult>
   sandboxCleanupPromise?: Promise<NotebookSandboxCleanupResult>
   // Captures why an involuntarily dropped proc became unusable before a request was registered, so
   // execute() can fail that pre-dispatch run instead of writing to a stale child and waiting forever.
@@ -307,7 +307,6 @@ type ProcState = {
   // Canonical host descriptors already installed into the Python loop's immutable audit hooks.
   // New roots cross the protocol once; Python never exposes a mutable policy collection or updater.
   protectedDirs: Set<string>
-  ownershipReceipt?: KernelProcessReceipt
 }
 
 // Marks timeouts distinctly so persisted run status can reflect timeout instead of failure.
@@ -856,13 +855,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       beginSandboxExecution: spawned.beginSandboxExecution,
       stderrTail: '',
       annotateStderr: spawned.annotateStderr,
-      confirmTermination: spawned.confirmTermination,
+      teardownProcess: spawned.teardownProcess,
       cleanupSandbox: spawned.cleanupSandbox,
       alive: true,
       cwd: spawned.cwd,
       interpreterIdentity: identity,
-      protectedDirs: new Set(request.protectedDirs ?? []),
-      ownershipReceipt: spawned.ownershipReceipt
+      protectedDirs: new Set(request.protectedDirs ?? [])
     }
 
     readline.on('line', (line) => this.handleLine(proc, line))
@@ -946,12 +944,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
     cwd: string
     beginSandboxExecution: () => () => void
     annotateStderr: (stderr: string) => string
-    confirmTermination?: () => Promise<boolean>
+    teardownProcess: () => Promise<ProcessTreeKillResult>
     cleanupSandbox: (
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
     ) => Promise<NotebookSandboxCleanupResult>
-    ownershipReceipt?: KernelProcessReceipt
   }> {
     assertProcessTreeSupport(this.platform)
     const figuresDir = this.ensureFiguresDir()
@@ -1075,24 +1072,96 @@ class NotebookKernelExecutor implements NotebookExecutor {
       : undefined
     let ownershipReceipt: KernelProcessReceipt | undefined
     const nativeTerminationProof = sandboxed?.confirmProcessTreeTermination
-    let terminationConfirmed = false
-    // A one-time native proof may arrive after the direct child exits. Retain the callback for
-    // admission retries, and retain a verified result if removing its durable receipt must retry.
-    const confirmTermination = nativeTerminationProof
-      ? async (): Promise<boolean> => {
-          if (!terminationConfirmed && (await nativeTerminationProof())) terminationConfirmed = true
-          if (terminationConfirmed && ownershipReceipt)
-            this.processLifecycle?.complete(ownershipReceipt, true)
-          return terminationConfirmed
+    let processProof: Promise<ProcessTreeKillResult> | undefined
+    let windowsOsProof: Promise<ProcessTreeKillResult> | undefined
+    const kernelEpochId = request.kernelEpochId ?? randomUUID()
+    let terminationAttempt = 0
+    const log = createLogger('notebook:kernel-termination')
+    // One owner supplies both executor and sandbox admission with evidence for this exact spawn.
+    // Keep successful proof before settling the receipt; failed observations remain retryable.
+    const teardownProcess = async (): Promise<ProcessTreeKillResult> => {
+      if (!processProof) {
+        const attempt = ++terminationAttempt
+        const proof = (async () => {
+          // POSIX retries verify recorded birth identities. Windows taskkill only addresses a PID,
+          // so never repeat it after the first attempt; only its native owner may supply late proof.
+          const killOwnedChild = (): Promise<ProcessTreeKillResult> =>
+            this.killChild(child).catch(() => {
+              log.warn('kernel process termination attempt failed', {
+                sessionId: request.sessionId,
+                projectId: request.projectId,
+                kernelEpochId,
+                runtime: kind,
+                phase: 'process-termination',
+                attempt,
+                failureCategory: 'termination-error'
+              })
+              return { reaped: false }
+            })
+          const osResult = await (this.platform === 'win32'
+            ? (windowsOsProof ??= killOwnedChild())
+            : killOwnedChild())
+          let result = osResult
+          if (!result.reaped && (await nativeTerminationProof?.().catch(() => false))) {
+            result = { reaped: true }
+          }
+          log.info('kernel process termination proof', {
+            sessionId: request.sessionId,
+            projectId: request.projectId,
+            kernelEpochId,
+            runtime: kind,
+            phase: 'process-termination',
+            attempt,
+            osReaped: osResult.reaped,
+            ...(this.platform === 'win32' && !result.reaped
+              ? {
+                  failureCategory: nativeTerminationProof
+                    ? 'native-proof-pending'
+                    : 'native-proof-unavailable'
+                }
+              : {}),
+            ...result
+          })
+          return result
+        })()
+        processProof = proof
+        void proof.then(
+          (result) => {
+            if (!result.reaped && processProof === proof) processProof = undefined
+          },
+          () => {
+            if (processProof === proof) processProof = undefined
+          }
+        )
+      }
+      const result = await processProof
+      if (ownershipReceipt) {
+        try {
+          this.processLifecycle?.complete(ownershipReceipt, result.reaped)
+        } catch (error) {
+          log.warn('kernel receipt settlement incomplete', {
+            sessionId: request.sessionId,
+            projectId: request.projectId,
+            kernelEpochId,
+            runtime: kind,
+            phase: 'receipt-settlement',
+            attempt: terminationAttempt,
+            processesTerminated: result.reaped
+          })
+          throw error
         }
-      : undefined
+      }
+      return result
+    }
+    // This callback never enters sandbox cleanup, which may be holding its own retry lock.
+    const confirmTermination = async (): Promise<boolean> => (await teardownProcess()).reaped
     const cleanupSandbox = (
       reason: NotebookSandboxCleanupReason,
       processOutcome: NotebookSandboxProcessOutcome
     ): Promise<NotebookSandboxCleanupResult> =>
       sandboxed?.cleanup(reason, {
         ...processOutcome,
-        ...(confirmTermination ? { confirmTermination } : {})
+        confirmTermination
       }) ??
       Promise.resolve({
         processesTerminated: processOutcome.processesTerminated,
@@ -1107,7 +1176,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         {
           laneKey: this.laneKey,
           processKey: kind === 'repl' ? 'repl' : `${kind}:${env}`,
-          kernelEpochId: request.kernelEpochId ?? randomUUID()
+          kernelEpochId
         },
         ownerToken
       )
@@ -1165,9 +1234,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)
       this.registerOwnedProcessGroup(child, processTreeOwnership.token)
     const cleanupFailedSpawn = async (): Promise<void> => {
-      const result = await this.terminateTree(child)
-      if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
-      else if (ownershipIntent && result.reaped) {
+      const result = await teardownProcess()
+      if (!ownershipReceipt && ownershipIntent && result.reaped) {
         this.processLifecycle?.abandonSpawn(ownershipIntent)
       }
       await cleanupSandbox('spawn-failed', { processesTerminated: result.reaped })
@@ -1221,9 +1289,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       cwd: spawnCwd ?? process.cwd(),
       beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
       annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr),
-      confirmTermination,
-      cleanupSandbox,
-      ...(ownershipReceipt ? { ownershipReceipt } : {})
+      teardownProcess,
+      cleanupSandbox
     }
   }
 
@@ -1679,11 +1746,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
     proc: ProcState,
     reason: NotebookSandboxCleanupReason = 'cancel'
   ): Promise<ProcessTreeKillResult> {
-    const done = this.teardownProc(proc)
+    const done = proc
+      .teardownProcess()
       .then(async (result) => {
-        if (!result.reaped && (await proc.confirmTermination?.().catch(() => false))) {
-          result = { reaped: true }
-        }
         const cleanup = await this.cleanupProc(proc, reason, { processesTerminated: result.reaped })
         return {
           reaped:
@@ -1743,13 +1808,6 @@ class NotebookKernelExecutor implements NotebookExecutor {
     )
     proc.sandboxCleanupPromise = cleanup
     return cleanup
-  }
-
-  private async teardownProc(proc: ProcState): Promise<ProcessTreeKillResult> {
-    // Keep the OS result even if receipt removal fails: retry only the owned receipt, not an old PID.
-    const result = await (proc.processTeardownPromise ??= this.killChild(proc.child))
-    if (proc.ownershipReceipt) this.processLifecycle?.complete(proc.ownershipReceipt, result.reaped)
-    return result
   }
 
   // Kills a child and every descendant it spawned (a conda/micromamba launcher, an R subprocess),

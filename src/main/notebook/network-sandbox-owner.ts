@@ -84,6 +84,25 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
 
+// A required runtime root can fail before the contained probe starts when Windows refuses the
+// AppContainer ACL grant. That is the point at which the interactive elevated repair is needed.
+// Keep this narrow: cleanup failures and arbitrary child-process errors must remain fail-closed.
+const isWindowsRuntimeAccessPermissionError = (error: unknown): boolean => {
+  const seen = new Set<unknown>()
+  let current: unknown = error
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current)
+    const message = current.message.toLowerCase()
+    if (
+      message.includes('grant appcontainer access') &&
+      /\bwindows_acl_access_denied:\s/i.test(message)
+    )
+      return true
+    current = current.cause
+  }
+  return false
+}
+
 const WINDOWS_PROBE_DIRECTORY_LOCK_CODES = new Set([
   'EBUSY',
   'EPERM',
@@ -799,7 +818,29 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           throw new Error('Enable protected mode before authorizing R access.')
         if (request.signal?.aborted)
           throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')
-        if (await this.verifyWindowsRuntimeAccess(request.executable, true, undefined, operationId))
+        let preflightVerified = false
+        try {
+          preflightVerified = await this.verifyWindowsRuntimeAccess(
+            request.executable,
+            true,
+            undefined,
+            operationId
+          )
+        } catch (error) {
+          // The preflight itself may need the same ACL that the interactive repair grants. Let the
+          // existing UAC flow handle only this explicit permission failure; every other failure,
+          // especially incomplete cleanup, remains a hard admission error.
+          if (
+            !this.options.allowRuntimeAccessPrompt ||
+            !isWindowsRuntimeAccessPermissionError(error)
+          )
+            throw error
+          this.log.info('R runtime access preflight requires administrator authorization', {
+            runtime: 'r',
+            executable: request.executable
+          })
+        }
+        if (preflightVerified)
           return { cancelled: false, windowsRuntimeAccessRequired: access.registered }
         if (request.signal?.aborted)
           throw new NotebookRuntimeAccessCancelledError('R access preparation was cancelled.')

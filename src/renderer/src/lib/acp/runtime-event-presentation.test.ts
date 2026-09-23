@@ -85,6 +85,7 @@ describe('runtime event presentation reducer', () => {
     const session = store.getState().sessions[0]
     expect(session.messages[1]).toMatchObject({
       content: 'I will inspect it.',
+      createdAt: 1_710_000_000_000,
       streamId: 'assistant-stream',
       status: 'streaming'
     })

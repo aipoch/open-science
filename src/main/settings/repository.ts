@@ -921,6 +921,26 @@ class SettingsRepository {
     })
   }
 
+  // Pin a verified historical location without overwriting a selection queued since startup read.
+  async persistLegacyDataRoot(dataRoot: string, completedAt: number): Promise<StoredSettings> {
+    const validate = (): void => {
+      if (!isAbsolute(dataRoot) || !statSync(dataRoot, { throwIfNoEntry: false })?.isDirectory())
+        throw new Error(
+          `The saved data location is missing or is not a directory: ${dataRoot}. Reconnect it before restarting.`
+        )
+    }
+    return this.store.mutate(
+      (settings) => {
+        if (settings.onboardingCompletedAt !== completedAt || settings.dataRoot !== undefined)
+          throw new Error('The data location changed. Restart to use the saved location.')
+        validate()
+        return { ...settings, dataRoot }
+      },
+      validate,
+      ['dataRoot']
+    )
+  }
+
   // Stamps the legacy-path-normalization completion time exactly once; later calls leave the first
   // value intact, so a caller can safely call this every launch once the pass has succeeded.
   async markPathsNormalized(timestamp: number): Promise<StoredSettings> {

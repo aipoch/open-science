@@ -245,7 +245,8 @@
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/service.test.ts",
       "src/main/settings/workflows.test.ts",
-      "src/main/settings/workflows/connectors-diagnostic.test.ts"
+      "src/main/settings/workflows/connectors-diagnostic.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

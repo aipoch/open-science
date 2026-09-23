@@ -7,6 +7,8 @@
     "src/main/storage/content-repository.test.ts",
     "src/main/storage/content-repository.ts",
     "src/main/storage/data-directories.ts",
+    "src/main/storage/data-location-identity.ts",
+    "src/main/storage/data-location-identity.test.ts",
     "src/main/storage/data-migration.test.ts",
     "src/main/storage/data-migration.ts",
     "src/main/storage/data-path-codec.ts",
@@ -56,6 +58,7 @@
     "src/main/storage/migration-target-race.test.ts"
   ],
   "interfacePaths": [
+    "src/main/storage/data-location-identity.ts",
     "src/main/storage/command-owner.ts",
     "src/main/storage/content-blob-registry.ts",
     "src/main/storage/content-repository.ts",
@@ -85,6 +88,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/storage/data-location-identity.test.ts",
       "src/main/storage/command-owner.atomicity.test.ts",
       "src/main/storage/content-blob-registry.test.ts",
       "src/main/storage/content-repository.test.ts",
@@ -696,7 +700,8 @@
       "src/main/session-package/ro-crate.integration.test.ts",
       "src/main/session-package/ro-crate.test.ts",
       "src/main/settings/codex-bridge-tools.test.ts",
-      "src/main/literature/smart-collections.test.ts"
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

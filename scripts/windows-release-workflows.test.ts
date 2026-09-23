@@ -60,6 +60,30 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
+  it('blocks packaging on native data-location upgrade checks for every target OS', () => {
+    const job = readWorkflow('build.yml').jobs.build
+    const steps = job.steps ?? []
+    const check = findStep(job, 'Verify native data-location upgrades')
+    expect(job['runs-on']).toBe('${{ matrix.os }}')
+    expect(check.if).toBeUndefined()
+    expect(check['continue-on-error']).toBeUndefined()
+    for (const suite of [
+      'src/main/storage-root.test.ts',
+      'src/main/storage/brand-location.test.ts',
+      'src/main/storage/data-location-identity.test.ts',
+      'src/main/settings/document-store.test.ts',
+      'src/main/settings/repository.test.ts'
+    ])
+      expect(check.run).toContain(suite)
+    expect(steps.indexOf(check)).toBeGreaterThan(
+      steps.indexOf(findStep(job, 'Install dependencies'))
+    )
+    expect(steps.indexOf(check)).toBeLessThan(steps.indexOf(findStep(job, 'Build & package')))
+    expect(steps.indexOf(check)).toBeLessThan(
+      steps.indexOf(findStep(job, 'Upload build artifacts'))
+    )
+  })
+
   it('stages the pinned compatibility runner before packaging Windows builds', () => {
     const job = readWorkflow('build.yml').jobs.build
     const stage = findStep(job, 'Stage notebook runtime resources')
