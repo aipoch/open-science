@@ -57,7 +57,12 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import {
+  pendingPdfContextSelections,
+  usePreviewWorkbenchStore,
+  type PreviewFileSource
+} from '@/stores/preview-workbench-store'
+import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 import { useSessionStore } from '@/stores/session-store'
 import {
   ANNOTATION_LIMITS,
@@ -3413,10 +3418,92 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
   const ownerSessionId = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
-        candidate.id === state.selectedSessionId && candidate.projectId === props.item.projectId
+        candidate.id === state.selectedSessionId &&
+        candidate.projectId === props.item.projectId &&
+        candidate.archivedAt === undefined
     )
     return session?.id
   })
+  const isDraftReadingSource = usePreviewWorkbenchStore((state) =>
+    Boolean(
+      !ownerSessionId &&
+      props.onAddAnnotation &&
+      props.item.projectId &&
+      props.item.projectId === state.activeProjectId &&
+      target &&
+      pendingPdfContextSelections(state.pendingPdfContextByProject[props.item.projectId]).some(
+        (selection) =>
+          selection.kind === 'version' &&
+          selection.sourceKind === target.sourceKind &&
+          selection.sourceVersionId === target.sourceVersionId
+      )
+    )
+  )
+  // Drafts have no Session binding yet. Resolve only their selected immutable Version; the
+  // first-send owner still creates the Session and links its PDF context.
+  const draftSourceKey =
+    isDraftReadingSource && target && props.item.projectId
+      ? JSON.stringify([props.item.projectId, target.sourceKind, target.sourceVersionId])
+      : undefined
+  const [draftSource, setDraftSource] = useState<{
+    key: string
+    source: PdfAnnotation['source']
+  }>()
+  const sourceKind = target?.sourceKind
+  const sourceFileId = target?.sourceFileId
+  const sourceVersionId = target?.sourceVersionId
+  useEffect(() => {
+    if (!draftSourceKey || isLibrary || !sourceFileId || !sourceVersionId) return
+    let active = true
+    const item = props.item
+    void window.api.managedFileVersions
+      .inspect({
+        projectId: item.projectId!,
+        source: sourceKind === 'artifact-version' ? 'artifact' : 'upload',
+        fileId: sourceFileId,
+        versionId: sourceVersionId
+      })
+      .then((result) => {
+        if (!active) return
+        if (!result.ok) {
+          setDraftSource(undefined)
+          return
+        }
+        const version = result.value.selectedVersion
+        if (
+          !version ||
+          version.id !== sourceVersionId ||
+          version.fileId !== sourceFileId ||
+          version.source !== (sourceKind === 'artifact-version' ? 'artifact' : 'upload')
+        )
+          return
+        const resolved = createPreviewFileItemForManagedVersion({
+          item,
+          version,
+          projectId: item.projectId!,
+          sessionId: result.value.sessionId
+        })
+        setDraftSource({
+          key: draftSourceKey,
+          source: {
+            kind: version.source === 'artifact' ? 'artifact-version' : 'upload-version',
+            projectId: item.projectId!,
+            sessionId: result.value.sessionId,
+            versionId: version.id,
+            name: resolved.name,
+            path: resolved.path,
+            checksum: version.checksum
+          }
+        })
+      })
+      .catch(() => {
+        // Unavailable versions keep the existing disabled action and reason tooltip.
+        if (active) setDraftSource(undefined)
+      })
+    return () => {
+      active = false
+    }
+  }, [draftSourceKey, isLibrary, sourceFileId, sourceVersionId, props.item, sourceKind])
   const binding = useSessionStore((state) => {
     const session = state.sessions.find(
       (candidate) =>
@@ -3430,6 +3517,16 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
         )
       : undefined
   })
+  const draftEvidenceSource =
+    draftSourceKey &&
+    isLibrary &&
+    libraryAnnotations.source &&
+    libraryAnnotations.source.kind === sourceKind &&
+    libraryAnnotations.source.versionId === sourceVersionId
+      ? { ...libraryAnnotations.source, projectId: props.item.projectId! }
+      : draftSourceKey && draftSource?.key === draftSourceKey
+        ? draftSource.source
+        : undefined
   const candidateSource: PdfAnnotation['source'] | undefined =
     binding && props.item.projectId
       ? {
@@ -3441,9 +3538,13 @@ const PdfPreviewRendererContent = (props: PreviewFileRendererProps): React.JSX.E
           path: props.item.path,
           checksum: binding.checksum
         }
-      : undefined
+      : draftEvidenceSource
   const pdfEvidenceSource =
-    candidateSource && pdfAnnotationSourceIsFixed(candidateSource) ? candidateSource : undefined
+    candidateSource &&
+    /^[a-f0-9]{64}$/u.test(candidateSource.checksum) &&
+    pdfAnnotationSourceIsFixed(candidateSource)
+      ? candidateSource
+      : undefined
   const bookmarkSourceKind = target?.sourceKind
   const bookmarkSourceFileId = target?.sourceFileId
   const bookmarkSourceVersionId = target?.sourceVersionId
