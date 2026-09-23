@@ -75,7 +75,6 @@ if (new URLSearchParams(location.search).has('search-shortcuts')) {
   useSpecialistStore.setState({
     isLoaded: true,
     load: async () => undefined,
-    listen: unsubscribe,
     items: [
       {
         id: 'search-fixture',
