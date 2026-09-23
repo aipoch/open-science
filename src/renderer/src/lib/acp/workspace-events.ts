@@ -840,6 +840,7 @@ const applyWorkspaceRuntimeEvent = async (
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
       eventId: event.id,
+      timestamp: event.timestamp,
       promptMessageId: event.promptMessageId,
       content,
       image
@@ -1258,6 +1259,7 @@ const applyWorkspaceRuntimeEventBatch = async (
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
       eventId: event.id,
+      timestamp: event.timestamp,
       promptMessageId: event.promptMessageId,
       content
     })

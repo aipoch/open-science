@@ -344,6 +344,7 @@ describe('Settings backend ownership architecture', () => {
       'markOnboardingComplete',
       'markPathsNormalized',
       'mutateClassification',
+      'persistLegacyDataRoot',
       'publishBootstrapOpenAlex',
       'publishBootstrapProvider',
       'rememberCodexAutoHttpsFallback',

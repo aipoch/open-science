@@ -5,6 +5,12 @@ use anyhow::{Context, Result, bail};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
+const WINDOWS_ACL_ACCESS_DENIED_MARKER: &str = "WINDOWS_ACL_ACCESS_DENIED";
+
+fn icacls_error_marker(status_code: Option<i32>) -> Option<&'static str> {
+    (status_code == Some(5)).then_some(WINDOWS_ACL_ACCESS_DENIED_MARKER)
+}
+
 #[cfg(windows)]
 mod wfp;
 
@@ -2210,7 +2216,10 @@ mod windows_host {
             return Ok(());
         }
         let message = String::from_utf8_lossy(&output.stderr);
-        bail!("{action} {path}: {}", message.trim())
+        let marker = super::icacls_error_marker(output.status.code())
+            .map(|value| format!("{value}: "))
+            .unwrap_or_default();
+        bail!("{action} {path}: {marker}{}", message.trim())
     }
 
     fn is_protected_write_boundary(spec: &LaunchSpec, path: &str) -> bool {
@@ -4715,6 +4724,16 @@ mod tests {
         let json = b"\xef\xbb\xbf{\"state\":\"creating\"}";
         let value: serde_json::Value = serde_json::from_slice(strip_utf8_bom(json)).unwrap();
         assert_eq!(value["state"], "creating");
+    }
+
+    #[test]
+    fn icacls_access_denied_uses_a_stable_marker() {
+        assert_eq!(
+            icacls_error_marker(Some(5)),
+            Some(WINDOWS_ACL_ACCESS_DENIED_MARKER)
+        );
+        assert_eq!(icacls_error_marker(Some(3)), None);
+        assert_eq!(icacls_error_marker(None), None);
     }
 
     #[test]

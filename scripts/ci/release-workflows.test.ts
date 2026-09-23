@@ -48,6 +48,23 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('blocks verified Windows builds on real receipt publication and submission recovery', () => {
+    const build = workflow('build.yml').jobs.build
+    const gate = step(build, 'Verify Windows receipt publication and submission recovery')
+    expect(gate.if).toBe("${{ matrix.platform == 'win' && !inputs.skip_verify }}")
+    expect(gate['continue-on-error']).not.toBe(true)
+    expect(gate.run).toContain('npx vitest run')
+    expect(gate.run).toContain('src/main/notebook/file-evidence-publication.integration.test.ts')
+    expect(gate.run).toContain(
+      'src/main/compute/compute-submission-evidence-recovery.integration.test.ts'
+    )
+    const steps = build.steps ?? []
+    expect(steps.indexOf(gate)).toBeGreaterThan(steps.indexOf(step(build, 'Install dependencies')))
+    expect(steps.indexOf(gate)).toBeLessThan(
+      steps.indexOf(step(build, 'Prune foreign Prisma engines'))
+    )
+  })
+
   it('batches latest-main Windows coverage daily across eight serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>

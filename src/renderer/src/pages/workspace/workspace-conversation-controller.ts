@@ -14,10 +14,11 @@ import {
 } from '../../../../shared/annotations'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { imageAttachmentMimeType } from '../../../../shared/uploads'
-import type {
-  ChatMessage,
-  ChatSession,
-  SessionActionabilityProjection
+import {
+  projectSessionActionability,
+  type ChatMessage,
+  type ChatSession,
+  type SessionActionabilityProjection
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -279,7 +280,9 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
   return Boolean(
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    activeSession?.status === 'running' &&
+    activeSession &&
+    // Queue admission must share the composer's live ownership view across durable idle echoes.
+    projectSessionActionability(activeSession).activity === 'running' &&
     composer.view.transfers.length === 0 &&
     !composer.view.readingContext.isPending &&
     (!docIsEmpty(composer.view.doc) ||
@@ -317,7 +320,8 @@ const canQueueRevision = (options: WorkspaceConversationControllerOptions): bool
   return Boolean(
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    activeSession?.status === 'running' &&
+    activeSession &&
+    projectSessionActionability(activeSession).activity === 'running' &&
     composer.view.transfers.length === 0 &&
     !options.isReviewing &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&

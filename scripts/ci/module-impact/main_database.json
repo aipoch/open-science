@@ -472,7 +472,8 @@
       "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/project-files/artifact-hidden.integration.test.ts"
+      "src/main/project-files/artifact-hidden.integration.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -1,8 +1,11 @@
+import { existsSync, lstatSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { app } from 'electron'
 import { directoryHasFiles } from './storage/location-evidence'
 import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './storage/managed-workspace-ownership-dir'
+import { MIGRATABLE_DATA_DIRS } from './storage/data-directories'
+import { dataLocationIdentity } from './storage/data-location-identity'
 
 import { resolveBootstrapConfigRoot, resolveConfigRootOverride } from './storage/config-root'
 import { DataLocationSelectionError, hasDataRootContent } from './storage/data-location-selection'
@@ -61,7 +64,7 @@ const dataRootForPicked = (picked: string): string => {
   return direct ? resolved : (candidates[0] ?? join(resolved, folder))
 }
 
-// The new default is only an onboarding choice; never infer a saved root from directory content.
+// The new default is only an onboarding choice. Completed legacy installs are resolved separately.
 const computeDefaultDataRoot = (): string => dataRootForParent(defaultDataParent())
 
 // Path equality that respects the platform filesystem: case-insensitive on Windows (NTFS paths are
@@ -97,8 +100,44 @@ const initDataRoot = (settingsDataRoot: unknown, onboardingCompletedAt?: number)
     )
   configuredDataRoot = unset ? undefined : (settingsDataRoot as string)
   // 历史数据路径，属于品牌改名豁免项，禁止随展示品牌修改。
-  const legacyDefault = (): string =>
-    join(app.getPath('home'), app.isPackaged ? 'OpenScience' : 'OpenScience-dev')
+  const legacyDefault = (): string => {
+    const configRoot = resolveConfigRoot()
+    const homeDefault = join(defaultDataParent(), legacyDataFolderName())
+    const legacyUsedConfig =
+      MIGRATABLE_DATA_DIRS.some(
+        (dir) => lstatSync(join(configRoot, dir), { throwIfNoEntry: false }) !== undefined
+      ) && !existsSync(join(configRoot, legacyDataFolderName()))
+    const candidates = [
+      // The nested branded-folder guard only decides the empty-marker fallback. Older
+      // research in the config root still needs conflict detection before pinning a pointer.
+      configRoot,
+      homeDefault,
+      ...(!app.isPackaged ? [join(defaultDataParent(), 'OpenScience-dev')] : []),
+      // 0.31 ignored ordinary config overrides when resolving its implicit home root.
+      // The dedicated E2E override is an isolation boundary and must never inspect real home.
+      ...(!process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT?.trim()
+        ? [
+            join(app.getPath('home'), legacyDataFolderName()),
+            ...(!app.isPackaged ? [join(app.getPath('home'), 'OpenScience-dev')] : [])
+          ]
+        : [])
+    ]
+    const physicalLocations = new Set<string>()
+    const populated = candidates.filter((root) => {
+      if (!MIGRATABLE_DATA_DIRS.some((dir) => directoryHasFiles(join(root, dir)))) return false
+      const physicalPath = dataLocationIdentity(root)
+      if (physicalLocations.has(physicalPath)) return false
+      physicalLocations.add(physicalPath)
+      return true
+    })
+    // Releases with the same settings schema used different implicit roots. Neither copy
+    // is authoritative when both contain data; persisting either would hide the other.
+    if (populated.length > 1)
+      throw new DataLocationSelectionError(
+        `Multiple data locations exist. Select or recover the original data folder before restarting:\n${populated.join('\n')}`
+      )
+    return populated[0] ?? (legacyUsedConfig ? configRoot : homeDefault)
+  }
   cachedDataRoot =
     configuredDataRoot ??
     (onboardingCompletedAt !== undefined ? legacyDefault() : computeDefaultDataRoot())

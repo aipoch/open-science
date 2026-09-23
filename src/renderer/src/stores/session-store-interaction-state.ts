@@ -150,7 +150,11 @@ export const projectSessionActionability = (
   const interactionState = inferSessionInteractionState(session)
   const status = resolveSessionInteractionStatus(session, interactionState)
   const waitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
-  const running = !waitReason && (status === 'running' || facts.hasRunningWork === true)
+  // Durable transcript updates can lag Main's live prompt ownership. Keep foreground actions
+  // locked until that ownership settles, while preserving actionable user waits above it.
+  const running =
+    !waitReason &&
+    (status === 'running' || session.agentPromptInFlight === true || facts.hasRunningWork === true)
   const durableRootPermissionPending = session.runtimeContext?.permission?.state === 'pending'
   const permissionPending =
     durableRootPermissionPending || (facts.rootPermissionPending ?? interactionState.permission)

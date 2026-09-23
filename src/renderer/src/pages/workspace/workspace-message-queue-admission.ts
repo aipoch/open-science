@@ -82,6 +82,8 @@ const queueSessionIsSendable = (
   session.archivedAt === undefined &&
   (options.isProjectActive?.(session.projectId) ?? true) &&
   (session.status === 'idle' || session.status === 'error') &&
+  // Live ownership can reach the store before the runtime snapshot or durable status catches up.
+  !session.agentPromptInFlight &&
   // Errored turns have no live reveal to wait for; let the queue proceed immediately.
   (session.status === 'error' || !options.isPresentationRevealing(session.id)) &&
   !options.promptInFlightSessionIds.includes(session.id) &&
@@ -107,6 +109,7 @@ const queuedItemHasPayload = (item: MessageQueueItem): boolean =>
   Boolean(item.snapshot?.pdfContext)
 
 const isQueueLiveTurn = (session: ChatSession | undefined): boolean =>
+  session?.agentPromptInFlight === true ||
   session?.status === 'running' ||
   session?.status === 'waiting-for-user' ||
   session?.status === 'waiting-permission'
