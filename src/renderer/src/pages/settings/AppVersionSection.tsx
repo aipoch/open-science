@@ -84,7 +84,11 @@ const AppVersionSection = ({
   })()
 
   return (
-    <SettingsSection title={t('About')} aria-label={t('App version')}>
+    <SettingsSection
+      data-settings-anchor="general.updates"
+      title={t('About')}
+      aria-label={t('App version')}
+    >
       <SettingsRow
         label={
           <div className="flex min-w-0 items-center gap-3">

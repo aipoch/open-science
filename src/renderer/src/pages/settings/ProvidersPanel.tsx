@@ -6,6 +6,8 @@ import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import {
   dialogBodyClassName,
   dialogDescriptionClassName,
@@ -166,6 +168,9 @@ const ProvidersPanel = ({
   const [providerPendingDeletion, setProviderPendingDeletion] = useState<ProviderView>()
   const dialogProvider = useRetainedDialogValue(providerPendingDeletion)
   const [providerDeletionPending, setProviderDeletionPending] = useState(false)
+  const [deletionScenarioHandling, setDeletionScenarioHandling] = useState<'preserve' | 'inherit'>(
+    'inherit'
+  )
   const xaiLoginCancelledRef = useRef(false)
   // Guards the race between the two isolated sign-in paths. The browser flow (setup-token + its
   // localhost callback) and a manual paste both write the same provider token; whichever finishes
@@ -539,7 +544,10 @@ const ProvidersPanel = ({
           claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}
-          onDelete={setProviderPendingDeletion}
+          onDelete={(provider) => {
+            setDeletionScenarioHandling('inherit')
+            setProviderPendingDeletion(provider)
+          }}
           onTest={(provider) => void handleTest(provider)}
           isCodexLoginPending={isCodexLoginPending}
           onCancelCodexLogin={() => void cancelCodexLogin()}
@@ -630,11 +638,67 @@ const ProvidersPanel = ({
                           <li key={scenario.id}>{scenario.label}</li>
                         ))}
                       </ul>
-                      <p className="mt-3">
-                        {t(
-                          'Keep their saved selections as unavailable, or reset them to use the main model.'
-                        )}
-                      </p>
+                      <div
+                        role="radiogroup"
+                        aria-label={t('Scenario model handling')}
+                        className="mt-3 space-y-2"
+                      >
+                        {(
+                          [
+                            {
+                              value: 'inherit',
+                              label: t('Reset to main model'),
+                              recommended: true,
+                              description: t(
+                                'Affected scenario models will use the main model instead, without interruption.'
+                              )
+                            },
+                            {
+                              value: 'preserve',
+                              label: t('Keep saved selections'),
+                              recommended: false,
+                              description: t(
+                                'Scenario models keep their saved selections and are marked unavailable until you reassign them.'
+                              )
+                            }
+                          ] as const
+                        ).map((option) => (
+                          <label
+                            key={option.value}
+                            className={cn(
+                              'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors',
+                              deletionScenarioHandling === option.value
+                                ? 'border-primary/40 bg-primary/5'
+                                : 'border-border hover:bg-muted/50'
+                            )}
+                          >
+                            <input
+                              type="radio"
+                              name="provider-deletion-scenario-handling"
+                              className="mt-0.5 size-4 shrink-0 accent-primary outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                              checked={deletionScenarioHandling === option.value}
+                              disabled={providerDeletionPending}
+                              onChange={() => setDeletionScenarioHandling(option.value)}
+                            />
+                            <span className="min-w-0">
+                              <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                                {option.label}
+                                {option.recommended ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="shrink-0 text-[11px] font-normal"
+                                  >
+                                    {t('Recommended')}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                              <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+                                {option.description}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
                       {dialogAffectedScenarios.some((scenario) => scenario.id === 'vision') ? (
                         <p className="mt-2">
                           {t(
@@ -650,47 +714,47 @@ const ProvidersPanel = ({
               </AlertDialog.Description>
             </div>
             <div className={`${dialogFooterClassName} flex-wrap`}>
-              <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline" disabled={providerDeletionPending}>
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
               {dialogAffectedScenarios.length > 0 ? (
                 <>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="link"
+                    className="mr-auto"
                     disabled={providerDeletionPending}
                     onClick={reassignAffectedScenario}
                   >
                     {t('Reassign first')}
                   </Button>
+                  <AlertDialog.Cancel asChild>
+                    <Button type="button" variant="outline" disabled={providerDeletionPending}>
+                      {t('Cancel')}
+                    </Button>
+                  </AlertDialog.Cancel>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={providerDeletionPending}
+                    onClick={() => void confirmProviderDeletion(deletionScenarioHandling)}
+                  >
+                    {t('Delete provider')}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <AlertDialog.Cancel asChild>
+                    <Button type="button" variant="outline" disabled={providerDeletionPending}>
+                      {t('Cancel')}
+                    </Button>
+                  </AlertDialog.Cancel>
                   <Button
                     type="button"
                     variant="destructive"
                     disabled={providerDeletionPending}
                     onClick={() => void confirmProviderDeletion('preserve')}
                   >
-                    {t('Keep unavailable')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={providerDeletionPending}
-                    onClick={() => void confirmProviderDeletion('inherit')}
-                  >
-                    {t('Use main model')}
+                    {t('Delete provider')}
                   </Button>
                 </>
-              ) : (
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={providerDeletionPending}
-                  onClick={() => void confirmProviderDeletion('preserve')}
-                >
-                  {t('Delete')}
-                </Button>
               )}
             </div>
           </AlertDialog.Content>

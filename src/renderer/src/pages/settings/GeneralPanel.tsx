@@ -33,7 +33,7 @@ import type {
 } from '../../../../shared/notifications'
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import { SettingsPreferenceToggle, SettingsRow, SettingsSection } from './SettingsLayout'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -143,6 +143,7 @@ const GeneralPanel = (): React.JSX.Element => {
   const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
   const showNotificationContent = useSettingsStore((state) => state.showNotificationContent)
   const setShowNotificationContent = useSettingsStore((state) => state.setShowNotificationContent)
+  const dismissSettingsWriteError = useSettingsStore((state) => state.dismissSettingsWriteError)
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
 
@@ -339,10 +340,15 @@ const GeneralPanel = (): React.JSX.Element => {
           )}
           className="pt-0"
         >
-          <SettingsToggle
+          <SettingsPreferenceToggle
             enabled={notificationsEnabled}
             aria-label={t('Toggle task notifications')}
-            onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
+            onToggle={async (next) => {
+              const result = await setNotificationsEnabled(next)
+              // The row reports the failure inline, so take it off the top-of-dialog banner.
+              if (result === 'reverted') dismissSettingsWriteError('notifications')
+              return result
+            }}
           />
         </SettingsRow>
 
@@ -352,11 +358,15 @@ const GeneralPanel = (): React.JSX.Element => {
             'Include task names and request details. Provider errors are always hidden.'
           )}
         >
-          <SettingsToggle
+          <SettingsPreferenceToggle
             enabled={showNotificationContent}
             disabled={!notificationsEnabled}
             aria-label={t('Toggle task content in system notifications')}
-            onToggle={() => void setShowNotificationContent(!showNotificationContent)}
+            onToggle={async (next) => {
+              const result = await setShowNotificationContent(next)
+              if (result === 'reverted') dismissSettingsWriteError('notificationContent')
+              return result
+            }}
           />
         </SettingsRow>
 

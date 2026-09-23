@@ -55,19 +55,28 @@ type OptimisticPreferenceField =
   | 'projectFilesFilter'
   | 'defaultPermissionProfile'
 
+// How an optimistic preference write settled, so rows can show their own save feedback: 'saved'
+// (committed), 'reverted' (rejected and rolled back), or 'superseded' (a newer write settled the
+// field; that write owns the feedback).
+export type PreferenceWriteResult = 'saved' | 'reverted' | 'superseded'
+
 export type SettingsPreferencesActions = {
-  setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
+  setReasoningEffort: (effort: ReasoningEffort) => Promise<PreferenceWriteResult>
   setReviewerModel: (configuration: ReviewerModelConfiguration) => Promise<void>
   setSessionDetailsModel: (configuration: SessionDetailsModelConfiguration) => Promise<void>
   setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
   setVisionModel: (configuration: VisionModelConfiguration | undefined) => Promise<void>
-  setNotificationsEnabled: (enabled: boolean) => Promise<void>
-  setShowNotificationContent: (enabled: boolean) => Promise<void>
-  setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
-  setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
-  setAppIconVariant: (variant: AppIconVariant) => Promise<void>
-  setProjectFilesFilter: (filter: ProjectFilesFilterPreference | undefined) => Promise<void>
-  setDefaultPermissionProfile: (profile: PermissionProfileId) => Promise<void>
+  setNotificationsEnabled: (enabled: boolean) => Promise<PreferenceWriteResult>
+  setShowNotificationContent: (enabled: boolean) => Promise<PreferenceWriteResult>
+  setConversationSkillImportEnabled: (enabled: boolean) => Promise<PreferenceWriteResult>
+  setClosePreference: (
+    preference: CloseActionPreference | undefined
+  ) => Promise<PreferenceWriteResult>
+  setAppIconVariant: (variant: AppIconVariant) => Promise<PreferenceWriteResult>
+  setProjectFilesFilter: (
+    filter: ProjectFilesFilterPreference | undefined
+  ) => Promise<PreferenceWriteResult>
+  setDefaultPermissionProfile: (profile: PermissionProfileId) => Promise<PreferenceWriteResult>
 
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
@@ -181,7 +190,7 @@ export const createSettingsPreferencesSlice = ({
     value: SettingsPreferencesState[Field],
     command: () => Promise<SettingsSnapshot>,
     consoleMessage: string
-  ): Promise<void> => {
+  ): Promise<PreferenceWriteResult> => {
     const write = writeCoordinator.beginOptimistic(key, getState()[field])
     setState({ [field]: value } as Partial<SettingsPreferencesState>)
 
@@ -196,9 +205,10 @@ export const createSettingsPreferencesSlice = ({
           ? { value: snapshot[field] as unknown as SettingsPreferencesState[Field] }
           : undefined
       )
-      if (!isCurrent) return
+      if (!isCurrent) return 'superseded'
       setState({ [field]: confirmedValue } as Partial<SettingsPreferencesState>)
       write.succeed()
+      return 'saved'
     } catch (error) {
       const confirmedValue = write.complete()
       if (write.isCurrent()) {
@@ -206,6 +216,7 @@ export const createSettingsPreferencesSlice = ({
       }
       write.fail(SETTINGS_WRITE_ERRORS[key])
       console.error(consoleMessage, error)
+      return 'reverted'
     }
   }
 

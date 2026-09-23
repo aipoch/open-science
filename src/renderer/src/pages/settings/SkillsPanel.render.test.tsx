@@ -685,11 +685,48 @@ describe('SkillsPanel (list view)', () => {
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
     ).find((item) => item.textContent?.trim() === 'Delete')
     clickRadixMenuItem(remove)
+    expect(useSettingsStore.getState().deleteSkill).not.toHaveBeenCalled()
+
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Delete skill?')
+    const confirm = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Delete'
+    )
+    act(() => confirm?.click())
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith(
       'personal-mine',
       'personal',
       undefined
     )
+  })
+
+  it('asks for confirmation before deleting a skill and honors Cancel', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
+    clickRadixMenuItem(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (item) => item.textContent?.trim() === 'Delete'
+      )
+    )
+
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Delete skill?')
+    expect(dialog?.textContent).toContain(
+      '"Mine" will be permanently deleted. This action cannot be undone.'
+    )
+    expect(dialog?.textContent).toContain(
+      'This skill is enabled for 1 agent; they will no longer be able to use it.'
+    )
+
+    const cancel = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Cancel'
+    )
+    act(() => cancel?.click())
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(useSettingsStore.getState().deleteSkill).not.toHaveBeenCalled()
   })
 
   it('exports imported and personal Skills but never built-in Skills', async () => {
@@ -863,12 +900,17 @@ describe('SkillsPanel (list view)', () => {
     })
 
     openRadixMenu(document.body.querySelector<HTMLElement>('[aria-label="Actions for Mine"]'))
-    await act(async () => {
-      clickRadixMenuItem(
-        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-          (item) => item.textContent?.trim() === 'Delete'
-        )
+    clickRadixMenuItem(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (item) => item.textContent?.trim() === 'Delete'
       )
+    )
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    const confirm = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Delete'
+    )
+    await act(async () => {
+      confirm?.click()
       await Promise.resolve()
     })
 

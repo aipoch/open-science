@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SETTINGS_SEARCH_INDEX, SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsPanelId } from './settings-navigation'
+import { i18next } from '@/i18n'
 
 const PANELS: ReadonlyArray<{ id: SettingsPanelId; labelKey: string }> = [
   { id: 'general', labelKey: 'General' },
@@ -244,6 +245,113 @@ describe('SettingsGlobalSearch', () => {
     expect(target.hasAttribute('tabindex')).toBe(false)
     // Focus stays on the jump target after the visual ring is gone.
     expect(document.activeElement).toBe(target)
+  })
+
+  it('covers every settings panel and resolves the newly indexed sub-settings', () => {
+    const allPanels: readonly SettingsPanelId[] = [
+      'model',
+      'agent',
+      'skills',
+      'specialists',
+      'memory',
+      'connectors',
+      'network',
+      'remote-control',
+      'credentials',
+      'tags',
+      'permissions',
+      'runtimes',
+      'storage',
+      'compute',
+      'usage',
+      'archived',
+      'general'
+    ]
+    const covered = new Set(SETTINGS_SEARCH_INDEX.map((entry) => entry.panel))
+    expect(allPanels.filter((panel) => !covered.has(panel))).toEqual([])
+
+    renderSearch()
+
+    typeQuery('remembered')
+    expect(options().map((option) => option.id)).toEqual([
+      expect.stringContaining('permissions.remembered')
+    ])
+
+    typeQuery('update')
+    expect(options().map((option) => option.id)).toEqual([
+      expect.stringContaining('general.updates')
+    ])
+
+    typeQuery('api key')
+    const apiKeyHits = options().map((option) => option.id)
+    expect(apiKeyHits.some((id) => id.includes('model.provider-key'))).toBe(true)
+    expect(apiKeyHits.some((id) => id.includes('model.add-provider'))).toBe(true)
+  })
+
+  it('matches localized keyword synonyms and still matches English terms', async () => {
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      renderSearch()
+
+      // The aria-label is translated under zh-Hans; target the combobox role instead.
+      const typeLocalized = (value: string): void => {
+        const field = document.body.querySelector<HTMLInputElement>('[role="combobox"]')!
+        act(() => {
+          field.focus()
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+            field,
+            value
+          )
+          field.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+      }
+
+      // The zh-Hans synonyms for the 'api key' keyword key resolve through the catalog.
+      typeLocalized('密钥')
+      const localizedHits = options().map((option) => option.id)
+      expect(localizedHits.some((id) => id.includes('model.provider-key'))).toBe(true)
+      expect(localizedHits.some((id) => id.includes('model.add-provider'))).toBe(true)
+
+      // The English keyword key itself remains a haystack under a translated locale.
+      typeLocalized('vendor')
+      expect(options().map((option) => option.id)).toEqual([
+        expect.stringContaining('model.add-provider'),
+        expect.stringContaining('model.provider-key')
+      ])
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
+  it('cancels a superseded highlight when a new selection starts', () => {
+    vi.useFakeTimers()
+    mountPanelRoot(
+      'general',
+      `<section data-slot="settings-section" data-settings-anchor="general.notifications">Notifications</section>
+       <section data-slot="settings-section" data-settings-anchor="general.language">Language</section>`
+    )
+    renderSearch()
+
+    typeQuery('notifications')
+    pressKey('Enter')
+    const first = document.body.querySelector<HTMLElement>(
+      '[data-settings-anchor="general.notifications"]'
+    )!
+    expect(first.classList.contains('settings-search-highlight')).toBe(true)
+
+    // A second jump strips the first ring immediately instead of letting it dwell.
+    typeQuery('language')
+    pressKey('Enter')
+    expect(first.classList.contains('settings-search-highlight')).toBe(false)
+    const second = document.body.querySelector<HTMLElement>(
+      '[data-settings-anchor="general.language"]'
+    )!
+    expect(second.classList.contains('settings-search-highlight')).toBe(true)
+    expect(document.activeElement).toBe(second)
   })
 
   it('marks a jump target in the panel sources for every anchored entry', () => {

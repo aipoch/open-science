@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import type { SkillSource } from '../../../../shared/settings'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -148,6 +149,16 @@ const SkillsPanel = ({
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
   const [deleteError, setDeleteError] = useState<{ id: string; message: string } | undefined>()
+  const [skillPendingDeletion, setSkillPendingDeletion] = useState<
+    | {
+        id: string
+        name: string
+        source: 'imported' | 'personal'
+        directoryName?: string
+        enabledAgentCount: number
+      }
+    | undefined
+  >()
   const [exportError, setExportError] = useState<string | undefined>()
   const [accessError, setAccessError] = useState(false)
   const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
@@ -221,6 +232,20 @@ const SkillsPanel = ({
 
   const retryCatalog = (): void => {
     void loadCatalog()
+  }
+
+  const confirmSkillDeletion = (): void => {
+    const pending = skillPendingDeletion
+    if (!pending) return
+    setSkillPendingDeletion(undefined)
+    setDeleteError(undefined)
+    void deleteSkill(pending.id, pending.source, pending.directoryName).catch((error) =>
+      setDeleteError({
+        id: pending.id,
+        message:
+          skillOperationErrorMessage(error) || t('This Skill is protected and cannot be deleted.')
+      })
+    )
   }
 
   useEffect(() => {
@@ -780,19 +805,14 @@ const SkillsPanel = ({
                                         className="gap-2 text-xs text-destructive"
                                         onSelect={() => {
                                           if (skill.source === 'featured') return
-                                          setDeleteError(undefined)
-                                          void deleteSkill(
-                                            skill.id,
-                                            skill.source,
-                                            skill.directoryName
-                                          ).catch((error) =>
-                                            setDeleteError({
-                                              id: skill.id,
-                                              message:
-                                                skillOperationErrorMessage(error) ||
-                                                t('This Skill is protected and cannot be deleted.')
-                                            })
-                                          )
+                                          setSkillPendingDeletion({
+                                            id: skill.id,
+                                            name: skill.displayName,
+                                            source: skill.source,
+                                            directoryName: skill.directoryName,
+                                            enabledAgentCount:
+                                              usages.length + (skill.enabled ? 1 : 0)
+                                          })
                                         }}
                                       >
                                         <Trash2 className="size-3.5 shrink-0" aria-hidden="true" />
@@ -891,6 +911,36 @@ const SkillsPanel = ({
         visibleIds={visible
           .filter(({ skill }) => groups.some((group) => group.source === skill.source))
           .map(({ skill }) => skill.id)}
+      />
+      <ConfirmActionDialog
+        open={skillPendingDeletion !== undefined}
+        destructive
+        title={t('Delete skill?')}
+        description={
+          skillPendingDeletion
+            ? t('"{{name}}" will be permanently deleted. This action cannot be undone.', {
+                name: skillPendingDeletion.name
+              })
+            : ''
+        }
+        content={
+          skillPendingDeletion && skillPendingDeletion.enabledAgentCount > 0 ? (
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              {t(
+                'This skill is enabled for {{count}} agents; they will no longer be able to use it.',
+                {
+                  count: skillPendingDeletion.enabledAgentCount,
+                  defaultValue_one:
+                    'This skill is enabled for {{count}} agent; they will no longer be able to use it.'
+                }
+              )}
+            </p>
+          ) : undefined
+        }
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Delete')}
+        onCancel={() => setSkillPendingDeletion(undefined)}
+        onConfirm={confirmSkillDeletion}
       />
     </div>
   )

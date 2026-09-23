@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -10,161 +10,211 @@ type SettingsSearchEntry = {
   panel: SettingsPanelId
   // A catalog key, not finished copy: this table is module-level, so callers resolve it via t().
   labelKey: string
-  // Extra English match terms that are never displayed.
-  keywords?: string
+  // Catalog keys for extra match terms that are never displayed, resolved via t() at search time
+  // so each locale supplies its own synonyms. English matches the keys themselves, and a missing
+  // translation falls back to the English key, so English terms keep working in every locale.
+  keywordKeys?: readonly string[]
   // Entries jump to the data-settings-anchor element named by their id. skipAnchor opts out and
   // falls back to the panel's first content block, for targets unmounted at jump time.
   skipAnchor?: boolean
 }
 
-// Cross-panel search index: one to three representative entries per panel, each reusing existing
-// settings copy as its label. Selection deep-links to the panel through the dialog's navigation.
+// Cross-panel search index: at least one entry per panel plus the important sub-settings, each
+// reusing existing settings copy as its label. Selection deep-links to the panel through the
+// dialog's navigation.
 const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
   {
     id: 'model.add-provider',
     panel: 'model',
     labelKey: 'Add provider',
-    keywords: 'api key vendor'
+    keywordKeys: ['api key', 'vendor']
   },
-  { id: 'model.main', panel: 'model', labelKey: 'Main model', keywords: 'default thinking' },
+  // The key field lives in the provider form sub-page, which is unmounted at jump time.
+  {
+    id: 'model.provider-key',
+    panel: 'model',
+    labelKey: 'API key',
+    keywordKeys: ['api key', 'vendor'],
+    skipAnchor: true
+  },
+  { id: 'model.main', panel: 'model', labelKey: 'Main model', keywordKeys: ['default thinking'] },
   {
     id: 'model.scenarios',
     panel: 'model',
     labelKey: 'Scenario models',
-    keywords: 'subagent reviewer vision session details'
+    keywordKeys: ['subagent reviewer vision']
   },
   {
     id: 'agent.framework',
     panel: 'agent',
     labelKey: 'Agent framework',
-    keywords: 'claude codex opencode backend'
+    keywordKeys: ['claude codex opencode backend']
   },
   {
     id: 'skills.manage',
     panel: 'skills',
     labelKey: 'Manage skills',
-    keywords: 'enable disable bulk'
+    keywordKeys: ['enable disable bulk']
   },
   {
     id: 'skills.add',
     panel: 'skills',
     labelKey: 'Add skill',
-    keywords: 'import upload zip github'
+    keywordKeys: ['import upload zip github']
   },
   { id: 'skills.conversation-imports', panel: 'skills', labelKey: 'Conversation imports' },
   {
     id: 'specialists.add',
     panel: 'specialists',
     labelKey: 'Add specialist',
-    keywords: 'create custom role'
+    keywordKeys: ['create custom role']
   },
   {
     id: 'specialists.marketplace',
     panel: 'specialists',
     labelKey: 'Marketplace',
-    keywords: 'browse install'
+    keywordKeys: ['browse install']
   },
-  { id: 'memory.new-category', panel: 'memory', labelKey: 'New category', keywords: 'remember' },
+  {
+    id: 'memory.new-category',
+    panel: 'memory',
+    labelKey: 'New category',
+    keywordKeys: ['remember']
+  },
   {
     id: 'connectors.add',
     panel: 'connectors',
     labelKey: 'Add connector',
-    keywords: 'mcp server'
+    keywordKeys: ['mcp server']
   },
   {
     id: 'connectors.import',
     panel: 'connectors',
     labelKey: 'Import Connector or MCP configuration',
-    keywords: 'json claude desktop',
+    keywordKeys: ['json claude desktop'],
     // The import action lives inside the Add connector dropdown, which is unmounted at jump
     // time — fall back to the panel's first block immediately instead of waiting.
     skipAnchor: true
   },
-  { id: 'network.proxy', panel: 'network', labelKey: 'Proxy', keywords: 'http https' },
+  { id: 'network.proxy', panel: 'network', labelKey: 'Proxy', keywordKeys: ['http https'] },
   {
     id: 'network.mirror',
     panel: 'network',
     labelKey: 'Package mirror',
-    keywords: 'npm pypi registry conda'
+    keywordKeys: ['npm pypi registry conda']
   },
   {
     id: 'network.domains',
     panel: 'network',
     labelKey: 'Notebook network access',
-    keywords: 'domains allowlist'
+    keywordKeys: ['domains allowlist']
   },
   {
     id: 'remote-control.app-access',
     panel: 'remote-control',
     labelKey: 'App access',
-    keywords: 'remote browser link pair'
+    keywordKeys: ['remote browser link pair']
   },
   {
     id: 'credentials.new',
     panel: 'credentials',
     labelKey: 'New credential',
-    keywords: 'token key'
+    keywordKeys: ['secret password key']
   },
   {
     id: 'credentials.literature',
     panel: 'credentials',
     labelKey: 'Literature access',
-    keywords: 'openalex unpaywall'
+    keywordKeys: ['openalex unpaywall']
   },
   { id: 'credentials.github', panel: 'credentials', labelKey: 'GitHub' },
-  { id: 'tags.new', panel: 'tags', labelKey: 'New Tag', keywords: 'label organize color' },
+  {
+    id: 'tags.new',
+    panel: 'tags',
+    labelKey: 'New Tag',
+    keywordKeys: ['label organize color']
+  },
   {
     id: 'permissions.default-mode',
     panel: 'permissions',
     labelKey: 'Default permission mode',
-    keywords: 'allow deny approve tools'
+    keywordKeys: ['allow deny approve']
+  },
+  {
+    id: 'permissions.remembered',
+    panel: 'permissions',
+    labelKey: 'Remembered permissions',
+    keywordKeys: ['granted rules', 'allow deny approve']
   },
   {
     id: 'runtimes.runtimes',
     panel: 'runtimes',
     labelKey: 'Notebook runtimes',
-    keywords: 'python r kernel jupyter environment'
+    keywordKeys: ['python r kernel jupyter environment']
   },
   {
     id: 'storage.application',
     panel: 'storage',
     labelKey: 'Application storage',
-    keywords: 'disk data size'
+    keywordKeys: ['disk data size']
   },
   {
     id: 'storage.location',
     panel: 'storage',
     labelKey: 'Change location',
-    keywords: 'folder move directory'
+    keywordKeys: ['folder move directory migrate']
   },
   {
     id: 'compute.add-host',
     panel: 'compute',
     labelKey: 'Add SSH host',
-    keywords: 'ssh remote server gpu'
+    keywordKeys: ['ssh remote server gpu']
   },
-  { id: 'usage.list', panel: 'usage', labelKey: 'Usage', keywords: 'tokens cost analytics' },
-  { id: 'archived.list', panel: 'archived', labelKey: 'Archived', keywords: 'project restore' },
+  {
+    id: 'usage.list',
+    panel: 'usage',
+    labelKey: 'Usage',
+    keywordKeys: ['tokens cost analytics']
+  },
+  {
+    id: 'archived.list',
+    panel: 'archived',
+    labelKey: 'Archived',
+    keywordKeys: ['project restore']
+  },
+  {
+    id: 'general.updates',
+    panel: 'general',
+    labelKey: 'App version',
+    keywordKeys: ['update version release']
+  },
   {
     id: 'general.appearance',
     panel: 'general',
     labelKey: 'Appearance',
-    keywords: 'theme dark light'
+    keywordKeys: ['theme dark light']
   },
-  { id: 'general.language', panel: 'general', labelKey: 'Language', keywords: 'locale' },
+  { id: 'general.language', panel: 'general', labelKey: 'Language', keywordKeys: ['locale'] },
   { id: 'general.notifications', panel: 'general', labelKey: 'Notifications' },
-  { id: 'general.diagnostics', panel: 'general', labelKey: 'Diagnostics', keywords: 'log file' },
+  {
+    id: 'general.diagnostics',
+    panel: 'general',
+    labelKey: 'Diagnostics',
+    keywordKeys: ['log file']
+  },
   {
     id: 'general.cli',
     panel: 'general',
     labelKey: 'Command line tool',
-    keywords: 'cli install path shell'
+    keywordKeys: ['cli install path shell']
   }
 ]
 
 type SettingsGlobalSearchProps = {
   panels: ReadonlyArray<{ id: SettingsPanelId; labelKey: string }>
   onNavigate: (panel: SettingsPanelId) => void
+  // Focus the field on mount — used by the narrow-viewport overlay, which only mounts on demand.
+  autoFocus?: boolean
 }
 
 // Elements that can already receive keyboard focus; anything else is lent a temporary tabindex.
@@ -176,9 +226,10 @@ const HIGHLIGHT_CLASS = 'settings-search-highlight'
 // user sees exactly where they landed. Entries with an anchor jump to their own setting element;
 // the anchor gets a grace period (lazy chunks, async data) before falling back to the panel's
 // first content block. Polls until the target panel has actually rendered, so the highlight never
-// lands on the previous panel. Purely visual and focus-only: no persistence. Returns a cancel
-// function that stops polling and strips any active ring — callers run it on unmount and before
-// starting another highlight.
+// lands on the previous panel. Purely visual and focus-only: no persistence. Self-terminating:
+// polling stops after a bounded window and stripRing skips detached nodes, so an in-flight jump
+// survives the combobox unmounting — the narrow-viewport search overlay unmounts it right after
+// navigation. Returns a cancel function that callers run before starting another highlight.
 const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() => void) => {
   const startedAt = Date.now()
   const timers: number[] = []
@@ -247,7 +298,8 @@ const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() =
 // to the selected panel through the dialog's own navigation.
 const SettingsGlobalSearch = ({
   panels,
-  onNavigate
+  onNavigate,
+  autoFocus
 }: SettingsGlobalSearchProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
@@ -255,16 +307,10 @@ const SettingsGlobalSearch = ({
   const [activeIndex, setActiveIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const listId = useId()
+  // Only used to cancel a previous highlight when a new selection supersedes it. Deliberately not
+  // cancelled on unmount: the overlay usage unmounts this combobox as part of navigation, and the
+  // highlight is self-terminating (see highlightNavigatedPanel).
   const cancelHighlightRef = useRef<(() => void) | null>(null)
-
-  // Stop highlight polling and strip any ring when the dialog (and this field) unmounts.
-  useEffect(
-    () => () => {
-      cancelHighlightRef.current?.()
-      cancelHighlightRef.current = null
-    },
-    []
-  )
 
   const panelLabel = (panel: SettingsPanelId): string => {
     const entry = panels.find((candidate) => candidate.id === panel)
@@ -275,9 +321,13 @@ const SettingsGlobalSearch = ({
     const normalized = query.trim().toLowerCase()
     if (!normalized) return SETTINGS_SEARCH_INDEX
     return SETTINGS_SEARCH_INDEX.filter((entry) =>
-      [entry.labelKey, t(entry.labelKey), panelLabel(entry.panel), entry.keywords ?? ''].some(
-        (haystack) => haystack.toLowerCase().includes(normalized)
-      )
+      [
+        entry.labelKey,
+        t(entry.labelKey),
+        panelLabel(entry.panel),
+        // Both the English keyword key and its localized synonyms are match targets.
+        ...(entry.keywordKeys ?? []).flatMap((keywordKey) => [keywordKey, t(keywordKey)])
+      ].some((haystack) => haystack.toLowerCase().includes(normalized))
     )
     // panelLabel closes over t and panels; both are covered by the deps below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -314,6 +364,7 @@ const SettingsGlobalSearch = ({
       <SettingsSearchInput
         value={query}
         shortcutPriority={1}
+        autoFocus={autoFocus}
         onChange={(event) => {
           setQuery(event.target.value)
           setIsOpen(true)

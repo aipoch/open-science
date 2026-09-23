@@ -26,6 +26,7 @@ import {
   Minimize2,
   MonitorSmartphone,
   ScrollText,
+  Search,
   Settings2,
   TerminalSquare,
   Tags as TagsIcon,
@@ -111,14 +112,20 @@ import {
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
 import { ProviderTestResultCard } from './ProviderTestResultCard'
-import { loadSettingsPanel } from './settings-panel-loader'
+import { lazyWithRetry, loadSettingsPanel } from './settings-panel-loader'
 import { SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsWriteErrorCode } from '../../../../shared/settings'
 
-const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
-const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
-const NetworkPanel = lazy(async () => ({ default: (await import('./NetworkPanel')).NetworkPanel }))
-const StoragePanel = lazy(async () => {
+const AgentPanel = lazyWithRetry(async () => ({
+  default: (await import('./AgentPanel')).AgentPanel
+}))
+const GeneralPanel = lazyWithRetry(async () => ({
+  default: (await import('./GeneralPanel')).GeneralPanel
+}))
+const NetworkPanel = lazyWithRetry(async () => ({
+  default: (await import('./NetworkPanel')).NetworkPanel
+}))
+const StoragePanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./StoragePanel'),
     () =>
@@ -128,7 +135,7 @@ const StoragePanel = lazy(async () => {
   )
   return { default: module.StoragePanel }
 })
-const RuntimesPanel = lazy(async () => {
+const RuntimesPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./RuntimesPanel'),
     () =>
@@ -138,37 +145,37 @@ const RuntimesPanel = lazy(async () => {
   )
   return { default: module.RuntimesPanel }
 })
-const RemoteControlPanel = lazy(async () => {
+const RemoteControlPanel = lazyWithRetry(async () => {
   const module = await import('./RemoteControlPanel')
   await module.RemoteControlPanel.preload().catch(() => undefined)
   return { default: module.RemoteControlPanel }
 })
-const SkillsPanel = lazy(async () => {
+const SkillsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./SkillsPanel'),
     () => useSettingsStore.getState().loadSkills()
   )
   return { default: module.SkillsPanel }
 })
-const ConnectorsPanel = lazy(async () => {
+const ConnectorsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./ConnectorsPanel'),
     () => useSettingsStore.getState().loadConnectors()
   )
   return { default: module.ConnectorsPanel }
 })
-const SpecialistsPanel = lazy(async () => {
+const SpecialistsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./SpecialistsPanel'),
     () => useSpecialistStore.getState().load()
   )
   return { default: module.SpecialistsPanel }
 })
-const MemoryPanel = lazy(async () => {
+const MemoryPanel = lazyWithRetry(async () => {
   const module = await import('./MemoryPanel')
   return { default: module.MemoryPanel }
 })
-const TagsPanel = lazy(async () => {
+const TagsPanel = lazyWithRetry(async () => {
   const tagState = useTagStore.getState()
   const module = await loadSettingsPanel(
     () => import('./TagsPanel'),
@@ -182,32 +189,32 @@ const TagsPanel = lazy(async () => {
   )
   return { default: module.TagsPanel }
 })
-const ConnectorDetailView = lazy(async () => ({
+const ConnectorDetailView = lazyWithRetry(async () => ({
   default: (await import('./ConnectorDetailView')).ConnectorDetailView
 }))
-const ConnectorAddForm = lazy(async () => ({
+const ConnectorAddForm = lazyWithRetry(async () => ({
   default: (await import('./ConnectorAddForm')).ConnectorAddForm
 }))
-const ConnectorExportView = lazy(async () => ({
+const ConnectorExportView = lazyWithRetry(async () => ({
   default: (await import('./ConnectorExportView')).ConnectorExportView
 }))
-const ConnectorImportView = lazy(async () => ({
+const ConnectorImportView = lazyWithRetry(async () => ({
   default: (await import('./ConnectorImportView')).ConnectorImportView
 }))
-const ComputePanel = lazy(async () => {
+const ComputePanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./ComputePanel'),
     () => preloadComputeHosts()
   )
   return { default: module.ComputePanel }
 })
-const ComputeAddForm = lazy(async () => ({
+const ComputeAddForm = lazyWithRetry(async () => ({
   default: (await import('./ComputeAddForm')).ComputeAddForm
 }))
-const ComputeHostDetail = lazy(async () => ({
+const ComputeHostDetail = lazyWithRetry(async () => ({
   default: (await import('./ComputeHostDetail')).ComputeHostDetail
 }))
-const PermissionsPanel = lazy(async () => {
+const PermissionsPanel = lazyWithRetry(async () => {
   const module = await loadSettingsPanel(
     () => import('./PermissionsPanel'),
     () =>
@@ -217,13 +224,13 @@ const PermissionsPanel = lazy(async () => {
   )
   return { default: module.PermissionsPanel }
 })
-const CredentialsPanel = lazy(async () => ({
+const CredentialsPanel = lazyWithRetry(async () => ({
   default: (await import('./CredentialsPanel')).CredentialsPanel
 }))
-const ArchivedPanel = lazy(async () => ({
+const ArchivedPanel = lazyWithRetry(async () => ({
   default: (await import('./ArchivedPanel')).ArchivedPanel
 }))
-const TokenUsagePanel = lazy(async () => ({
+const TokenUsagePanel = lazyWithRetry(async () => ({
   default: (await import('./TokenUsagePanel')).TokenUsagePanel
 }))
 
@@ -503,6 +510,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const mobileNavRef = useRef<HTMLElement | null>(null)
   const mobileNavTriggerRef = useRef<HTMLButtonElement | null>(null)
   const mobileNavWasOpenRef = useRef(false)
+  // Narrow viewports swap the header search field for an icon button that opens a full-width
+  // search overlay; the field only exists while the overlay is open, so ⌘K never targets an
+  // invisible input.
+  const [isMobileSearchOpen, setIsMobileSearchOpenState] = useState(false)
+  const isMobileSearchOpenRef = useRef(false)
+  const setIsMobileSearchOpen = useCallback((next: boolean) => {
+    // The dialog's Escape listener can retain an earlier render's callback, same as the mobile
+    // navigation state above. Update its authority before scheduling the visual state change.
+    isMobileSearchOpenRef.current = next
+    setIsMobileSearchOpenState(next)
+  }, [])
+  const mobileSearchTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const mobileSearchOverlayRef = useRef<HTMLDivElement | null>(null)
+  const mobileSearchWasOpenRef = useRef(false)
+  // Whether focus was inside the overlay when a breakpoint crossing closed it.
+  const mobileSearchHadFocusRef = useRef(false)
   const codebuddyAutoDetectAttempted = useRef(false)
   const skills = useSettingsStore((state) => state.skills)
   const connectors = useSettingsStore((state) => state.connectors)
@@ -573,6 +596,34 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     mobileNavWasOpenRef.current = false
     mobileNavTriggerRef.current?.focus()
   }, [isMobile, isMobileNavOpen])
+
+  // The search overlay belongs to the narrow layout; dropping it when the viewport crosses the md
+  // breakpoint keeps the desktop header field as the only mounted combobox. Record whether focus
+  // was inside the overlay so the close effect can hand it to that desktop field.
+  if (!isMobile && isMobileSearchOpen) {
+    mobileSearchHadFocusRef.current =
+      document.activeElement instanceof Node &&
+      (mobileSearchOverlayRef.current?.contains(document.activeElement) ?? false)
+    setIsMobileSearchOpen(false)
+  }
+
+  // Return focus when the overlay closes: to the header search button on narrow viewports, or to
+  // the desktop search field if a breakpoint crossing closed the overlay mid-search.
+  useEffect(() => {
+    if (isMobile && isMobileSearchOpen) {
+      mobileSearchWasOpenRef.current = true
+      return
+    }
+    if (!mobileSearchWasOpenRef.current) return
+    mobileSearchWasOpenRef.current = false
+    if (isMobile) {
+      mobileSearchTriggerRef.current?.focus()
+      return
+    }
+    if (!mobileSearchHadFocusRef.current) return
+    mobileSearchHadFocusRef.current = false
+    document.querySelector<HTMLElement>('[data-slot="settings-global-search"] input')?.focus()
+  }, [isMobile, isMobileSearchOpen])
 
   // External entry points publish one route intent with an event identity. Guard by request rather
   // than target value so two separate requests for the same route are both honored.
@@ -1072,6 +1123,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         setIsMobileNavOpen(false)
         return true
       }
+      if (isMobileSearchOpen) {
+        setIsMobileSearchOpen(false)
+        return true
+      }
       if (breadcrumb) {
         if (canGoBack) setHistoryIndex((index) => index - 1)
         else {
@@ -1357,6 +1412,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               event.preventDefault()
               return
             }
+            // Mobile search overlay, closed in two stages. While the results list is open the
+            // combobox's own Escape closes just the list (and blurs the field); the overlay's
+            // bubble-phase handler or — once focus fell out of the overlay with the blur — the
+            // ref-guarded branch below closes the overlay itself. Never the whole dialog.
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.closest('[data-slot="settings-mobile-search"]')
+            ) {
+              event.preventDefault()
+              return
+            }
+            if (isMobileSearchOpenRef.current) {
+              event.preventDefault()
+              setIsMobileSearchOpen(false)
+              return
+            }
             if (!isMobileNavOpenRef.current) return
             event.preventDefault()
             setIsMobileNavOpen(false)
@@ -1482,8 +1553,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             {/* Right column: header bar + scrollable panel content. */}
             <div
               data-slot="settings-main"
-              aria-hidden={isMobile && isMobileNavOpen ? true : undefined}
-              inert={isMobile && isMobileNavOpen ? true : undefined}
+              aria-hidden={isMobile && (isMobileNavOpen || isMobileSearchOpen) ? true : undefined}
+              inert={isMobile && (isMobileNavOpen || isMobileSearchOpen) ? true : undefined}
               className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
             >
               <TooltipProvider delayDuration={300}>
@@ -1580,7 +1651,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </h2>
                     )}
                   </div>
-                  {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
+                  {/* Below the md breakpoint this field moves into the mobile search overlay. */}
                   {!isMobile ? (
                     <div
                       data-slot="settings-global-search"
@@ -1590,6 +1661,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     </div>
                   ) : null}
                   <div className="flex shrink-0 items-center gap-1">
+                    {isMobile ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            ref={mobileSearchTriggerRef}
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setIsMobileSearchOpen(true)}
+                            aria-label={t('Search settings')}
+                            className="rounded-lg text-muted-foreground"
+                          >
+                            <Search className="size-4" aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('Search settings')}</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -2244,6 +2333,54 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 </SettingsFormFooter>
               ) : null}
             </div>
+
+            {/* Narrow viewports: full-width search surface over the whole settings column, opened
+                from the header search button. Reuses the desktop combobox; Escape closes the
+                results list first, then the overlay, and the back button dismisses it — both
+                return focus to the search button. Sibling of settings-main (which is inerted while
+                this is open) so the overlay itself stays interactive; z-30 sits above the panels'
+                sticky z-20 filter bars and below the toast stack and nav drawer. */}
+            {isMobile && isMobileSearchOpen ? (
+              <div
+                ref={mobileSearchOverlayRef}
+                data-slot="settings-mobile-search"
+                role="dialog"
+                aria-modal="true"
+                aria-label={t('Search settings')}
+                className="absolute inset-0 z-30 flex flex-col bg-card"
+                onKeyDown={(event) => {
+                  // Bubble phase: while the results list is open the combobox stops propagation
+                  // and closes just the list, so this only fires once the list is gone.
+                  if (event.key !== 'Escape') return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setIsMobileSearchOpen(false)
+                }}
+              >
+                <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setIsMobileSearchOpen(false)}
+                    aria-label={t('Back', { context: 'step' })}
+                    className="shrink-0 rounded-lg text-muted-foreground"
+                  >
+                    <ArrowLeft className="size-4" aria-hidden="true" />
+                  </Button>
+                  <div className="min-w-0 flex-1">
+                    <SettingsGlobalSearch
+                      panels={SETTINGS_PANELS}
+                      autoFocus
+                      onNavigate={(panel) => {
+                        setIsMobileSearchOpen(false)
+                        navigatePanel(panel)
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </motion.div>
           <div
             hidden={isMobile && isMobileNavOpen}

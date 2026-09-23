@@ -98,7 +98,7 @@ describe('ProvidersPanel: unexpected command failures', () => {
     await act(async () => deleteButtons[1]?.click())
     const dialog = document.body.querySelector('[role="alertdialog"]')
     const confirmDelete = Array.from(dialog?.querySelectorAll('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Delete'
+      (button) => button.textContent?.trim() === 'Delete provider'
     )
     await act(async () => confirmDelete?.click())
 
@@ -208,7 +208,16 @@ describe('ProvidersPanel: provider removal impact', () => {
     expect(dialog?.textContent).toContain('Vision')
     expect(deleteProvider).not.toHaveBeenCalled()
     expect(dialog?.textContent).toContain('Cancel')
-    expect(dialog?.textContent).toContain('Keep unavailable')
+    expect(dialog?.textContent).toContain('Reset to main model')
+    expect(dialog?.textContent).toContain('Recommended')
+    expect(dialog?.textContent).toContain('Keep saved selections')
+    const radios = Array.from(
+      dialog?.querySelectorAll<HTMLInputElement>('input[type="radio"]') ?? []
+    )
+    expect(
+      radios.find((radio) => radio.closest('label')?.textContent?.includes('Reset to main model'))
+        ?.checked
+    ).toBe(true)
     const reassignFirst = Array.from(dialog?.querySelectorAll('button') ?? []).find(
       (button) => button.textContent?.trim() === 'Reassign first'
     )
@@ -226,21 +235,25 @@ describe('ProvidersPanel: provider removal impact', () => {
 
     await act(async () => deleteButtons[0]?.click())
     const reopenedForPreserve = document.body.querySelector('[role="alertdialog"]')
-    const keepUnavailable = Array.from(reopenedForPreserve?.querySelectorAll('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Keep unavailable'
-    )
+    const keepSavedSelections = Array.from(
+      reopenedForPreserve?.querySelectorAll<HTMLInputElement>('input[type="radio"]') ?? []
+    ).find((radio) => radio.closest('label')?.textContent?.includes('Keep saved selections'))
+    await act(async () => keepSavedSelections?.click())
+    const deleteProviderButton = Array.from(
+      reopenedForPreserve?.querySelectorAll('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Delete provider')
 
-    await act(async () => keepUnavailable?.click())
+    await act(async () => deleteProviderButton?.click())
 
     expect(deleteProvider).toHaveBeenCalledWith(removedProvider.id, 'preserve')
 
     await act(async () => deleteButtons[0]?.click())
     const reopenedDialog = document.body.querySelector('[role="alertdialog"]')
-    const useMainModel = Array.from(reopenedDialog?.querySelectorAll('button') ?? []).find(
-      (button) => button.textContent?.trim() === 'Use main model'
+    const deleteWithDefault = Array.from(reopenedDialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Delete provider'
     )
 
-    await act(async () => useMainModel?.click())
+    await act(async () => deleteWithDefault?.click())
 
     expect(deleteProvider).toHaveBeenNthCalledWith(2, removedProvider.id, 'inherit')
   })

@@ -67,6 +67,7 @@ export type SettingsWriteCoordinator = {
   ) => OptimisticSettingsWrite<T>
   acceptCommitted: (key: OptimisticSettingsWriteKey, value: unknown) => void
   hasPending: (key: OptimisticSettingsWriteKey) => boolean
+  dismissFailure: (key: SettingsWriteKey) => void
   clearFailures: () => void
 }
 
@@ -184,6 +185,10 @@ export const createSettingsWriteCoordinator = (
       if (state) state.confirmedValue = value
     },
     hasPending: (key) => (optimisticStates.get(key)?.pendingCount ?? 0) > 0,
+    dismissFailure: (key) => {
+      // A row that shows its own inline failure takes it off the top-of-dialog banner.
+      if (failures.delete(key)) onVisibleError(currentError())
+    },
     clearFailures: () => {
       failures.clear()
       onVisibleError(undefined)

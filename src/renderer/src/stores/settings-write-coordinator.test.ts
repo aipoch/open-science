@@ -104,4 +104,20 @@ describe('settings write coordinator', () => {
       'notification-content'
     ])
   })
+
+  it('dismisses a single failure while keeping failures from other writes visible', () => {
+    const onError = vi.fn()
+    const writes = createSettingsWriteCoordinator(onError)
+
+    writes.begin('notifications').fail('notifications')
+    writes.begin('appIcon').fail('app-icon')
+    writes.dismissFailure('notifications')
+    writes.dismissFailure('notifications')
+
+    expect(onError.mock.calls.map(([error]) => error)).toEqual([
+      'notifications',
+      'notifications app-icon',
+      'app-icon'
+    ])
+  })
 })
