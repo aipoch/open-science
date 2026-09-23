@@ -1372,11 +1372,8 @@
     "Delete {{provider}}?": "刪除 {{provider}}？",
     "Deleting this provider affects these scenario models:": "刪除此模型服務商會影響以下情境模型：",
     "For Vision, using the main model disables the separate fallback model.": "對於視覺，使用主模型會停用獨立的備援模型。",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "保留已儲存的選擇並將其標示為不可用，或將其重設為使用主模型。",
-    "Keep unavailable": "保留為不可用",
     "Reassign first": "先重新綁定",
     "This provider will be removed from Open-Science.": "此模型服務商將從 Open-Science 中刪除。",
-    "Use main model": "使用主模型",
     "Delete Session?": "刪除工作階段？",
     "Delete Specialist": "刪除專家",
     "Delete project": "刪除專案",
@@ -7316,6 +7313,13 @@
     "Cannot cancel; the app will reopen automatically.": "安裝無法取消，完成後應用程式將自動重新開啟。",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "部分 PDF 字形沒有可靠的文字表示。請核對原始頁面。",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "部分 PDF 文字缺少可靠的 Unicode 對應。已保留擷取的文字，請與原始頁面核對。",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "部分表格結構不可靠。已保留原始影像和文字，未將文字分配至儲存格。"
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "部分表格結構不可靠。已保留原始影像和文字，未將文字分配至儲存格。",
+    "Recommended": "建議",
+    "Reset to main model": "重設為主模型",
+    "Keep saved selections": "保留已儲存的選擇",
+    "Affected scenario models will use the main model instead, without interruption.": "受影響的場景模型將改用主模型，不會中斷。",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "場景模型將保留已儲存的選擇，並在你重新綁定前標示為不可用。",
+    "Delete provider": "刪除模型服務商",
+    "Scenario model handling": "場景模型處理方式"
   }
 }

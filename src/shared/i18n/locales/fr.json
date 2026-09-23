@@ -1337,11 +1337,8 @@
     "Delete {{provider}}?": "Supprimer {{provider}} ?",
     "Deleting this provider affects these scenario models:": "La suppression de ce fournisseur affecte les modèles de scénario suivants :",
     "For Vision, using the main model disables the separate fallback model.": "Pour Vision, l’utilisation du modèle principal désactive le modèle de secours distinct.",
-    "Keep their saved selections as unavailable, or reset them to use the main model.": "Conservez leurs sélections enregistrées comme indisponibles ou réinitialisez-les pour utiliser le modèle principal.",
-    "Keep unavailable": "Conserver comme indisponibles",
     "Reassign first": "Réaffecter d’abord",
     "This provider will be removed from Open-Science.": "Ce fournisseur sera supprimé d’Open-Science.",
-    "Use main model": "Utiliser le modèle principal",
     "Delete Session?": "Supprimer la session ?",
     "Delete Specialist": "Supprimer le spécialiste",
     "Delete project": "Supprimer le projet",
@@ -7646,6 +7643,13 @@
     "Cannot cancel; the app will reopen automatically.": "Annulation impossible ; l’application se rouvrira seule.",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "Certains glyphes du PDF n’ont pas de représentation textuelle fiable. Comparez avec la page d’origine.",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "Certains passages du PDF n’ont pas de correspondance Unicode fiable. Le texte extrait est conservé ; comparez-le à la page d’origine.",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "La structure de certains tableaux est peu fiable. Les images et les textes d’origine sont conservés sans être affectés aux cellules."
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "La structure de certains tableaux est peu fiable. Les images et les textes d’origine sont conservés sans être affectés aux cellules.",
+    "Recommended": "Recommandé",
+    "Reset to main model": "Réinitialiser sur le modèle principal",
+    "Keep saved selections": "Conserver les sélections enregistrées",
+    "Affected scenario models will use the main model instead, without interruption.": "Les modèles de scénario affectés utiliseront le modèle principal, sans interruption.",
+    "Scenario models keep their saved selections and are marked unavailable until you reassign them.": "Les modèles de scénario conservent leurs sélections enregistrées et sont marqués indisponibles jusqu'à ce que vous les réattribuiez.",
+    "Delete provider": "Supprimer le fournisseur",
+    "Scenario model handling": "Gestion des modèles de scénario"
   }
 }
