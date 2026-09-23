@@ -5386,6 +5386,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 singleReevaluation={singleReevaluation?.collectionId === selectedCollection.id}
                 onViewChange={receiveSmartView}
                 onEdit={() => openEditCollection(selectedCollection)}
+                onOpenScope={(scope) => {
+                  if (scope.kind === 'library') selectLibrary()
+                  else if (scope.kind === 'project') selectProject(scope.id)
+                  else selectLibrary(scope.id)
+                }}
                 onDelete={() => {
                   setCollectionDeleteError(undefined)
                   setCollectionPendingDelete(selectedCollection)

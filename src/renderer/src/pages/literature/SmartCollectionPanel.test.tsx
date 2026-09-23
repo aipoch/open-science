@@ -69,6 +69,7 @@ it('collapses rule details by default without hiding configuration or starting i
   expect(screen.queryByText('Adult trials')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Collection rule' }))
   expect(screen.getByText('Adult trials')).toBeTruthy()
+  expect(screen.getByText('All references')).toBeTruthy()
   expect(screen.getByText('#3')).toBeTruthy()
   expect(
     screen.getByRole('button', { name: 'Collection rule' }).getAttribute('aria-expanded')
@@ -78,6 +79,47 @@ it('collapses rule details by default without hiding configuration or starting i
   expect(screen.queryByText('Adult trials')).toBeNull()
   expect(transact.mock.calls.every(([command]) => command.action === 'read')).toBe(true)
 })
+it.each([
+  [{ kind: 'library' }, '', 'All references'],
+  [{ kind: 'project', id: 'project-1' }, 'Research', 'Project: Research'],
+  [{ kind: 'collection', id: 'collection-1' }, 'Research', 'Collection: Research']
+] as const)('opens the matching Library scope for %s', async (scope, sourceName, label) => {
+  view = { ...view, scope, sourceName }
+  const onOpenScope = vi.fn()
+  render(
+    <SmartCollectionPanel
+      collectionId="smart"
+      name="Trials"
+      description="Adult trials"
+      onOpenScope={onOpenScope}
+    />
+  )
+  await screen.findByText('Collection saved')
+  fireEvent.click(screen.getByRole('button', { name: 'Collection rule' }))
+  fireEvent.click(screen.getByRole('button', { name: label }))
+  expect(onOpenScope).toHaveBeenCalledWith(scope)
+})
+
+it('does not link an unavailable source', async () => {
+  view = {
+    ...view,
+    scope: { kind: 'collection', id: 'removed' },
+    sourceName: 'Removed',
+    sourceAvailable: false
+  }
+  render(
+    <SmartCollectionPanel
+      collectionId="smart"
+      name="Trials"
+      description="Adult trials"
+      onOpenScope={vi.fn()}
+    />
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Collection rule' }))
+  expect(await screen.findByText('Unavailable')).not.toBeNull()
+  expect(screen.queryByRole('button', { name: 'Collection: Removed' })).toBeNull()
+})
+
 it('requires the explicit cost confirmation before recomputing', async () => {
   view = { ...view, configured: true }
   render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
