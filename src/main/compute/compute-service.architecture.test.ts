@@ -1125,7 +1125,8 @@ describe('Compute service architecture', () => {
       'src/main/settings/claude-provider-configuration.integration.test.ts',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/main/settings/provider-transport-owner.test.ts',
-      'src/main/literature/smart-collections.test.ts'
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/project-files/artifact-hidden.integration.test.ts'
     ])
   })
 
