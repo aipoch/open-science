@@ -257,6 +257,7 @@ export const createSessionDetailsOwner = (
   const active = new Map<string, ActiveAttempt>()
   const admissionQueue = new Map<string, { projectId: string; sessionId: string }>()
   const admitting = new Set<string>()
+  const retriedAdmissionClaims = new Set<string>()
   const pendingSaves: SessionDetailsSession[] = []
   let started = false
   let stopping = false
@@ -669,6 +670,54 @@ export const createSessionDetailsOwner = (
     return claimed?.sessionDetailsGeneration?.status === 'queued'
   }
 
+  const retryFailedAdmission = async (session: SessionDetailsSession): Promise<boolean> => {
+    const generation = session.sessionDetailsGeneration
+    if (
+      session.sessionDetailsSource !== 'fallback' ||
+      generation?.status !== 'failed' ||
+      'startedAt' in generation
+    ) {
+      return false
+    }
+    const claimKey = `${keyOf(session.projectId, session.id)}\0${generation.requestId}`
+    if (retriedAdmissionClaims.has(claimKey)) return false
+    retriedAdmissionClaims.add(claimKey)
+    const queued = await dependencies.sessions.mutateSession(
+      session.projectId,
+      session.id,
+      (current) => {
+        const currentGeneration = current.sessionDetailsGeneration
+        if (
+          current.sessionDetailsSource !== 'fallback' ||
+          currentGeneration?.status !== 'failed' ||
+          'startedAt' in currentGeneration ||
+          currentGeneration.requestId !== generation.requestId ||
+          !hasValidGenerationAuthority(current)
+        ) {
+          return { kind: 'unchanged' }
+        }
+        return {
+          kind: 'write',
+          session: {
+            ...current,
+            sessionDetailsGeneration: {
+              status: 'queued',
+              sourceMessageId: currentGeneration.sourceMessageId,
+              requestId: currentGeneration.requestId,
+              queuedAt: now()
+            }
+          }
+        }
+      }
+    )
+    if (!queued) {
+      retriedAdmissionClaims.delete(claimKey)
+      return false
+    }
+    await enqueueAdmission(session.projectId, session.id)
+    return true
+  }
+
   const claimAndAdmit = async (session: SessionDetailsSession): Promise<void> => {
     if (!acceptCompletions || stopping) return
     if (
@@ -688,6 +737,7 @@ export const createSessionDetailsOwner = (
       await enqueueAdmission(session.projectId, session.id)
       return
     }
+    if (await retryFailedAdmission(session)) return
     if (
       session.sessionDetailsGenerationEligible === true &&
       (await claimEligible(session.projectId, session.id))
@@ -765,10 +815,16 @@ export const createSessionDetailsOwner = (
 
     afterSessionSaved(session: PersistedChatSession): void {
       const detailsSession = session as SessionDetailsSession
+      const generation = detailsSession.sessionDetailsGeneration
+      const retryableAdmissionFailure =
+        detailsSession.sessionDetailsSource === 'fallback' &&
+        generation?.status === 'failed' &&
+        !('startedAt' in generation)
       if (
         stopping ||
-        (detailsSession.sessionDetailsGeneration?.status !== 'queued' &&
-          detailsSession.sessionDetailsGenerationEligible !== true)
+        (generation?.status !== 'queued' &&
+          detailsSession.sessionDetailsGenerationEligible !== true &&
+          !retryableAdmissionFailure)
       )
         return
       if (!started) {

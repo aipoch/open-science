@@ -682,28 +682,37 @@ describe('SessionDetailsOwner', () => {
     await owner.shutdown()
   })
 
-  it('retains a failed one-shot claim after target recovery, another save, and restart', async () => {
+  it('bounds retries when admission remains unavailable', async () => {
     const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
     await first.owner.start()
     expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
-    first.resolveTarget.mockResolvedValue(admittedTarget)
+    first.owner.afterSessionSaved(first.store.current())
+    await waitFor(() => first.resolveTarget.mock.calls.length === 2)
+    first.owner.afterSessionSaved(first.store.current())
     first.owner.afterSessionSaved(first.store.current())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(first.generate).not.toHaveBeenCalled()
+    expect(first.resolveTarget).toHaveBeenCalledTimes(2)
     await first.owner.shutdown()
-    const restarted = harness([first.store.current()])
-    await restarted.owner.start()
-    expect(restarted.generate).not.toHaveBeenCalled()
-    expect(restarted.store.current().sessionDetailsGeneration?.status).toBe('failed')
-    await expect(
-      restarted.owner.edit({
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        title: 'Manual title',
-        description: 'Manual description'
-      })
-    ).resolves.toMatchObject({ title: 'Manual title', description: 'Manual description' })
-    await restarted.owner.shutdown()
+  })
+
+  it('retries a failed admission claim once when a later save finds an available target', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    await first.owner.start()
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+
+    first.resolveTarget.mockResolvedValue(admittedTarget)
+    first.owner.afterSessionSaved(first.store.current())
+
+    await waitFor(() => first.generate.mock.calls.length === 1)
+    await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
+
+    expect(first.store.current()).toMatchObject({
+      title: 'Generated',
+      description: 'Generated summary',
+      sessionDetailsSource: 'generated'
+    })
+    await first.owner.shutdown()
   })
 
   it('frames a delimiter-injection attempt only as JSON message data', () => {
@@ -1024,7 +1033,7 @@ describe('SessionDetailsOwner', () => {
       data: { errorKind: 'authentication_failed' },
       name: 'RequestError'
     })
-    const { owner, store, warn } = harness([queuedSession()], {
+    const { owner, store, generate, warn } = harness([queuedSession()], {
       inference: async () => Promise.reject(authenticationFailure),
       inferenceTimeoutMs: 30_000
     })
@@ -1037,6 +1046,10 @@ describe('SessionDetailsOwner', () => {
       usageUnavailable: true
     })
     expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: false })
+    owner.afterSessionSaved(store.current())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(generate).toHaveBeenCalledTimes(1)
+    await owner.shutdown()
   })
 
   it('normalizes usage and drops an inconsistent cache breakdown', async () => {
