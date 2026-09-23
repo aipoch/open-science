@@ -148,6 +148,16 @@ const sameValue = (left: unknown, right: unknown): boolean => {
   )
 }
 
+// Main may receive a renderer's branch edit just before its own terminal runtime projection. The
+// edit is safe to retry once that projection clears the active run, so callers must distinguish this
+// transient admission race from a real branch identity conflict.
+export class SessionConversationCommandDeferredError extends Error {
+  constructor() {
+    super('Cannot fork a running or changed conversation Branch.')
+    this.name = 'SessionConversationCommandDeferredError'
+  }
+}
+
 const sameCommand = (
   left: SessionConversationCommand,
   right: SessionConversationCommand
@@ -240,7 +250,8 @@ export const applySessionConversationCommands = (
           }
           break
         }
-        if (result.activeRun || branch.id !== command.parentBranchId) {
+        if (result.activeRun) throw new SessionConversationCommandDeferredError()
+        if (branch.id !== command.parentBranchId) {
           throw new Error('Cannot fork a running or changed conversation Branch.')
         }
         graph =

@@ -6,6 +6,7 @@ import {
 import { SessionPersistenceStateOwner } from './state-owner'
 import { SessionProjectionAfterCommitError } from './save-session'
 import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
+import { forkEditedConversationMessage } from '../../shared/conversation-graph'
 
 const fixture = (): PersistedChatSession =>
   materializeSessionConversationGraph({
@@ -420,6 +421,53 @@ describe('Main runtime Session authority', () => {
     expect(upgrade).toHaveBeenLastCalledWith(
       expect.objectContaining({ runtimeTranscriptOwner: 'main' }),
       { mode: 'live-save' }
+    )
+  })
+
+  it('defers an edited Branch until Main commits the active run terminal state', async () => {
+    const h = harness({ ...fixture(), runtimeTranscriptOwner: 'main' })
+    const initial = h.durable()
+    const parentBranchId = initial.conversationGraph!.branches[0].id
+    const branchId = 'edited-branch'
+    const localGraph = forkEditedConversationMessage(
+      initial.conversationGraph!,
+      'prompt',
+      branchId,
+      10
+    )
+    const edited = {
+      ...initial,
+      status: 'idle' as const,
+      activeRun: undefined,
+      conversationGraph: localGraph
+    }
+    const options = {
+      conversationCommands: [
+        {
+          id: 'edit-while-terminal-save-races',
+          kind: 'fork-message' as const,
+          branchId,
+          parentBranchId,
+          messageId: 'prompt',
+          timestamp: 10
+        }
+      ]
+    }
+
+    await expect(h.owner.saveSession(edited, options)).resolves.toMatchObject({
+      activeRun: { promptMessageId: 'prompt' },
+      conversationGraph: initial.conversationGraph
+    })
+    expect(h.saveSession).not.toHaveBeenCalled()
+
+    await h.owner.mutateRuntimeSession(scope, (latest) => ({
+      ...latest,
+      status: 'idle',
+      activeRun: undefined
+    }))
+    const saved = await h.owner.saveSession(edited, options)
+    expect(saved.conversationGraph?.branches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: branchId })])
     )
   })
 })
