@@ -181,8 +181,7 @@ const SpecialistCapabilitiesSection = ({
       ...connectors.map((connector) => ({
         id: connector.id,
         name: connector.displayName,
-        description:
-          connector.id === 'genomes' ? connectorDescription(connector, t) : connector.description,
+        description: connectorDescription(connector, t),
         mainEnabled: connector.enabled,
         available: true
       })),

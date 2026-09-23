@@ -310,6 +310,7 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/main/connectors/descriptors/omics-ena.test.ts",
       "src/main/connectors/descriptors/genomes-blast.test.ts",
+      "src/main/connectors/descriptors/genomes-clustal.test.ts",
       "src/main/connectors/descriptors/gdc.test.ts"
     ]
   },
