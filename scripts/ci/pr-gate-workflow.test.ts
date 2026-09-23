@@ -1511,12 +1511,14 @@ describe('PR Gate workflow', () => {
       'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
       'src/main/net/network-info.test.ts',
       'src/main/notebook/kernel-executor.test.ts',
-      'src/main/notebook/managed-runtime-guard.test.ts'
+      'src/main/notebook/managed-runtime-guard.test.ts',
+      'src/main/process-tree-darwin-recovery.test.ts',
+      'src/main/process-tree-evidence.macos.integration.test.ts'
     ]) {
       expect(native?.run).toContain(testFile)
     }
     expect(native?.run).toContain(
-      "-t 'executes the repl loop through the production network sandbox'"
+      "-t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'"
     )
     expect(enforce?.env).toMatchObject({
       UNIT_MACOS_NATIVE_OUTCOME: '${{ steps.unit_macos_native.outcome }}'

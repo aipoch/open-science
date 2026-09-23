@@ -64,7 +64,7 @@ jobs:
           r_prefix="$RUNNER_TEMP/runtime-r"
 
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$python_prefix" \
-            --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl openpyxl pycirclize
+            --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl openpyxl pycirclize patsy
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$r_prefix" \
             --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass \
             r-circlize r-dplyr r-ggrepel r-ggvenndiagram r-magrittr r-openxlsx \
@@ -107,7 +107,7 @@ jobs:
         run: |
           set -euo pipefail
           "$OPEN_SCIENCE_TEST_PY_ENV" -c \
-            'import matplotlib, numpy, pandas, openpyxl, pycirclize; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
+            'import matplotlib, numpy, pandas, openpyxl, pycirclize, patsy; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
           "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
             'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
 

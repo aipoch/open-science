@@ -1090,9 +1090,11 @@ jobs:
             src/main/second-instance-router.test.ts \
             src/main/windows.test.ts \
             src/main/net/network-info.test.ts \
-            src/main/notebook/managed-runtime-guard.test.ts
+            src/main/notebook/managed-runtime-guard.test.ts \
+            src/main/process-tree-darwin-recovery.test.ts \
+            src/main/process-tree-evidence.macos.integration.test.ts
           npx vitest run src/main/notebook/kernel-executor.test.ts \
-            -t 'executes the repl loop through the production network sandbox'
+            -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
       - name: Test short macOS platform checks
         id: unit_macos_smoke
         if: ${{ matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}

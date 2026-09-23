@@ -36,6 +36,11 @@ const backend = vi.hoisted(() => ({
   dispose: vi.fn().mockResolvedValue(undefined)
 }))
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
 vi.mock('./r-command', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./r-command')>()),
   rKernelProtocolProbe: backend.rKernelProtocolProbe
@@ -1248,6 +1253,141 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['directory', 'receipt'] as const)(
+    'preserves production package cleanup proof while retrying a locked command %s',
+    async (lockedResource) => {
+      const { NotebookNetworkSandbox } = await vi.importActual<
+        typeof import('../../../packages/notebook-network-sandbox/src/index')
+      >('../../../packages/notebook-network-sandbox/src/index')
+      const { NotebookNetworkRuntime } =
+        await import('../../../packages/notebook-network-sandbox/runtime/src/index')
+      const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-cleanup-proof-'))
+      fixtureDirectories.push(fixtureRoot)
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: '/resources' }
+      })
+      const status = vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+      const initialize = vi.spyOn(NotebookNetworkRuntime, 'initialize').mockResolvedValue(undefined)
+      const runtimeWrap = vi
+        .spyOn(NotebookNetworkRuntime, 'wrap')
+        .mockResolvedValue({ argv: ['/sandbox/sh', '-c', 'wrapped'], env: {} })
+      const runtimeCleanup = vi
+        .spyOn(NotebookNetworkRuntime, 'cleanupAfterCommand')
+        .mockImplementation(async (_commandId, _reason, outcome) => ({
+          processesTerminated: outcome.processesTerminated,
+          networkClosed: true,
+          temporaryResourcesRemoved: outcome.processesTerminated
+        }))
+      const reset = vi.spyOn(NotebookNetworkRuntime, 'reset').mockResolvedValue(undefined)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        temporaryRoot: join(fixtureRoot, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn().mockResolvedValue('deny')
+      })
+      const invocation = {
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: fixtureRoot,
+        commandText: 'true',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime: 'bash' as const,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [fixtureRoot],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      }
+      const confirmTermination = vi.fn().mockResolvedValue(true)
+      const { rm: originalRm } =
+        await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      let lockedPath: string | undefined
+      const remove = vi.mocked(rm).mockImplementation(async (path, options) => {
+        if (path === lockedPath) throw new Error('Command temporary resource is locked')
+        await originalRm(path, options)
+      })
+      try {
+        await sandbox.initialize()
+        backend.wrap.mockImplementation((command) => sandbox.wrap(command))
+        const wrapped = await owner.wrap(invocation)
+        const commandRoot = backend.wrap.mock.calls.at(-1)![0].env.TMPDIR as string
+        const receipt = `${commandRoot}.receipt`
+        lockedPath = lockedResource === 'directory' ? commandRoot : receipt
+        await expect(
+          wrapped.cleanup('cancel', { processesTerminated: false, confirmTermination })
+        ).resolves.toEqual({
+          processesTerminated: false,
+          networkClosed: true,
+          temporaryResourcesRemoved: false
+        })
+        expect(confirmTermination).not.toHaveBeenCalled()
+        expect(existsSync(commandRoot)).toBe(true)
+        expect(existsSync(receipt)).toBe(true)
+
+        // The original process owner now proves termination, but application cleanup still fails.
+        await expect(owner.wrap(invocation)).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+        expect(confirmTermination).toHaveBeenCalledOnce()
+        expect(runtimeCleanup).toHaveBeenCalledTimes(2)
+        expect(existsSync(commandRoot)).toBe(lockedResource === 'directory')
+        expect(existsSync(receipt)).toBe(true)
+
+        // Repeated and concurrent admissions cannot discard the proof or bypass the locked resource.
+        await expect(
+          Promise.allSettled([owner.wrap(invocation), owner.wrap(invocation)])
+        ).resolves.toEqual([
+          {
+            status: 'rejected',
+            reason: expect.objectContaining({
+              message: expect.stringContaining('SHELL_CLEANUP_INCOMPLETE')
+            })
+          },
+          {
+            status: 'rejected',
+            reason: expect.objectContaining({
+              message: expect.stringContaining('SHELL_CLEANUP_INCOMPLETE')
+            })
+          }
+        ])
+        expect(runtimeWrap).toHaveBeenCalledOnce()
+        expect(runtimeCleanup).toHaveBeenCalledTimes(2)
+        expect(confirmTermination).toHaveBeenCalledOnce()
+        expect(existsSync(receipt)).toBe(true)
+
+        lockedPath = undefined
+        const next = await owner.wrap({ ...invocation, sessionId: 'session-2' })
+        expect(existsSync(commandRoot)).toBe(false)
+        expect(existsSync(receipt)).toBe(false)
+        expect(runtimeWrap).toHaveBeenCalledTimes(2)
+        expect(runtimeCleanup).toHaveBeenCalledTimes(2)
+        expect(confirmTermination).toHaveBeenCalledOnce()
+        await expect(wrapped.cleanup('cancel', { processesTerminated: false })).resolves.toEqual({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+        await next.cleanup('exit', { processesTerminated: true })
+      } finally {
+        lockedPath = undefined
+        try {
+          await owner.dispose()
+          await sandbox.dispose()
+        } finally {
+          remove.mockImplementation(originalRm)
+          reset.mockRestore()
+          runtimeCleanup.mockRestore()
+          runtimeWrap.mockRestore()
+          initialize.mockRestore()
+          status.mockRestore()
+        }
+      }
+    }
+  )
+
   it('does not block a native kernel when cleanup remains incomplete for the previous WSL2 kernel', async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'os-network-wsl2-to-native-'))
     fixtureDirectories.push(fixtureRoot)
@@ -1887,7 +2027,10 @@ it('checks sandbox spawn admission before launching the R process', async () => 
     expect(result.kernelDispatched).toBe(false)
     expect(beginSpawn).toHaveBeenCalledOnce()
     expect(existsSync(marker)).toBe(false)
-    expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true })
+    expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+      processesTerminated: true,
+      confirmTermination: expect.any(Function)
+    })
   } finally {
     await executor.shutdown()
   }

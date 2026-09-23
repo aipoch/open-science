@@ -391,7 +391,10 @@ describe('terminateProcessTree (posix)', () => {
     await vi.waitFor(() => expect(readFileMock).toHaveBeenCalledTimes(2))
     child.exitCode = 0
 
-    await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: false })
+    await expect(terminateProcessTree(child as never)).resolves.toMatchObject({
+      reaped: false,
+      diagnostics: { failureCategory: 'process-table-history-incomplete' }
+    })
     expect(killSpy).not.toHaveBeenCalledWith(1001, expect.anything())
     expect(child.kill).not.toHaveBeenCalled()
   })
@@ -439,7 +442,10 @@ describe('terminateProcessTree (posix)', () => {
     await vi.waitFor(() => expect(child.kill).toHaveBeenCalledWith('SIGTERM'))
     child.emit('exit', 0, null)
 
-    await expect(pending).resolves.toEqual({ reaped: false })
+    await expect(pending).resolves.toMatchObject({
+      reaped: false,
+      diagnostics: { failureCategory: 'leader-identity-unavailable' }
+    })
     expect(killSpy).not.toHaveBeenCalledWith(1000, 'SIGTERM')
     expect(killSpy).not.toHaveBeenCalledWith(-1000, 'SIGTERM')
   })
@@ -529,7 +535,10 @@ describe('terminateProcessTree (posix)', () => {
     ps.stdout.emit('data', Buffer.from('1000 1\n'))
     ps.emit('close', 0)
 
-    await expect(pending).resolves.toEqual({ reaped: false })
+    await expect(pending).resolves.toMatchObject({
+      reaped: false,
+      diagnostics: { failureCategory: 'leader-identity-unavailable' }
+    })
     expect(killSpy).toHaveBeenCalledWith(-1000, 'SIGTERM')
     expect(child.kill).not.toHaveBeenCalled()
   })
