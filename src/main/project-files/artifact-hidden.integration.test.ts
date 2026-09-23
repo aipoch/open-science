@@ -140,6 +140,25 @@ describe('hidden artifacts (isolated SQLite and files)', () => {
     }
   )
 
+  it('bounds dedicated thumbnail reads and retains visibility checks', async () => {
+    await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: true })
+    const request = { projectId: 'project-a', fileId, versionId, maxBytes: 4 }
+    const read = (request: ReadHiddenArtifactRequest): ReturnType<typeof readHiddenArtifactChunk> =>
+      readHiddenArtifactChunk(request, (identity) =>
+        versions.openHiddenArtifactVersion(identity, identity.versionId)
+      )
+    await expect(read(request)).resolves.toMatchObject({
+      content: 'priv',
+      size: 14,
+      truncated: true
+    })
+    await expect(read({ ...request, maxBytes: -1 })).rejects.toThrow(
+      'Invalid hidden file byte limit.'
+    )
+    await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: false })
+    await expect(read(request)).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+  })
+
   it('excludes hidden files from ordinary catalogs and searches while keeping the Hidden collection', async () => {
     await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: true })
     expect(

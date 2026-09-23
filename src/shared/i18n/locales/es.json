@@ -6550,6 +6550,7 @@
     "Could not load project files.": "No se pudieron cargar los archivos del proyecto.",
     "Could not load file preview.": "No se pudo cargar la vista previa del archivo.",
     "Download this file to view it.": "Descargue este archivo para verlo.",
-    "Preview truncated.": "Vista previa truncada."
+    "Preview truncated.": "Vista previa truncada.",
+    "Hide file": "Ocultar archivo"
   }
 }

@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { initI18n } from '@/i18n'
-import { ArtifactHideButton, HiddenArtifactFiles } from '@/pages/workspace/HiddenArtifactFiles'
+import { HiddenArtifactFiles } from '@/pages/workspace/HiddenArtifactFiles'
+import { ArtifactHideButton } from '@/pages/workspace/ArtifactHideButton'
 import { ProjectFilesFilterMenu } from '@/pages/workspace/project-files-presentation-owner'
 import { DownloadProjectArtifactsDialog } from '@/pages/workspace/DownloadProjectArtifactsDialog'
 import type { ProjectFileItem, ProjectFilesChangedEvent } from '../../../src/shared/project-files'
@@ -74,6 +75,7 @@ window.api = {
 export const App = (): React.JSX.Element => {
   const [isHidden, setHidden] = useState(hidden)
   const [filter, setFilter] = useState('all')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [exportOpen, setExportOpen] = useState(false)
   useEffect(() => {
     const listener = (): void => setHidden(hidden)
@@ -109,10 +111,13 @@ export const App = (): React.JSX.Element => {
             isLocalSelected={false}
             selectedLocalRootId={undefined}
           />
+          <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}>
+            Toggle file layout
+          </button>
           <button onClick={() => setExportOpen(true)}>Download project artifacts</button>
         </div>
         {filter === 'hidden' ? (
-          <HiddenArtifactFiles projectId="project" query="" />
+          <HiddenArtifactFiles projectId="project" query="" viewMode={viewMode} />
         ) : !isHidden ? (
           <div className="mt-6 flex items-center justify-between">
             <span>result.txt</span>

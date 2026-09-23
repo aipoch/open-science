@@ -6384,6 +6384,7 @@
     "Could not load project files.": "Die Projektdateien konnten nicht geladen werden.",
     "Could not load file preview.": "Die Dateivorschau konnte nicht geladen werden.",
     "Download this file to view it.": "Laden Sie diese Datei herunter, um sie anzuzeigen.",
-    "Preview truncated.": "Vorschau gekürzt."
+    "Preview truncated.": "Vorschau gekürzt.",
+    "Hide file": "Datei ausblenden"
   }
 }

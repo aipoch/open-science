@@ -3745,6 +3745,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       'View in context',
       'Open full screen preview',
       'Download',
+      'Hide file',
       'Close'
     ])
     expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(1)
@@ -3871,7 +3872,7 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="separator"]') ?? [])].map(
         (entry) => (entry.getAttribute('role') === 'separator' ? 'separator' : entry.textContent)
       )
-    ).toEqual(['Provenance', 'separator', 'View in context'])
+    ).toEqual(['Provenance', 'separator', 'View in context', 'Hide file'])
   })
 
   it('keeps the Session context action visible but disabled when an Upload PDF has no immutable Version', async () => {
@@ -4668,6 +4669,151 @@ const seedWorkspaceStores = (): void => {
 }
 
 describe('PreviewFileSurface View in context entry', () => {
+  it.each(['context', 'more', 'toolbar'] as const)(
+    'hides an artifact from the %s entry',
+    async (entry) => {
+      seedWorkspaceStores()
+      const setArtifactHidden = vi.fn().mockResolvedValue(undefined)
+      window.api.projectFiles = { ...window.api.projectFiles, setArtifactHidden }
+      const onClose = vi.fn()
+      await act(async () => {
+        root.render(
+          <PreviewFileSurface
+            item={{ ...item, projectId: 'project-1', managedFileId: 'artifact-1' }}
+            onClose={onClose}
+            provenanceEntry={entry === 'toolbar' ? 'trailing' : 'menu'}
+          />
+        )
+      })
+      if (entry === 'context') {
+        await act(async () => {
+          container.querySelector('[data-testid="preview-content"]')?.dispatchEvent(
+            new MouseEvent('contextmenu', {
+              bubbles: true,
+              cancelable: true,
+              clientX: 20,
+              clientY: 20
+            })
+          )
+        })
+        expect(document.body.textContent).toContain('Hide file')
+        await clickMenuItem('Hide file')
+      } else if (entry === 'more') {
+        await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+        expect(document.body.textContent).toContain('Hide file')
+        await clickMenuItem('Hide file')
+      } else {
+        const hide = container.querySelector<HTMLElement>('[aria-label="Hide sin.png"]')
+        expect(hide).not.toBeNull()
+        await click(hide)
+      }
+      expect(setArtifactHidden).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        hidden: true
+      })
+      expect(onClose).toHaveBeenCalled()
+    }
+  )
+
+  it('closes after the visibility broadcast revokes the content before hide resolves', async () => {
+    seedWorkspaceStores()
+    const listeners = new Set<Parameters<typeof window.api.projectFiles.onChanged>[0]>()
+    let finishHide!: () => void
+    const getHiddenArtifactIds = vi.fn().mockResolvedValue([])
+    const setArtifactHidden = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishHide = resolve
+        })
+    )
+    window.api.projectFiles = {
+      ...window.api.projectFiles,
+      setArtifactHidden,
+      getHiddenArtifactIds,
+      onChanged: vi.fn((listener) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      })
+    }
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, projectId: 'project-1', managedFileId: 'artifact-1' }}
+          onClose={onClose}
+          provenanceEntry="trailing"
+        />
+      )
+    })
+    await click(container.querySelector<HTMLElement>('[aria-label="Hide sin.png"]'))
+    getHiddenArtifactIds.mockResolvedValue([{ fileId: 'artifact-1', versionIds: [] }])
+    await act(async () => {
+      for (const notify of [...listeners])
+        notify({
+          projectId: 'project-1',
+          kind: 'reset',
+          sources: ['artifact'],
+          artifactVisibilityChanged: true
+        })
+    })
+    expect(container.textContent).toContain('File unavailable')
+    await act(async () => {
+      finishHide()
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['switch', 'unmount'] as const)(
+    'does not close a newer preview after a pending hide (%s)',
+    async (transition) => {
+      seedWorkspaceStores()
+      let finishHide!: () => void
+      const setArtifactHidden = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishHide = resolve
+          })
+      )
+      window.api.projectFiles = { ...window.api.projectFiles, setArtifactHidden }
+      const onClose = vi.fn()
+      await act(async () => {
+        root.render(
+          <PreviewFileSurface
+            item={{ ...item, projectId: 'project-1', managedFileId: 'artifact-1' }}
+            onClose={onClose}
+            provenanceEntry="trailing"
+          />
+        )
+      })
+      await click(container.querySelector<HTMLElement>('[aria-label="Hide sin.png"]'))
+      expect(setArtifactHidden).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        root.render(
+          transition === 'unmount' ? null : (
+            <PreviewFileSurface
+              item={{
+                ...item,
+                id: 'other',
+                name: 'other.txt',
+                projectId: 'project-1',
+                managedFileId: 'artifact-2'
+              }}
+              onClose={onClose}
+              provenanceEntry="trailing"
+            />
+          )
+        )
+      })
+      await act(async () => {
+        finishHide()
+      })
+      expect(onClose).not.toHaveBeenCalled()
+    }
+  )
+
   it('locates the source message of the selected artifact version after navigation', async () => {
     seedWorkspaceStores()
     useSearchMessageFocusStore.setState({ pending: undefined })
@@ -4726,7 +4872,14 @@ describe('PreviewFileSurface View in context entry', () => {
       [...(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])].map(
         (entry) => entry.textContent
       )
-    ).toEqual(['Provenance', 'View in context', 'Open full screen preview', 'Download', 'Close'])
+    ).toEqual([
+      'Provenance',
+      'View in context',
+      'Open full screen preview',
+      'Download',
+      'Hide file',
+      'Close'
+    ])
   })
 
   it('shares managed download execution, pending protection, and failure state across actions', async () => {
