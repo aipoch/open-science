@@ -13,6 +13,7 @@
     "src/shared/bookmarks.ts",
     "src/shared/bootstrap.ts",
     "src/shared/cli.ts",
+    "src/shared/claude-runtime.ts",
     "src/shared/codex-runtime.ts",
     "src/shared/configured-model-catalog.test.ts",
     "src/shared/configured-model-catalog.ts",
@@ -126,7 +127,10 @@
     "src/shared/classification.ts",
     "src/shared/runtime-writer.ts",
     "src/shared/pdf-annotations.ts",
-    "src/shared/pdf-annotations.test.ts"
+    "src/shared/pdf-annotations.test.ts",
+    "src/shared/literature-smart-collections.ts",
+    "src/shared/smart-collection-rule.test.ts",
+    "src/shared/smart-collection-rule.ts"
   ],
   "interfacePaths": [
     "src/shared/__fixtures__/skill-marketplace.ts",
@@ -138,6 +142,7 @@
     "src/shared/bookmarks.ts",
     "src/shared/bootstrap.ts",
     "src/shared/cli.ts",
+    "src/shared/claude-runtime.ts",
     "src/shared/codex-runtime.ts",
     "src/shared/configured-model-catalog.ts",
     "src/shared/custom-connector.ts",
@@ -214,7 +219,8 @@
     "src/shared/wsl-setup.ts",
     "src/shared/config-root.ts",
     "src/shared/runtime-writer.ts",
-    "src/shared/pdf-annotations.ts"
+    "src/shared/pdf-annotations.ts",
+    "src/shared/literature-smart-collections.ts"
   ],
   "consumerModules": [],
   "testFiles": {

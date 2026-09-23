@@ -1551,3 +1551,34 @@ it.each(['en', 'zh-Hans'] as const)(
     }
   }
 )
+
+it('reports a localized location and rule without exposing the matched value', async () => {
+  const { PackageSensitiveContentError } = await import('./sensitive-content')
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const failure = new PackageSensitiveContentError(
+    'notebooks/project/session/data.txt @17?token=synthetic-private-value',
+    'assignment'
+  )
+  vi.spyOn(service, 'exportTo').mockRejectedValue(failure)
+  const desktop = createDesktop({
+    service,
+    translate: (key, options) => translateNativeMessage('zh-Hans', key, options),
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => {}
+  })
+  try {
+    await expect(desktop.export({ projectId: 'project', sessionId: 'session' })).rejects.toThrow(
+      '疑似凭据的赋值'
+    )
+    expect(desktop.operations.snapshot?.error).toContain('data.txt @17')
+    expect(desktop.operations.snapshot?.error).not.toContain('synthetic-private-value')
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})

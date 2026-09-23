@@ -1,3 +1,5 @@
+import type { ClassificationUsageRecorder } from './classification-usage'
+import { AutomaticClassificationPausedError } from '../../shared/classification'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -961,4 +963,378 @@ it('rejects insecure custom endpoints before attempting validation', async () =>
     })
   ).rejects.toThrow('endpoint is invalid')
   expect(fetchMock).not.toHaveBeenCalled()
+})
+
+const literatureRequest = (): Parameters<ClassificationSettingsOwner['classifyLiterature']>[0] => ({
+  description: 'Original studies of resistance using single-cell sequencing.',
+  title: 'Single-cell resistance study',
+  abstract: 'We used single-cell sequencing to investigate resistance.',
+  signal: new AbortController().signal
+})
+const choiceResponse = (changes: Record<string, unknown> = {}): Response =>
+  new Response(
+    JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: {
+        membership: {
+          type: 'choice',
+          choice: 'match',
+          confidence: 0.9,
+          probabilities: { match: 0.95, 'no-match': 0.01, uncertain: 0.04 },
+          ...changes
+        }
+      },
+      usage: { input_tokens: 42, output_tokens: 5 }
+    })
+  )
+it('does not use capability selection as authorization to classify literature', async () => {
+  await configure()
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow('not configured')
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+it('persists independent smart collection binding without changing the capability binding', async () => {
+  await configure()
+  const snapshot = await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  expect(snapshot.smartCollections).toEqual(snapshot.capabilitySelection)
+  const restarted = new ClassificationSettingsOwner(new SettingsRepository(dir), fetchMock)
+  expect((await restarted.snapshot()).smartCollections).toEqual(snapshot.smartCollections)
+  const unbound = await owner.mutate({ revision: 3, kind: 'bind', feature: 'smart-collections' })
+  expect(unbound.smartCollections).toBeUndefined()
+  expect(unbound.capabilitySelection).toEqual(snapshot.capabilitySelection)
+})
+it.each(['typesafe', 'openrouter', 'custom'] as const)(
+  'classifies literature with a closed Choice contract through %s',
+  async (adapter) => {
+    await owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter,
+      name: 'Classifier',
+      apiKey: 'secret',
+      ...(adapter === 'custom'
+        ? { baseUrl: 'https://classifier.example.test/decisions', modelId: 'local-model' }
+        : {})
+    })
+    await owner.mutate({
+      revision: 1,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    fetchMock.mockClear().mockResolvedValue(choiceResponse())
+    const observeUsage = vi.fn()
+    const result = await owner.classifyLiterature({ ...literatureRequest(), observeUsage })
+    expect(result).toMatchObject({ verdict: 'match', model: 'jev-1.13.0' })
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(
+      adapter === 'typesafe'
+        ? 'https://api.typesafe.ai/v1/systemone'
+        : adapter === 'openrouter'
+          ? 'https://openrouter.ai/api/alpha/decisions'
+          : 'https://classifier.example.test/decisions'
+    )
+    const body = JSON.parse(String(init?.body))
+    expect(body.questions.membership.type).toBe('choice')
+    expect(Object.keys(body.questions.membership.criteria)).toEqual([
+      'match',
+      'no-match',
+      'uncertain'
+    ])
+    expect(JSON.parse(body.state)).toEqual({
+      title: literatureRequest().title,
+      abstract: literatureRequest().abstract
+    })
+    expect(observeUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        usage: { inputTokens: 42, outputTokens: 5, cacheTokens: 0, turnCount: 1 }
+      })
+    )
+  }
+)
+it.each([
+  { choice: 'unknown' },
+  { probabilities: { match: 0.1, 'no-match': 0.8, uncertain: 0.1 } },
+  { probabilities: { match: 0.95, 'no-match': 0.9, uncertain: 0.1 } },
+  { type: 'noul', noul: 0.99 },
+  { probabilities: { match: 0.95, 'no-match': 0.01 } }
+])(
+  'rejects invalid literature decisions rather than silently excluding a paper: %j',
+  async (invalid) => {
+    await configure()
+    await owner.mutate({
+      revision: 2,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    fetchMock.mockResolvedValue(choiceResponse(invalid))
+    await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow()
+  }
+)
+it('does not send missing abstracts and rejects results made obsolete by configuration changes', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  await expect(owner.classifyLiterature({ ...literatureRequest(), abstract: '' })).rejects.toThrow(
+    'Insufficient'
+  )
+  expect(fetchMock).not.toHaveBeenCalled()
+  fetchMock.mockImplementation(async () => {
+    await owner.mutate({ revision: 3, kind: 'bind', feature: 'smart-collections' })
+    return choiceResponse()
+  })
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow()
+})
+
+it.each([
+  [401, 'auth'],
+  [429, 'rate-limit'],
+  [500, 'service'],
+  [404, 'configuration']
+] as const)('returns a safe literature failure category for HTTP %s', async (status, category) => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  fetchMock.mockImplementation(async () => new Response('private-provider-message', { status }))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    category,
+    message: 'Classification evaluation failed.'
+  })
+})
+it('distinguishes malformed literature responses from network failures', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  fetchMock.mockResolvedValueOnce(new Response('not-json'))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    category: 'invalid-response'
+  })
+  fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    category: 'network'
+  })
+})
+
+it('selects only a supplied evidence passage and rejects an invented citation index', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  const response = await choiceResponse().json()
+  response.answers.evidence = { type: 'choice', choice: '0' }
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  const input = {
+    ...literatureRequest(),
+    abstract: '',
+    evidence: {
+      coverage: 'passages',
+      passages: [{ pageStart: 3, pageEnd: 3, content: 'Participants were randomly assigned.' }]
+    }
+  }
+  expect(await owner.classifyLiterature(input)).toMatchObject({
+    verdict: 'match',
+    evidenceIndex: 0
+  })
+  delete response.answers.evidence
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  const withoutCitation = await owner.classifyLiterature(input)
+  expect(withoutCitation).toMatchObject({ verdict: 'match' })
+  expect(withoutCitation.evidenceIndex).toBeUndefined()
+  response.answers.evidence = { type: 'choice', choice: 'none' }
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  expect((await owner.classifyLiterature(input)).evidenceIndex).toBeUndefined()
+  response.answers.evidence.choice = '999'
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  await expect(owner.classifyLiterature(input)).rejects.toThrow()
+})
+
+it.each(['success', 'invalid', 'cancelled', 'network', 'retry'] as const)(
+  'accounts for actual literature provider attempts: %s',
+  async (scenario) => {
+    await configure()
+    await owner.mutate({
+      revision: 2,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    const controller = new AbortController()
+    const recordRequest = vi.fn<
+      (event: import('../../shared/classification').ClassificationRequestUsage) => Promise<void>
+    >(async () => undefined)
+    owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+      observer: () => recordRequest
+    } as unknown as ClassificationUsageRecorder)
+    const observeUsage = vi.fn()
+    fetchMock.mockClear()
+    if (scenario === 'network') fetchMock.mockRejectedValueOnce(new Error('connection failed'))
+    else if (scenario === 'invalid')
+      fetchMock.mockResolvedValueOnce(choiceResponse({ choice: 'invalid' }))
+    else if (scenario === 'cancelled')
+      fetchMock.mockImplementationOnce(async () => {
+        controller.abort()
+        return choiceResponse()
+      })
+    else if (scenario === 'retry')
+      fetchMock
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ usage: { input_tokens: 3, output_tokens: 1 } }), {
+            status: 429
+          })
+        )
+        .mockResolvedValueOnce(choiceResponse())
+    else fetchMock.mockResolvedValueOnce(choiceResponse())
+    const result = owner.classifyLiterature({
+      ...literatureRequest(),
+      signal: controller.signal,
+      observeUsage
+    })
+    if (scenario === 'success' || scenario === 'retry') await result
+    else await expect(result).rejects.toThrow()
+    const records = recordRequest.mock.calls.map(
+      (call) => call[0]
+    ) as unknown as import('../../shared/classification').ClassificationRequestUsage[]
+    const attempts = scenario === 'retry' ? 2 : 1
+    expect(records).toHaveLength(attempts * 2)
+    expect(new Set(records.map((entry) => entry.eventId)).size).toBe(attempts)
+    expect(records[0].status).toBe('started')
+    if (scenario === 'network') {
+      expect(records[1]).toMatchObject({ status: 'failed' })
+      expect(records[1].inputTokens).toBeUndefined()
+      expect(observeUsage).not.toHaveBeenCalled()
+    } else {
+      expect(records.at(-1)).toMatchObject({
+        inputTokens: 42,
+        outputTokens: 5,
+        status:
+          scenario === 'invalid' ? 'failed' : scenario === 'cancelled' ? 'interrupted' : 'completed'
+      })
+      expect(observeUsage).toHaveBeenCalledTimes(attempts)
+    }
+  }
+)
+
+it('does not send literature requests when recording their initial identity fails', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+    observer: () => async () => {
+      throw new Error('database unavailable')
+    }
+  } as unknown as ClassificationUsageRecorder)
+  fetchMock.mockClear()
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow()
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('stops a provider retry when the automatic request budget is exhausted', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  let attempts = 0
+  owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+    observer:
+      () => async (event: import('../../shared/classification').ClassificationRequestUsage) => {
+        if (event.status === 'started' && ++attempts > 1) {
+          throw new AutomaticClassificationPausedError('run-limit')
+        }
+      }
+  } as unknown as ClassificationUsageRecorder)
+  fetchMock.mockClear()
+  fetchMock.mockResolvedValueOnce(new Response('retry later', { status: 429 }))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    reason: 'run-limit'
+  })
+  expect(attempts).toBe(2)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+it('records connection checks, capability selection and reading routing at the same provider boundary', async () => {
+  const records: {
+    context: import('../../shared/classification').ClassificationUsageContext
+    event: import('../../shared/classification').ClassificationRequestUsage
+  }[] = []
+  owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+    observer: (context) => async (event) => {
+      records.push({ context, event })
+    }
+  } as ClassificationUsageRecorder)
+  await configure()
+  await owner.probe({ serviceId, revision: 2 })
+  const usageContext = { projectId: 'project', sessionId: 'session' }
+  await owner.selectSkills({ ...request(), usageContext })
+  fetchMock.mockResolvedValueOnce(readingResponse(0.9, 0.1))
+  await owner.selectReadingRoute({ text: 'Read the full paper', usageContext })
+  const done = records.filter(({ event }) => event.status === 'completed')
+  expect(done.map(({ context }) => context.scenario)).toEqual([
+    'save-validation',
+    'probe',
+    'capability-selection',
+    'reading-route'
+  ])
+  expect(
+    done
+      .slice(2)
+      .every(({ context }) => context.sessionId === 'session' && context.projectId === 'project')
+  ).toBe(true)
+  expect(done.every(({ event }) => event.inputTokens! > 0)).toBe(true)
+  expect(new Set(done.map(({ event }) => event.eventId)).size).toBe(4)
+  const calls = fetchMock.mock.calls.length
+  await owner.selectSkills({ ...request(), signal: AbortSignal.abort() })
+  expect(fetchMock).toHaveBeenCalledTimes(calls)
+})
+
+it('notifies classification observers only after committed changes and releases subscriptions', async () => {
+  const changed = vi.fn()
+  const unsubscribe = owner.subscribe(changed)
+  await configure()
+  expect(changed).toHaveBeenCalled()
+  changed.mockClear()
+  await expect(
+    owner.mutate({
+      revision: -1,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+  ).rejects.toThrow()
+  expect(changed).not.toHaveBeenCalled()
+  unsubscribe()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  expect(changed).not.toHaveBeenCalled()
 })

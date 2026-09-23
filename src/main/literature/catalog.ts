@@ -1,3 +1,14 @@
+import { saveSmartRuleVersion } from './smart-rule-history'
+import {
+  serializedSmartRuleSchema,
+  formatSmartRule,
+  parseSmartRule
+} from '../../shared/smart-collection-rule'
+import {
+  smartScopeSchema,
+  smartEvidenceModeSchema
+} from '../../shared/literature-smart-collections'
+import type { LiteratureSmartCollections } from './smart-collections'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
@@ -20,6 +31,7 @@ import {
   LITERATURE_IDENTITY_SCHEMES,
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   LITERATURE_COLLECTION_NAME_CONFLICT,
+  LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH,
   LITERATURE_COLLECTION_REVISION_CONFLICT,
   literatureCandidateInputSchema,
   literaturePdfProvenanceSchema,
@@ -810,7 +822,8 @@ class LiteratureCatalog {
         // Metadata-only clients may delete metadata, but cannot bypass attachment authority.
         if (attachmentIds.length) throw new Error('Literature attachment removal is unavailable.')
       }),
-    private readonly onChanged?: (event: LiteratureChangedEvent) => void
+    private readonly onChanged?: (event: LiteratureChangedEvent) => void,
+    private readonly smart?: LiteratureSmartCollections
   ) {}
 
   private revision = 0
@@ -821,6 +834,7 @@ class LiteratureCatalog {
     } catch (error) {
       log.warn('Could not publish committed literature changes', { error })
     }
+    this.smart?.schedule()
   }
 
   // Observe writes on the transaction's own SQLite connection. Read-only previews and empty
@@ -836,7 +850,7 @@ class LiteratureCatalog {
     // A library search may hold the single SQLite connection for up to 30 seconds.
     // Acquisition must not fail at Prisma's 2s default while that valid read is still running.
     const transactionOptions = { maxWait: 30_000, ...options }
-    if (!this.onChanged) return client.$transaction(operation, transactionOptions)
+    if (!this.onChanged && !this.smart) return client.$transaction(operation, transactionOptions)
     const committed = await client.$transaction(async (transaction) => {
       const count = async (): Promise<bigint> =>
         (
@@ -927,14 +941,25 @@ class LiteratureCatalog {
         ...(request.parentId ? { parentId: request.parentId } : {}),
         ...(request.itemId || request.projectId
           ? {
-              items: {
-                some: {
-                  ...(request.itemId ? { itemId: request.itemId } : {}),
-                  ...(request.projectId
-                    ? { item: { projects: { some: { projectId: request.projectId } } } }
-                    : {})
+              OR: [
+                {
+                  id: {
+                    in:
+                      (await this.smart?.matchingCollections(request.itemId, request.projectId)) ??
+                      []
+                  }
+                },
+                {
+                  items: {
+                    some: {
+                      ...(request.itemId ? { itemId: request.itemId } : {}),
+                      ...(request.projectId
+                        ? { item: { projects: { some: { projectId: request.projectId } } } }
+                        : {})
+                    }
+                  }
                 }
-              }
+              ]
             }
           : {}),
         ...(query ? { name: { contains: query } } : {})
@@ -944,6 +969,7 @@ class LiteratureCatalog {
         client.literatureCollection.findMany({
           where,
           include: {
+            smart: true,
             _count: {
               select: { items: { where: { item: { deletedAt: null, mergedIntoItemId: null } } } }
             }
@@ -954,16 +980,32 @@ class LiteratureCatalog {
         })
       ])
       return {
-        entries: rows.slice(0, limit).map((row): LiteratureCollectionView => ({
-          id: row.id,
-          revision: row.revision,
-          name: row.name,
-          description: row.description,
-          parentId: row.parentId ?? undefined,
-          itemCount: row._count.items,
-          createdAt: row.createdAt.getTime(),
-          updatedAt: row.updatedAt.getTime()
-        })),
+        entries: await Promise.all(
+          rows.slice(0, limit).map(async (row): Promise<LiteratureCollectionView> => {
+            const members = row.smart ? await this.smart?.members(row.id) : undefined
+            return {
+              id: row.id,
+              revision: row.revision,
+              name: row.name,
+              description: row.description,
+              parentId: row.parentId ?? undefined,
+              smart: members !== undefined,
+              smartEvidenceMode: row.smart
+                ? smartEvidenceModeSchema.parse(row.smart.evidenceMode)
+                : undefined,
+              smartAutoUpdate: row.smart?.autoUpdate,
+              smartScope: row.smart
+                ? smartScopeSchema.parse({
+                    kind: row.smart.scopeKind,
+                    ...(row.smart.scopeId ? { id: row.smart.scopeId } : {})
+                  })
+                : undefined,
+              itemCount: members?.length ?? row._count.items,
+              createdAt: row.createdAt.getTime(),
+              updatedAt: row.updatedAt.getTime()
+            }
+          })
+        ),
         totalCount,
         nextOffset: rows.length > limit ? offset + limit : undefined
       }
@@ -1022,15 +1064,7 @@ class LiteratureCatalog {
 
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
-    client: Pick<
-      LiteratureCatalogClient,
-      | 'literatureItem'
-      | 'literatureCollection'
-      | '$queryRaw'
-      | 'projectDeletionIntent'
-      | 'pdfAnnotation'
-      | 'tagAssignment'
-    >,
+    client: Prisma.TransactionClient,
     boundResponse = true
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
@@ -1086,10 +1120,21 @@ class LiteratureCatalog {
         Prisma.sql`EXISTS (SELECT 1 FROM "ProjectLiterature" p JOIN "Project" project ON project.id = p."projectId" WHERE p."itemId" = i.id AND p."projectId" = ${projectId} AND project."deletedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM "ProjectDeletionIntent" d WHERE d."projectId" = project.id))`
       )
     const collectionId = request.collectionId ?? filter?.collectionId
-    if (collectionId)
-      predicates.push(
-        Prisma.sql`EXISTS (SELECT 1 FROM "LiteratureCollectionItem" c WHERE c."itemId" = i.id AND c."collectionId" = ${collectionId})`
+    if (collectionId) {
+      const members = await this.smart?.members(
+        collectionId,
+        client,
+        request.smartFilter,
+        request.smartDecisionSource
       )
+      predicates.push(
+        members === undefined
+          ? Prisma.sql`EXISTS (SELECT 1 FROM "LiteratureCollectionItem" c WHERE c."itemId" = i.id AND c."collectionId" = ${collectionId})`
+          : members.length
+            ? Prisma.sql`i.id IN (SELECT value FROM json_each(${JSON.stringify(members)}))`
+            : Prisma.sql`0 = 1`
+      )
+    }
     for (const tagId of new Set([
       ...(filter?.tagIds ?? []),
       ...(request.tagId ? [request.tagId] : [])
@@ -1127,32 +1172,44 @@ class LiteratureCatalog {
                   : { updatedAt: { gte: new Date(request.updatedAfter) } }),
                 ...(request.projectId
                   ? {
-                      items: {
-                        some: {
-                          item: {
-                            deletedAt: null,
-                            projects: {
-                              some: {
-                                projectId: request.projectId,
-                                project: await availableProjectWhere(client)
+                      AND: [
+                        {
+                          OR: [
+                            {
+                              id: {
+                                in:
+                                  (await this.smart?.matchingCollections(
+                                    undefined,
+                                    request.projectId,
+                                    client
+                                  )) ?? []
+                              }
+                            },
+                            {
+                              items: {
+                                some: {
+                                  item: {
+                                    deletedAt: null,
+                                    projects: {
+                                      some: {
+                                        projectId: request.projectId,
+                                        project: await availableProjectWhere(client)
+                                      }
+                                    }
+                                  }
+                                }
                               }
                             }
-                          }
+                          ]
                         }
-                      }
+                      ]
                     }
                   : {}),
                 ...(query
                   ? { OR: [{ name: { contains: query } }, { description: { contains: query } }] }
                   : {})
               },
-              include: {
-                _count: {
-                  select: {
-                    items: { where: { item: { deletedAt: null, mergedIntoItemId: null } } }
-                  }
-                }
-              }
+              select: { id: true, name: true, updatedAt: true }
             })
       ])
       // Search stored annotation text only; PDF bytes/rendering are never needed here.
@@ -1234,36 +1291,67 @@ class LiteratureCatalog {
       ].sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
       if (request.countOnly) return { entries: [], totalCount }
       const page = ranked.slice(offset, offset + limit)
-      const selectedPapers = await client.literatureItem.findMany({
-        where: { id: { in: page.filter((item) => item.kind === 'paper').map((item) => item.id) } },
-        include: await activeItemInclude(client)
-      })
-      const paperViews = new Map(selectedPapers.map((item) => [item.id, toItemView(item)]))
-      const collectionViews = new Map(
-        collections.map((row) => [
-          row.id,
-          {
-            revision: row.revision,
-            id: row.id,
-            name: row.name,
-            description: row.description,
-            parentId: row.parentId ?? undefined,
-            itemCount: row._count.items,
-            createdAt: row.createdAt.getTime(),
-            updatedAt: row.updatedAt.getTime()
-          }
-        ])
+      const paperIds = page.filter((item) => item.kind === 'paper').map((item) => item.id)
+      const selectedPapers = paperIds.length
+        ? await client.literatureItem.findMany({
+            where: { id: { in: paperIds } },
+            include: await activeItemInclude(client)
+          })
+        : []
+      const paperViews = new Map(
+        (await this.itemViews(selectedPapers, client)).map((item) => [item.id, item])
       )
-      const noteViews = new Map(
-        (
-          await readAnnotations(
-            client,
-            await client.pdfAnnotation.findMany({
-              where: {
-                id: { in: page.filter((item) => item.kind === 'note').map((item) => item.id) }
+      const collectionIds = page.filter((item) => item.kind === 'collection').map((item) => item.id)
+      const selectedCollections = collectionIds.length
+        ? await client.literatureCollection.findMany({
+            where: { id: { in: collectionIds } },
+            include: {
+              smart: true,
+              _count: {
+                select: { items: { where: { item: { deletedAt: null, mergedIntoItemId: null } } } }
               }
-            })
-          )
+            }
+          })
+        : []
+      const collectionViews = new Map(
+        await Promise.all(
+          selectedCollections.map(async (row) => {
+            const members = row.smart ? await this.smart?.members(row.id, client) : undefined
+            return [
+              row.id,
+              {
+                revision: row.revision,
+                id: row.id,
+                name: row.name,
+                description: row.description,
+                parentId: row.parentId ?? undefined,
+                smart: members !== undefined,
+                smartScope: row.smart
+                  ? smartScopeSchema.parse({
+                      kind: row.smart.scopeKind,
+                      ...(row.smart.scopeId ? { id: row.smart.scopeId } : {})
+                    })
+                  : undefined,
+                smartEvidenceMode: row.smart
+                  ? smartEvidenceModeSchema.parse(row.smart.evidenceMode)
+                  : undefined,
+                smartAutoUpdate: row.smart?.autoUpdate,
+                itemCount: members?.length ?? row._count.items,
+                createdAt: row.createdAt.getTime(),
+                updatedAt: row.updatedAt.getTime()
+              }
+            ] as const
+          })
+        )
+      )
+      const noteIds = page.filter((item) => item.kind === 'note').map((item) => item.id)
+      const noteViews = new Map(
+        (noteIds.length
+          ? await readAnnotations(
+              client,
+              await client.pdfAnnotation.findMany({ where: { id: { in: noteIds } } })
+            )
+          : []
         ).map((annotation) => [annotation.id, { id: annotation.id, annotation }])
       )
       const entries = page.flatMap(
@@ -1342,9 +1430,16 @@ class LiteratureCatalog {
           include: await activeItemInclude(client)
         })
       : []
-    const byId = new Map(rows.map((row) => [row.id, row]))
+    const byId = new Map((await this.itemViews(rows, client)).map((row) => [row.id, row]))
+    const decisions = new Map(
+      (collectionId
+        ? ((await this.smart?.decisions(collectionId, itemIds, client)) ?? [])
+        : []
+      ).map((row) => [row.id, row])
+    )
     const entries = ids.map(({ id, requestedId }) => ({
-      ...toItemView(byId.get(id)!),
+      ...byId.get(id)!,
+      ...(decisions.has(id) ? { smartDecision: decisions.get(id) } : {}),
       id: requestedId
     }))
     const page = boundResponse
@@ -1364,6 +1459,23 @@ class LiteratureCatalog {
     }
   }
 
+  private async itemViews(
+    rows: LiteratureItemRow[],
+    client?: Prisma.TransactionClient
+  ): Promise<LiteratureItemView[]> {
+    const memberships = await this.smart?.memberships(
+      rows.map((row) => row.id),
+      client
+    )
+    return rows.map((row) => {
+      const view = toItemView(row)
+      return {
+        ...view,
+        collectionIds: [...view.collectionIds, ...(memberships?.get(row.id) ?? [])]
+      }
+    })
+  }
+
   async exportRecord(
     request: LiteratureExportRecordRequest
   ): Promise<LiteratureExportRecordResult> {
@@ -1375,7 +1487,7 @@ class LiteratureCatalog {
       include: await activeItemInclude(client)
     })
     if (!row) throw new Error('Reference unavailable')
-    const content = JSON.stringify(toItemView(row))
+    const content = JSON.stringify((await this.itemViews([row]))[0])
     const digest = createHash('sha256').update(content).digest('hex')
     const offset = request.offset ?? 0
     if ((offset > 0 && !request.digest) || (request.digest && request.digest !== digest))
@@ -1405,7 +1517,7 @@ class LiteratureCatalog {
       : requested?.deletedAt
         ? undefined
         : requested
-    return row ? toItemView(row) : undefined
+    return row ? (await this.itemViews([row]))[0] : undefined
   }
 
   async sources(itemId: string): Promise<LiteratureSourceRecordView[]> {
@@ -1451,6 +1563,9 @@ class LiteratureCatalog {
             include: await activeItemInclude(client)
           })
     const survivorsById = new Map(survivors.map((row) => [row.id, row]))
+    const views = new Map(
+      (await this.itemViews([...requestedRows, ...survivors])).map((row) => [row.id, row])
+    )
     return ids.flatMap((id) => {
       const requested = requestedById.get(id)
       const resolved = requested?.mergedIntoItemId
@@ -1458,7 +1573,7 @@ class LiteratureCatalog {
         : requested?.deletedAt
           ? undefined
           : requested
-      return resolved ? [{ ...toItemView(resolved), id }] : []
+      return resolved ? [{ ...views.get(resolved.id)!, id }] : []
     })
   }
 
@@ -1604,6 +1719,17 @@ class LiteratureCatalog {
   }
 
   async transact(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
+    if (
+      command.kind === 'read-smart-history' ||
+      command.kind === 'read-smart-decisions' ||
+      command.kind === 'create-smart-collection' ||
+      command.kind === 'smart-collection' ||
+      command.kind === 'preview-smart-collection' ||
+      command.kind === 'cancel-smart-preview'
+    ) {
+      if (!this.smart) throw new Error('Smart collections are unavailable.')
+      return this.smart.execute(command)
+    }
     try {
       return await this.execute(command)
     } finally {
@@ -1735,6 +1861,13 @@ class LiteratureCatalog {
         return this.settleCandidates(command)
       case 'restore-candidates':
         return this.restoreCandidates(command.candidateIds)
+      case 'read-smart-history':
+      case 'read-smart-decisions':
+      case 'preview-smart-collection':
+      case 'cancel-smart-preview':
+      case 'create-smart-collection':
+      case 'smart-collection':
+        throw new Error('Smart collection commands require their owner.')
       case 'create-collection':
         return this.createCollection(command.name, command.description, command.parentId)
       case 'update-collection':
@@ -1775,6 +1908,10 @@ class LiteratureCatalog {
             select: { id: true }
           })
           if (!collection) throw new Error('Literature Collection is unavailable.')
+          if (await transaction.literatureSmartCollection.count({ where: { collectionId } }))
+            throw new Error(
+              'Import into the library or an ordinary collection, then update the smart collection.'
+            )
           const last = await transaction.literatureCollectionItem.findFirst({
             where: { collectionId },
             orderBy: { sortOrder: 'desc' },
@@ -2169,6 +2306,8 @@ class LiteratureCatalog {
     const name = normalizeSpace(nameInput)
     if (!name) throw new Error('Literature Collection name is required.')
     const client = await this.getClient()
+    if (parentId && this.smart && (await this.smart.members(parentId)) !== undefined)
+      throw new Error('Smart collections cannot contain child collections.')
     const last = await client.literatureCollection.findFirst({
       where: { parentId: parentId ?? null },
       orderBy: { sortOrder: 'desc' },
@@ -2207,16 +2346,73 @@ class LiteratureCatalog {
     const client = await this.getClient()
     const updated = await this.commit(
       client,
-      (transaction) =>
-        transaction.literatureCollection.updateMany({
+      async (transaction) => {
+        const previous = await transaction.literatureCollection.findUnique({
+          where: { id: command.collectionId },
+          include: { smart: true }
+        })
+        if (previous?.smart) serializedSmartRuleSchema.parse(command.description)
+        else if (command.description.trim().length > LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH)
+          throw new Error('Collection description is too long.')
+        const previousRule = previous?.smart ? parseSmartRule(previous.description) : undefined
+        const description = previous?.smart
+          ? formatSmartRule(parseSmartRule(command.description)!)
+          : command.description.trim()
+        if (
+          command.smartScope &&
+          (!previous?.smart ||
+            !this.smart ||
+            !(await this.smart.scope(transaction, command.smartScope)))
+        )
+          throw new Error('Smart collection source is unavailable.')
+        const scopeChanged =
+          command.smartScope &&
+          previous?.smart &&
+          (command.smartScope.kind !== previous.smart.scopeKind ||
+            (command.smartScope.kind === 'library' ? null : command.smartScope.id) !==
+              previous.smart.scopeId)
+        const ruleChanged =
+          (previousRule ? formatSmartRule(previousRule) : previous?.description) !== description ||
+          scopeChanged ||
+          (command.smartEvidenceMode !== undefined &&
+            command.smartEvidenceMode !== previous?.smart?.evidenceMode)
+        const result = await transaction.literatureCollection.updateMany({
           where: { id: command.collectionId, revision: command.expectedRevision },
           data: {
             name,
             nameKey: name.toLowerCase(),
-            description: command.description.trim(),
+            description,
             revision: { increment: 1 }
           }
-        }),
+        })
+        if (
+          result.count &&
+          previous?.smart &&
+          (ruleChanged || command.smartAutoUpdate !== undefined)
+        ) {
+          await transaction.literatureSmartCollection.update({
+            where: { collectionId: command.collectionId },
+            data: {
+              ...(ruleChanged ? { ruleRevision: { increment: 1 } } : {}),
+              ...(command.smartEvidenceMode !== undefined
+                ? { evidenceMode: command.smartEvidenceMode }
+                : {}),
+              ...(command.smartAutoUpdate !== undefined
+                ? { autoUpdate: command.smartAutoUpdate }
+                : {}),
+              ...(command.smartScope
+                ? {
+                    scopeKind: command.smartScope.kind,
+                    scopeId: command.smartScope.kind === 'library' ? null : command.smartScope.id
+                  }
+                : {})
+            }
+          })
+        }
+        if (result.count && previous?.smart && ruleChanged)
+          await saveSmartRuleVersion(transaction, command.collectionId)
+        return result
+      },
       { collectionIds: [command.collectionId] }
     ).catch((error: unknown) => {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
@@ -2224,10 +2420,19 @@ class LiteratureCatalog {
       throw error
     })
     if (updated.count !== 1) throw new Error(LITERATURE_COLLECTION_REVISION_CONFLICT)
+    await this.smart?.ruleUpdated(command.collectionId).catch((error) => {
+      log.warn('Could not notify the running smart collection after saving its rule', { error })
+    })
     return { kind: 'collection', id: command.collectionId }
   }
 
   private async deleteCollection(collectionId: string): Promise<LiteratureCatalogReceipt> {
+    if (this.smart)
+      return this.smart.deleteCollection(collectionId, () => this.removeCollection(collectionId))
+    return this.removeCollection(collectionId)
+  }
+
+  private async removeCollection(collectionId: string): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
     await this.commit(
       client,
@@ -2252,6 +2457,8 @@ class LiteratureCatalog {
     command: Extract<LiteratureCatalogCommand, { kind: 'set-collection-item' }>
   ): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
+    if (this.smart && (await this.smart.members(command.collectionId)) !== undefined)
+      throw new Error('Use an explicit smart collection override.')
     if (!command.included) {
       await this.commit(
         client,
@@ -2361,6 +2568,10 @@ class LiteratureCatalog {
           where: { id: { in: itemIds }, mergedIntoItemId: null },
           data: command.state === 'deleted' ? { deletedAt: now } : { deletedAt: null }
         })
+        await transaction.literatureSmartAssessment.updateMany({
+          where: { itemId: { in: itemIds } },
+          data: { policyKey: 'obsolete:lifecycle-change' }
+        })
         if (updated.count !== itemIds.length) {
           throw new Error('One or more Literature Items are unavailable.')
         }
@@ -2464,6 +2675,13 @@ class LiteratureCatalog {
   ): Promise<LiteratureCatalogReceipt> {
     const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
+    if (
+      this.smart &&
+      ((await this.smart.members(command.targetCollectionId)) !== undefined ||
+        (command.sourceCollectionId &&
+          (await this.smart.members(command.sourceCollectionId)) !== undefined))
+    )
+      throw new Error('Smart collection membership cannot be moved manually.')
     return this.commit(
       client,
       async (transaction) => {
@@ -2676,6 +2894,28 @@ class LiteratureCatalog {
     ) {
       throw new Error('Literature references changed after review.')
     }
+    const overrides = await transaction.literatureSmartOverride.findMany({
+      where: { itemId: { in: [command.survivorId, ...duplicateIds] } }
+    })
+    const decisions = new Map<string, string>()
+    for (const override of overrides) {
+      const previous = decisions.get(override.collectionId)
+      if (previous && previous !== override.decision)
+        throw new Error(
+          'Resolve conflicting smart collection decisions before merging these references.'
+        )
+      decisions.set(override.collectionId, override.decision)
+    }
+    for (const [collectionId, decision] of decisions) {
+      await transaction.literatureSmartOverride.upsert({
+        where: { collectionId_itemId: { collectionId, itemId: command.survivorId } },
+        create: { collectionId, itemId: command.survivorId, decision },
+        update: { decision }
+      })
+    }
+    await transaction.literatureSmartAssessment.deleteMany({
+      where: { itemId: { in: [command.survivorId, ...duplicateIds] } }
+    })
     await transaction.literatureIdentifier.deleteMany({
       where: { itemId: { in: duplicateIds } }
     })

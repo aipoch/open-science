@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { setTimeout as delay } from 'node:timers/promises'
+import { migrationSqlExecutor } from './migration-sql-executor'
+import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
 
 import { literatureCandidateInputSchema } from '../../shared/literature'
 import { LiteratureCatalog } from '../literature/catalog'
@@ -312,6 +315,7 @@ describe('application database migrations', () => {
   let client: PrismaClient | undefined
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     await client?.$disconnect()
     if (storageRoot) await rm(storageRoot, { force: true, recursive: true })
   })
@@ -332,28 +336,29 @@ describe('application database migrations', () => {
     const before = await client.literatureItem.findMany()
     await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_artifact_hidden')`
+      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden')`
     )
     const ledger = await client.$queryRawUnsafe(
       'SELECT * FROM "_open_science_migrations" ORDER BY id'
     )
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0038_literature_search_text',
-      to: '0044_artifact_hidden',
+      to: '0045_artifact_hidden',
       applied: [
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
     expect(await client.literatureItem.findMany()).toEqual(before)
     expect(
       await client.$queryRawUnsafe(
-        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_artifact_hidden') ORDER BY id`
+        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden') ORDER BY id`
       )
     ).toEqual(ledger)
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -649,6 +654,36 @@ describe('application database migrations', () => {
     })
   })
 
+  it(
+    'commits a slow ordinary migration and its ledger entry atomically',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'slow-migration-'))
+      client = createProjectDbClient(storageRoot)
+      const execute = migrationSqlExecutor.execute
+      let delayed = false
+      vi.spyOn(migrationSqlExecutor, 'execute').mockImplementation(
+        async (target, statement, ...values) => {
+          if (!delayed && statement === grantedLocalRootsMigration.statements[0]) {
+            delayed = true
+            // Reproduce scanner/disk latency exceeding Prisma's default 5-second transaction.
+            await delay(6_000)
+          }
+          return execute(target, statement, ...values)
+        }
+      )
+
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+        applied: expect.arrayContaining([grantedLocalRootsMigration.id])
+      })
+      expect(delayed).toBe(true)
+      await expect(
+        client.$queryRawUnsafe('SELECT COUNT(*) AS count FROM "GrantedLocalRoot"')
+      ).resolves.toEqual([{ count: 0n }])
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
+
   it('records the runtime baseline once for a fresh database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science 数据 baseline-'))
     client = createProjectDbClient(storageRoot)
@@ -704,10 +739,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: null,
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -720,8 +756,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0044_artifact_hidden',
-      to: '0044_artifact_hidden'
+      from: '0045_artifact_hidden',
+      to: '0045_artifact_hidden'
     })
   })
 
@@ -757,10 +793,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -872,7 +909,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(
@@ -970,7 +1008,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1015,7 +1054,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -1082,10 +1121,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -1180,10 +1220,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(
       client.$queryRaw<
@@ -1306,7 +1347,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0044_artifact_hidden'
+      migrationId: '0045_artifact_hidden'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1323,7 +1364,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0044_artifact_hidden',
+      from: '0045_artifact_hidden',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1374,7 +1415,8 @@ describe('application database migrations', () => {
       { id: '0041_bookmarks' },
       { id: '0042_classification_usage' },
       { id: '0043_pdf_annotations' },
-      { id: '0044_artifact_hidden' },
+      { id: '0044_literature_smart_collections' },
+      { id: '0045_artifact_hidden' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1471,10 +1513,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     expect(backupEvents).toEqual([
       {
@@ -1572,7 +1615,8 @@ describe('application database migrations', () => {
       { id: '0041_bookmarks' },
       { id: '0042_classification_usage' },
       { id: '0043_pdf_annotations' },
-      { id: '0044_artifact_hidden' }
+      { id: '0044_literature_smart_collections' },
+      { id: '0045_artifact_hidden' }
     ])
   })
 
@@ -1709,7 +1753,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden',
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1847,7 +1892,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1979,7 +2024,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(
@@ -2120,7 +2166,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -2213,7 +2260,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(
@@ -2309,7 +2357,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2439,7 +2488,8 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(
@@ -2962,8 +3012,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0043_pdf_annotations.backup',
-      'open-science.db.before-0044_artifact_hidden.backup',
+      'open-science.db.before-0044_literature_smart_collections.backup',
+      'open-science.db.before-0045_artifact_hidden.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3276,10 +3326,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3338,7 +3389,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3414,10 +3465,11 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0044_artifact_hidden'
+      to: '0045_artifact_hidden'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

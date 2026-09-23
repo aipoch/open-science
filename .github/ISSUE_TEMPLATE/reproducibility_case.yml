@@ -1,6 +1,7 @@
 name: Reproducibility Case
 description: Share one real Agent-generated Python or R analysis — worked, failed, or corrected
 title: '[Case]: '
+labels: ['reproducibility', 'needs-triage']
 body:
   - type: markdown
     attributes:

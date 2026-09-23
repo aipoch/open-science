@@ -1,10 +1,10 @@
-import { McpClientManager } from '../../connectors/mcp-client-manager'
+import { McpClientManager } from '../../connectors/custom-mcp'
 import {
   classifyCustomMcpFailure,
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig
-} from '../../connectors/custom-mcp-bootstrap'
+} from '../../connectors/custom-mcp'
 import type {
   AuthenticateCustomServerRequest,
   CreateDeviceCredentialRequest,

@@ -141,6 +141,9 @@ const FilePreviewDialog = ({
         <RemoveScroll
           ref={setContentRef}
           enabled={open}
+          // The application body already hides overflow; only lock scroll events here.
+          // Toggling the scrollbar stylesheet invalidates styles throughout the app.
+          removeScrollBar={false}
           allowPinchZoom
           noIsolation={hasNestedFullscreen}
           forwardProps

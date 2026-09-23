@@ -3,9 +3,9 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
 import { ParserEngine } from './engine'
 import { CredentialRequestBroker } from './credential-request-broker'
-import { McpClientManager, McpToolCallError } from './mcp-client-manager'
+import { McpClientManager, McpToolCallError } from './custom-mcp'
 import type { SpecialistView } from '../../shared/specialist'
-import type { CustomMcpServerConfig } from './mcp-client-manager'
+import type { CustomMcpServerConfig } from './custom-mcp'
 
 const internal = { origin: 'internal' as const }
 

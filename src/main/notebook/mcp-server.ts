@@ -1589,6 +1589,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,
+    progressMessage: 'Shell command is still running.',
     mapResult: (raw, input) =>
       asRecord(input)?.background === true
         ? compactBackgroundRunSubmissionReceipt(raw)

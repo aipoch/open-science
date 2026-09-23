@@ -1,3 +1,21 @@
+import { SmartDecisionPendingContext, createSmartCollectionState } from './smart-collection-state'
+import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
+import { SmartRuleSummary } from './SmartRuleSummary'
+import {
+  shouldConfirmSmartReevaluation,
+  setSmartReevaluationConfirmation
+} from './smart-collection-preferences'
+import { LiteratureHoverDropdown, LiteratureHoverMenuGroup } from './LiteratureHoverMenus'
+import { useSmartDecisionBatch } from './useSmartDecisionBatch'
+import {
+  SmartCollectionCells,
+  type SmartCollectionCellActions,
+  SmartCollectionAssessment,
+  SmartCollectionDecisionActions
+} from './SmartCollectionDecision'
+import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
+import type { SmartCollectionView } from '../../../../shared/literature-smart-collections'
+import { SmartCollectionPanel } from './SmartCollectionPanel'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import {
   createBookmarkPreviewItem,
@@ -15,7 +33,7 @@ import {
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { readLiteratureSelectionPage } from './literature-read-pages'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
-import { useLiteratureChanges } from './useLiteratureChanges'
+import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
 import type { TFunction } from 'i18next'
 import { LiteratureSources } from './LiteratureSources'
 import { LiteratureAttachments } from './LiteratureAttachments'
@@ -27,8 +45,9 @@ import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT
 } from '../../../../shared/literature'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { AlertDialog } from 'radix-ui'
+import { AlertDialog, Tabs } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
+import * as Checkbox from '@radix-ui/react-checkbox'
 import {
   ArrowLeft,
   BookOpenText,
@@ -65,6 +84,9 @@ import {
   X
 } from 'lucide-react'
 import {
+  memo,
+  createContext,
+  useContext,
   startTransition,
   useCallback,
   useEffect,
@@ -85,6 +107,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
@@ -102,11 +125,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -114,7 +136,6 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { cn } from '@/lib/utils'
@@ -273,6 +294,10 @@ const literatureTableColumnWidths: Record<LiteratureTableColumn, number> = {
 }
 
 const LITERATURE_TABLE_PREFERENCES_KEY = 'open-science:literature-table-preferences'
+const literatureTabsListClassName = 'flex gap-3 overflow-x-auto border-b border-border'
+const literatureTabClassName =
+  'relative flex shrink-0 items-center justify-center gap-2 whitespace-nowrap border-b-2 border-transparent px-1 py-3 text-xs font-medium text-muted-foreground data-[state=inactive]:hover:border-muted-foreground data-[state=inactive]:hover:text-foreground data-[state=active]:border-primary data-[state=active]:text-primary transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'
+
 const LITERATURE_DEFAULT_PAGE_SIZE = 25
 const LITERATURE_PAGE_SIZES = [25, 50, 100] as const
 const LITERATURE_SIDEBAR_GROUP_LIMIT = 5
@@ -739,8 +764,9 @@ function LiteratureExportMenu({
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+    <LiteratureHoverDropdown
+      disabled={disabled || status === 'loading'}
+      trigger={
         <Button
           type="button"
           variant="outline"
@@ -761,27 +787,61 @@ function LiteratureExportMenu({
             <Download className="size-3.5" aria-hidden="true" />
           )}
           {status === 'loading' ? t('Exporting…') : status === 'success' ? t('Saved') : t('Export')}
-          <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
+          <ChevronRight className="ml-auto size-3.5 opacity-60" aria-hidden="true" />
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => void runExport('bibtex')}>
-          <FileText className="mr-2 size-4" aria-hidden="true" />
-          {t('BibTeX')}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void runExport('ris')}>
-          <FileText className="mr-2 size-4" aria-hidden="true" />
-          {t('RIS')}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      }
+    >
+      <DropdownMenuItem onSelect={() => void runExport('bibtex')}>
+        <FileText className="mr-2 size-4" aria-hidden="true" />
+        {t('BibTeX')}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => void runExport('ris')}>
+        <FileText className="mr-2 size-4" aria-hidden="true" />
+        {t('RIS')}
+      </DropdownMenuItem>
+    </LiteratureHoverDropdown>
   )
 }
 
+function LibraryMenuTrigger({ status }: { status: string }): React.JSX.Element {
+  const { t } = useTranslation()
+  const { openMenu } = useActionMenu()
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      aria-label={t('More actions')}
+      disabled={status === 'loading'}
+      onClick={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect()
+        openMenu({
+          targetId: 'library-actions',
+          pointer: { x: bounds.right, y: bounds.bottom },
+          align: 'end',
+          focusTarget: event.currentTarget
+        })
+      }}
+    >
+      {status === 'loading' ? (
+        <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+      ) : status === 'success' ? (
+        <Check className="size-4" aria-hidden="true" />
+      ) : (
+        <MoreHorizontal className="size-4" aria-hidden="true" />
+      )}
+    </Button>
+  )
+}
 function LiteratureLibraryActionsMenu({
   exportDisabled,
+  onEdit,
+  onDelete,
+  identityKey,
   onExport
 }: Readonly<{
+  onEdit?: () => void
+  onDelete?: () => void
+  identityKey: string
   exportDisabled?: boolean
   onExport: (format: 'bibtex' | 'ris') => Promise<boolean>
 }>): React.JSX.Element {
@@ -812,44 +872,41 @@ function LiteratureLibraryActionsMenu({
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="shrink-0"
-          disabled={status === 'loading'}
-          aria-label={t('More actions')}
-          title={t('More actions')}
-          aria-invalid={status === 'error' || undefined}
-          aria-busy={status === 'loading'}
-          data-state={status}
-        >
-          {status === 'loading' ? (
-            <LoaderCircle
-              className="size-4 animate-spin motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-          ) : status === 'success' ? (
-            <Check className="size-4 text-primary" aria-hidden="true" />
-          ) : (
-            <SlidersHorizontal className="size-4" aria-hidden="true" />
-          )}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-44">
-        <DropdownMenuLabel>{t('Export')}</DropdownMenuLabel>
-        <DropdownMenuItem disabled={exportDisabled} onSelect={() => void runExport('bibtex')}>
-          <FileText className="mr-2 size-4" aria-hidden="true" />
-          {t('BibTeX')}
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={exportDisabled} onSelect={() => void runExport('ris')}>
-          <FileText className="mr-2 size-4" aria-hidden="true" />
-          {t('RIS')}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <ActionMenuProvider onActionError={() => setStatus('error')}>
+      <ActionMenuTarget
+        asChild
+        targetId="library-actions"
+        identityKey={identityKey}
+        invocation={identityKey}
+        catalog={{
+          edit: { labelKey: 'Edit collection', icon: Pencil },
+          remove: { labelKey: 'Delete collection', icon: Trash2, danger: true },
+          bibtex: { labelKey: 'BibTeX', icon: FileText },
+          ris: { labelKey: 'RIS', icon: FileText }
+        }}
+        recipe={[
+          { kind: 'action', action: 'edit' },
+          { kind: 'submenu', labelKey: 'Export', icon: Download, actions: ['bibtex', 'ris'] },
+          { kind: 'separator' },
+          { kind: 'action', action: 'remove' }
+        ]}
+        bindings={{
+          edit: { execute: () => onEdit?.(), hidden: !onEdit },
+          remove: { execute: () => onDelete?.(), hidden: !onDelete },
+          bibtex: { execute: () => runExport('bibtex'), disabled: exportDisabled },
+          ris: { execute: () => runExport('ris'), disabled: exportDisabled }
+        }}
+      >
+        <div>
+          <LibraryMenuTrigger status={status} />
+        </div>
+      </ActionMenuTarget>
+      {status === 'error' && (
+        <p role="alert" className="text-sm text-destructive">
+          {t('References could not be exported.')}
+        </p>
+      )}
+    </ActionMenuProvider>
   )
 }
 
@@ -1267,6 +1324,363 @@ const titleFromPdfFilename = (filename: string): string =>
 
 const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-attention-seen'
 
+type LiteratureRowActions = {
+  openSelectedItemDetail: (entry: LiteratureItemView, initiator?: HTMLElement) => void
+  persistInlineItem: (
+    entry: LiteratureItemView,
+    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>,
+    onPersisted?: (reload: () => Promise<LiteratureItemView>) => void
+  ) => Promise<void>
+  previewFirstAttachment: (entry: LiteratureItemView) => void
+  setItemsLifecycle: (
+    ids: readonly string[] | undefined,
+    state: 'active' | 'deleted'
+  ) => Promise<void>
+  requestPermanentDeletion: (ids: string[]) => void
+}
+
+// Position changes affect only the number cells, not each reference's entire row.
+const LiteratureRowNumbers = createContext<ReadonlyMap<string, number>>(new Map())
+function LiteratureRowNumber({ itemId }: { itemId: string }): React.JSX.Element {
+  const number = useContext(LiteratureRowNumbers).get(itemId)
+  return (
+    <td
+      data-row-number={number}
+      className="px-2 py-2 text-center align-middle text-xs tabular-nums text-muted-foreground"
+    >
+      {number}
+    </td>
+  )
+}
+
+// Render inputs are explicit; event handlers read the latest owner guards at interaction time.
+const LiteratureItemRow = memo(function LiteratureItemRow({
+  entry,
+  trash,
+  smart,
+  smartTableBlocked,
+  isBatching,
+  decisionDisabled,
+  updateDisabled,
+  completed,
+  evaluating,
+  attachmentPending,
+  selectionStore,
+  smartCellActions,
+  visibleOrderedTableColumns,
+  itemTypeLabels,
+  actions
+}: {
+  entry: LiteratureItemView
+  trash: boolean
+  smart: boolean
+  smartTableBlocked: boolean
+  isBatching: boolean
+  decisionDisabled: boolean
+  updateDisabled: boolean
+  completed: boolean
+  evaluating: boolean
+  attachmentPending: boolean
+  selectionStore: LiteratureSelectionStore
+  smartCellActions: React.RefObject<SmartCollectionCellActions>
+  visibleOrderedTableColumns: LiteratureTableColumn[]
+  itemTypeLabels: Record<LiteratureItemType, string>
+  actions: React.RefObject<LiteratureRowActions>
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const attachmentVersion = entry.attachments.find((attachment) => attachment.versions[0])
+    ?.versions[0]
+  const hasUnavailableAttachment = entry.attachments.some((attachment) =>
+    attachment.versions.some((version) => version.availability === 'unavailable')
+  )
+  return (
+    <tr className="group h-16 bg-bg-000 hover:bg-bg-200 focus-within:bg-bg-200">
+      <td className="px-3 py-2 align-middle">
+        <LiteratureSelectionCheckbox
+          disabled={smartTableBlocked}
+          itemId={entry.id}
+          label={t('Select {{title}}', { title: entry.item.title })}
+          store={selectionStore}
+          className="size-4"
+        />
+      </td>
+      <LiteratureRowNumber itemId={entry.id} />
+      <td className="p-0 align-middle">
+        <LiteratureTextTooltip text={entry.item.title}>
+          <button
+            type="button"
+            className="flex h-full min-h-16 w-full min-w-0 items-center gap-2 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            disabled={trash}
+            onClick={(event) => actions.current.openSelectedItemDetail(entry, event.currentTarget)}
+          >
+            <span className="min-w-0 line-clamp-2 break-words font-medium text-foreground">
+              {entry.item.title}
+            </span>
+            {entry.mergedIntoItemId ? (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {t('Merged duplicate')}
+              </span>
+            ) : null}
+          </button>
+        </LiteratureTextTooltip>
+      </td>
+      {smart && (
+        <SmartCollectionCells
+          itemId={entry.id}
+          row={entry.smartDecision}
+          actions={smartCellActions}
+          completed={completed}
+          evaluating={evaluating}
+          disabled={decisionDisabled}
+          updateDisabled={updateDisabled}
+        />
+      )}
+      {visibleOrderedTableColumns.map((column) => {
+        switch (column) {
+          case 'abstract':
+            return (
+              <LiteratureTextTooltip key={column} text={entry.item.abstract}>
+                <td
+                  tabIndex={entry.item.abstract ? 0 : undefined}
+                  className="px-3 py-2 align-middle text-muted-foreground"
+                >
+                  <span className="line-clamp-2 leading-5">{entry.item.abstract || '—'}</span>
+                </td>
+              </LiteratureTextTooltip>
+            )
+          case 'year':
+            return (
+              <td
+                key={column}
+                className="px-3 py-2 align-middle text-muted-foreground tabular-nums"
+              >
+                {entry.item.issuedYear ?? '—'}
+              </td>
+            )
+          case 'publication':
+            return (
+              <LiteratureTextTooltip key={column} text={entry.item.containerTitle}>
+                <td
+                  tabIndex={entry.item.containerTitle ? 0 : undefined}
+                  className="truncate px-3 py-2 align-middle text-muted-foreground"
+                >
+                  {entry.item.containerTitle || '—'}
+                </td>
+              </LiteratureTextTooltip>
+            )
+          case 'authors':
+            return (
+              <LiteratureTextTooltip key={column} text={fullCreatorLabel(entry.item)}>
+                <td
+                  tabIndex={entry.item.creators.length ? 0 : undefined}
+                  className="truncate px-3 py-2 align-middle text-muted-foreground"
+                >
+                  {creatorLabel(entry.item) || t('Unknown')}
+                </td>
+              </LiteratureTextTooltip>
+            )
+          case 'type':
+            return (
+              <td key={column} className="px-2 py-2 align-middle">
+                <LiteratureTypeControl
+                  disabled={trash || smartTableBlocked}
+                  key={`${entry.id}:${entry.metadataRevision}:type`}
+                  value={entry.item.itemType}
+                  title={entry.item.title}
+                  labels={itemTypeLabels}
+                  onCommit={(itemType) => actions.current.persistInlineItem(entry, { itemType })}
+                />
+              </td>
+            )
+          case 'tags':
+            return (
+              <td key={column} className="px-2 py-2 align-middle">
+                <ResourceTagMenu
+                  reference={{
+                    resourceType: 'literature.item',
+                    resourceId: entry.id
+                  }}
+                  trigger={
+                    <button
+                      type="button"
+                      aria-label={t('Manage Tags')}
+                      disabled={trash || smartTableBlocked}
+                      className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md px-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <ResourceTagBadges
+                          reference={{
+                            resourceType: 'literature.item',
+                            resourceId: entry.id
+                          }}
+                          removable={false}
+                          className="min-w-0 justify-start"
+                        />
+                      </span>
+                      <ChevronDown
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  }
+                />
+              </td>
+            )
+          case 'rating':
+            return (
+              <td key={column} className="px-2 py-2 align-middle">
+                <LiteratureRatingControl
+                  disabled={trash || smartTableBlocked}
+                  key={`${entry.id}:${entry.metadataRevision}:rating`}
+                  value={entry.item.rating ?? 0}
+                  onCommit={(rating) => actions.current.persistInlineItem(entry, { rating })}
+                />
+              </td>
+            )
+          case 'notes':
+            return (
+              <td key={column} className="px-2 py-2 align-middle">
+                <LiteratureNoteControl
+                  disabled={trash || smartTableBlocked}
+                  key={entry.id}
+                  entry={entry}
+                  onCommit={(base, personalNote, onPersisted) =>
+                    actions.current.persistInlineItem(base, { personalNote }, onPersisted)
+                  }
+                />
+              </td>
+            )
+          case 'url': {
+            const externalUrl = getExternalLiteratureUrl(entry.item.url)
+            return (
+              <td key={column} className="px-2 py-2 text-center align-middle text-muted-foreground">
+                {externalUrl ? (
+                  <ExternalTextLink
+                    href={externalUrl.href}
+                    aria-label={`${t('URL')}: ${externalUrl.href}`}
+                    className="size-8 justify-center rounded-md no-underline hover:bg-muted"
+                  >
+                    <span className="sr-only">{externalUrl.href}</span>
+                  </ExternalTextLink>
+                ) : (
+                  '—'
+                )}
+              </td>
+            )
+          }
+        }
+      })}
+      <td className="sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-border-300/80 bg-inherit px-3 py-2 text-center align-middle shadow-card-opaque">
+        {attachmentVersion ? (
+          <LiteratureTextTooltip text={attachmentVersion.filename}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Preview {{title}}', {
+                title: attachmentVersion.filename
+              })}
+              disabled={
+                trash || attachmentVersion.availability === 'unavailable' || attachmentPending
+              }
+              onClick={() => actions.current.previewFirstAttachment(entry)}
+            >
+              <Paperclip className="size-4 text-primary" aria-hidden="true" />
+            </Button>
+          </LiteratureTextTooltip>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+        {hasUnavailableAttachment ? (
+          <button
+            type="button"
+            className="block w-full text-xs text-danger-000"
+            disabled={trash}
+            onClick={(event) => actions.current.openSelectedItemDetail(entry, event.currentTarget)}
+          >
+            {t('Attachment unavailable')}
+          </button>
+        ) : null}
+      </td>
+      <td className="sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
+        <div className="flex items-center justify-end">
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('More actions')}
+                disabled={smartTableBlocked}
+                className="transition-none"
+              >
+                <MoreHorizontal className="size-4" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={trash}
+                onSelect={() => actions.current.openSelectedItemDetail(entry)}
+              >
+                <Pencil className="mr-2 size-4" aria-hidden="true" />
+                {t('Edit')}
+              </DropdownMenuItem>
+              {trash ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={isBatching || Boolean(entry.mergedIntoItemId)}
+                    onSelect={() => void actions.current.setItemsLifecycle([entry.id], 'active')}
+                  >
+                    <RotateCcw className="mr-2 size-4" aria-hidden="true" />
+                    {t('Restore')}
+                  </DropdownMenuItem>
+                  {entry.mergedIntoItemId ? (
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        useNavigationStore
+                          .getState()
+                          .openLiteratureItem(entry.mergedIntoItemId!, 'user')
+                      }
+                    >
+                      <BookOpenText className="mr-2 size-4" aria-hidden="true" />
+                      {t('Open retained reference')}
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
+              ) : null}
+              {!trash ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={isBatching}
+                    onSelect={() => void actions.current.setItemsLifecycle([entry.id], 'deleted')}
+                  >
+                    <Trash2 className="mr-2 size-4" aria-hidden="true" />
+                    {t('Move to Trash')}
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-danger-000 focus:text-danger-000"
+                    disabled={isBatching}
+                    onSelect={() => actions.current.requestPermanentDeletion([entry.id])}
+                  >
+                    <Trash2 className="mr-2 size-4" aria-hidden="true" />
+                    {t('Delete permanently')}
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </td>
+    </tr>
+  )
+})
+
 const LiteratureLibraryPage = (): React.JSX.Element => {
   const { i18n, t } = useTranslation()
   const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
@@ -1307,6 +1721,57 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => window.sessionStorage.getItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY) !== 'true'
   )
   const [collectionId, setCollectionId] = useState<string>()
+  const smartState = useMemo(() => createSmartCollectionState(collectionId), [collectionId])
+  const smartView = useSyncExternalStore(smartState.subscribe, smartState.getSettledSnapshot)
+  const pendingDecisionsRef = useRef(new Set<string>())
+  const [pendingDecisions, setPendingDecisions] = useState<Set<string>>(new Set())
+  const decisionQueue = useRef(Promise.resolve())
+  const currentSmartState = useRef(smartState)
+  useLayoutEffect(() => {
+    currentSmartState.current = smartState
+  }, [smartState])
+  const [decisionFailures, setDecisionFailures] = useState<
+    Array<{ key: string; collection: string; retry: () => void }>
+  >([])
+  const [smartRefreshFailure, setSmartRefreshFailure] = useState<string>()
+  const smartResultSnapshot = useRef<string | undefined>(undefined)
+  const [smartRunningCollection, setSmartRunningCollection] = useState<string>()
+  const [singleReevaluation, setSingleReevaluation] = useState<{
+    collectionId: string
+    itemId: string
+    previousRunId?: string
+  }>()
+  const [completedReevaluation, setCompletedReevaluation] = useState<typeof singleReevaluation>()
+  useEffect(() => {
+    if (!completedReevaluation) return
+    const timer = setTimeout(() => setCompletedReevaluation(undefined), 1600)
+    return () => clearTimeout(timer)
+  }, [completedReevaluation])
+  const singleReevaluationRef = useRef<typeof singleReevaluation>(undefined)
+  const smartDecisionBatch = useSmartDecisionBatch()
+  const smartTableBlocked =
+    smartRunningCollection === collectionId &&
+    !!collectionId &&
+    singleReevaluation?.collectionId !== collectionId &&
+    !smartDecisionBatch.progress
+  const [smartBatchResult, setSmartBatchResult] = useState<{
+    collectionId: string
+    done: number
+    failed: string[]
+    remaining: string[]
+    decision: 'include' | 'exclude' | 'automatic'
+  }>()
+  const [smartReevaluation, setSmartReevaluation] = useState<{
+    collectionId: string
+    ids: string[]
+    detailItemId?: string
+  }>()
+  const [smartReevaluationRemember, setSmartReevaluationRemember] = useState(false)
+
+  const [smartDecisionSource, setSmartDecisionSource] = useState<'all' | 'ai' | 'manual'>('all')
+  const [smartFilter, setSmartFilter] = useState<'match' | 'review' | 'no-match' | 'pending'>(
+    'match'
+  )
   const [projectId, setProjectId] = useState<string>()
   const [query, setQuery] = useState('')
   const [tagId, setTagId] = useState('all')
@@ -1360,6 +1825,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [items, setItems] = useState<LiteratureItemView[]>([])
   const [candidates, setCandidates] = useState<LiteratureInboxCandidateView[]>([])
   const [inboxPendingCount, setInboxPendingCount] = useState<number>()
+  const [inboxDismissedCount, setInboxDismissedCount] = useState<number>()
   const [collections, setCollections] = useState<LiteratureCollectionView[]>([])
   const [projectItemCounts, setProjectItemCounts] = useState<Record<string, number>>({})
   const [selectedCandidate, setSelectedCandidate] = useState<LiteratureInboxCandidateView>()
@@ -1422,6 +1888,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     LITERATURE_DEFAULT_PAGE_SIZE
   )
   const [entriesOffset, setEntriesOffset] = useState(0)
+  const rowNumbers = useMemo(
+    () => new Map(items.map((item, index) => [item.id, entriesOffset + index + 1])),
+    [items, entriesOffset]
+  )
   const [entriesTotalCount, setEntriesTotalCount] = useState(0)
   const [nextEntriesOffset, setNextEntriesOffset] = useState<number>()
   const [error, setError] = useState<string>()
@@ -1842,6 +2312,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     queueMicrotask(() => {
       setDuplicatesOpen(false)
       setSection('library')
+      setSmartFilter('match')
+      setSmartDecisionSource('all')
+
       setCollectionId(nextCollectionId)
       setProjectId(undefined)
       clearSelection()
@@ -1851,6 +2324,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const collectionsGenerationRef = useRef(0)
   const loadCollections = useCallback(async (): Promise<LiteratureCollectionView[] | undefined> => {
+    if (pendingDecisionsRef.current.size) return
     const generation = ++collectionsGenerationRef.current
     const collections: LiteratureCollectionView[] = []
     let offset: number | undefined = 0
@@ -1865,15 +2339,21 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }, [])
 
   const inboxCountGeneration = useRef(0)
-  const loadInboxPendingCount = useCallback(async (): Promise<void> => {
+  const loadInboxCounts = useCallback(async (): Promise<void> => {
     const generation = ++inboxCountGeneration.current
-    const page = await window.api.literature.search({
-      scope: 'inbox',
-      inboxState: 'pending',
-      limit: 1
-    })
-    if (generation === inboxCountGeneration.current)
-      setInboxPendingCount(page.totalCount ?? page.entries.length)
+    await Promise.all(
+      (['pending', 'dismissed'] as const).map(async (state) => {
+        const page = await window.api.literature.search({
+          scope: 'inbox',
+          inboxState: state,
+          limit: 1
+        })
+        if (generation !== inboxCountGeneration.current) return
+        const count = page.totalCount ?? page.entries.length
+        if (state === 'pending') setInboxPendingCount(count)
+        else setInboxDismissedCount(count)
+      })
+    )
   }, [])
 
   const projectCountsGenerationRef = useRef(0)
@@ -1894,12 +2374,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => collections.find((collection) => collection.id === collectionId),
     [collectionId, collections]
   )
+  const smartSetup = Boolean(
+    selectedCollection?.smart && !smartView?.configured && !smartView?.run && !smartView?.matches
+  )
   const entriesKey = useMemo(
     () =>
       JSON.stringify({
         section,
         inboxState,
         collectionId,
+        smartFilter,
+        smartDecisionSource,
         projectId,
         query,
         tagId,
@@ -1912,6 +2397,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       }),
     [
       collectionId,
+      smartFilter,
+      smartDecisionSource,
       filterHasPdf,
       entriesPageSize,
       filterItemType,
@@ -1980,6 +2467,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         : {
             scope: 'library',
             collectionId: section === 'library' ? collectionId : undefined,
+            smartFilter: selectedCollection?.smart ? smartFilter : undefined,
+            ...(selectedCollection?.smart && smartDecisionSource !== 'all'
+              ? { smartDecisionSource }
+              : {}),
             projectId: section === 'library' ? projectId : undefined,
             query,
             lifecycle: section === 'trash' ? 'deleted' : 'active',
@@ -1996,6 +2487,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           },
     [
       collectionId,
+      selectedCollection?.smart,
+      smartFilter,
+      smartDecisionSource,
       entriesOffset,
       entriesPageSize,
       filterHasPdf,
@@ -2025,8 +2519,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         page.totalCount ??
         (request.offset ?? 0) + page.entries.length + (page.nextOffset === undefined ? 0 : 1)
       setEntriesTotalCount(totalCount)
-      if (request.scope === 'inbox' && request.inboxState === 'pending' && !request.query)
-        setInboxPendingCount(totalCount)
+      if (request.scope === 'inbox' && !request.query) {
+        if (request.inboxState === 'pending') setInboxPendingCount(totalCount)
+        else if (request.inboxState === 'dismissed') setInboxDismissedCount(totalCount)
+      }
       if (
         request.scope === 'library' &&
         request.projectId &&
@@ -2086,6 +2582,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }, [metadata.mode])
 
   const closeSelectedItemDetail = useCallback((): void => {
+    setSmartReevaluation((current) => (current?.detailItemId ? undefined : current))
     if (addingPdfRef.current) return
     detailInteractionRef.current += 1
     detailTagMenuOpenRef.current = false
@@ -2116,7 +2613,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }, [clearSelection, refreshItems, reloadEntries, tagId, tagRevision])
 
   const loadEntries = useCallback(
-    (force = false, preservePage = false): Promise<void> => {
+    (force = false, preservePage = false): Promise<boolean | undefined> => {
       if (force) {
         detailController.invalidate()
         setDuplicatesRevision((value) => value + 1)
@@ -2126,6 +2623,22 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     },
     [detailController, reloadEntries]
   )
+  const currentEntriesReload = useRef(loadEntries)
+  useLayoutEffect(() => {
+    currentEntriesReload.current = loadEntries
+  }, [loadEntries])
+  const refreshSmartSummary = useCallback(async () => {
+    if (!collectionId) return false
+    const token = smartState.beginRead()
+    const receipt = await window.api.literature.transact({
+      kind: 'smart-collection',
+      collectionId,
+      action: 'read',
+      summaryOnly: true,
+      offset: 0
+    })
+    return Boolean(receipt.smart) && smartState.acceptRead(token, receipt.smart)
+  }, [collectionId, smartState])
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
@@ -2137,12 +2650,76 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const currentCollectionId = useRef(collectionId)
   useLayoutEffect(() => {
     currentCollectionId.current = collectionId
+    return () => {
+      currentCollectionId.current = undefined
+    }
   }, [collectionId])
 
-  useLiteratureChanges(() => {
+  const receiveSmartView = useCallback(
+    (view: SmartCollectionView | undefined, updating: boolean): void => {
+      if (!collectionId || currentCollectionId.current !== collectionId) return
+      setSmartRunningCollection(updating ? collectionId : undefined)
+      if (!updating && singleReevaluationRef.current?.collectionId === collectionId) {
+        if (
+          view?.run?.state === 'completed' &&
+          !view.run.failure &&
+          view.run.id !== singleReevaluationRef.current.previousRunId
+        )
+          setCompletedReevaluation(singleReevaluationRef.current)
+        singleReevaluationRef.current = undefined
+        setSingleReevaluation(undefined)
+      }
+      if (updating) {
+        smartResultSnapshot.current = collectionId
+        return
+      }
+
+      if (view) {
+        collectionsGenerationRef.current++
+        setCollections((current) =>
+          current.map((collection) =>
+            collection.id === collectionId && collection.itemCount !== view.counts.match
+              ? { ...collection, itemCount: view.counts.match }
+              : collection
+          )
+        )
+      }
+      if (smartResultSnapshot.current === collectionId) {
+        smartResultSnapshot.current = undefined
+        void Promise.all([loadEntries(true, true), loadCollections()]).catch(() =>
+          setError(t('Literature could not be loaded.'))
+        )
+      }
+    },
+    [collectionId, loadEntries, loadCollections, t]
+  )
+
+  const consumePendingCollectionChange = useLiteratureChanges((event) => {
+    const collectionOnly = isCollectionOnlyChange(event)
+    if (
+      collectionOnly &&
+      pendingDecisionsRef.current.size &&
+      event?.collectionIds?.every((id) => id === currentCollectionId.current)
+    )
+      return
+    if (
+      collectionOnly &&
+      smartDecisionBatch.active.current &&
+      event?.collectionIds?.every((id) => id === smartDecisionBatch.active.current)
+    )
+      return
+    // The panel owns live progress. Keep saved rows and sidebar counts stable until the run ends.
+    if (
+      collectionOnly &&
+      smartResultSnapshot.current &&
+      smartResultSnapshot.current === currentCollectionId.current &&
+      event?.collectionIds?.every((id) => id === smartResultSnapshot.current)
+    )
+      return
+    if (collectionOnly) detailController.invalidate()
     // Starting the new reads invalidates outstanding list/navigation requests immediately.
     void Promise.all([
-      loadEntries(true, true),
+      collectionOnly ? reloadEntries(true, true) : loadEntries(true, true),
       loadCollections().then((collections) => {
         const selectedId = currentCollectionId.current
         if (
@@ -2153,12 +2730,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           selectLibrary()
         }
       }),
-      loadInboxPendingCount(),
-      loadProjectCounts(),
+      ...(!collectionOnly ? [loadInboxCounts(), loadProjectCounts()] : []),
       (async () => {
         const snapshot = detailController.getSnapshot()
         if (!snapshot.open || !snapshot.item) return
         const latest = await detailController.read(snapshot.item.id)
+        if (latest && selectedCollection?.smart) {
+          const receipt = await window.api.literature.transact({
+            kind: 'read-smart-decisions',
+            collectionId: selectedCollection.id,
+            itemIds: [latest.id]
+          })
+          latest.smartDecision = receipt.smartDecisions?.[0]
+        }
         if (detailController.getSnapshot().generation !== snapshot.generation) return
         if (!latest || latest.id !== snapshot.item.id || latest.deletedAt !== undefined) {
           // Read the current mode after awaiting: an edit may have started during the refresh.
@@ -2178,13 +2762,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   useEffect(() => {
     const loadNavigation = async (): Promise<void> => {
       try {
-        await Promise.all([loadCollections(), loadInboxPendingCount(), loadProjectCounts()])
+        await Promise.all([loadCollections(), loadInboxCounts(), loadProjectCounts()])
       } catch {
         setError(t('Literature could not be loaded.'))
       }
     }
     void loadNavigation()
-  }, [loadCollections, loadInboxPendingCount, loadProjectCounts, t])
+  }, [loadCollections, loadInboxCounts, loadProjectCounts, t])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -2264,7 +2848,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }, [collections])
   const batchCollections = useMemo(
-    () => displayCollections.filter((collection) => collection.id !== collectionId),
+    () =>
+      displayCollections.filter(
+        (collection) => !collection.smart && collection.id !== collectionId
+      ),
     [collectionId, displayCollections]
   )
   const itemTypeLabels = useMemo<Record<LiteratureItemType, string>>(
@@ -2299,8 +2886,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }),
     [t]
   )
-  const visibleOrderedTableColumns = tableColumnOrder.filter((column) =>
-    visibleTableColumns.has(column)
+  const visibleOrderedTableColumns = useMemo(
+    () => tableColumnOrder.filter((column) => visibleTableColumns.has(column)),
+    [tableColumnOrder, visibleTableColumns]
   )
   const activeFilterCount =
     (tagId !== 'all' ? 1 : 0) +
@@ -2366,7 +2954,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const refreshCandidateInboxCount = async (): Promise<void> => {
     try {
-      await loadInboxPendingCount()
+      await loadInboxCounts()
     } catch {
       setInboxPendingCount(undefined)
       setError(t('Literature could not be loaded.'))
@@ -2430,6 +3018,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         }
       })
     }
+    if (state === 'dismissed')
+      setInboxDismissedCount((current) =>
+        current === undefined ? current : current + candidateIds.length
+      )
     const settledIds = new Set(candidateIds)
     setCandidates((current) => current.filter(({ id }) => !settledIds.has(id)))
     candidateIds.forEach((id) => selectionStore.remove(id))
@@ -2548,6 +3140,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         }
         remaining = remaining.slice(batch.length)
         undoRemaining = undoRemaining.filter((id) => !batch.includes(id))
+        setInboxDismissedCount((current) =>
+          current === undefined ? current : Math.max(0, current - batch.length)
+        )
         setDismissedCandidateUndo(dismissedUndo(undoRemaining))
         for (const id of batch) selectionStore.remove(id)
         setCandidates((current) => current.filter(({ id }) => !batch.includes(id)))
@@ -2630,6 +3225,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setCitationStylesOpen(false)
     setDuplicatesOpen(false)
     setSection('library')
+    setSmartFilter('match')
+    setSmartDecisionSource('all')
+
     setCollectionId(nextCollectionId)
     setProjectId(undefined)
     clearSelection()
@@ -2955,7 +3553,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 included: true,
                 source: 'library'
               }
-            : collectionId
+            : collectionId && !selectedCollection?.smart
               ? { kind: 'set-collection-item', collectionId, itemId: receipt.id, included: true }
               : undefined
         }
@@ -3188,6 +3786,261 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
     if (!page.itemIds) throw new Error('Literature membership is unavailable.')
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
+  }
+
+  const smartCellActions = useRef<SmartCollectionCellActions>({
+    update: () => {},
+    reevaluate: () => {},
+    decide: () => {}
+  })
+  useLayoutEffect(() => {
+    smartCellActions.current = {
+      update: () => void updateSmartEvidence(),
+      reevaluate: (id) => void prepareSmartReevaluation([id]),
+      decide: (id, decision) => void confirmSmartDecision(decision, [id], true)
+    }
+  })
+
+  const updateSmartEvidence = async (): Promise<void> => {
+    if (
+      !selectedCollection?.smart ||
+      isBatching ||
+      pendingDecisionsRef.current.size > 0 ||
+      smartRunningCollection === selectedCollection.id
+    )
+      return
+    setIsBatching(true)
+    smartState.beginWrite()
+    try {
+      const receipt = await window.api.literature.transact({
+        kind: 'smart-collection',
+        collectionId: selectedCollection.id,
+        action: 'refresh',
+        offset: 0
+      })
+      smartState.finishWrite(receipt.smart)
+    } catch {
+      setError(t('Collection could not be updated.'))
+    } finally {
+      smartState.finishWrite()
+      setIsBatching(false)
+    }
+  }
+
+  const confirmSmartDecision = async (
+    decision: 'include' | 'exclude' | 'automatic',
+    itemIds?: string[],
+    singleRecord = false
+  ): Promise<void> => {
+    if (
+      !selectedCollection?.smart ||
+      isBatching ||
+      smartRunningCollection === selectedCollection.id
+    )
+      return
+    const targetCollectionId = selectedCollection.id
+    if (singleRecord && itemIds?.length === 1) {
+      const itemId = itemIds[0]
+      const operationKey = `${targetCollectionId}:${itemId}`
+      if (pendingDecisionsRef.current.has(operationKey)) return
+      pendingDecisionsRef.current.add(operationKey)
+      setPendingDecisions(new Set(pendingDecisionsRef.current))
+      const submit = async (): Promise<void> => {
+        let saved = false
+        const owner =
+          currentSmartState.current.collectionId === targetCollectionId
+            ? currentSmartState.current
+            : smartState
+        owner.beginWrite()
+        collectionsGenerationRef.current++
+        if (currentCollectionId.current === targetCollectionId) setError(undefined)
+        setDecisionFailures((current) => current.filter((failure) => failure.key !== operationKey))
+        try {
+          const receipt = await window.api.literature.transact({
+            kind: 'smart-collection',
+            collectionId: targetCollectionId,
+            action: 'override',
+            itemId,
+            decision,
+            offset: 0
+          })
+          saved = true
+          collectionsGenerationRef.current++
+          consumePendingCollectionChange(targetCollectionId)
+          owner.finishWrite(receipt.smart)
+          if (
+            currentSmartState.current.collectionId === targetCollectionId &&
+            currentSmartState.current !== owner
+          )
+            currentSmartState.current.finishWrite(receipt.smart)
+          if (receipt.smart) {
+            const view = receipt.smart
+            setCollections((current) =>
+              current.map((collection) =>
+                collection.id === targetCollectionId
+                  ? { ...collection, itemCount: view.counts.match }
+                  : collection
+              )
+            )
+            if (currentCollectionId.current === targetCollectionId) {
+              const detail = detailController.getSnapshot().item
+              const row = view.rows.find((row) => row.id === itemId)
+              if (detail?.id === itemId && row)
+                detailController.replace({ ...detail, smartDecision: row })
+            }
+          }
+          if (receipt.smartRefreshFailed) setSmartRefreshFailure(targetCollectionId)
+          if (currentCollectionId.current !== targetCollectionId) return
+          const refreshed = await currentEntriesReload.current(true, true)
+          setSmartRefreshFailure(
+            receipt.smartRefreshFailed || refreshed === false ? targetCollectionId : undefined
+          )
+        } catch {
+          if (saved) setSmartRefreshFailure(targetCollectionId)
+          else
+            setDecisionFailures((current) => [
+              ...current.filter((failure) => failure.key !== operationKey),
+              {
+                key: operationKey,
+                collection: selectedCollection.name,
+                retry: () => {
+                  void confirmSmartDecision(decision, [itemId], true)
+                }
+              }
+            ])
+        } finally {
+          owner.finishWrite()
+          collectionsGenerationRef.current++
+        }
+      }
+      const queued = decisionQueue.current.then(submit)
+      decisionQueue.current = queued.catch(() => undefined)
+      try {
+        await queued
+      } finally {
+        pendingDecisionsRef.current.delete(operationKey)
+        setPendingDecisions(new Set(pendingDecisionsRef.current))
+      }
+      return
+    }
+    if (pendingDecisionsRef.current.size) return
+    setIsBatching(true)
+    setError(undefined)
+    try {
+      const ids = itemIds ?? (await resolveSelectedItemIds())
+      if (currentCollectionId.current !== targetCollectionId) return
+      smartState.beginWrite()
+      const { done, failed, remaining } = await smartDecisionBatch.run(
+        targetCollectionId,
+        ids,
+        decision
+      )
+      setSmartBatchResult(
+        failed.length > 0 || remaining.length > 0
+          ? {
+              collectionId: targetCollectionId,
+              done,
+              failed,
+              remaining,
+              decision
+            }
+          : undefined
+      )
+      if (currentCollectionId.current === targetCollectionId) {
+        selectionStore.replace([...failed, ...remaining])
+        consumePendingCollectionChange(targetCollectionId)
+        smartState.finishWrite()
+        await Promise.all([loadEntries(true, true), loadCollections(), refreshSmartSummary()])
+      }
+    } catch {
+      setError(t('Collection could not be updated.'))
+    } finally {
+      smartState.finishWrite()
+      setIsBatching(false)
+    }
+  }
+
+  const prepareSmartReevaluation = async (ids?: string[], detailItemId?: string): Promise<void> => {
+    if (
+      !selectedCollection?.smart ||
+      isBatching ||
+      pendingDecisionsRef.current.size > 0 ||
+      smartRunningCollection === selectedCollection.id
+    )
+      return
+    setIsBatching(true)
+    let request: typeof smartReevaluation
+    try {
+      setSmartBatchResult(undefined)
+      const detail = detailController.getSnapshot()
+      request = {
+        collectionId: selectedCollection.id,
+        ids: ids ?? (await resolveSelectedItemIds()),
+        detailItemId:
+          detailItemId ??
+          (detail.open && ids?.length === 1 && ids[0] === detail.item?.id
+            ? detail.item.id
+            : undefined)
+      }
+    } catch {
+      setError(t('Literature could not be loaded.'))
+    } finally {
+      setIsBatching(false)
+    }
+    if (!request || currentCollectionId.current !== request.collectionId) return
+    if (request.ids.length === 1 || !shouldConfirmSmartReevaluation()) {
+      void runSmartReevaluation(request)
+    } else {
+      setSmartReevaluationRemember(false)
+      setSmartReevaluation(request)
+    }
+  }
+  const runSmartReevaluation = async (request = smartReevaluation): Promise<void> => {
+    if (
+      !request ||
+      currentCollectionId.current !== request.collectionId ||
+      (isBatching && request === smartReevaluation)
+    )
+      return
+    setIsBatching(true)
+    smartState.beginWrite()
+    const single =
+      request.ids.length === 1
+        ? {
+            collectionId: request.collectionId,
+            itemId: request.ids[0],
+            previousRunId: smartView?.run?.id
+          }
+        : undefined
+    setCompletedReevaluation(undefined)
+    singleReevaluationRef.current = single
+    setSingleReevaluation(single)
+    receiveSmartView(smartView, true)
+    try {
+      const receipt = await window.api.literature.transact({
+        kind: 'smart-collection',
+        collectionId: request.collectionId,
+        action: 'recompute',
+        itemIds: request.ids,
+        offset: 0
+      })
+      smartState.finishWrite(receipt.smart)
+      if (receipt.smart?.run?.state !== 'running' && receipt.smart?.run?.state !== 'queued')
+        receiveSmartView(receipt.smart, false)
+      setSmartReevaluation(undefined)
+      if (
+        currentCollectionId.current === request.collectionId &&
+        !request.detailItemId &&
+        request.ids.length > 1
+      )
+        clearSelection()
+    } catch {
+      receiveSmartView(smartView, false)
+      setError(t('Collection could not be updated.'))
+    } finally {
+      smartState.finishWrite()
+      setIsBatching(false)
+    }
   }
 
   const previewRestoreSelection = async (): Promise<void> => {
@@ -3749,7 +4602,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const entriesPagination =
     entriesTotalCount > 0 ? (
-      <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-300/80 bg-bg-000 px-3 py-2">
+      <fieldset
+        disabled={smartTableBlocked}
+        className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-300/80 bg-bg-000 px-3 py-2"
+      >
         <p className="text-xs text-muted-foreground tabular-nums">
           <span className="font-medium text-foreground">
             {entriesRangeStart}–{entriesRangeEnd}
@@ -3850,1778 +4706,33 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             </nav>
           ) : null}
         </div>
-      </div>
+      </fieldset>
     ) : null
 
-  return (
-    <main className="flex h-svh min-h-0 overflow-hidden bg-bg-10 text-text-000">
-      <LiteratureSidebarState>
-        {(sidebarCollapsed, toggleSidebar) => {
-          const navButtonClassName = cn(
-            'relative flex h-9 w-full items-center rounded-lg text-sm hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
-            sidebarCollapsed ? 'justify-center px-0' : 'gap-2 px-3'
-          )
-          return (
-            <aside
-              className={cn(
-                'flex shrink-0 flex-col border-r border-border-300/80 bg-bg-000 py-3',
-                sidebarCollapsed ? 'w-14 px-2' : 'w-60 px-3'
-              )}
-            >
-              <div
-                className={cn(
-                  'mb-3 flex min-h-10 items-center',
-                  sidebarCollapsed ? 'justify-center' : 'gap-2 px-1'
-                )}
-              >
-                {!sidebarCollapsed ? (
-                  <>
-                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-bg-200 text-primary">
-                      <BookOpenText className="size-4" aria-hidden="true" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <h1 className="truncate text-sm font-semibold">{t('Literature library')}</h1>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {t('Your research references')}
-                      </p>
-                    </div>
-                  </>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={cn('shrink-0', !sidebarCollapsed && 'ml-auto')}
-                  aria-label={
-                    sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')
-                  }
-                  aria-expanded={!sidebarCollapsed}
-                  aria-controls="literature-sidebar-navigation"
-                  aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
-                  title={sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')}
-                  onClick={toggleSidebar}
-                >
-                  <PanelLeft className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-              <div className="mb-3 border-b border-border-300/80 pb-3">
-                <button
-                  type="button"
-                  className={navButtonClassName}
-                  aria-label={returnLabel}
-                  title={sidebarCollapsed ? returnLabel : undefined}
-                  onClick={() => returnFromLibrary('user')}
-                >
-                  <ArrowLeft className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
-                </button>
-              </div>
-              <nav
-                id="literature-sidebar-navigation"
-                className="space-y-1"
-                aria-label={t('Literature library')}
-              >
-                <button
-                  type="button"
-                  className={cn(
-                    navButtonClassName,
-                    !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
-                  )}
-                  aria-current={
-                    !citationStylesOpen && !duplicatesOpen && section === 'inbox'
-                      ? 'page'
-                      : undefined
-                  }
-                  aria-label={t('Inbox')}
-                  title={sidebarCollapsed ? t('Inbox') : undefined}
-                  onClick={() => selectSection('inbox')}
-                >
-                  <Inbox className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Inbox')}</span> : null}
-                  {!sidebarCollapsed && inboxPendingCount !== undefined && inboxPendingCount > 0 ? (
-                    <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                      {inboxPendingCount}
-                    </span>
-                  ) : null}
-                  {sidebarCollapsed && inboxPendingCount !== undefined && inboxPendingCount > 0 ? (
-                    <span
-                      className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    navButtonClassName,
-                    !duplicatesOpen &&
-                      section === 'library' &&
-                      !collectionId &&
-                      !projectId &&
-                      'bg-bg-300 font-medium'
-                  )}
-                  ref={libraryEntryRef}
-                  aria-current={
-                    !citationStylesOpen &&
-                    !duplicatesOpen &&
-                    section === 'library' &&
-                    !collectionId &&
-                    !projectId
-                      ? 'page'
-                      : undefined
-                  }
-                  aria-label={t('All references')}
-                  title={sidebarCollapsed ? t('All references') : undefined}
-                  onClick={() => selectLibrary()}
-                >
-                  <BookOpenText className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
-                  <LiteratureLibraryCount
-                    revision={libraryCountRevision}
-                    hidden={sidebarCollapsed}
-                  />
-                </button>
-                <button
-                  type="button"
-                  className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
-                  aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
-                  aria-label={t('Duplicates')}
-                  title={sidebarCollapsed ? t('Duplicates') : undefined}
-                  onClick={() => {
-                    setCitationStylesOpen(false)
-                    setDuplicatesOpen(true)
-                    clearSelection()
-                  }}
-                >
-                  <Copy className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Duplicates')}</span> : null}
-                  <LiteratureDuplicateCount ref={duplicateCountRef} hidden={sidebarCollapsed} />
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    navButtonClassName,
-                    !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
-                  )}
-                  aria-current={
-                    !citationStylesOpen && !duplicatesOpen && section === 'trash'
-                      ? 'page'
-                      : undefined
-                  }
-                  aria-label={t('Trash')}
-                  title={sidebarCollapsed ? t('Trash') : undefined}
-                  onClick={() => selectSection('trash')}
-                >
-                  <Trash2 className="size-4" aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Trash')}</span> : null}
-                </button>
-              </nav>
-              <div
-                className={cn(
-                  'min-h-0 flex-1 overflow-y-auto',
-                  sidebarCollapsed ? 'mt-3 border-t border-border-300/80 pt-3' : 'mt-2'
-                )}
-              >
-                {!sidebarCollapsed ? (
-                  <div
-                    role="separator"
-                    aria-orientation="horizontal"
-                    className="mx-2 mb-2 mt-2 h-px bg-border-300/80"
-                  />
-                ) : null}
-                <LiteratureSidebarGroup
-                  collapsed={sidebarCollapsed}
-                  entries={activeProjects}
-                  groupId="literature-sidebar-projects"
-                  label={t('Projects')}
-                  navButtonClassName={navButtonClassName}
-                  selectedId={duplicatesOpen ? undefined : projectId}
-                  showAllLabel={t('Show all projects')}
-                  showAllText={t('Show all')}
-                  showFewerLabel={t('Show fewer projects')}
-                  showLessText={t('Show less')}
-                  renderEntry={(project) => (
-                    <button
-                      key={project.id}
-                      type="button"
-                      className={cn(
-                        navButtonClassName,
-                        !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
-                      )}
-                      aria-current={
-                        !citationStylesOpen &&
-                        !duplicatesOpen &&
-                        section === 'library' &&
-                        projectId === project.id
-                          ? 'page'
-                          : undefined
-                      }
-                      aria-label={project.name}
-                      title={sidebarCollapsed ? project.name : undefined}
-                      onClick={() => selectProject(project.id)}
-                    >
-                      <GalleryVerticalEnd className="size-4" aria-hidden="true" />
-                      {!sidebarCollapsed ? (
-                        <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-                      ) : null}
-                      {!sidebarCollapsed ? (
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                          {projectItemCounts[project.id] ?? 0}
-                        </span>
-                      ) : null}
-                    </button>
-                  )}
-                />
-                <div
-                  role="separator"
-                  aria-orientation="horizontal"
-                  className={cn(
-                    'mx-2 h-px bg-border-300/80',
-                    sidebarCollapsed ? 'my-3' : 'mb-2 mt-4'
-                  )}
-                />
-                <LiteratureSidebarGroup
-                  collapsed={sidebarCollapsed}
-                  entries={displayCollections}
-                  groupId="literature-sidebar-collections"
-                  label={t('Collections')}
-                  action={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-lg"
-                      className="text-muted-foreground hover:bg-bg-300 hover:text-foreground active:bg-bg-300 transition-none"
-                      aria-label={t('New collection')}
-                      aria-haspopup="dialog"
-                      title={t('New collection')}
-                      onClick={openCreateCollection}
-                    >
-                      {sidebarCollapsed ? (
-                        <FolderPlus className="size-4" aria-hidden="true" />
-                      ) : (
-                        <Plus className="size-4" aria-hidden="true" />
-                      )}
-                    </Button>
-                  }
-                  navButtonClassName={navButtonClassName}
-                  selectedId={duplicatesOpen ? undefined : collectionId}
-                  showAllLabel={t('Show all collections')}
-                  showAllText={t('Show all')}
-                  showFewerLabel={t('Show fewer collections')}
-                  showLessText={t('Show less')}
-                  renderEntry={(collection) => (
-                    <button
-                      key={collection.id}
-                      type="button"
-                      className={cn(
-                        navButtonClassName,
-                        !duplicatesOpen && collectionId === collection.id && 'bg-bg-300 font-medium'
-                      )}
-                      aria-current={
-                        !citationStylesOpen &&
-                        !duplicatesOpen &&
-                        section === 'library' &&
-                        collectionId === collection.id
-                          ? 'page'
-                          : undefined
-                      }
-                      aria-label={collection.name}
-                      title={sidebarCollapsed ? collection.name : undefined}
-                      onClick={() => selectLibrary(collection.id)}
-                    >
-                      <FolderOpen className="size-4" aria-hidden="true" />
-                      {!sidebarCollapsed ? (
-                        <span className="min-w-0 flex-1 truncate text-left">{collection.name}</span>
-                      ) : null}
-                      {!sidebarCollapsed ? (
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                          {collection.itemCount}
-                        </span>
-                      ) : null}
-                    </button>
-                  )}
-                />
-              </div>
-              <div
-                className={cn(
-                  'mt-auto space-y-1 border-t border-border-300/80 pt-2',
-                  sidebarCollapsed && 'flex flex-col items-center'
-                )}
-              >
-                <button
-                  type="button"
-                  className={cn(navButtonClassName, citationStylesOpen && 'bg-bg-300 font-medium')}
-                  aria-current={citationStylesOpen ? 'page' : undefined}
-                  aria-label={t('Settings')}
-                  title={sidebarCollapsed ? t('Settings') : undefined}
-                  onClick={() => setCitationStylesOpen(true)}
-                >
-                  <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                  {!sidebarCollapsed ? <span>{t('Settings')}</span> : null}
-                </button>
-              </div>
-            </aside>
-          )
-        }}
-      </LiteratureSidebarState>
-
-      <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <LiteratureDuplicatesView
-          active={duplicatesOpen && !citationStylesOpen}
-          revision={duplicatesRevision}
-          onCount={setDuplicateCount}
-          onMerged={() => {
-            void loadEntries(true)
-            void loadCollections()
-            void loadProjectCounts()
-            setDuplicatesRevision((value) => value + 1)
-          }}
-          onReview={(entries) => {
-            setMergeError(undefined)
-            setDuplicateMergeItems(entries)
-            setMergeSurvivorId(entries[0]?.id ?? '')
-            setMergeFieldSources({})
-            setMergeOpen(true)
-          }}
-        />
-        {citationStylesOpen ? (
-          <CitationStylesView
-            styles={citationStyles}
-            onBack={() => setCitationStylesOpen(false)}
-            onStylesChange={updateCitationStyles}
-          />
-        ) : null}
-        <div
-          className={cn(
-            'flex h-full min-h-0 w-full max-w-none flex-col px-4 py-6 lg:px-6 lg:py-8',
-            (citationStylesOpen || duplicatesOpen) && 'hidden'
-          )}
-        >
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex w-fit max-w-full min-w-0 items-center gap-1.5">
-                <h2
-                  className="min-w-0 truncate text-2xl font-semibold tracking-tight"
-                  title={selectedProject?.name ?? selectedCollection?.name}
-                >
-                  {section === 'inbox'
-                    ? t('Inbox')
-                    : section === 'trash'
-                      ? t('Trash')
-                      : (selectedProject?.name ?? selectedCollection?.name ?? t('All references'))}
-                </h2>
-                {section === 'library' && selectedProject ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="shrink-0"
-                    aria-label={t('Open project')}
-                    title={t('Open project')}
-                    onClick={() => openProject(selectedProject.id, 'user')}
-                  >
-                    <ExternalLink className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : null}
-                {section === 'library' && selectedCollection ? (
-                  <TooltipProvider delayDuration={300}>
-                    <DropdownMenu>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="shrink-0"
-                              aria-label={t('Collection actions')}
-                              onFocus={(event) => {
-                                if (!event.currentTarget.matches(':focus-visible')) {
-                                  event.preventDefault()
-                                }
-                              }}
-                            >
-                              <MoreHorizontal className="size-4" aria-hidden="true" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('Collection actions')}</TooltipContent>
-                      </Tooltip>
-                      <DropdownMenuContent align="start" className="min-w-44">
-                        <DropdownMenuItem
-                          className="gap-2"
-                          onSelect={() => openEditCollection(selectedCollection)}
-                        >
-                          <span className="flex size-4 shrink-0 items-center justify-center">
-                            <Pencil className="size-4" aria-hidden="true" />
-                          </span>
-                          {t('Edit collection')}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="gap-2 text-danger-000 focus:bg-danger-900 focus:text-danger-000"
-                          onSelect={() => {
-                            setCollectionDeleteError(undefined)
-                            setCollectionPendingDelete(selectedCollection)
-                            void loadCollections().catch(() =>
-                              setCollectionDeleteError(t('Literature could not be loaded.'))
-                            )
-                          }}
-                        >
-                          <span className="flex size-4 shrink-0 items-center justify-center">
-                            <Trash2 className="size-4" aria-hidden="true" />
-                          </span>
-                          {t('Delete collection')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TooltipProvider>
-                ) : null}
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {section === 'inbox'
-                  ? t('Review references found by Agents before they enter your library.')
-                  : section === 'trash'
-                    ? t(
-                        'Restore references to edit, preview, or export them, or delete them permanently.'
-                      )
-                    : selectedProject
-                      ? t('References linked to this project.')
-                      : selectedCollection
-                        ? selectedCollection.description ||
-                          t('References saved in this collection.')
-                        : t('Search and organize the references you use across projects.')}
-              </p>
-            </div>
-            <div className="flex w-full min-w-0 shrink-0 flex-wrap items-center gap-2 sm:w-auto">
-              {showLiteratureReviewAction && reviewProjectId ? (
-                <Button
-                  type="button"
-                  className="literature-review-cta h-8 shrink-0 px-1.5 pr-3 shadow-card hover:bg-primary/90 active:translate-y-px active:shadow-none dark:shadow-none [@media(pointer:coarse)]:h-11"
-                  data-attention={shouldCueLiteratureReview ? 'true' : undefined}
-                  onClick={() =>
-                    startLiteratureReviewConversation(
-                      reviewProjectId,
-                      selectedCollection
-                        ? {
-                            type: 'literature-scope',
-                            scope: 'collection',
-                            collectionId: selectedCollection.id,
-                            name: selectedCollection.name
-                          }
-                        : { type: 'literature-scope', scope: 'project' },
-                      t('Synthesize this literature into a concise review.')
-                    )
-                  }
-                >
-                  <span className="literature-review-cta__content inline-flex items-center gap-2">
-                    <span
-                      className="literature-review-cta__mark inline-grid size-6 place-items-center rounded-md bg-primary-foreground/15 ring-1 ring-primary-foreground/20 ring-inset"
-                      onAnimationEnd={() => setShouldCueLiteratureReview(false)}
-                    >
-                      <Sparkles className="size-3.5" aria-hidden="true" />
-                    </span>
-                    <span>{t('Review with agent')}</span>
-                  </span>
-                </Button>
-              ) : null}
-              {section === 'library' ? (
-                <div>
-                  <input
-                    ref={importPdfInputRef}
-                    multiple
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    className="sr-only"
-                    aria-label={t('Import PDFs')}
-                    onChange={(event) => {
-                      const files = Array.from(event.currentTarget.files ?? [])
-                      event.currentTarget.value = ''
-                      if (files.length > 1)
-                        setPdfBatch({
-                          files,
-                          destination: {
-                            name:
-                              selectedProject?.name ??
-                              selectedCollection?.name ??
-                              t('All references'),
-                            projectId,
-                            collectionId
-                          }
-                        })
-                      else if (files[0]) beginPdfImport(files[0])
-                    }}
-                  />
-                  <input
-                    ref={importRecordsInputRef}
-                    type="file"
-                    accept=".bib,.bibtex,.ris,.nbib,.txt,application/x-bibtex,application/x-research-info-systems,text/plain"
-                    className="sr-only"
-                    aria-label={t('Import references')}
-                    onChange={(event) => {
-                      const file = event.currentTarget.files?.[0]
-                      event.currentTarget.value = ''
-                      if (file) void previewRecordImport(file)
-                    }}
-                  />
-                  <LiteratureAddMenu
-                    onAddReference={() => {
-                      setPendingImportPdf(undefined)
-                      setPendingImportDraft(undefined)
-                      setIsReadingImportMetadata(false)
-                      setCreateItemError(undefined)
-                      setDuplicatePolicy('reuse')
-                      setIsCreatingItem(true)
-                    }}
-                    onImportPdf={() => importPdfInputRef.current?.click()}
-                    onImportReferences={() => importRecordsInputRef.current?.click()}
-                  />
-                </div>
-              ) : null}
-              <LiteratureSearchInput
-                initialValue={query}
-                onCommit={setQuery}
-                onDraftChange={clearSelection}
-              />
-              {section === 'library' && (selectedProject || selectedCollection) ? (
-                <LiteratureLibraryActionsMenu
-                  exportDisabled={
-                    entriesLoading ||
-                    (selectedProject
-                      ? projectItemCounts[selectedProject.id] === 0
-                      : selectedCollection?.itemCount === 0)
-                  }
-                  onExport={exportCurrentScope}
-                />
-              ) : null}
-            </div>
-          </div>
-
-          <div
-            data-slot="literature-action-rail"
-            className={section === 'inbox' ? 'hidden' : 'mt-4 min-h-12 shrink-0'}
-          >
-            <LiteratureSelectionBoundary store={selectionStore}>
-              {(selection) => {
-                const hasSelection = selection.allMatchingSelected || selection.selectedIds.size > 0
-                const selectedItemCount = selection.allMatchingSelected
-                  ? Math.max(0, entriesTotalCount - selection.excludedMatchingIds.size)
-                  : selection.selectedIds.size
-                const allLoadedItemsSelected =
-                  items.length > 0 &&
-                  items.every((item) => isLiteratureItemSelected(selection, item.id))
-                return (
-                  <div className="flex min-h-12 flex-wrap items-center justify-end gap-2">
-                    <LiteratureBackgroundTasks
-                      hidden={hasSelection || section === 'inbox'}
-                      onOpen={(job) =>
-                        setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
-                      }
-                      onChanged={receiveBackgroundItems}
-                    />
-                    {section !== 'inbox' &&
-                      (!hasSelection ? (
-                        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-                          <Select
-                            value={sortBy}
-                            onValueChange={(value) => {
-                              setSortBy(value as typeof sortBy)
-                              clearSelection()
-                            }}
-                          >
-                            <SelectTrigger aria-label={t('Sort references')} className="w-52">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="updated">{t('Recently updated')}</SelectItem>
-                              <SelectItem value="created">{t('Recently added')}</SelectItem>
-                              <SelectItem value="created-asc">{t('First added')}</SelectItem>
-                              <SelectItem value="title">{t('Title: A–Z')}</SelectItem>
-                              <SelectItem value="title-desc">{t('Title: Z–A')}</SelectItem>
-                              <SelectItem value="year">{t('Year: newest first')}</SelectItem>
-                              <SelectItem value="year-asc">{t('Year: oldest first')}</SelectItem>
-                              <SelectItem value="rating">{t('Highest rated')}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
-                            <PopoverTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="relative"
-                                aria-describedby={
-                                  yearFilter.invalid && !filtersOpen
-                                    ? 'literature-year-filter-error'
-                                    : undefined
-                                }
-                              >
-                                <SlidersHorizontal className="size-4" aria-hidden="true" />
-                                {t('Filters')}
-                                {activeFilterCount > 0 ? (
-                                  <span className="rounded-full bg-primary/10 px-1.5 text-[11px] font-medium tabular-nums text-primary">
-                                    {activeFilterCount}
-                                  </span>
-                                ) : null}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              align="end"
-                              aria-labelledby={`${accessibilityId}-filters`}
-                              className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
-                            >
-                              <p id={`${accessibilityId}-filters`} className="text-sm font-medium">
-                                {t('Filters')}
-                              </p>
-                              <div className="space-y-1.5">
-                                <span className="text-xs font-medium text-muted-foreground">
-                                  {t('Tags')}
-                                </span>
-                                <TagFilter
-                                  resourceType="literature.item"
-                                  value={tagId}
-                                  onChange={(value) => {
-                                    setTagId(value)
-                                    clearSelection()
-                                  }}
-                                  className="w-full"
-                                />
-                              </div>
-                              <>
-                                <div className="space-y-1.5">
-                                  <span className="text-xs font-medium text-muted-foreground">
-                                    {t('Reference type')}
-                                  </span>
-                                  <Select
-                                    value={filterItemType}
-                                    onValueChange={(value) => {
-                                      setFilterItemType(value as LiteratureItemType | 'all')
-                                      clearSelection()
-                                    }}
-                                  >
-                                    <SelectTrigger aria-label={t('Reference type')}>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">{t('All')}</SelectItem>
-                                      {Object.entries(itemTypeLabels).map(([value, label]) => (
-                                        <SelectItem key={value} value={value}>
-                                          {label}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <LiteratureYearFilter {...yearFilter} />
-                                <div className="space-y-1.5">
-                                  <span className="text-xs font-medium text-muted-foreground">
-                                    {t('PDF')}
-                                  </span>
-                                  <Select
-                                    value={filterHasPdf}
-                                    onValueChange={(value) => {
-                                      setFilterHasPdf(value as typeof filterHasPdf)
-                                      clearSelection()
-                                    }}
-                                  >
-                                    <SelectTrigger aria-label={t('PDF')}>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">{t('All')}</SelectItem>
-                                      <SelectItem value="with">{t('With PDF')}</SelectItem>
-                                      <SelectItem value="without">{t('Without PDF')}</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              </>
-                              <div className="border-t border-border pt-3">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  className="w-full"
-                                  disabled={
-                                    activeFilterCount === 0 &&
-                                    !yearFilter.draftFrom &&
-                                    !yearFilter.draftTo
-                                  }
-                                  onClick={clearFilters}
-                                >
-                                  {t('Clear filters')}
-                                </Button>
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                          {yearFilter.invalid && !filtersOpen ? (
-                            <p
-                              id="literature-year-filter-error"
-                              role="status"
-                              className="text-xs text-destructive"
-                            >
-                              {t('Enter a valid year range (0–9999).')}
-                            </p>
-                          ) : null}
-                          <LiteratureColumnCustomizer
-                            columns={tableColumnOrder}
-                            labels={tableColumnLabels}
-                            visible={visibleTableColumns}
-                            onMove={moveTableColumn}
-                            onMoveBy={moveTableColumnBy}
-                            onVisibilityChange={(column, nextVisible) =>
-                              setVisibleTableColumns((current) => {
-                                const next = new Set(current)
-                                if (nextVisible) next.add(column)
-                                else next.delete(column)
-                                return next
-                              })
-                            }
-                          />
-                        </div>
-                      ) : (
-                        <div
-                          data-slot="literature-selection-toolbar"
-                          className="flex min-h-12 w-full min-w-0 flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5"
-                        >
-                          <span className="shrink-0 whitespace-nowrap px-1 text-sm font-medium tabular-nums">
-                            {t('{{count}} selected', { count: selectedItemCount })}
-                          </span>
-                          {!selection.allMatchingSelected &&
-                          allLoadedItemsSelected &&
-                          (entriesOffset > 0 || nextEntriesOffset !== undefined) ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              aria-label={`${t('Select all matching references')} ${formattedMatchingCount}`}
-                              disabled={isBatching}
-                              onClick={selectionStore.selectAllMatching}
-                              className="shrink-0 whitespace-nowrap"
-                            >
-                              <span>{t('Select all')}</span>
-                              <span className="text-muted-foreground tabular-nums">
-                                {formattedMatchingCount}
-                              </span>
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={t('Clear selection')}
-                            title={t('Clear selection')}
-                            disabled={isBatching}
-                            onClick={clearSelection}
-                          >
-                            <X className="size-3.5" aria-hidden="true" />
-                          </Button>
-                          <span
-                            className="ml-auto hidden h-5 w-px shrink-0 bg-border sm:block"
-                            aria-hidden="true"
-                          />
-                          {section === 'library' ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="shrink-0 whitespace-nowrap"
-                              disabled={isBatching || Boolean(startingReadingProjectId)}
-                              onClick={() => void requestReadSelection()}
-                            >
-                              <BookOpenText className="size-3.5" aria-hidden="true" />
-                              {t('Read with agent')}
-                            </Button>
-                          ) : null}
-                          {section === 'library' ? (
-                            <LiteratureBatchDestinationMenus
-                              collections={batchCollections}
-                              disabled={isBatching}
-                              moveBetweenCollections={Boolean(collectionId)}
-                              projects={activeProjects}
-                              projectsLoaded={projectsLoaded}
-                              onCreateCollection={createCollectionForSelection}
-                              onCreateProject={batchProjectFormDialog.openCreateDialog}
-                              onSelectCollection={(id) => void moveSelectedItems(id)}
-                              onSelectProject={(id) => void addSelectedItemsToProject(id)}
-                            />
-                          ) : (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={
-                                isBatching ||
-                                (!selection.allMatchingSelected &&
-                                  [...selection.selectedIds].every((id) =>
-                                    items.some(
-                                      (item) => item.id === id && Boolean(item.mergedIntoItemId)
-                                    )
-                                  ))
-                              }
-                              onClick={() => void previewRestoreSelection()}
-                            >
-                              <RotateCcw className="size-3.5" aria-hidden="true" />
-                              {t('Restore')}
-                            </Button>
-                          )}
-                          <LiteratureExportMenu
-                            disabled={isBatching || section === 'trash'}
-                            onExport={exportSelectedItems}
-                          />
-                          {section === 'library' ||
-                          (section === 'trash' &&
-                            !selection.allMatchingSelected &&
-                            selection.selectedIds.size <= LITERATURE_BATCH_COMMAND_SIZE) ? (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  className="shrink-0"
-                                  aria-label={t('More actions')}
-                                  title={t('More actions')}
-                                  disabled={isBatching}
-                                >
-                                  <MoreHorizontal className="size-3.5" aria-hidden="true" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                {section === 'library' ? (
-                                  <>
-                                    <DropdownMenuItem
-                                      onSelect={() => void requestBatchLookup('metadata')}
-                                    >
-                                      <Search className="mr-2 size-4" aria-hidden="true" />
-                                      {t('Complete metadata')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onSelect={() => void requestBatchLookup('full-text')}
-                                    >
-                                      <Download className="mr-2 size-4" aria-hidden="true" />
-                                      {t('Find full-text PDF')}
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    {!selection.allMatchingSelected &&
-                                    selection.selectedIds.size > 1 &&
-                                    selection.selectedIds.size <= 20 ? (
-                                      <>
-                                        <DropdownMenuItem
-                                          onSelect={() => {
-                                            const firstSelected = items.find((item) =>
-                                              selection.selectedIds.has(item.id)
-                                            )
-                                            setMergeSurvivorId(firstSelected?.id ?? '')
-                                            setMergeFieldSources({})
-                                            setMergeError(undefined)
-                                            setMergeOpen(true)
-                                          }}
-                                        >
-                                          <Merge className="mr-2 size-4" aria-hidden="true" />
-                                          {t('Merge')}
-                                        </DropdownMenuItem>
-                                        <DropdownMenuSeparator />
-                                      </>
-                                    ) : null}
-                                    <DropdownMenuItem
-                                      onSelect={() => void runLifecycleAction('deleted')}
-                                    >
-                                      <Trash2 className="mr-2 size-4" aria-hidden="true" />
-                                      {t('Move to Trash')}
-                                    </DropdownMenuItem>
-                                  </>
-                                ) : (
-                                  <>
-                                    <DropdownMenuItem
-                                      className="text-danger-000 focus:text-danger-000"
-                                      onSelect={() =>
-                                        requestPermanentDeletion([...selection.selectedIds])
-                                      }
-                                    >
-                                      <Trash2 className="mr-2 size-4" aria-hidden="true" />
-                                      {t('Delete permanently')}
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          ) : null}
-                        </div>
-                      ))}
-                  </div>
-                )
-              }}
-            </LiteratureSelectionBoundary>
-          </div>
-          <LiteratureAttachmentOperations
-            detailController={detailController}
-            onChanged={(operation) => {
-              if (!operation.item) return
-              const current = detailController.getSnapshot().item
-              const updated =
-                current?.id === operation.itemId
-                  ? { ...current, attachments: operation.item.attachments }
-                  : operation.item
-              detailController.replace(updated)
-              updateMetadataItem(updated)
-              void loadEntries(true)
-            }}
-          />
-          {batchLookup ? (
-            <LiteratureBatchLookupDialog
-              key={batchLookup.jobId ?? `${batchLookup.mode}:${batchLookup.itemIds.join(',')}`}
-              {...batchLookup}
-              initialItems={items}
-              fieldLabel={metadataFieldLabel}
-              onClose={() => setBatchLookup(undefined)}
-              onChanged={receiveBackgroundItems}
-            />
-          ) : null}
-          {dismissedCandidateUndo ? (
-            <fieldset
-              className="contents"
-              disabled={isBatching || Boolean(pendingCandidateId)}
-              aria-busy={isBatching || Boolean(pendingCandidateId)}
-            >
-              <ActionToast
-                title={t('Dismissed from Inbox')}
-                detail={dismissedCandidateUndo.detail}
-                actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
-                dismissLabel={t('Close')}
-                onAction={() => void restoreDismissedCandidates()}
-                onDismiss={() => {
-                  setDismissedCandidateUndo(undefined)
-                  setUndoNotice(undefined)
-                }}
-                testId="literature-dismiss-undo"
-                className="static w-full max-w-none shadow-none"
-              />
-            </fieldset>
-          ) : null}
-          {linkFailure && linkFailure.scopeKey === entriesKey ? (
-            <div className="mt-2">
-              <LiteratureErrorNotice
-                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
-                description={
-                  linkFailure.skipped
-                    ? t(
-                        'Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.',
-                        {
-                          completed: linkFailure.completed,
-                          remaining: linkFailure.itemIds.length,
-                          skipped: linkFailure.skipped
-                        }
-                      )
-                    : t('Updated: {{completed}}. Not updated: {{remaining}}.', {
-                        completed: linkFailure.completed,
-                        remaining: linkFailure.itemIds.length
-                      })
-                }
-                primaryButton={
-                  linkFailure.itemIds.length
-                    ? {
-                        label: t('Retry'),
-                        disabled: isBatching,
-                        onClick: () =>
-                          void runLinkBatch(
-                            linkFailure.command,
-                            linkFailure.itemIds,
-                            linkFailure.completed,
-                            linkFailure.skipped,
-                            true
-                          )
-                      }
-                    : undefined
-                }
-              />
-            </div>
-          ) : null}
-          {lifecycleFailure ? (
-            <div className="mt-5">
-              <LiteratureErrorNotice
-                title={t('Literature could not be updated.')}
-                description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
-                  completed: lifecycleFailure.completed,
-                  remaining: lifecycleFailure.itemIds.length
-                })}
-                secondaryButton={{
-                  label: t('Retry'),
-                  disabled: isBatching,
-                  onClick: () =>
-                    void setItemsLifecycle(lifecycleFailure.itemIds, lifecycleFailure.state)
-                }}
-              />
-            </div>
-          ) : null}
-          {candidateUpdateUncertain || candidateCountsFailed ? (
-            <div className="mt-2">
-              <LiteratureErrorNotice
-                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
-                description={
-                  candidateUpdateUncertain
-                    ? t('The update could not be confirmed. Check the Inbox before trying again.')
-                    : [
-                        t('Project counts could not be refreshed.'),
-                        error === t('Literature could not be loaded.') ? error : undefined
-                      ]
-                        .filter(Boolean)
-                        .join(' ')
-                }
-                primaryButton={{
-                  label: t('Retry'),
-                  disabled: isBatching || Boolean(pendingCandidateId),
-                  onClick: () => void retryCandidateReads()
-                }}
-              />
-            </div>
-          ) : null}
-          {undoNotice ? (
-            <p role="status" className="mt-2 text-xs leading-5 text-muted-foreground">
-              {undoNotice}
-            </p>
-          ) : null}
-          {permanentDeleteResult?.cleanupPending ? (
-            <div className="mt-2">
-              <LiteratureErrorNotice
-                title={t('References were permanently deleted. Some files are awaiting cleanup.')}
-                description={t(
-                  'Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.'
-                )}
-              />
-            </div>
-          ) : null}
-          {permanentDeleteResult && (permanentDeleteResult.refreshFailed || entriesFailed) ? (
-            <div className="mt-2">
-              <LiteratureErrorNotice
-                description={t(
-                  'References were permanently deleted, but the view could not be refreshed.'
-                )}
-                primaryButton={{
-                  label: t('Retry'),
-                  loading: isBatching,
-                  onClick: () => void refreshAfterPermanentDeletion()
-                }}
-              />
-            </div>
-          ) : null}
-          {oversizedItemId ? <LiteratureOversizedNotice itemId={oversizedItemId} /> : null}
-          {!oversizedItemId &&
-          (linkedItemError || error) &&
-          !(
-            permanentDeleteResult &&
-            !linkedItemError &&
-            error === t('Literature could not be loaded.')
-          ) &&
-          !entriesLoading &&
-          // A failed Inbox read is already covered by the recovery notice and its Retry.
-          !(
-            !linkedItemError &&
-            (candidateUpdateUncertain || candidateCountsFailed) &&
-            error === t('Literature could not be loaded.')
-          ) ? (
-            <div className="mt-2">
-              <LiteratureErrorNotice
-                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
-                description={linkedItemError || error || undefined}
-                primaryButton={
-                  !linkedItemError && error === t('Literature could not be loaded.')
-                    ? {
-                        label: t('Retry'),
-                        disabled: isBatching,
-                        onClick: () => {
-                          void Promise.all([
-                            loadEntries(true, true),
-                            loadCollections(),
-                            loadInboxPendingCount(),
-                            loadProjectCounts()
-                          ]).catch(() => setError(t('Literature could not be loaded.')))
-                        }
-                      }
-                    : undefined
-                }
-              />
-            </div>
-          ) : null}
-
-          {section === 'inbox' ? (
-            <div className="mt-5 flex gap-2">
-              {(['pending', 'dismissed'] as const).map((state) => (
-                <Button
-                  key={state}
-                  type="button"
-                  size="sm"
-                  variant={inboxState === state ? 'secondary' : 'ghost'}
-                  aria-pressed={inboxState === state}
-                  disabled={isBatching || pendingCandidateId !== undefined}
-                  onClick={() => {
-                    setInboxState(state)
-                    clearSelection()
-                    setEntriesOffset(0)
-                  }}
-                >
-                  {state === 'pending' ? t('Pending') : t('Dismissed')}
-                </Button>
-              ))}
-            </div>
-          ) : null}
-          <div className="mt-6 flex min-h-0 flex-1 flex-col gap-2">
-            {entriesFailed ? null : entriesLoading && !entriesPageTransitionLoading ? (
-              <div
-                role="status"
-                className="flex min-h-0 flex-1 justify-center py-20 text-muted-foreground"
-              >
-                <LoaderCircle
-                  className="size-5 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-                <span className="sr-only">{t('Loading…')}</span>
-              </div>
-            ) : section === 'inbox' ? (
-              candidates.length > 0 ? (
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <LiteratureSelectionBoundary store={selectionStore}>
-                    {(selection) => {
-                      const selectedCount = selection.selectedIds.size
-                      return (
-                        <div className="mb-2 flex min-h-10 shrink-0 items-center gap-2 px-2">
-                          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-                            <LiteratureSelectPageCheckbox
-                              itemIds={candidates.map(({ id }) => id)}
-                              label={t('Select all references')}
-                              store={selectionStore}
-                              disabled={isBatching || Boolean(pendingCandidateId)}
-                              className="size-4"
-                            />
-                            {t('Select all')}
-                          </label>
-                          {selectedCount > 0 ? (
-                            <>
-                              <span className="ml-2 text-sm font-medium tabular-nums">
-                                {t('{{count}} selected', { count: selectedCount })}
-                              </span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                disabled={isBatching || Boolean(pendingCandidateId)}
-                                onClick={clearSelection}
-                              >
-                                {t('Clear selection')}
-                              </Button>
-                              <div className="ml-auto flex items-center gap-2">
-                                {inboxState === 'dismissed' ? (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    disabled={isBatching || Boolean(pendingCandidateId)}
-                                    onClick={() =>
-                                      void restoreDismissedCandidates([...selection.selectedIds])
-                                    }
-                                  >
-                                    <RotateCcw className="size-3.5" aria-hidden="true" />
-                                    {t('Restore')}
-                                  </Button>
-                                ) : (
-                                  <>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      disabled={isBatching || Boolean(pendingCandidateId)}
-                                      onClick={() => void settleSelectedCandidates('dismissed')}
-                                    >
-                                      <X className="size-3.5" aria-hidden="true" />
-                                      {t('Dismiss')}
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      disabled={isBatching || Boolean(pendingCandidateId)}
-                                      onClick={() => void settleSelectedCandidates('accepted')}
-                                    >
-                                      <Check className="size-3.5" aria-hidden="true" />
-                                      {t('Accept')}
-                                    </Button>
-                                  </>
-                                )}
-                              </div>
-                            </>
-                          ) : null}
-                        </div>
-                      )
-                    }}
-                  </LiteratureSelectionBoundary>
-                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-1 pb-3">
-                    {candidates.map((candidate) => {
-                      const item = candidate.candidate.item
-                      const pending = pendingCandidateId === candidate.id
-                      const authors = creatorLabel(item)
-                      const publication = [item.issuedYear, item.containerTitle]
-                        .filter(Boolean)
-                        .join(' · ')
-                      return (
-                        <article
-                          key={candidate.id}
-                          aria-busy={pending}
-                          className={cn(
-                            'group relative grid grid-cols-[1.25rem_minmax(0,1fr)] gap-4 rounded-xl border border-border-300/80 bg-bg-000 px-5 py-4 transition-[box-shadow,opacity] duration-150 ease-out has-[input:checked]:border-primary/30 has-[input:checked]:bg-primary/5 hover:z-10 hover:shadow-lg motion-reduce:transition-none sm:grid-cols-[1.25rem_minmax(0,1fr)_8rem]',
-                            pending && 'opacity-60'
-                          )}
-                        >
-                          <button
-                            type="button"
-                            className="absolute inset-0 cursor-pointer rounded-xl outline-none active:bg-muted/10 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
-                            aria-label={`${t('View details')}: ${item.title}`}
-                            disabled={isBatching || Boolean(pendingCandidateId)}
-                            onClick={() => setSelectedCandidate(candidate)}
-                          />
-                          <LiteratureSelectionCheckbox
-                            itemId={candidate.id}
-                            label={t('Select {{title}}', { title: item.title })}
-                            store={selectionStore}
-                            disabled={isBatching || Boolean(pendingCandidateId)}
-                            className="relative z-10 mt-1 size-4"
-                          />
-                          <div className="pointer-events-none relative min-w-0">
-                            <h3 className="line-clamp-2 text-base font-semibold leading-6 text-foreground">
-                              {item.title}
-                            </h3>
-                            <p className="mt-1 text-sm leading-5 text-foreground/70">
-                              {authors || itemTypeLabels[item.itemType]}
-                            </p>
-                            <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs leading-5 text-muted-foreground">
-                              {candidate.pdfs?.length ? (
-                                <span>
-                                  {t('PDF')} · {candidate.pdfs.length}
-                                </span>
-                              ) : null}
-                              {publication ? <span>{publication}</span> : null}
-                              <span className="whitespace-nowrap">
-                                {t('Found via {{provider}}', {
-                                  provider: inboxProviderLabel(candidate.candidate.source.provider)
-                                })}
-                              </span>
-                            </div>
-                            {candidateProjectNames(candidate).length > 0 ? (
-                              <p className="mt-2 text-xs text-muted-foreground">
-                                {t('Accepting will link to: {{projects}}', {
-                                  projects: candidateProjectNames(candidate).join(', ')
-                                })}
-                              </p>
-                            ) : null}
-                            {item.abstract ? (
-                              <p className="mt-3 line-clamp-2 text-[0.8125rem] leading-5 text-muted-foreground">
-                                {item.abstract}
-                              </p>
-                            ) : null}
-                          </div>
-                          <div className="relative z-10 col-start-2 grid grid-cols-2 gap-2 self-center sm:col-start-auto sm:grid-cols-1">
-                            {candidate.state === 'dismissed' ? (
-                              <Button
-                                type="button"
-                                className="w-full"
-                                disabled={isBatching || Boolean(pendingCandidateId)}
-                                onClick={() => void restoreDismissedCandidates([candidate.id])}
-                              >
-                                <RotateCcw className="size-3.5" aria-hidden="true" />
-                                {t('Restore')}
-                              </Button>
-                            ) : (
-                              <>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  className="w-full"
-                                  disabled={isBatching || Boolean(pendingCandidateId)}
-                                  onClick={() =>
-                                    void changeCandidateState(candidate.id, 'dismiss-candidate')
-                                  }
-                                >
-                                  <X className="size-3.5" aria-hidden="true" />
-                                  {t('Dismiss')}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  className="w-full"
-                                  disabled={isBatching || Boolean(pendingCandidateId)}
-                                  onClick={() =>
-                                    void changeCandidateState(candidate.id, 'accept-candidate')
-                                  }
-                                >
-                                  <Check className="size-3.5" aria-hidden="true" />
-                                  {t('Accept')}
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </article>
-                      )
-                    })}
-                  </div>
-                  {entriesPagination}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-border py-20 text-center">
-                  <Inbox className="mx-auto size-7 text-muted-foreground" aria-hidden="true" />
-                  <h3 className="mt-3 font-medium">
-                    {inboxState === 'dismissed'
-                      ? t('No dismissed references')
-                      : t('Inbox is clear')}
-                  </h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {inboxState === 'dismissed'
-                      ? t('Dismissed references can be restored here.')
-                      : t('New Agent discoveries will appear here for review.')}
-                  </p>
-                </div>
-              )
-            ) : items.length > 0 || entriesPageTransitionLoading ? (
-              <div className="isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-300/80 bg-bg-000">
-                <div className="relative min-h-0 flex-1 overflow-hidden">
-                  <div
-                    ref={tableScrollRef}
-                    data-slot="literature-table-scroll"
-                    className="h-full overflow-auto pb-3 [scrollbar-gutter:stable]"
-                  >
-                    <LiteratureTable
-                      className="w-full table-fixed text-left text-sm"
-                      style={{ minWidth: tableMinWidth }}
-                    >
-                      <thead className="sticky top-0 z-40 border-b border-border-300/80 bg-bg-200 text-xs font-medium text-muted-foreground">
-                        <tr>
-                          <th className="w-11 px-3 py-2.5">
-                            <LiteratureSelectPageCheckbox
-                              itemIds={items.map((item) => item.id)}
-                              label={t('Select all references')}
-                              store={selectionStore}
-                              className="size-4"
-                            />
-                          </th>
-                          <th
-                            scope="col"
-                            className="w-12 min-w-12 max-w-12 px-2 py-2.5 text-center tabular-nums"
-                          >
-                            #
-                          </th>
-                          <th scope="col" className="w-72 px-2 py-2.5">
-                            {t('Title')}
-                          </th>
-                          {visibleOrderedTableColumns.map((column) => (
-                            <th
-                              key={column}
-                              scope="col"
-                              className={cn(
-                                'px-3 py-2.5',
-                                column === 'type' && 'w-40',
-                                column === 'authors' && 'w-56',
-                                column === 'year' && 'w-20 tabular-nums',
-                                column === 'publication' && 'w-56',
-                                column === 'tags' && 'w-52 px-2',
-                                column === 'abstract' && 'w-80',
-                                column === 'rating' && 'w-[152px]',
-                                column === 'notes' && 'w-[280px]',
-                                column === 'url' && 'w-20 text-center'
-                              )}
-                            >
-                              {tableColumnLabels[column]}
-                            </th>
-                          ))}
-                          <th
-                            scope="col"
-                            className="sticky right-12 z-30 w-28 min-w-28 max-w-28 overflow-hidden border-l border-border-300/80 bg-bg-200 px-2 py-2.5 text-center text-[11px] whitespace-nowrap shadow-card-opaque"
-                          >
-                            {t('Attachment')}
-                          </th>
-                          <th
-                            scope="col"
-                            className="sticky right-0 z-30 w-12 min-w-12 max-w-12 bg-bg-200 px-2 py-2.5 text-right"
-                          >
-                            <span className="sr-only">{t('Actions')}</span>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border-300/70">
-                        {items.map((entry, itemIndex) => {
-                          const attachmentVersion = entry.attachments.find(
-                            (attachment) => attachment.versions[0]
-                          )?.versions[0]
-                          const hasUnavailableAttachment = entry.attachments.some((attachment) =>
-                            attachment.versions.some(
-                              (version) => version.availability === 'unavailable'
-                            )
-                          )
-                          const rowNumber = entriesOffset + itemIndex + 1
-                          return (
-                            <tr
-                              key={entry.id}
-                              className="group h-16 bg-bg-000 hover:bg-bg-200 focus-within:bg-bg-200"
-                            >
-                              <td className="px-3 py-2 align-middle">
-                                <LiteratureSelectionCheckbox
-                                  itemId={entry.id}
-                                  label={t('Select {{title}}', { title: entry.item.title })}
-                                  store={selectionStore}
-                                  className="size-4"
-                                />
-                              </td>
-                              <td
-                                data-row-number={rowNumber}
-                                className="px-2 py-2 text-center align-middle text-xs tabular-nums text-muted-foreground"
-                              >
-                                {rowNumber}
-                              </td>
-                              <td className="p-0 align-middle">
-                                <LiteratureTextTooltip text={entry.item.title}>
-                                  <button
-                                    type="button"
-                                    className="flex h-full min-h-16 w-full min-w-0 items-center gap-2 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                                    disabled={section === 'trash'}
-                                    onClick={(event) =>
-                                      openSelectedItemDetail(entry, event.currentTarget)
-                                    }
-                                  >
-                                    <span className="min-w-0 line-clamp-2 break-words font-medium text-foreground">
-                                      {entry.item.title}
-                                    </span>
-                                    {entry.mergedIntoItemId ? (
-                                      <span className="shrink-0 text-xs text-muted-foreground">
-                                        {t('Merged duplicate')}
-                                      </span>
-                                    ) : null}
-                                  </button>
-                                </LiteratureTextTooltip>
-                              </td>
-                              {visibleOrderedTableColumns.map((column) => {
-                                switch (column) {
-                                  case 'abstract':
-                                    return (
-                                      <LiteratureTextTooltip
-                                        key={column}
-                                        text={entry.item.abstract}
-                                      >
-                                        <td
-                                          tabIndex={entry.item.abstract ? 0 : undefined}
-                                          className="px-3 py-2 align-middle text-muted-foreground"
-                                        >
-                                          <span className="line-clamp-2 leading-5">
-                                            {entry.item.abstract || '—'}
-                                          </span>
-                                        </td>
-                                      </LiteratureTextTooltip>
-                                    )
-                                  case 'year':
-                                    return (
-                                      <td
-                                        key={column}
-                                        className="px-3 py-2 align-middle text-muted-foreground tabular-nums"
-                                      >
-                                        {entry.item.issuedYear ?? '—'}
-                                      </td>
-                                    )
-                                  case 'publication':
-                                    return (
-                                      <LiteratureTextTooltip
-                                        key={column}
-                                        text={entry.item.containerTitle}
-                                      >
-                                        <td
-                                          tabIndex={entry.item.containerTitle ? 0 : undefined}
-                                          className="truncate px-3 py-2 align-middle text-muted-foreground"
-                                        >
-                                          {entry.item.containerTitle || '—'}
-                                        </td>
-                                      </LiteratureTextTooltip>
-                                    )
-                                  case 'authors':
-                                    return (
-                                      <LiteratureTextTooltip
-                                        key={column}
-                                        text={fullCreatorLabel(entry.item)}
-                                      >
-                                        <td
-                                          tabIndex={entry.item.creators.length ? 0 : undefined}
-                                          className="truncate px-3 py-2 align-middle text-muted-foreground"
-                                        >
-                                          {creatorLabel(entry.item) || t('Unknown')}
-                                        </td>
-                                      </LiteratureTextTooltip>
-                                    )
-                                  case 'type':
-                                    return (
-                                      <td key={column} className="px-2 py-2 align-middle">
-                                        <LiteratureTypeControl
-                                          disabled={section === 'trash'}
-                                          key={`${entry.id}:${entry.metadataRevision}:type`}
-                                          value={entry.item.itemType}
-                                          title={entry.item.title}
-                                          labels={itemTypeLabels}
-                                          onCommit={(itemType) =>
-                                            persistInlineItem(entry, { itemType })
-                                          }
-                                        />
-                                      </td>
-                                    )
-                                  case 'tags':
-                                    return (
-                                      <td key={column} className="px-2 py-2 align-middle">
-                                        <ResourceTagMenu
-                                          reference={{
-                                            resourceType: 'literature.item',
-                                            resourceId: entry.id
-                                          }}
-                                          trigger={
-                                            <button
-                                              type="button"
-                                              aria-label={t('Manage Tags')}
-                                              disabled={section === 'trash'}
-                                              className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md px-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-                                            >
-                                              <span className="min-w-0 flex-1">
-                                                <ResourceTagBadges
-                                                  reference={{
-                                                    resourceType: 'literature.item',
-                                                    resourceId: entry.id
-                                                  }}
-                                                  removable={false}
-                                                  className="min-w-0 justify-start"
-                                                />
-                                              </span>
-                                              <ChevronDown
-                                                className="size-3.5 shrink-0 text-muted-foreground"
-                                                aria-hidden="true"
-                                              />
-                                            </button>
-                                          }
-                                        />
-                                      </td>
-                                    )
-                                  case 'rating':
-                                    return (
-                                      <td key={column} className="px-2 py-2 align-middle">
-                                        <LiteratureRatingControl
-                                          disabled={section === 'trash'}
-                                          key={`${entry.id}:${entry.metadataRevision}:rating`}
-                                          value={entry.item.rating ?? 0}
-                                          onCommit={(rating) =>
-                                            persistInlineItem(entry, { rating })
-                                          }
-                                        />
-                                      </td>
-                                    )
-                                  case 'notes':
-                                    return (
-                                      <td key={column} className="px-2 py-2 align-middle">
-                                        <LiteratureNoteControl
-                                          disabled={section === 'trash'}
-                                          key={entry.id}
-                                          entry={entry}
-                                          onCommit={(base, personalNote, onPersisted) =>
-                                            persistInlineItem(base, { personalNote }, onPersisted)
-                                          }
-                                        />
-                                      </td>
-                                    )
-                                  case 'url': {
-                                    const externalUrl = getExternalLiteratureUrl(entry.item.url)
-                                    return (
-                                      <td
-                                        key={column}
-                                        className="px-2 py-2 text-center align-middle text-muted-foreground"
-                                      >
-                                        {externalUrl ? (
-                                          <ExternalTextLink
-                                            href={externalUrl.href}
-                                            aria-label={`${t('URL')}: ${externalUrl.href}`}
-                                            className="size-8 justify-center rounded-md no-underline hover:bg-muted"
-                                          >
-                                            <span className="sr-only">{externalUrl.href}</span>
-                                          </ExternalTextLink>
-                                        ) : (
-                                          '—'
-                                        )}
-                                      </td>
-                                    )
-                                  }
-                                }
-                              })}
-                              <td className="sticky right-12 z-20 w-28 min-w-28 max-w-28 border-l border-border-300/80 bg-inherit px-3 py-2 text-center align-middle shadow-card-opaque">
-                                {attachmentVersion ? (
-                                  <LiteratureTextTooltip text={attachmentVersion.filename}>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon-sm"
-                                      aria-label={t('Preview {{title}}', {
-                                        title: attachmentVersion.filename
-                                      })}
-                                      disabled={
-                                        section === 'trash' ||
-                                        attachmentVersion.availability === 'unavailable' ||
-                                        attachmentOperations.some(
-                                          (operation) =>
-                                            operation.itemId === entry.id && operation.pending
-                                        )
-                                      }
-                                      onClick={() => previewFirstAttachment(entry)}
-                                    >
-                                      <Paperclip
-                                        className="size-4 text-primary"
-                                        aria-hidden="true"
-                                      />
-                                    </Button>
-                                  </LiteratureTextTooltip>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                                {hasUnavailableAttachment ? (
-                                  <button
-                                    type="button"
-                                    className="block w-full text-xs text-danger-000"
-                                    disabled={section === 'trash'}
-                                    onClick={(event) =>
-                                      openSelectedItemDetail(entry, event.currentTarget)
-                                    }
-                                  >
-                                    {t('Attachment unavailable')}
-                                  </button>
-                                ) : null}
-                              </td>
-                              <td className="sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
-                                <div className="flex items-center justify-end">
-                                  <DropdownMenu modal={false}>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon-sm"
-                                        aria-label={t('More actions')}
-                                        className="transition-none"
-                                      >
-                                        <MoreHorizontal className="size-4" aria-hidden="true" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem
-                                        disabled={section === 'trash'}
-                                        onSelect={() => openSelectedItemDetail(entry)}
-                                      >
-                                        <Pencil className="mr-2 size-4" aria-hidden="true" />
-                                        {t('Edit')}
-                                      </DropdownMenuItem>
-                                      {section === 'trash' ? (
-                                        <>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            disabled={isBatching || Boolean(entry.mergedIntoItemId)}
-                                            onSelect={() =>
-                                              void setItemsLifecycle([entry.id], 'active')
-                                            }
-                                          >
-                                            <RotateCcw className="mr-2 size-4" aria-hidden="true" />
-                                            {t('Restore')}
-                                          </DropdownMenuItem>
-                                          {entry.mergedIntoItemId ? (
-                                            <DropdownMenuItem
-                                              onSelect={() =>
-                                                useNavigationStore
-                                                  .getState()
-                                                  .openLiteratureItem(
-                                                    entry.mergedIntoItemId!,
-                                                    'user'
-                                                  )
-                                              }
-                                            >
-                                              <BookOpenText
-                                                className="mr-2 size-4"
-                                                aria-hidden="true"
-                                              />
-                                              {t('Open retained reference')}
-                                            </DropdownMenuItem>
-                                          ) : null}
-                                        </>
-                                      ) : null}
-                                      {section !== 'trash' ? (
-                                        <>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            disabled={isBatching}
-                                            onSelect={() =>
-                                              void setItemsLifecycle([entry.id], 'deleted')
-                                            }
-                                          >
-                                            <Trash2 className="mr-2 size-4" aria-hidden="true" />
-                                            {t('Move to Trash')}
-                                          </DropdownMenuItem>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            className="text-danger-000 focus:text-danger-000"
-                                            disabled={isBatching}
-                                            onSelect={() => requestPermanentDeletion([entry.id])}
-                                          >
-                                            <Trash2 className="mr-2 size-4" aria-hidden="true" />
-                                            {t('Delete permanently')}
-                                          </DropdownMenuItem>
-                                        </>
-                                      )}
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </LiteratureTable>
-                  </div>
-                  {entriesPageTransitionLoading ? (
-                    <div
-                      role="status"
-                      className="pointer-events-none absolute inset-x-0 top-10 bottom-0 z-30 flex items-center justify-center bg-bg-000/80 text-muted-foreground backdrop-blur-[1px]"
-                    >
-                      <LoaderCircle
-                        className="size-5 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                      <span className="sr-only">{t('Loading…')}</span>
-                    </div>
-                  ) : null}
-                </div>
-                {entriesPagination}
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed border-border py-20 text-center">
-                <BookOpenText className="mx-auto size-7 text-muted-foreground" aria-hidden="true" />
-                <h3 className="mt-3 font-medium">{t('No references found')}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t('Try a different search or add references from a research session.')}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
+  const smartReevaluationNotice = smartReevaluation &&
+    smartReevaluation.collectionId === collectionId && (
       <Dialog.Root
-        open={mergeOpen}
+        open
         onOpenChange={(open) => {
-          if (isBatching) return
-          setMergeOpen(open)
-          if (!open) setDuplicateMergeItems(undefined)
+          if (!open) setSmartReevaluation(undefined)
         }}
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
           <Dialog.Content
-            className={dialogPanelClassName('flex w-[min(960px,calc(100vw-2rem))] flex-col p-0')}
+            data-slot="smart-reevaluation-dialog"
+            className={dialogPanelClassName('w-[min(480px,calc(100vw-2rem))] p-0')}
           >
             <div className={dialogHeaderClassName}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>
-                  {t('Merge references')}
+                  {smartReevaluation.detailItemId ? t('Re-evaluate') : t('Re-evaluate selected')}
                 </Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
-                  {t('Choose the reference to keep and resolve conflicting fields.')}
+                  {t(
+                    'Re-evaluate selected references ({{total}})? This may incur costs. Manual decisions are retained.',
+                    { total: smartReevaluation.ids.length }
+                  )}
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild>
@@ -5630,180 +4741,2182 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className="relative min-h-0 max-h-[60vh] space-y-5 overflow-y-auto p-5">
-              {mergeError ? <LiteratureErrorNotice tone="amber" title={mergeError} /> : null}
-              <LiteratureMergeReview
-                entries={selectedItems}
-                survivorId={mergeSurvivorId}
-                onSurvivorChange={setMergeSurvivorId}
-                sources={mergeFieldSources}
-                onSourceChange={(field, id) =>
-                  setMergeFieldSources((current) => ({ ...current, [field]: id }))
-                }
-                fieldLabel={mergeFieldLabel}
-                creatorLabel={fullCreatorLabel}
-                itemTypeLabels={itemTypeLabels}
-                disabled={isBatching}
-              />
+            <div className={dialogBodyClassName}>
+              {smartReevaluation.detailItemId && selectedItem ? (
+                <p className="mb-3 line-clamp-2 text-sm font-medium leading-5">
+                  {selectedItem.item.title}
+                </p>
+              ) : null}
+              <label className="flex items-start gap-2 text-sm text-muted-foreground">
+                <Checkbox.Root
+                  checked={smartReevaluationRemember}
+                  onCheckedChange={(checked) => setSmartReevaluationRemember(checked === true)}
+                  className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-border-300 bg-bg-000 data-[state=checked]:border-primary data-[state=checked]:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Checkbox.Indicator>
+                    <Check className="size-3 text-white" aria-hidden="true" />
+                  </Checkbox.Indicator>
+                </Checkbox.Root>
+                {t("Don't ask again")}
+              </label>
             </div>
-            <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+            <div className={dialogFooterClassName}>
               <Dialog.Close asChild>
-                <Button type="button" variant="outline">
-                  {t('Cancel')}
-                </Button>
+                <Button variant="outline">{t('Cancel')}</Button>
               </Dialog.Close>
               <Button
-                type="button"
-                disabled={!mergeSurvivorId || isBatching}
-                onClick={() => void mergeSelectedItems()}
+                disabled={
+                  isBatching ||
+                  !smartView?.configured ||
+                  smartView?.run?.state === 'running' ||
+                  smartView?.run?.state === 'queued'
+                }
+                onClick={() => {
+                  if (smartReevaluationRemember && !setSmartReevaluationConfirmation(false))
+                    setError(t('Settings could not be saved'))
+                  void runSmartReevaluation()
+                }}
               >
-                <Merge className="size-4" aria-hidden="true" />
-                {t('Merge references')}
+                {smartReevaluation.detailItemId ? t('Re-evaluate') : t('Re-evaluate selected')}
               </Button>
             </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+    )
 
-      {pdfBatch ? (
-        <LiteraturePdfBatchImportDialog
-          {...pdfBatch}
-          createDraft={(file) => ({
-            ...emptyLiteratureItem(),
-            title: titleFromPdfFilename(file.name)
-          })}
-          onClose={() => {
-            setPdfBatch(undefined)
-            void loadEntries(true)
-            void loadCollections()
-            void loadProjectCounts()
-          }}
-        />
-      ) : null}
-      {recordImport ? (
-        <LiteratureRecordImportDialog
-          recordImport={recordImport}
-          duplicatePolicy={duplicatePolicy}
-          onDuplicatePolicyChange={setDuplicatePolicy}
-          isImportingRecords={isImportingRecords}
-          destination={recordImport.destination.name}
-          itemDescription={itemDescription}
-          itemTypeLabels={itemTypeLabels}
-          onClose={() => {
-            recordImportRequest.current += 1
-            setRecordImport(undefined)
-          }}
-          onImport={() => void commitRecordImport()}
-        />
-      ) : null}
+  const rowActions = useRef<LiteratureRowActions>({
+    openSelectedItemDetail,
+    persistInlineItem,
+    previewFirstAttachment,
+    setItemsLifecycle,
+    requestPermanentDeletion
+  })
+  useLayoutEffect(() => {
+    rowActions.current = {
+      openSelectedItemDetail,
+      persistInlineItem,
+      previewFirstAttachment,
+      setItemsLifecycle,
+      requestPermanentDeletion
+    }
+  })
 
-      <Dialog.Root
-        open={isCreatingItem}
-        onOpenChange={(open) => {
-          if (!open && !isSavingNewItem) {
-            closeItemEditor()
-          }
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content
-            className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
-          >
-            <div className={dialogHeaderClassName}>
-              <div>
-                <Dialog.Title className={dialogTitleClassName}>
-                  {dialogItemEditor?.file ? t('Import PDF') : t('Add reference')}
-                </Dialog.Title>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  {dialogItemEditor?.file
-                    ? t('Review reference details before importing {{name}}.', {
-                        name: dialogItemEditor?.file.name
-                      })
-                    : t('Create a reference in your library.')}
-                </Dialog.Description>
-              </div>
-              <Dialog.Close asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={dialogCloseButtonClassName}
-                  disabled={isSavingNewItem}
-                  aria-label={t('Close')}
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </Dialog.Close>
-            </div>
-            {isSavingNewItem ? pdfUploadNotice : null}
-            {dialogItemEditor?.file && dialogItemEditor?.reading ? (
-              <div
-                className="grid min-h-80 place-items-center text-sm text-muted-foreground"
-                role="status"
+  return (
+    <SmartDecisionPendingContext.Provider value={pendingDecisions.size > 0}>
+      <main className="flex h-svh min-h-0 overflow-hidden bg-bg-10 text-text-000">
+        <LiteratureSidebarState>
+          {(sidebarCollapsed, toggleSidebar) => {
+            const navButtonClassName = cn(
+              'relative flex h-9 w-full items-center rounded-lg text-sm hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+              sidebarCollapsed ? 'justify-center px-0' : 'gap-2 px-3'
+            )
+            return (
+              <aside
+                className={cn(
+                  'flex shrink-0 flex-col border-r border-border-300/80 bg-bg-000 py-3',
+                  sidebarCollapsed ? 'w-14 px-2' : 'w-60 px-3'
+                )}
               >
-                <span className="inline-flex items-center gap-2">
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
+                <div
+                  className={cn(
+                    'mb-3 flex min-h-10 items-center',
+                    sidebarCollapsed ? 'justify-center' : 'gap-2 px-1'
+                  )}
+                >
+                  {!sidebarCollapsed ? (
+                    <>
+                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-bg-200 text-primary">
+                        <BookOpenText className="size-4" aria-hidden="true" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <h1 className="truncate text-sm font-semibold">
+                          {t('Literature library')}
+                        </h1>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {t('Your research references')}
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={cn('shrink-0', !sidebarCollapsed && 'ml-auto')}
+                    aria-label={
+                      sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')
+                    }
+                    aria-expanded={!sidebarCollapsed}
+                    aria-controls="literature-sidebar-navigation"
+                    aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
+                    title={
+                      sidebarCollapsed ? t('Expand sidebar panel') : t('Collapse sidebar panel')
+                    }
+                    onClick={toggleSidebar}
+                  >
+                    <PanelLeft className="size-4" aria-hidden="true" />
+                  </Button>
+                </div>
+                <div className="mb-3 border-b border-border-300/80 pb-3">
+                  <button
+                    type="button"
+                    className={navButtonClassName}
+                    aria-label={returnLabel}
+                    title={sidebarCollapsed ? returnLabel : undefined}
+                    onClick={() => returnFromLibrary('user')}
+                  >
+                    <ArrowLeft className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{returnLabel}</span> : null}
+                  </button>
+                </div>
+                <nav
+                  id="literature-sidebar-navigation"
+                  className="space-y-1"
+                  aria-label={t('Literature library')}
+                >
+                  <button
+                    type="button"
+                    className={cn(
+                      navButtonClassName,
+                      !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
+                    )}
+                    aria-current={
+                      !citationStylesOpen && !duplicatesOpen && section === 'inbox'
+                        ? 'page'
+                        : undefined
+                    }
+                    aria-label={t('Inbox')}
+                    title={sidebarCollapsed ? t('Inbox') : undefined}
+                    onClick={() => selectSection('inbox')}
+                  >
+                    <Inbox className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{t('Inbox')}</span> : null}
+                    {!sidebarCollapsed &&
+                    inboxPendingCount !== undefined &&
+                    inboxPendingCount > 0 ? (
+                      <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                        {inboxPendingCount}
+                      </span>
+                    ) : null}
+                    {sidebarCollapsed &&
+                    inboxPendingCount !== undefined &&
+                    inboxPendingCount > 0 ? (
+                      <span
+                        className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-primary"
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      navButtonClassName,
+                      !duplicatesOpen &&
+                        section === 'library' &&
+                        !collectionId &&
+                        !projectId &&
+                        'bg-bg-300 font-medium'
+                    )}
+                    ref={libraryEntryRef}
+                    aria-current={
+                      !citationStylesOpen &&
+                      !duplicatesOpen &&
+                      section === 'library' &&
+                      !collectionId &&
+                      !projectId
+                        ? 'page'
+                        : undefined
+                    }
+                    aria-label={t('All references')}
+                    title={sidebarCollapsed ? t('All references') : undefined}
+                    onClick={() => selectLibrary()}
+                  >
+                    <BookOpenText className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
+                    <LiteratureLibraryCount
+                      revision={libraryCountRevision}
+                      hidden={sidebarCollapsed}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
+                    aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
+                    aria-label={t('Duplicates')}
+                    title={sidebarCollapsed ? t('Duplicates') : undefined}
+                    onClick={() => {
+                      setCitationStylesOpen(false)
+                      setDuplicatesOpen(true)
+                      clearSelection()
+                    }}
+                  >
+                    <Copy className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{t('Duplicates')}</span> : null}
+                    <LiteratureDuplicateCount ref={duplicateCountRef} hidden={sidebarCollapsed} />
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      navButtonClassName,
+                      !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
+                    )}
+                    aria-current={
+                      !citationStylesOpen && !duplicatesOpen && section === 'trash'
+                        ? 'page'
+                        : undefined
+                    }
+                    aria-label={t('Trash')}
+                    title={sidebarCollapsed ? t('Trash') : undefined}
+                    onClick={() => selectSection('trash')}
+                  >
+                    <Trash2 className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{t('Trash')}</span> : null}
+                  </button>
+                </nav>
+                <div
+                  className={cn(
+                    'min-h-0 flex-1 overflow-y-auto',
+                    sidebarCollapsed ? 'mt-3 border-t border-border-300/80 pt-3' : 'mt-2'
+                  )}
+                >
+                  {!sidebarCollapsed ? (
+                    <div
+                      role="separator"
+                      aria-orientation="horizontal"
+                      className="mx-2 mb-2 mt-2 h-px bg-border-300/80"
+                    />
+                  ) : null}
+                  <LiteratureSidebarGroup
+                    collapsed={sidebarCollapsed}
+                    entries={activeProjects}
+                    groupId="literature-sidebar-projects"
+                    label={t('Projects')}
+                    navButtonClassName={navButtonClassName}
+                    selectedId={duplicatesOpen ? undefined : projectId}
+                    showAllLabel={t('Show all projects')}
+                    showAllText={t('Show all')}
+                    showFewerLabel={t('Show fewer projects')}
+                    showLessText={t('Show less')}
+                    renderEntry={(project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
+                        )}
+                        aria-current={
+                          !citationStylesOpen &&
+                          !duplicatesOpen &&
+                          section === 'library' &&
+                          projectId === project.id
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={project.name}
+                        title={sidebarCollapsed ? project.name : undefined}
+                        onClick={() => selectProject(project.id)}
+                      >
+                        <GalleryVerticalEnd className="size-4" aria-hidden="true" />
+                        {!sidebarCollapsed ? (
+                          <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                        ) : null}
+                        {!sidebarCollapsed ? (
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            {projectItemCounts[project.id] ?? 0}
+                          </span>
+                        ) : null}
+                      </button>
+                    )}
                   />
-                  {t('Reading…')}
-                </span>
+                  <div
+                    role="separator"
+                    aria-orientation="horizontal"
+                    className={cn(
+                      'mx-2 h-px bg-border-300/80',
+                      sidebarCollapsed ? 'my-3' : 'mb-2 mt-4'
+                    )}
+                  />
+                  <LiteratureSidebarGroup
+                    collapsed={sidebarCollapsed}
+                    entries={displayCollections}
+                    groupId="literature-sidebar-collections"
+                    label={t('Collections')}
+                    action={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-lg"
+                        className="text-muted-foreground hover:bg-bg-300 hover:text-foreground active:bg-bg-300 transition-none"
+                        aria-label={t('New collection')}
+                        aria-haspopup="dialog"
+                        title={t('New collection')}
+                        onClick={openCreateCollection}
+                      >
+                        {sidebarCollapsed ? (
+                          <FolderPlus className="size-4" aria-hidden="true" />
+                        ) : (
+                          <Plus className="size-4" aria-hidden="true" />
+                        )}
+                      </Button>
+                    }
+                    navButtonClassName={navButtonClassName}
+                    selectedId={duplicatesOpen ? undefined : collectionId}
+                    showAllLabel={t('Show all collections')}
+                    showAllText={t('Show all')}
+                    showFewerLabel={t('Show fewer collections')}
+                    showLessText={t('Show less')}
+                    renderEntry={(collection) => (
+                      <button
+                        key={collection.id}
+                        type="button"
+                        className={cn(
+                          navButtonClassName,
+                          !duplicatesOpen &&
+                            collectionId === collection.id &&
+                            'bg-bg-300 font-medium'
+                        )}
+                        aria-current={
+                          !citationStylesOpen &&
+                          !duplicatesOpen &&
+                          section === 'library' &&
+                          collectionId === collection.id
+                            ? 'page'
+                            : undefined
+                        }
+                        aria-label={collection.name}
+                        title={sidebarCollapsed ? collection.name : undefined}
+                        onClick={() => selectLibrary(collection.id)}
+                      >
+                        <span aria-hidden="true">
+                          {collection.smart ? (
+                            <SmartCollectionIcon
+                              className="size-4 text-primary"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <FolderOpen className="size-4" />
+                          )}
+                        </span>
+                        {!sidebarCollapsed ? (
+                          <span className="min-w-0 flex-1 truncate text-left">
+                            {collection.name}
+                          </span>
+                        ) : null}
+                        {!sidebarCollapsed ? (
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            {collection.itemCount}
+                          </span>
+                        ) : null}
+                      </button>
+                    )}
+                  />
+                </div>
+                <div
+                  className={cn(
+                    'mt-auto space-y-1 border-t border-border-300/80 pt-2',
+                    sidebarCollapsed && 'flex flex-col items-center'
+                  )}
+                >
+                  <button
+                    type="button"
+                    className={cn(
+                      navButtonClassName,
+                      citationStylesOpen && 'bg-bg-300 font-medium'
+                    )}
+                    aria-current={citationStylesOpen ? 'page' : undefined}
+                    aria-label={t('Settings')}
+                    title={sidebarCollapsed ? t('Settings') : undefined}
+                    onClick={() => setCitationStylesOpen(true)}
+                  >
+                    <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{t('Settings')}</span> : null}
+                  </button>
+                </div>
+              </aside>
+            )
+          }}
+        </LiteratureSidebarState>
+
+        <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <LiteratureDuplicatesView
+            active={duplicatesOpen && !citationStylesOpen}
+            revision={duplicatesRevision}
+            onCount={setDuplicateCount}
+            onMerged={() => {
+              void loadEntries(true)
+              void loadCollections()
+              void loadProjectCounts()
+              setDuplicatesRevision((value) => value + 1)
+            }}
+            onReview={(entries) => {
+              setMergeError(undefined)
+              setDuplicateMergeItems(entries)
+              setMergeSurvivorId(entries[0]?.id ?? '')
+              setMergeFieldSources({})
+              setMergeOpen(true)
+            }}
+          />
+          {citationStylesOpen ? (
+            <CitationStylesView
+              styles={citationStyles}
+              onBack={() => setCitationStylesOpen(false)}
+              onStylesChange={updateCitationStyles}
+            />
+          ) : null}
+          <div
+            className={cn(
+              'flex h-full min-h-0 w-full max-w-none flex-col px-4 py-6 lg:px-6 lg:py-8',
+              (citationStylesOpen || duplicatesOpen) && 'hidden'
+            )}
+          >
+            <div
+              className={
+                selectedCollection?.smart
+                  ? 'hidden'
+                  : 'flex flex-wrap items-end justify-between gap-4'
+              }
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex w-fit max-w-full min-w-0 items-center gap-1.5">
+                  <h2
+                    className="min-w-0 truncate text-2xl font-semibold tracking-tight"
+                    title={selectedProject?.name ?? selectedCollection?.name}
+                  >
+                    {section === 'inbox'
+                      ? t('Inbox')
+                      : section === 'trash'
+                        ? t('Trash')
+                        : (selectedProject?.name ??
+                          selectedCollection?.name ??
+                          t('All references'))}
+                  </h2>
+                  {section === 'library' && selectedProject ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="shrink-0"
+                      aria-label={t('Open project')}
+                      title={t('Open project')}
+                      onClick={() => openProject(selectedProject.id, 'user')}
+                    >
+                      <ExternalLink className="size-4" aria-hidden="true" />
+                    </Button>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {section === 'inbox'
+                    ? t('Review references found by Agents before they enter your library.')
+                    : section === 'trash'
+                      ? t(
+                          'Restore references to edit, preview, or export them, or delete them permanently.'
+                        )
+                      : selectedProject
+                        ? t('References linked to this project.')
+                        : selectedCollection
+                          ? (selectedCollection.smart
+                              ? t('Smart collection')
+                              : selectedCollection.description) ||
+                            t('References saved in this collection.')
+                          : t('Search and organize the references you use across projects.')}
+                </p>
               </div>
-            ) : (
-              <LiteratureMetadataEditor
-                className="min-h-0"
-                beforeFields={
-                  <LiteratureDuplicatePolicyField
-                    value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}
-                    onChange={setDuplicatePolicy}
-                    disabled={isSavingNewItem || Boolean(dialogItemEditor?.createdItemId)}
+              <div
+                className={
+                  smartSetup
+                    ? 'hidden'
+                    : 'flex w-full min-w-0 shrink-0 flex-wrap items-center gap-2 sm:w-auto'
+                }
+              >
+                {showLiteratureReviewAction && reviewProjectId ? (
+                  <Button
+                    type="button"
+                    className="literature-review-cta h-8 shrink-0 px-1.5 pr-3 shadow-card hover:bg-primary/90 active:translate-y-px active:shadow-none dark:shadow-none [@media(pointer:coarse)]:h-11"
+                    data-attention={shouldCueLiteratureReview ? 'true' : undefined}
+                    onClick={() =>
+                      startLiteratureReviewConversation(
+                        reviewProjectId,
+                        selectedCollection
+                          ? {
+                              type: 'literature-scope',
+                              scope: 'collection',
+                              collectionId: selectedCollection.id,
+                              name: selectedCollection.name
+                            }
+                          : { type: 'literature-scope', scope: 'project' },
+                        t('Synthesize this literature into a concise review.')
+                      )
+                    }
+                  >
+                    <span className="literature-review-cta__content inline-flex items-center gap-2">
+                      <span
+                        className="literature-review-cta__mark inline-grid size-6 place-items-center rounded-md bg-primary-foreground/15 ring-1 ring-primary-foreground/20 ring-inset"
+                        onAnimationEnd={() => setShouldCueLiteratureReview(false)}
+                      >
+                        <Sparkles className="size-3.5" aria-hidden="true" />
+                      </span>
+                      <span>{t('Review with agent')}</span>
+                    </span>
+                  </Button>
+                ) : null}
+                {section === 'library' && !selectedCollection?.smart ? (
+                  <div>
+                    <input
+                      ref={importPdfInputRef}
+                      multiple
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="sr-only"
+                      aria-label={t('Import PDFs')}
+                      onChange={(event) => {
+                        const files = Array.from(event.currentTarget.files ?? [])
+                        event.currentTarget.value = ''
+                        if (files.length > 1)
+                          setPdfBatch({
+                            files,
+                            destination: {
+                              name:
+                                selectedProject?.name ??
+                                selectedCollection?.name ??
+                                t('All references'),
+                              projectId,
+                              collectionId
+                            }
+                          })
+                        else if (files[0]) beginPdfImport(files[0])
+                      }}
+                    />
+                    <input
+                      ref={importRecordsInputRef}
+                      type="file"
+                      accept=".bib,.bibtex,.ris,.nbib,.txt,application/x-bibtex,application/x-research-info-systems,text/plain"
+                      className="sr-only"
+                      aria-label={t('Import references')}
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0]
+                        event.currentTarget.value = ''
+                        if (file) void previewRecordImport(file)
+                      }}
+                    />
+                    <LiteratureAddMenu
+                      onAddReference={() => {
+                        setPendingImportPdf(undefined)
+                        setPendingImportDraft(undefined)
+                        setIsReadingImportMetadata(false)
+                        setCreateItemError(undefined)
+                        setDuplicatePolicy('reuse')
+                        setIsCreatingItem(true)
+                      }}
+                      onImportPdf={() => importPdfInputRef.current?.click()}
+                      onImportReferences={() => importRecordsInputRef.current?.click()}
+                    />
+                  </div>
+                ) : null}
+                <LiteratureSearchInput
+                  initialValue={query}
+                  onCommit={setQuery}
+                  onDraftChange={clearSelection}
+                />
+                {section === 'library' && (selectedProject || selectedCollection) ? (
+                  <LiteratureLibraryActionsMenu
+                    identityKey={selectedCollection?.id ?? selectedProject?.id ?? 'library'}
+                    onEdit={
+                      selectedCollection ? () => openEditCollection(selectedCollection) : undefined
+                    }
+                    onDelete={
+                      selectedCollection
+                        ? () => {
+                            setCollectionDeleteError(undefined)
+                            setCollectionPendingDelete(selectedCollection)
+                            void loadCollections().catch(() =>
+                              setCollectionDeleteError(t('Literature could not be loaded.'))
+                            )
+                          }
+                        : undefined
+                    }
+                    exportDisabled={
+                      entriesLoading ||
+                      (selectedProject
+                        ? projectItemCounts[selectedProject.id] === 0
+                        : selectedCollection?.itemCount === 0)
+                    }
+                    onExport={exportCurrentScope}
                   />
+                ) : null}
+              </div>
+            </div>
+
+            {selectedCollection?.smart && (
+              <SmartCollectionPanel
+                key={selectedCollection.id}
+                collectionId={selectedCollection.id}
+                state={smartState}
+                name={selectedCollection.name}
+                description={selectedCollection.description}
+                onReview={
+                  showLiteratureReviewAction && reviewProjectId
+                    ? () =>
+                        startLiteratureReviewConversation(
+                          reviewProjectId,
+                          {
+                            type: 'literature-scope',
+                            scope: 'collection',
+                            collectionId: selectedCollection.id,
+                            name: selectedCollection.name
+                          },
+                          t('Synthesize this literature into a concise review.')
+                        )
+                    : undefined
                 }
-                key={dialogItemEditor?.file?.name ?? 'manual-reference'}
-                item={
-                  dialogItemEditor?.draft ?? {
-                    ...emptyLiteratureItem(),
-                    title: dialogItemEditor?.file
-                      ? titleFromPdfFilename(dialogItemEditor?.file.name)
-                      : ''
-                  }
+
+                onExport={exportCurrentScope}
+                exportDisabled={entriesLoading || selectedCollection.itemCount === 0}
+                searchActions={
+                  <>
+                    <LiteratureSearchInput
+                      initialValue={query}
+                      onCommit={setQuery}
+                      onDraftChange={clearSelection}
+                    />
+                  </>
                 }
-                saving={isSavingNewItem}
-                error={dialogItemEditor?.error}
-                onRetry={createdItemId ? () => void createManualItem() : undefined}
-                onCancel={closeItemEditor}
-                onSave={(item) => {
-                  if (isCreatingItem) void createManualItem(item)
+                decisionPending={pendingDecisions.size > 0}
+                singleReevaluation={singleReevaluation?.collectionId === selectedCollection.id}
+                onViewChange={receiveSmartView}
+                onEdit={() => openEditCollection(selectedCollection)}
+                onDelete={() => {
+                  setCollectionDeleteError(undefined)
+                  setCollectionPendingDelete(selectedCollection)
+                  void loadCollections().catch(() =>
+                    setCollectionDeleteError(t('Literature could not be loaded.'))
+                  )
                 }}
               />
             )}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
 
-      <Dialog.Root
-        open={selectedCandidate !== undefined}
-        onOpenChange={(open) => {
-          if (!open) setSelectedCandidate(undefined)
-        }}
-      >
-        {selectedCandidate ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex min-h-0 flex-1 flex-col">
+                {decisionFailures.map((failure) => (
+                  <LiteratureErrorNotice
+                    key={failure.key}
+                    className="mt-3 w-full"
+                    description={t('The decision could not be saved in {{collection}}.', {
+                      collection: failure.collection
+                    })}
+                    primaryButton={{
+                      label: t('Retry'),
+                      onClick: failure.retry,
+                      disabled: pendingDecisions.has(failure.key)
+                    }}
+                    secondaryButton={{
+                      label: t('Dismiss'),
+                      onClick: () =>
+                        setDecisionFailures((current) =>
+                          current.filter((entry) => entry.key !== failure.key)
+                        )
+                    }}
+                  />
+                ))}
+                {smartRefreshFailure && smartRefreshFailure === collectionId && (
+                  <LiteratureErrorNotice
+                    className="mt-3 w-full"
+                    description={t(
+                      'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
+                    )}
+                    primaryButton={{
+                      label: t('Retry'),
+                      disabled: entriesLoading || isBatching || pendingDecisions.size > 0,
+                      onClick: () => {
+                        void Promise.all([loadEntries(true, true), refreshSmartSummary()])
+                          .then(([refreshed, summary]) => {
+                            if (
+                              refreshed === true &&
+                              summary &&
+                              currentCollectionId.current === collectionId
+                            ) {
+                              setSmartRefreshFailure(undefined)
+                              setError(undefined)
+                            }
+                          })
+                          .catch(() => {
+                            /* Keep the saved-state warning and its read-only retry. */
+                          })
+                      }
+                    }}
+                  />
+                )}
+                {smartBatchResult && smartBatchResult.collectionId === collectionId && (
+                  <div
+                    role="status"
+                    className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm"
+                  >
+                    <span>
+                      {t('Decisions saved: {{done}}. Failed: {{failed}}.', {
+                        done: smartBatchResult.done,
+                        failed: smartBatchResult.failed.length
+                      })}
+                    </span>
+                    {smartBatchResult.remaining.length > 0 && (
+                      <span>
+                        {t('Not processed: {{remaining}}', {
+                          remaining: smartBatchResult.remaining.length
+                        })}
+                      </span>
+                    )}
+                    {(smartBatchResult.failed.length > 0 ||
+                      smartBatchResult.remaining.length > 0) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isBatching}
+                        onClick={() =>
+                          void confirmSmartDecision(smartBatchResult.decision, [
+                            ...smartBatchResult.failed,
+                            ...smartBatchResult.remaining
+                          ])
+                        }
+                      >
+                        {t('Retry')}
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSmartBatchResult(undefined)}
+                    >
+                      {t('Dismiss')}
+                    </Button>
+                  </div>
+                )}
+                <div
+                  data-slot="literature-action-rail"
+                  className={
+                    section === 'inbox' || smartSetup ? 'hidden' : 'mt-4 min-h-12 shrink-0'
+                  }
+                >
+                  <fieldset
+                    disabled={smartTableBlocked}
+                    className="contents"
+                    data-slot="smart-table-controls"
+                  >
+                    <LiteratureSelectionBoundary store={selectionStore}>
+                      {(selection) => {
+                        const hasSelection =
+                          selection.allMatchingSelected || selection.selectedIds.size > 0
+                        const selectedItemCount = selection.allMatchingSelected
+                          ? Math.max(0, entriesTotalCount - selection.excludedMatchingIds.size)
+                          : selection.selectedIds.size
+                        const allLoadedItemsSelected =
+                          items.length > 0 &&
+                          items.every((item) => isLiteratureItemSelected(selection, item.id))
+                        return (
+                          <div className={cn('flex h-12 min-w-0 items-center justify-end gap-2')}>
+                            {selectedCollection?.smart && !hasSelection && (
+                              <>
+                                <Tabs.Root
+                                  value={smartFilter}
+                                  onValueChange={(value) =>
+                                    setSmartFilter(value as typeof smartFilter)
+                                  }
+                                  className="mr-auto min-w-0 max-w-full"
+                                >
+                                  <Tabs.List
+                                    aria-label={t('Filter decisions')}
+                                    className={literatureTabsListClassName}
+                                  >
+                                    {(
+                                      [
+                                        [
+                                          'match',
+                                          t('Included'),
+                                          t('Papers included by the rule or your manual decision.')
+                                        ],
+                                        [
+                                          'review',
+                                          t('Needs review'),
+                                          t('Uncertain or outdated results that need review.')
+                                        ],
+                                        [
+                                          'no-match',
+                                          t('Excluded'),
+                                          t('Papers excluded by the rule or your manual decision.')
+                                        ],
+                                        [
+                                          'pending',
+                                          t('Not evaluated'),
+                                          t(
+                                            'Papers not evaluated by a model: not started, failed, or insufficient evidence.'
+                                          )
+                                        ]
+                                      ] as const
+                                    ).map(([value, label, hint]) => (
+                                      <Tabs.Trigger
+                                        key={value}
+                                        value={value}
+                                        id={`smart-decision-${value}`}
+                                        aria-controls="smart-collection-results"
+                                        title={hint}
+                                        className={literatureTabClassName}
+                                      >
+                                        {label}
+                                        <span className="rounded-sm bg-muted px-1.5 text-xs tabular-nums">
+                                          {(smartDecisionSource === 'all'
+                                            ? smartView?.counts
+                                            : smartView?.countsBySource?.[smartDecisionSource])?.[
+                                            value
+                                          ] ?? '—'}
+                                        </span>
+                                      </Tabs.Trigger>
+                                    ))}
+                                  </Tabs.List>
+                                </Tabs.Root>
+                              </>
+                            )}
+                            <LiteratureBackgroundTasks
+                              hidden={hasSelection || section === 'inbox'}
+                              onOpen={(job) =>
+                                setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
+                              }
+                              onChanged={receiveBackgroundItems}
+                            />
+                            {section !== 'inbox' && (
+                              <>
+                                {!hasSelection && (
+                                  <div className="flex shrink-0 items-center justify-end gap-2">
+                                    {selectedCollection?.smart && (
+                                      <Select
+                                        value={smartDecisionSource}
+                                        disabled={!smartView?.countsBySource}
+                                        onValueChange={(value) => {
+                                          setSmartDecisionSource(
+                                            value as typeof smartDecisionSource
+                                          )
+                                          clearSelection()
+                                        }}
+                                      >
+                                        <SelectTrigger
+                                          aria-label={t('Decision source')}
+                                          className="w-40"
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="all">
+                                            {t('All decision sources')}
+                                          </SelectItem>
+                                          <SelectItem value="ai">{t('AI decisions')}</SelectItem>
+                                          <SelectItem value="manual">
+                                            {t('Manual decisions')}
+                                          </SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+
+                                    <Select
+                                      value={sortBy}
+                                      onValueChange={(value) => {
+                                        setSortBy(value as typeof sortBy)
+                                        clearSelection()
+                                      }}
+                                    >
+                                      <SelectTrigger
+                                        aria-label={t('Sort references')}
+                                        className="w-52"
+                                      >
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="updated">
+                                          {t('Recently updated')}
+                                        </SelectItem>
+                                        <SelectItem value="created">
+                                          {t('Recently added')}
+                                        </SelectItem>
+                                        <SelectItem value="created-asc">
+                                          {t('First added')}
+                                        </SelectItem>
+                                        <SelectItem value="title">{t('Title: A–Z')}</SelectItem>
+                                        <SelectItem value="title-desc">
+                                          {t('Title: Z–A')}
+                                        </SelectItem>
+                                        <SelectItem value="year">
+                                          {t('Year: newest first')}
+                                        </SelectItem>
+                                        <SelectItem value="year-asc">
+                                          {t('Year: oldest first')}
+                                        </SelectItem>
+                                        <SelectItem value="rating">{t('Highest rated')}</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className="relative"
+                                          aria-describedby={
+                                            yearFilter.invalid && !filtersOpen
+                                              ? 'literature-year-filter-error'
+                                              : undefined
+                                          }
+                                        >
+                                          <SlidersHorizontal
+                                            className="size-4"
+                                            aria-hidden="true"
+                                          />
+                                          {t('Filters')}
+                                          {activeFilterCount > 0 ? (
+                                            <span className="rounded-full bg-primary/10 px-1.5 text-[11px] font-medium tabular-nums text-primary">
+                                              {activeFilterCount}
+                                            </span>
+                                          ) : null}
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent
+                                        align="end"
+                                        aria-labelledby={`${accessibilityId}-filters`}
+                                        className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
+                                      >
+                                        <p
+                                          id={`${accessibilityId}-filters`}
+                                          className="text-sm font-medium"
+                                        >
+                                          {t('Filters')}
+                                        </p>
+                                        <div className="space-y-1.5">
+                                          <span className="text-xs font-medium text-muted-foreground">
+                                            {t('Tags')}
+                                          </span>
+                                          <TagFilter
+                                            resourceType="literature.item"
+                                            value={tagId}
+                                            onChange={(value) => {
+                                              setTagId(value)
+                                              clearSelection()
+                                            }}
+                                            className="w-full"
+                                          />
+                                        </div>
+                                        <>
+                                          <div className="space-y-1.5">
+                                            <span className="text-xs font-medium text-muted-foreground">
+                                              {t('Reference type')}
+                                            </span>
+                                            <Select
+                                              value={filterItemType}
+                                              onValueChange={(value) => {
+                                                setFilterItemType(
+                                                  value as LiteratureItemType | 'all'
+                                                )
+                                                clearSelection()
+                                              }}
+                                            >
+                                              <SelectTrigger aria-label={t('Reference type')}>
+                                                <SelectValue />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="all">{t('All')}</SelectItem>
+                                                {Object.entries(itemTypeLabels).map(
+                                                  ([value, label]) => (
+                                                    <SelectItem key={value} value={value}>
+                                                      {label}
+                                                    </SelectItem>
+                                                  )
+                                                )}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                          <LiteratureYearFilter {...yearFilter} />
+                                          <div className="space-y-1.5">
+                                            <span className="text-xs font-medium text-muted-foreground">
+                                              {t('PDF')}
+                                            </span>
+                                            <Select
+                                              value={filterHasPdf}
+                                              onValueChange={(value) => {
+                                                setFilterHasPdf(value as typeof filterHasPdf)
+                                                clearSelection()
+                                              }}
+                                            >
+                                              <SelectTrigger aria-label={t('PDF')}>
+                                                <SelectValue />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="all">{t('All')}</SelectItem>
+                                                <SelectItem value="with">
+                                                  {t('With PDF')}
+                                                </SelectItem>
+                                                <SelectItem value="without">
+                                                  {t('Without PDF')}
+                                                </SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </>
+                                        <div className="border-t border-border pt-3">
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="w-full"
+                                            disabled={
+                                              activeFilterCount === 0 &&
+                                              !yearFilter.draftFrom &&
+                                              !yearFilter.draftTo
+                                            }
+                                            onClick={clearFilters}
+                                          >
+                                            {t('Clear filters')}
+                                          </Button>
+                                        </div>
+                                      </PopoverContent>
+                                    </Popover>
+                                    {yearFilter.invalid && !filtersOpen ? (
+                                      <p
+                                        id="literature-year-filter-error"
+                                        role="status"
+                                        className="text-xs text-destructive"
+                                      >
+                                        {t('Enter a valid year range (0–9999).')}
+                                      </p>
+                                    ) : null}
+                                    <LiteratureColumnCustomizer
+                                      columns={tableColumnOrder}
+                                      labels={tableColumnLabels}
+                                      visible={visibleTableColumns}
+                                      onMove={moveTableColumn}
+                                      onMoveBy={moveTableColumnBy}
+                                      onVisibilityChange={(column, nextVisible) =>
+                                        setVisibleTableColumns((current) => {
+                                          const next = new Set(current)
+                                          if (nextVisible) next.add(column)
+                                          else next.delete(column)
+                                          return next
+                                        })
+                                      }
+                                    />
+                                  </div>
+                                )}
+                                {hasSelection && (
+                                  <div
+                                    data-slot="literature-selection-toolbar"
+                                    className="w-full min-w-0 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1"
+                                  >
+                                    <div
+                                      data-slot="literature-selection-common-actions"
+                                      className="flex min-h-9 min-w-0 items-center gap-2 overflow-x-auto [&>button]:shrink-0"
+                                    >
+                                      <span className="shrink-0 whitespace-nowrap px-1 text-sm font-medium tabular-nums">
+                                        {t('{{count}} selected', { count: selectedItemCount })}
+                                      </span>
+                                      {!selection.allMatchingSelected &&
+                                      allLoadedItemsSelected &&
+                                      (entriesOffset > 0 || nextEntriesOffset !== undefined) ? (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          aria-label={`${t('Select all matching references')} ${formattedMatchingCount}`}
+                                          disabled={isBatching}
+                                          onClick={selectionStore.selectAllMatching}
+                                          className="shrink-0 whitespace-nowrap"
+                                        >
+                                          <span>{t('Select all')}</span>
+                                          <span className="text-muted-foreground tabular-nums">
+                                            {formattedMatchingCount}
+                                          </span>
+                                        </Button>
+                                      ) : null}
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        aria-label={t('Clear selection')}
+                                        title={t('Clear selection')}
+                                        disabled={isBatching}
+                                        onClick={clearSelection}
+                                      >
+                                        <X className="size-3.5" aria-hidden="true" />
+                                      </Button>
+                                      {smartDecisionBatch.progress &&
+                                      smartDecisionBatch.progress.collectionId === collectionId ? (
+                                        <>
+                                          <span role="status" className="text-sm tabular-nums">
+                                            {t(
+                                              'Saving decisions: {{done}}/{{total}}',
+                                              smartDecisionBatch.progress
+                                            )}
+                                          </span>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={smartDecisionBatch.stop}
+                                            disabled={smartDecisionBatch.progress.stopping}
+                                          >
+                                            {t('Stop')}
+                                          </Button>
+                                        </>
+                                      ) : (
+                                        selectedCollection?.smart && (
+                                          <>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              disabled={isBatching || pendingDecisions.size > 0}
+                                              onClick={() => void confirmSmartDecision('include')}
+                                            >
+                                              {t('Include')}
+                                            </Button>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              disabled={isBatching || pendingDecisions.size > 0}
+                                              onClick={() => void confirmSmartDecision('exclude')}
+                                            >
+                                              {t('Exclude')}
+                                            </Button>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              disabled={
+                                                isBatching ||
+                                                pendingDecisions.size > 0 ||
+                                                !smartView?.configured ||
+                                                !smartView?.sourceAvailable ||
+                                                smartView?.run?.state === 'running' ||
+                                                smartView?.run?.state === 'queued'
+                                              }
+                                              onClick={() => void prepareSmartReevaluation()}
+                                            >
+                                              <RotateCcw className="size-3.5" aria-hidden="true" />
+                                              {t('Re-evaluate selected')}
+                                            </Button>
+                                          </>
+                                        )
+                                      )}
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="ml-auto shrink-0"
+                                            disabled={isBatching}
+                                          >
+                                            {t('More actions')}
+                                            <ChevronDown className="size-3.5" aria-hidden="true" />
+                                          </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent
+                                          align="end"
+                                          className="w-64 max-w-[calc(100vw-2rem)] space-y-1 rounded-xl border border-border bg-bg-000 p-1.5 text-foreground [&_button]:h-8 [&_button]:w-full [&_button]:justify-start [&_button]:border-transparent [&_button]:bg-transparent [&_button]:shadow-none [&_button:hover]:bg-bg-200"
+                                        >
+                                          <LiteratureHoverMenuGroup>
+                                            <div className="flex flex-col gap-0.5">
+                                              {section === 'library' ? (
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  className="shrink-0 whitespace-nowrap"
+                                                  disabled={
+                                                    isBatching || Boolean(startingReadingProjectId)
+                                                  }
+                                                  onClick={() => void requestReadSelection()}
+                                                >
+                                                  <BookOpenText
+                                                    className="size-3.5"
+                                                    aria-hidden="true"
+                                                  />
+                                                  {t('Read with agent')}
+                                                </Button>
+                                              ) : null}
+                                              {section === 'library' ? (
+                                                <LiteratureBatchDestinationMenus
+                                                  collections={batchCollections}
+                                                  disabled={isBatching}
+                                                  moveBetweenCollections={Boolean(collectionId)}
+                                                  projects={activeProjects}
+                                                  projectsLoaded={projectsLoaded}
+                                                  onCreateCollection={createCollectionForSelection}
+                                                  onCreateProject={
+                                                    batchProjectFormDialog.openCreateDialog
+                                                  }
+                                                  onSelectCollection={(id) =>
+                                                    void moveSelectedItems(id)
+                                                  }
+                                                  onSelectProject={(id) =>
+                                                    void addSelectedItemsToProject(id)
+                                                  }
+                                                />
+                                              ) : (
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  disabled={
+                                                    isBatching ||
+                                                    (!selection.allMatchingSelected &&
+                                                      [...selection.selectedIds].every((id) =>
+                                                        items.some(
+                                                          (item) =>
+                                                            item.id === id &&
+                                                            Boolean(item.mergedIntoItemId)
+                                                        )
+                                                      ))
+                                                  }
+                                                  onClick={() => void previewRestoreSelection()}
+                                                >
+                                                  <RotateCcw
+                                                    className="size-3.5"
+                                                    aria-hidden="true"
+                                                  />
+                                                  {t('Restore')}
+                                                </Button>
+                                              )}
+                                              <LiteratureExportMenu
+                                                disabled={isBatching || section === 'trash'}
+                                                onExport={exportSelectedItems}
+                                              />
+                                              {section === 'library' ||
+                                              (section === 'trash' &&
+                                                !selection.allMatchingSelected &&
+                                                selection.selectedIds.size <=
+                                                  LITERATURE_BATCH_COMMAND_SIZE) ? (
+                                                <LiteratureHoverDropdown
+                                                  disabled={isBatching}
+                                                  trigger={
+                                                    <Button
+                                                      type="button"
+                                                      variant="ghost"
+                                                      size="sm"
+                                                      className="shrink-0"
+                                                      aria-label={t('Actions')}
+                                                      disabled={isBatching}
+                                                    >
+                                                      <MoreHorizontal
+                                                        className="size-3.5"
+                                                        aria-hidden="true"
+                                                      />
+                                                      {t('Actions')}
+                                                      <ChevronRight
+                                                        className="ml-auto size-3.5 opacity-60"
+                                                        aria-hidden="true"
+                                                      />
+                                                    </Button>
+                                                  }
+                                                >
+                                                  {section === 'library' ? (
+                                                    <>
+                                                      <PopoverClose asChild>
+                                                        <DropdownMenuItem
+                                                          onSelect={() =>
+                                                            void requestBatchLookup('metadata')
+                                                          }
+                                                        >
+                                                          <Search
+                                                            className="mr-2 size-4"
+                                                            aria-hidden="true"
+                                                          />
+                                                          {t('Complete metadata')}
+                                                        </DropdownMenuItem>
+                                                      </PopoverClose>
+                                                      <PopoverClose asChild>
+                                                        <DropdownMenuItem
+                                                          onSelect={() =>
+                                                            void requestBatchLookup('full-text')
+                                                          }
+                                                        >
+                                                          <Download
+                                                            className="mr-2 size-4"
+                                                            aria-hidden="true"
+                                                          />
+                                                          {t('Find full-text PDF')}
+                                                        </DropdownMenuItem>
+                                                      </PopoverClose>
+                                                      <DropdownMenuSeparator />
+                                                      {!selection.allMatchingSelected &&
+                                                      selection.selectedIds.size > 1 &&
+                                                      selection.selectedIds.size <= 20 ? (
+                                                        <>
+                                                          <PopoverClose asChild>
+                                                            <DropdownMenuItem
+                                                              onSelect={() => {
+                                                                const firstSelected = items.find(
+                                                                  (item) =>
+                                                                    selection.selectedIds.has(
+                                                                      item.id
+                                                                    )
+                                                                )
+                                                                setMergeSurvivorId(
+                                                                  firstSelected?.id ?? ''
+                                                                )
+                                                                setMergeFieldSources({})
+                                                                setMergeError(undefined)
+                                                                setMergeOpen(true)
+                                                              }}
+                                                            >
+                                                              <Merge
+                                                                className="mr-2 size-4"
+                                                                aria-hidden="true"
+                                                              />
+                                                              {t('Merge')}
+                                                            </DropdownMenuItem>
+                                                          </PopoverClose>
+                                                          <DropdownMenuSeparator />
+                                                        </>
+                                                      ) : null}
+                                                      <PopoverClose asChild>
+                                                        <DropdownMenuItem
+                                                          onSelect={() =>
+                                                            void runLifecycleAction('deleted')
+                                                          }
+                                                        >
+                                                          <Trash2
+                                                            className="mr-2 size-4"
+                                                            aria-hidden="true"
+                                                          />
+                                                          {t('Move to Trash')}
+                                                        </DropdownMenuItem>
+                                                      </PopoverClose>
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <PopoverClose asChild>
+                                                        <DropdownMenuItem
+                                                          className="text-danger-000 focus:text-danger-000"
+                                                          onSelect={() =>
+                                                            requestPermanentDeletion([
+                                                              ...selection.selectedIds
+                                                            ])
+                                                          }
+                                                        >
+                                                          <Trash2
+                                                            className="mr-2 size-4"
+                                                            aria-hidden="true"
+                                                          />
+                                                          {t('Delete permanently')}
+                                                        </DropdownMenuItem>
+                                                      </PopoverClose>
+                                                    </>
+                                                  )}
+                                                </LiteratureHoverDropdown>
+                                              ) : null}
+                                            </div>
+                                            {selectedCollection?.smart && (
+                                              <div
+                                                data-slot="smart-selection-actions"
+                                                className="flex flex-col gap-0.5 border-t border-border pt-1"
+                                              >
+                                                <Button
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  disabled={isBatching}
+                                                  onClick={() =>
+                                                    void confirmSmartDecision('automatic')
+                                                  }
+                                                >
+                                                  {t('Use model decision')}
+                                                </Button>
+                                              </div>
+                                            )}
+                                          </LiteratureHoverMenuGroup>
+                                        </PopoverContent>
+                                      </Popover>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )
+                      }}
+                    </LiteratureSelectionBoundary>
+                  </fieldset>
+                </div>
+                <LiteratureAttachmentOperations
+                  detailController={detailController}
+                  onChanged={(operation) => {
+                    if (!operation.item) return
+                    const current = detailController.getSnapshot().item
+                    const updated =
+                      current?.id === operation.itemId
+                        ? { ...current, attachments: operation.item.attachments }
+                        : operation.item
+                    detailController.replace(updated)
+                    updateMetadataItem(updated)
+                    void loadEntries(true)
+                  }}
+                />
+                {batchLookup ? (
+                  <LiteratureBatchLookupDialog
+                    key={
+                      batchLookup.jobId ?? `${batchLookup.mode}:${batchLookup.itemIds.join(',')}`
+                    }
+                    {...batchLookup}
+                    initialItems={items}
+                    fieldLabel={metadataFieldLabel}
+                    onClose={() => setBatchLookup(undefined)}
+                    onChanged={receiveBackgroundItems}
+                  />
+                ) : null}
+                {dismissedCandidateUndo ? (
+                  <fieldset
+                    className="contents"
+                    disabled={isBatching || Boolean(pendingCandidateId)}
+                    aria-busy={isBatching || Boolean(pendingCandidateId)}
+                  >
+                    <ActionToast
+                      title={t('Dismissed from Inbox')}
+                      detail={dismissedCandidateUndo.detail}
+                      actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+                      dismissLabel={t('Close')}
+                      onAction={() => void restoreDismissedCandidates()}
+                      onDismiss={() => {
+                        setDismissedCandidateUndo(undefined)
+                        setUndoNotice(undefined)
+                      }}
+                      testId="literature-dismiss-undo"
+                      className="static w-full max-w-none shadow-none"
+                    />
+                  </fieldset>
+                ) : null}
+                {linkFailure && linkFailure.scopeKey === entriesKey ? (
+                  <div className="mt-2">
+                    <LiteratureErrorNotice
+                      className="w-full min-w-0 rounded-md px-3 py-1.5"
+                      description={
+                        linkFailure.skipped
+                          ? t(
+                              'Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.',
+                              {
+                                completed: linkFailure.completed,
+                                remaining: linkFailure.itemIds.length,
+                                skipped: linkFailure.skipped
+                              }
+                            )
+                          : t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                              completed: linkFailure.completed,
+                              remaining: linkFailure.itemIds.length
+                            })
+                      }
+                      primaryButton={
+                        linkFailure.itemIds.length
+                          ? {
+                              label: t('Retry'),
+                              disabled: isBatching,
+                              onClick: () =>
+                                void runLinkBatch(
+                                  linkFailure.command,
+                                  linkFailure.itemIds,
+                                  linkFailure.completed,
+                                  linkFailure.skipped,
+                                  true
+                                )
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                ) : null}
+                {lifecycleFailure ? (
+                  <div className="mt-5">
+                    <LiteratureErrorNotice
+                      title={t('Literature could not be updated.')}
+                      description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                        completed: lifecycleFailure.completed,
+                        remaining: lifecycleFailure.itemIds.length
+                      })}
+                      secondaryButton={{
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () =>
+                          void setItemsLifecycle(lifecycleFailure.itemIds, lifecycleFailure.state)
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {candidateUpdateUncertain || candidateCountsFailed ? (
+                  <div className="mt-2">
+                    <LiteratureErrorNotice
+                      className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                      description={
+                        candidateUpdateUncertain
+                          ? t(
+                              'The update could not be confirmed. Check the Inbox before trying again.'
+                            )
+                          : [
+                              t('Project counts could not be refreshed.'),
+                              error === t('Literature could not be loaded.') ? error : undefined
+                            ]
+                              .filter(Boolean)
+                              .join(' ')
+                      }
+                      primaryButton={{
+                        label: t('Retry'),
+                        disabled: isBatching || Boolean(pendingCandidateId),
+                        onClick: () => void retryCandidateReads()
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {undoNotice ? (
+                  <p role="status" className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {undoNotice}
+                  </p>
+                ) : null}
+                {permanentDeleteResult?.cleanupPending ? (
+                  <div className="mt-2">
+                    <LiteratureErrorNotice
+                      title={t(
+                        'References were permanently deleted. Some files are awaiting cleanup.'
+                      )}
+                      description={t(
+                        'Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.'
+                      )}
+                    />
+                  </div>
+                ) : null}
+                {permanentDeleteResult && (permanentDeleteResult.refreshFailed || entriesFailed) ? (
+                  <div className="mt-2">
+                    <LiteratureErrorNotice
+                      description={t(
+                        'References were permanently deleted, but the view could not be refreshed.'
+                      )}
+                      primaryButton={{
+                        label: t('Retry'),
+                        loading: isBatching,
+                        onClick: () => void refreshAfterPermanentDeletion()
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {oversizedItemId ? <LiteratureOversizedNotice itemId={oversizedItemId} /> : null}
+                {!oversizedItemId &&
+                (linkedItemError || error) &&
+                !(
+                  permanentDeleteResult &&
+                  !linkedItemError &&
+                  error === t('Literature could not be loaded.')
+                ) &&
+                !entriesLoading &&
+                // A failed Inbox read is already covered by the recovery notice and its Retry.
+                !(
+                  !linkedItemError &&
+                  (candidateUpdateUncertain || candidateCountsFailed) &&
+                  error === t('Literature could not be loaded.')
+                ) ? (
+                  <div className="mt-2">
+                    <LiteratureErrorNotice
+                      className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                      description={linkedItemError || error || undefined}
+                      primaryButton={
+                        !linkedItemError && error === t('Literature could not be loaded.')
+                          ? {
+                              label: t('Retry'),
+                              disabled: isBatching,
+                              onClick: () => {
+                                void Promise.all([
+                                  loadEntries(true, true),
+                                  loadCollections(),
+                                  loadInboxCounts(),
+                                  loadProjectCounts()
+                                ]).catch(() => setError(t('Literature could not be loaded.')))
+                              }
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                ) : null}
+
+                {section === 'inbox' ? (
+                  <Tabs.Root
+                    value={inboxState}
+                    onValueChange={(value) => {
+                      setInboxState(value as typeof inboxState)
+                      clearSelection()
+                      setEntriesOffset(0)
+                    }}
+                    className="mt-5 min-w-0 max-w-full self-start"
+                  >
+                    <Tabs.List aria-label={t('Inbox')} className={literatureTabsListClassName}>
+                      {(['pending', 'dismissed'] as const).map((state) => (
+                        <Tabs.Trigger
+                          key={state}
+                          value={state}
+                          id={`inbox-state-${state}`}
+                          aria-controls="inbox-results"
+                          className={literatureTabClassName}
+                          disabled={isBatching || pendingCandidateId !== undefined}
+                        >
+                          {state === 'pending' ? t('Pending') : t('Dismissed')}
+                          <span className="rounded-sm bg-muted px-1.5 text-xs tabular-nums">
+                            {(state === 'pending' ? inboxPendingCount : inboxDismissedCount) ?? '—'}
+                          </span>
+                        </Tabs.Trigger>
+                      ))}
+                    </Tabs.List>
+                  </Tabs.Root>
+                ) : null}
+                <div
+                  id={
+                    section === 'inbox'
+                      ? 'inbox-results'
+                      : selectedCollection?.smart
+                        ? 'smart-collection-results'
+                        : undefined
+                  }
+                  role={section === 'inbox' || selectedCollection?.smart ? 'tabpanel' : undefined}
+                  aria-labelledby={
+                    section === 'inbox'
+                      ? `inbox-state-${inboxState}`
+                      : selectedCollection?.smart
+                        ? `smart-decision-${smartFilter}`
+                        : undefined
+                  }
+                  className={
+                    smartSetup ? 'hidden' : cn('flex min-h-0 flex-1 flex-col gap-2', 'mt-6')
+                  }
+                >
+                  {entriesFailed ? null : entriesLoading && !entriesPageTransitionLoading ? (
+                    <div
+                      role="status"
+                      className="flex min-h-0 flex-1 justify-center py-20 text-muted-foreground"
+                    >
+                      <LoaderCircle
+                        className="size-5 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      <span className="sr-only">{t('Loading…')}</span>
+                    </div>
+                  ) : section === 'inbox' ? (
+                    candidates.length > 0 ? (
+                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                        <LiteratureSelectionBoundary store={selectionStore}>
+                          {(selection) => {
+                            const selectedCount = selection.selectedIds.size
+                            return (
+                              <div className="mb-2 flex min-h-10 shrink-0 items-center gap-2 px-2">
+                                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                                  <LiteratureSelectPageCheckbox
+                                    itemIds={candidates.map(({ id }) => id)}
+                                    label={t('Select all references')}
+                                    store={selectionStore}
+                                    disabled={isBatching || Boolean(pendingCandidateId)}
+                                    className="size-4"
+                                  />
+                                  {t('Select all')}
+                                </label>
+                                {selectedCount > 0 ? (
+                                  <>
+                                    <span className="ml-2 text-sm font-medium tabular-nums">
+                                      {t('{{count}} selected', { count: selectedCount })}
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={isBatching || Boolean(pendingCandidateId)}
+                                      onClick={clearSelection}
+                                    >
+                                      {t('Clear selection')}
+                                    </Button>
+                                    <div className="ml-auto flex items-center gap-2">
+                                      {inboxState === 'dismissed' ? (
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          disabled={isBatching || Boolean(pendingCandidateId)}
+                                          onClick={() =>
+                                            void restoreDismissedCandidates([
+                                              ...selection.selectedIds
+                                            ])
+                                          }
+                                        >
+                                          <RotateCcw className="size-3.5" aria-hidden="true" />
+                                          {t('Restore')}
+                                        </Button>
+                                      ) : (
+                                        <>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={isBatching || Boolean(pendingCandidateId)}
+                                            onClick={() =>
+                                              void settleSelectedCandidates('dismissed')
+                                            }
+                                          >
+                                            <X className="size-3.5" aria-hidden="true" />
+                                            {t('Dismiss')}
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            disabled={isBatching || Boolean(pendingCandidateId)}
+                                            onClick={() =>
+                                              void settleSelectedCandidates('accepted')
+                                            }
+                                          >
+                                            <Check className="size-3.5" aria-hidden="true" />
+                                            {t('Accept')}
+                                          </Button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </>
+                                ) : null}
+                              </div>
+                            )
+                          }}
+                        </LiteratureSelectionBoundary>
+                        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-1 pb-3">
+                          {candidates.map((candidate) => {
+                            const item = candidate.candidate.item
+                            const pending = pendingCandidateId === candidate.id
+                            const authors = creatorLabel(item)
+                            const publication = [item.issuedYear, item.containerTitle]
+                              .filter(Boolean)
+                              .join(' · ')
+                            return (
+                              <article
+                                key={candidate.id}
+                                aria-busy={pending}
+                                className={cn(
+                                  'group relative grid grid-cols-[1.25rem_minmax(0,1fr)] gap-4 rounded-xl border border-border-300/80 bg-bg-000 px-5 py-4 transition-[box-shadow,opacity] duration-150 ease-out has-[input:checked]:border-primary/30 has-[input:checked]:bg-primary/5 hover:z-10 hover:shadow-lg motion-reduce:transition-none sm:grid-cols-[1.25rem_minmax(0,1fr)_8rem]',
+                                  pending && 'opacity-60'
+                                )}
+                              >
+                                <button
+                                  type="button"
+                                  className="absolute inset-0 cursor-pointer rounded-xl outline-none active:bg-muted/10 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
+                                  aria-label={`${t('View details')}: ${item.title}`}
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
+                                  onClick={() => setSelectedCandidate(candidate)}
+                                />
+                                <LiteratureSelectionCheckbox
+                                  itemId={candidate.id}
+                                  label={t('Select {{title}}', { title: item.title })}
+                                  store={selectionStore}
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
+                                  className="relative z-10 mt-1 size-4"
+                                />
+                                <div className="pointer-events-none relative min-w-0">
+                                  <h3 className="line-clamp-2 text-base font-semibold leading-6 text-foreground">
+                                    {item.title}
+                                  </h3>
+                                  <p className="mt-1 text-sm leading-5 text-foreground/70">
+                                    {authors || itemTypeLabels[item.itemType]}
+                                  </p>
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs leading-5 text-muted-foreground">
+                                    {candidate.pdfs?.length ? (
+                                      <span>
+                                        {t('PDF')} · {candidate.pdfs.length}
+                                      </span>
+                                    ) : null}
+                                    {publication ? <span>{publication}</span> : null}
+                                    <span className="whitespace-nowrap">
+                                      {t('Found via {{provider}}', {
+                                        provider: inboxProviderLabel(
+                                          candidate.candidate.source.provider
+                                        )
+                                      })}
+                                    </span>
+                                  </div>
+                                  {candidateProjectNames(candidate).length > 0 ? (
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                      {t('Accepting will link to: {{projects}}', {
+                                        projects: candidateProjectNames(candidate).join(', ')
+                                      })}
+                                    </p>
+                                  ) : null}
+                                  {item.abstract ? (
+                                    <p className="mt-3 line-clamp-2 text-[0.8125rem] leading-5 text-muted-foreground">
+                                      {item.abstract}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="relative z-10 col-start-2 grid grid-cols-2 gap-2 self-center sm:col-start-auto sm:grid-cols-1">
+                                  {candidate.state === 'dismissed' ? (
+                                    <Button
+                                      type="button"
+                                      className="w-full"
+                                      disabled={isBatching || Boolean(pendingCandidateId)}
+                                      onClick={() =>
+                                        void restoreDismissedCandidates([candidate.id])
+                                      }
+                                    >
+                                      <RotateCcw className="size-3.5" aria-hidden="true" />
+                                      {t('Restore')}
+                                    </Button>
+                                  ) : (
+                                    <>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="w-full"
+                                        disabled={isBatching || Boolean(pendingCandidateId)}
+                                        onClick={() =>
+                                          void changeCandidateState(
+                                            candidate.id,
+                                            'dismiss-candidate'
+                                          )
+                                        }
+                                      >
+                                        <X className="size-3.5" aria-hidden="true" />
+                                        {t('Dismiss')}
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        className="w-full"
+                                        disabled={isBatching || Boolean(pendingCandidateId)}
+                                        onClick={() =>
+                                          void changeCandidateState(
+                                            candidate.id,
+                                            'accept-candidate'
+                                          )
+                                        }
+                                      >
+                                        <Check className="size-3.5" aria-hidden="true" />
+                                        {t('Accept')}
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              </article>
+                            )
+                          })}
+                        </div>
+                        {entriesPagination}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-border py-20 text-center">
+                        <Inbox
+                          className="mx-auto size-7 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                        <h3 className="mt-3 font-medium">
+                          {inboxState === 'dismissed'
+                            ? t('No dismissed references')
+                            : t('Inbox is clear')}
+                        </h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {inboxState === 'dismissed'
+                            ? t('Dismissed references can be restored here.')
+                            : t('New Agent discoveries will appear here for review.')}
+                        </p>
+                      </div>
+                    )
+                  ) : items.length > 0 || entriesPageTransitionLoading ? (
+                    <div className="isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-300/80 bg-bg-000">
+                      <div className="relative min-h-0 flex-1 overflow-hidden">
+                        <div
+                          ref={tableScrollRef}
+                          data-slot="literature-table-scroll"
+                          className="h-full overflow-auto pb-3 [scrollbar-gutter:stable]"
+                        >
+                          <LiteratureTable
+                            className="w-full table-fixed text-left text-sm"
+                            style={{
+                              minWidth: tableMinWidth + (selectedCollection?.smart ? 272 : 0)
+                            }}
+                          >
+                            <thead className="sticky top-0 z-40 border-b border-border-300/80 bg-bg-200 text-xs font-medium text-muted-foreground">
+                              <tr>
+                                <th className="w-11 px-3 py-2.5">
+                                  <LiteratureSelectPageCheckbox
+                                    disabled={smartTableBlocked}
+                                    itemIds={items.map((item) => item.id)}
+                                    label={t('Select all references')}
+                                    store={selectionStore}
+                                    className="size-4"
+                                  />
+                                </th>
+                                <th
+                                  scope="col"
+                                  className="w-12 min-w-12 max-w-12 px-2 py-2.5 text-center tabular-nums"
+                                >
+                                  #
+                                </th>
+                                <th scope="col" className="w-72 px-2 py-2.5">
+                                  {t('Title')}
+                                </th>
+                                {selectedCollection?.smart && (
+                                  <>
+                                    <th scope="col" className="w-40 px-2 py-2.5">
+                                      {t('Evaluation')}
+                                    </th>
+                                    <th scope="col" className="w-28 px-2 py-2.5">
+                                      {t('Actions')}
+                                    </th>
+                                  </>
+                                )}
+                                {visibleOrderedTableColumns.map((column) => (
+                                  <th
+                                    key={column}
+                                    scope="col"
+                                    className={cn(
+                                      'px-3 py-2.5',
+                                      column === 'type' && 'w-40',
+                                      column === 'authors' && 'w-56',
+                                      column === 'year' && 'w-20 tabular-nums',
+                                      column === 'publication' && 'w-56',
+                                      column === 'tags' && 'w-52 px-2',
+                                      column === 'abstract' && 'w-80',
+                                      column === 'rating' && 'w-[152px]',
+                                      column === 'notes' && 'w-[280px]',
+                                      column === 'url' && 'w-20 text-center'
+                                    )}
+                                  >
+                                    {tableColumnLabels[column]}
+                                  </th>
+                                ))}
+                                <th
+                                  scope="col"
+                                  className="sticky right-12 z-30 w-28 min-w-28 max-w-28 overflow-hidden border-l border-border-300/80 bg-bg-200 px-2 py-2.5 text-center text-[11px] whitespace-nowrap shadow-card-opaque"
+                                >
+                                  {t('Attachment')}
+                                </th>
+                                <th
+                                  scope="col"
+                                  className="sticky right-0 z-30 w-12 min-w-12 max-w-12 bg-bg-200 px-2 py-2.5 text-right"
+                                >
+                                  <span className="sr-only">{t('Actions')}</span>
+                                </th>
+                              </tr>
+                            </thead>
+                            <TooltipProvider
+                              disableHoverableContent
+                              delayDuration={150}
+                              skipDelayDuration={300}
+                            >
+                              <LiteratureRowNumbers.Provider value={rowNumbers}>
+                                <tbody className="divide-y divide-border-300/70">
+                                  {items.map((entry) => (
+                                    <LiteratureItemRow
+                                      key={entry.id}
+                                      entry={entry}
+                                      trash={section === 'trash'}
+                                      smart={Boolean(selectedCollection?.smart)}
+                                      smartTableBlocked={smartTableBlocked}
+                                      isBatching={isBatching}
+                                      decisionDisabled={
+                                        isBatching ||
+                                        pendingDecisions.has(`${collectionId}:${entry.id}`) ||
+                                        smartRunningCollection === collectionId
+                                      }
+                                      updateDisabled={
+                                        pendingDecisions.has(`${collectionId}:${entry.id}`) ||
+                                        isBatching ||
+                                        smartTableBlocked ||
+                                        !smartView?.configured ||
+                                        !smartView?.sourceAvailable
+                                      }
+                                      completed={
+                                        completedReevaluation?.collectionId === collectionId &&
+                                        completedReevaluation?.itemId === entry.id
+                                      }
+                                      evaluating={
+                                        singleReevaluation?.collectionId === collectionId &&
+                                        singleReevaluation?.itemId === entry.id
+                                      }
+                                      attachmentPending={attachmentOperations.some(
+                                        (operation) =>
+                                          operation.itemId === entry.id && operation.pending
+                                      )}
+                                      selectionStore={selectionStore}
+                                      smartCellActions={smartCellActions}
+                                      visibleOrderedTableColumns={visibleOrderedTableColumns}
+                                      itemTypeLabels={itemTypeLabels}
+                                      actions={rowActions}
+                                    />
+                                  ))}
+                                </tbody>
+                              </LiteratureRowNumbers.Provider>
+                            </TooltipProvider>
+                          </LiteratureTable>
+                        </div>
+                        {entriesPageTransitionLoading ? (
+                          <div
+                            role="status"
+                            className="pointer-events-none absolute inset-x-0 top-10 bottom-0 z-30 flex items-center justify-center bg-bg-000/80 text-muted-foreground backdrop-blur-[1px]"
+                          >
+                            <LoaderCircle
+                              className="size-5 animate-spin motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                            <span className="sr-only">{t('Loading…')}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                      {entriesPagination}
+                    </div>
+                  ) : selectedCollection?.smart && !query ? (
+                    smartView?.sourceAvailable ? (
+                      <div className="rounded-2xl border border-dashed border-border py-20 text-center">
+                        <BookOpenText
+                          className="mx-auto size-7 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                        <h3 className="mt-3 font-medium">
+                          {smartView.run ? t('No papers in this view.') : t('Ready to organize')}
+                        </h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {smartView.run
+                            ? t('Try another decision view or adjust the collection rule.')
+                            : t(
+                                'Evaluate references against your collection rules using the evidence selected for each collection.'
+                              )}
+                        </p>
+                        <Button
+                          className="mt-3"
+                          variant="outline"
+                          disabled={smartTableBlocked}
+                          onClick={() => openEditCollection(selectedCollection)}
+                        >
+                          <Pencil className="size-3.5" aria-hidden="true" />
+                          {t('Edit rule')}
+                        </Button>
+                      </div>
+                    ) : null
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-border py-20 text-center">
+                      <BookOpenText
+                        className="mx-auto size-7 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <h3 className="mt-3 font-medium">{t('No references found')}</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {t('Try a different search or add references from a research session.')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <Dialog.Root
+          open={mergeOpen}
+          onOpenChange={(open) => {
+            if (isBatching) return
+            setMergeOpen(open)
+            if (!open) setDuplicateMergeItems(undefined)
+          }}
+        >
           <Dialog.Portal>
             <Dialog.Overlay className={dialogOverlayClassName} />
             <Dialog.Content
-              className={dialogPanelClassName('flex w-[min(620px,calc(100vw-2rem))] flex-col p-0')}
+              className={dialogPanelClassName('flex w-[min(960px,calc(100vw-2rem))] flex-col p-0')}
             >
-              <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
-                <div className="min-w-0">
-                  <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
-                    {selectedCandidate.candidate.item.title}
+              <div className={dialogHeaderClassName}>
+                <div>
+                  <Dialog.Title className={dialogTitleClassName}>
+                    {t('Merge references')}
                   </Dialog.Title>
-                  <Dialog.Description
-                    className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
-                  >
-                    {itemDescription(selectedCandidate.candidate.item) ||
-                      itemTypeLabels[selectedCandidate.candidate.item.itemType]}
+                  <Dialog.Description className={dialogDescriptionClassName}>
+                    {t('Choose the reference to keep and resolve conflicting fields.')}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Close')}>
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </Dialog.Close>
+              </div>
+              <div className="relative min-h-0 max-h-[60vh] space-y-5 overflow-y-auto p-5">
+                {mergeError ? <LiteratureErrorNotice tone="amber" title={mergeError} /> : null}
+                <LiteratureMergeReview
+                  entries={selectedItems}
+                  survivorId={mergeSurvivorId}
+                  onSurvivorChange={setMergeSurvivorId}
+                  sources={mergeFieldSources}
+                  onSourceChange={(field, id) =>
+                    setMergeFieldSources((current) => ({ ...current, [field]: id }))
+                  }
+                  fieldLabel={mergeFieldLabel}
+                  creatorLabel={fullCreatorLabel}
+                  itemTypeLabels={itemTypeLabels}
+                  disabled={isBatching}
+                />
+              </div>
+              <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+                <Dialog.Close asChild>
+                  <Button type="button" variant="outline">
+                    {t('Cancel')}
+                  </Button>
+                </Dialog.Close>
+                <Button
+                  type="button"
+                  disabled={!mergeSurvivorId || isBatching}
+                  onClick={() => void mergeSelectedItems()}
+                >
+                  <Merge className="size-4" aria-hidden="true" />
+                  {t('Merge references')}
+                </Button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {pdfBatch ? (
+          <LiteraturePdfBatchImportDialog
+            {...pdfBatch}
+            createDraft={(file) => ({
+              ...emptyLiteratureItem(),
+              title: titleFromPdfFilename(file.name)
+            })}
+            onClose={() => {
+              setPdfBatch(undefined)
+              void loadEntries(true)
+              void loadCollections()
+              void loadProjectCounts()
+            }}
+          />
+        ) : null}
+        {recordImport ? (
+          <LiteratureRecordImportDialog
+            recordImport={recordImport}
+            duplicatePolicy={duplicatePolicy}
+            onDuplicatePolicyChange={setDuplicatePolicy}
+            isImportingRecords={isImportingRecords}
+            destination={recordImport.destination.name}
+            itemDescription={itemDescription}
+            itemTypeLabels={itemTypeLabels}
+            onClose={() => {
+              recordImportRequest.current += 1
+              setRecordImport(undefined)
+            }}
+            onImport={() => void commitRecordImport()}
+          />
+        ) : null}
+
+        <Dialog.Root
+          open={isCreatingItem}
+          onOpenChange={(open) => {
+            if (!open && !isSavingNewItem) {
+              closeItemEditor()
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className={dialogOverlayClassName} />
+            <Dialog.Content
+              className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
+            >
+              <div className={dialogHeaderClassName}>
+                <div>
+                  <Dialog.Title className={dialogTitleClassName}>
+                    {dialogItemEditor?.file ? t('Import PDF') : t('Add reference')}
+                  </Dialog.Title>
+                  <Dialog.Description className={dialogDescriptionClassName}>
+                    {dialogItemEditor?.file
+                      ? t('Review reference details before importing {{name}}.', {
+                          name: dialogItemEditor?.file.name
+                        })
+                      : t('Create a reference in your library.')}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -5812,1249 +6925,1409 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     variant="ghost"
                     size="icon-sm"
                     className={dialogCloseButtonClassName}
+                    disabled={isSavingNewItem}
                     aria-label={t('Close')}
                   >
                     <X className="size-4" aria-hidden="true" />
                   </Button>
                 </Dialog.Close>
               </div>
-              <div className="relative min-h-0 max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
-                {candidateProjectNames(selectedCandidate).length > 0 ? (
-                  <p className="py-4 text-sm leading-6 text-muted-foreground">
-                    {t('Accepting will link to: {{projects}}', {
-                      projects: candidateProjectNames(selectedCandidate).join(', ')
-                    })}
-                  </p>
-                ) : null}
-                {selectedCandidate.candidate.item.abstract ? (
-                  <section className="py-4">
-                    <h3 className="font-medium">{t('Abstract')}</h3>
-                    <p className="mt-2 whitespace-pre-wrap leading-6 text-muted-foreground">
-                      {selectedCandidate.candidate.item.abstract}
-                    </p>
-                  </section>
-                ) : null}
-                {selectedCandidate.pdfs?.length ? (
-                  <section className="py-4">
-                    <h3 className="font-medium">{t('Attachments')}</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('PDFs will be attached when you accept this reference.')}
-                    </p>
-                    <ul className="mt-2 space-y-2">
-                      {selectedCandidate.pdfs.map((pdf) => (
-                        <li key={pdf.id} className="text-xs">
-                          <p className="break-words">{pdf.filename}</p>
-                          <ExternalTextLink href={pdf.sourceUrl} className="text-xs">
-                            {t('Open source')}
-                          </ExternalTextLink>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ) : null}
-                <section className="py-4">
-                  <h3 className="font-medium">{t('Provider')}</h3>
-                  <p className="mt-1 text-muted-foreground">
-                    {inboxProviderLabel(selectedCandidate.candidate.source.provider)}
-                  </p>
-                  {selectedCandidate.candidate.source.sourceUrl ? (
-                    <p className="mt-1 break-all text-xs text-muted-foreground">
-                      {getExternalLiteratureUrl(selectedCandidate.candidate.source.sourceUrl) ? (
-                        <ExternalTextLink href={selectedCandidate.candidate.source.sourceUrl}>
-                          {selectedCandidate.candidate.source.sourceUrl}
-                        </ExternalTextLink>
-                      ) : (
-                        selectedCandidate.candidate.source.sourceUrl
-                      )}
-                    </p>
-                  ) : null}
-                </section>
-                {selectedCandidate.candidate.item.identifiers.length > 0 ? (
-                  <section className="py-4">
-                    <h3 className="font-medium">{t('Identifiers')}</h3>
-                    <dl className="mt-2 space-y-2">
-                      {selectedCandidate.candidate.item.identifiers.map((identifier) => {
-                        const value = normalizeLiteratureIdentifierValue(
-                          identifier.scheme,
-                          identifier.value
-                        )
-                        const href = createLiteratureIdentifierUrl(identifier.scheme, value)
-                        return (
-                          <div
-                            key={`${identifier.scheme}:${identifier.value}`}
-                            className="flex gap-3"
-                          >
-                            <dt className="w-16 shrink-0 uppercase text-muted-foreground">
-                              {identifier.scheme}
-                            </dt>
-                            <dd className="min-w-0 break-all">
-                              {href ? (
-                                <ExternalTextLink
-                                  href={href}
-                                  aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
-                                >
-                                  {value}
-                                </ExternalTextLink>
-                              ) : (
-                                value
-                              )}
-                            </dd>
-                          </div>
-                        )
-                      })}
-                    </dl>
-                  </section>
-                ) : null}
-              </div>
-              <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
-                {selectedCandidate.state === 'dismissed' ? (
-                  <Button
-                    type="button"
-                    disabled={isBatching || Boolean(pendingCandidateId)}
-                    onClick={() =>
-                      void restoreDismissedCandidates([selectedCandidate.id]).then((restored) => {
-                        if (restored) setSelectedCandidate(undefined)
-                      })
-                    }
-                  >
-                    <RotateCcw className="size-3.5" aria-hidden="true" />
-                    {t('Restore')}
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
-                      onClick={() => {
-                        void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
-                          (updated) => {
-                            if (updated) setSelectedCandidate(undefined)
-                          }
-                        )
-                      }}
-                    >
-                      <X className="size-3.5" aria-hidden="true" />
-                      {t('Dismiss')}
-                    </Button>
-                    <Button
-                      type="button"
-                      disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
-                      onClick={() => {
-                        void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
-                          (updated) => {
-                            if (updated) setSelectedCandidate(undefined)
-                          }
-                        )
-                      }}
-                    >
-                      <Check className="size-3.5" aria-hidden="true" />
-                      {t('Accept')}
-                    </Button>
-                  </>
-                )}
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        ) : null}
-      </Dialog.Root>
-
-      <LiteratureDetailBoundary controller={detailController}>
-        {({ item: selectedItem, open, generation }) => (
-          <Dialog.Root open={open}>
-            {selectedItem ? (
-              <Dialog.Portal>
-                {/* Keep the panel and scrim mounted while the portaled preview owns focus.
-                    Only release Radix's scroll lock: changing Root.modal remounts Content. */}
-                {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
+              {isSavingNewItem ? pdfUploadNotice : null}
+              {dialogItemEditor?.file && dialogItemEditor?.reading ? (
                 <div
-                  aria-hidden="true"
-                  data-state={open ? 'open' : 'closed'}
-                  className={cn(dialogOverlayClassName, 'pointer-events-auto')}
-                  onPointerDownCapture={(event) => {
-                    const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
-                    const pointInsideDialog = Boolean(
-                      dialogBounds &&
-                      event.clientX >= dialogBounds.left &&
-                      event.clientX <= dialogBounds.right &&
-                      event.clientY >= dialogBounds.top &&
-                      event.clientY <= dialogBounds.bottom
-                    )
-
-                    if (pointInsideDialog) {
-                      event.preventDefault()
-                      event.stopPropagation()
+                  className="grid min-h-80 place-items-center text-sm text-muted-foreground"
+                  role="status"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                    {t('Reading…')}
+                  </span>
+                </div>
+              ) : (
+                <LiteratureMetadataEditor
+                  className="min-h-0"
+                  beforeFields={
+                    <LiteratureDuplicatePolicyField
+                      value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}
+                      onChange={setDuplicatePolicy}
+                      disabled={isSavingNewItem || Boolean(dialogItemEditor?.createdItemId)}
+                    />
+                  }
+                  key={dialogItemEditor?.file?.name ?? 'manual-reference'}
+                  item={
+                    dialogItemEditor?.draft ?? {
+                      ...emptyLiteratureItem(),
+                      title: dialogItemEditor?.file
+                        ? titleFromPdfFilename(dialogItemEditor?.file.name)
+                        : ''
                     }
-                  }}
-                  onClick={(event) => {
-                    const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
-                    const pointInsideDialog = Boolean(
-                      dialogBounds &&
-                      event.clientX >= dialogBounds.left &&
-                      event.clientX <= dialogBounds.right &&
-                      event.clientY >= dialogBounds.top &&
-                      event.clientY <= dialogBounds.bottom
-                    )
-
-                    if (
-                      pointInsideDialog ||
-                      detailTagMenuOpenRef.current ||
-                      detailSelectOpenRef.current ||
-                      Date.now() <= childLayerDismissGuardUntilRef.current ||
-                      hasLiteratureDetailChildLayer()
-                    ) {
-                      return
-                    }
-
-                    closeSelectedItemDetail()
+                  }
+                  saving={isSavingNewItem}
+                  error={dialogItemEditor?.error}
+                  onRetry={createdItemId ? () => void createManualItem() : undefined}
+                  onCancel={closeItemEditor}
+                  onSave={(item) => {
+                    if (isCreatingItem) void createManualItem(item)
                   }}
                 />
-                <Dialog.Content
-                  ref={selectedItemDialogRef}
-                  onCloseAutoFocus={(event) => {
-                    event.preventDefault()
-                    if (detailController.getSnapshot().open || previewItem) return
-                    const initiator = detailInitiatorRef.current
-                    if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
-                      initiator.focus()
-                      if (document.activeElement === initiator && initiator !== document.body)
-                        return
-                    }
-                    libraryEntryRef.current?.focus()
-                  }}
-                  className={dialogPanelClassName(
-                    cn(
-                      'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
-                      metadata.mode === 'full-text'
-                        ? 'max-h-[calc(100vh-2rem)]'
-                        : 'h-[min(840px,calc(100vh-2rem))]'
-                    )
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root
+          open={selectedCandidate !== undefined}
+          onOpenChange={(open) => {
+            if (!open) setSelectedCandidate(undefined)
+          }}
+        >
+          {selectedCandidate ? (
+            <Dialog.Portal>
+              <Dialog.Overlay className={dialogOverlayClassName} />
+              <Dialog.Content
+                className={dialogPanelClassName(
+                  'flex w-[min(620px,calc(100vw-2rem))] flex-col p-0'
+                )}
+              >
+                <div className={cn(dialogHeaderClassName, 'px-5 py-3')}>
+                  <div className="min-w-0">
+                    <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
+                      {selectedCandidate.candidate.item.title}
+                    </Dialog.Title>
+                    <Dialog.Description
+                      className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
+                    >
+                      {itemDescription(selectedCandidate.candidate.item) ||
+                        itemTypeLabels[selectedCandidate.candidate.item.itemType]}
+                    </Dialog.Description>
+                  </div>
+                  <Dialog.Close asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className={dialogCloseButtonClassName}
+                      aria-label={t('Close')}
+                    >
+                      <X className="size-4" aria-hidden="true" />
+                    </Button>
+                  </Dialog.Close>
+                </div>
+                <div className="relative min-h-0 max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                  {candidateProjectNames(selectedCandidate).length > 0 ? (
+                    <p className="py-4 text-sm leading-6 text-muted-foreground">
+                      {t('Accepting will link to: {{projects}}', {
+                        projects: candidateProjectNames(selectedCandidate).join(', ')
+                      })}
+                    </p>
+                  ) : null}
+                  {selectedCandidate.candidate.item.abstract ? (
+                    <section className="py-4">
+                      <h3 className="font-medium">{t('Abstract')}</h3>
+                      <p className="mt-2 whitespace-pre-wrap leading-6 text-muted-foreground">
+                        {selectedCandidate.candidate.item.abstract}
+                      </p>
+                    </section>
+                  ) : null}
+                  {selectedCandidate.pdfs?.length ? (
+                    <section className="py-4">
+                      <h3 className="font-medium">{t('Attachments')}</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t('PDFs will be attached when you accept this reference.')}
+                      </p>
+                      <ul className="mt-2 space-y-2">
+                        {selectedCandidate.pdfs.map((pdf) => (
+                          <li key={pdf.id} className="text-xs">
+                            <p className="break-words">{pdf.filename}</p>
+                            <ExternalTextLink href={pdf.sourceUrl} className="text-xs">
+                              {t('Open source')}
+                            </ExternalTextLink>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                  <section className="py-4">
+                    <h3 className="font-medium">{t('Provider')}</h3>
+                    <p className="mt-1 text-muted-foreground">
+                      {inboxProviderLabel(selectedCandidate.candidate.source.provider)}
+                    </p>
+                    {selectedCandidate.candidate.source.sourceUrl ? (
+                      <p className="mt-1 break-all text-xs text-muted-foreground">
+                        {getExternalLiteratureUrl(selectedCandidate.candidate.source.sourceUrl) ? (
+                          <ExternalTextLink href={selectedCandidate.candidate.source.sourceUrl}>
+                            {selectedCandidate.candidate.source.sourceUrl}
+                          </ExternalTextLink>
+                        ) : (
+                          selectedCandidate.candidate.source.sourceUrl
+                        )}
+                      </p>
+                    ) : null}
+                  </section>
+                  {selectedCandidate.candidate.item.identifiers.length > 0 ? (
+                    <section className="py-4">
+                      <h3 className="font-medium">{t('Identifiers')}</h3>
+                      <dl className="mt-2 space-y-2">
+                        {selectedCandidate.candidate.item.identifiers.map((identifier) => {
+                          const value = normalizeLiteratureIdentifierValue(
+                            identifier.scheme,
+                            identifier.value
+                          )
+                          const href = createLiteratureIdentifierUrl(identifier.scheme, value)
+                          return (
+                            <div
+                              key={`${identifier.scheme}:${identifier.value}`}
+                              className="flex gap-3"
+                            >
+                              <dt className="w-16 shrink-0 uppercase text-muted-foreground">
+                                {identifier.scheme}
+                              </dt>
+                              <dd className="min-w-0 break-all">
+                                {href ? (
+                                  <ExternalTextLink
+                                    href={href}
+                                    aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
+                                  >
+                                    {value}
+                                  </ExternalTextLink>
+                                ) : (
+                                  value
+                                )}
+                              </dd>
+                            </div>
+                          )
+                        })}
+                      </dl>
+                    </section>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 px-5 py-4">
+                  {selectedCandidate.state === 'dismissed' ? (
+                    <Button
+                      type="button"
+                      disabled={isBatching || Boolean(pendingCandidateId)}
+                      onClick={() =>
+                        void restoreDismissedCandidates([selectedCandidate.id]).then((restored) => {
+                          if (restored) setSelectedCandidate(undefined)
+                        })
+                      }
+                    >
+                      <RotateCcw className="size-3.5" aria-hidden="true" />
+                      {t('Restore')}
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
+                        onClick={() => {
+                          void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
+                            (updated) => {
+                              if (updated) setSelectedCandidate(undefined)
+                            }
+                          )
+                        }}
+                      >
+                        <X className="size-3.5" aria-hidden="true" />
+                        {t('Dismiss')}
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
+                        onClick={() => {
+                          void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
+                            (updated) => {
+                              if (updated) setSelectedCandidate(undefined)
+                            }
+                          )
+                        }}
+                      >
+                        <Check className="size-3.5" aria-hidden="true" />
+                        {t('Accept')}
+                      </Button>
+                    </>
                   )}
-                  onInteractOutside={(event) => {
-                    event.preventDefault()
-                  }}
-                  onEscapeKeyDown={(event) => {
-                    event.preventDefault()
-                    if (
-                      detailSelectOpenRef.current ||
-                      detailTagMenuOpenRef.current ||
-                      Date.now() <= childLayerDismissGuardUntilRef.current
-                    ) {
-                      return
-                    }
-                    closeSelectedItemDetail()
-                  }}
-                >
-                  <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
-                    <div className="flex min-w-0 flex-1 items-start gap-2">
-                      {metadata.mode !== 'view' ? (
+                </div>
+              </Dialog.Content>
+            </Dialog.Portal>
+          ) : null}
+        </Dialog.Root>
+
+        <LiteratureDetailBoundary controller={detailController}>
+          {({ item: selectedItem, open, generation }) => (
+            <Dialog.Root open={open}>
+              {selectedItem ? (
+                <Dialog.Portal>
+                  {/* Keep the panel and scrim mounted while the portaled preview owns focus.
+                    Only release Radix's scroll lock: changing Root.modal remounts Content. */}
+                  {!previewItem ? <Dialog.Overlay className="hidden" /> : null}
+                  <div
+                    aria-hidden="true"
+                    data-state={open ? 'open' : 'closed'}
+                    className={cn(dialogOverlayClassName, 'pointer-events-auto')}
+                    onPointerDownCapture={(event) => {
+                      const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
+                      const pointInsideDialog = Boolean(
+                        dialogBounds &&
+                        event.clientX >= dialogBounds.left &&
+                        event.clientX <= dialogBounds.right &&
+                        event.clientY >= dialogBounds.top &&
+                        event.clientY <= dialogBounds.bottom
+                      )
+
+                      if (pointInsideDialog) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                      }
+                    }}
+                    onClick={(event) => {
+                      const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
+                      const pointInsideDialog = Boolean(
+                        dialogBounds &&
+                        event.clientX >= dialogBounds.left &&
+                        event.clientX <= dialogBounds.right &&
+                        event.clientY >= dialogBounds.top &&
+                        event.clientY <= dialogBounds.bottom
+                      )
+
+                      if (
+                        pointInsideDialog ||
+                        detailTagMenuOpenRef.current ||
+                        detailSelectOpenRef.current ||
+                        Date.now() <= childLayerDismissGuardUntilRef.current ||
+                        hasLiteratureDetailChildLayer()
+                      ) {
+                        return
+                      }
+
+                      closeSelectedItemDetail()
+                    }}
+                  />
+                  <Dialog.Content
+                    ref={selectedItemDialogRef}
+                    onCloseAutoFocus={(event) => {
+                      event.preventDefault()
+                      if (detailController.getSnapshot().open || previewItem) return
+                      const initiator = detailInitiatorRef.current
+                      if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
+                        initiator.focus()
+                        if (document.activeElement === initiator && initiator !== document.body)
+                          return
+                      }
+                      libraryEntryRef.current?.focus()
+                    }}
+                    className={dialogPanelClassName(
+                      cn(
+                        'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
+                        metadata.mode === 'full-text'
+                          ? 'max-h-[calc(100vh-2rem)]'
+                          : 'h-[min(840px,calc(100vh-2rem))]'
+                      )
+                    )}
+                    onInteractOutside={(event) => {
+                      event.preventDefault()
+                    }}
+                    onEscapeKeyDown={(event) => {
+                      event.preventDefault()
+                      if (
+                        detailSelectOpenRef.current ||
+                        detailTagMenuOpenRef.current ||
+                        Date.now() <= childLayerDismissGuardUntilRef.current
+                      ) {
+                        return
+                      }
+                      closeSelectedItemDetail()
+                    }}
+                  >
+                    <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
+                      <div className="flex min-w-0 flex-1 items-start gap-2">
+                        {metadata.mode !== 'view' ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="shrink-0"
+                            aria-label={t('Back')}
+                            onClick={() => {
+                              changeDetailMode('view')
+                            }}
+                          >
+                            <ArrowLeft className="size-4" aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                        <div className="min-w-0 flex-1">
+                          {metadata.mode !== 'view' ? (
+                            <>
+                              <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
+                                {metadata.mode === 'edit'
+                                  ? t('Edit metadata')
+                                  : metadata.mode === 'complete'
+                                    ? t('Complete metadata')
+                                    : metadata.mode === 'full-text'
+                                      ? t('Find full-text PDF')
+                                      : t('Citation')}
+                              </Dialog.Title>
+                              <Dialog.Description
+                                className={cn(
+                                  dialogDescriptionClassName,
+                                  'mt-0.5 truncate text-xs'
+                                )}
+                              >
+                                {selectedItem.item.title}
+                              </Dialog.Description>
+                            </>
+                          ) : (
+                            <>
+                              <div className="mb-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                                <span className="rounded bg-bg-200 px-1.5 py-0.5 font-medium text-foreground">
+                                  {itemTypeLabels[selectedItem.item.itemType]}
+                                </span>
+                                {publicationSummary(selectedItem.item) ? (
+                                  <span className="min-w-0 break-words">
+                                    {publicationSummary(selectedItem.item)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <Dialog.Title
+                                className={cn(
+                                  dialogTitleClassName,
+                                  'line-clamp-3 break-words leading-snug'
+                                )}
+                              >
+                                {selectedItem.item.title}
+                              </Dialog.Title>
+                              <Dialog.Description className="sr-only">
+                                {fullCreatorLabel(selectedItem.item) ||
+                                  itemTypeLabels[selectedItem.item.itemType]}
+                              </Dialog.Description>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {metadata.mode === 'view' ? (
+                          <DropdownMenu modal={false}>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                className="transition-none"
+                                aria-label={t('More actions')}
+                              >
+                                <MoreHorizontal className="size-4" aria-hidden="true" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  changeDetailMode('edit')
+                                }}
+                              >
+                                <Pencil className="mr-2 size-4" aria-hidden="true" />
+                                {t('Edit metadata')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  metadata.resetCompletion()
+                                  changeDetailMode('complete')
+                                }}
+                              >
+                                <Search className="mr-2 size-4" aria-hidden="true" />
+                                {t('Complete metadata')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => changeDetailMode('full-text')}>
+                                <Download className="mr-2 size-4" aria-hidden="true" />
+                                {t('Find full-text PDF')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  changeDetailMode('citation')
+                                }}
+                              >
+                                <Quote className="mr-2 size-4" aria-hidden="true" />
+                                {t('Citation')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          className="shrink-0"
-                          aria-label={t('Back')}
-                          onClick={() => {
-                            changeDetailMode('view')
-                          }}
+                          className={dialogCloseButtonClassName}
+                          aria-label={t('Close')}
+                          disabled={isAddingPdf}
+                          onClick={closeSelectedItemDetail}
                         >
-                          <ArrowLeft className="size-4" aria-hidden="true" />
+                          <X className="size-4" aria-hidden="true" />
                         </Button>
-                      ) : null}
-                      <div className="min-w-0 flex-1">
-                        {metadata.mode !== 'view' ? (
-                          <>
-                            <Dialog.Title className={cn(dialogTitleClassName, 'truncate')}>
-                              {metadata.mode === 'edit'
-                                ? t('Edit metadata')
-                                : metadata.mode === 'complete'
-                                  ? t('Complete metadata')
-                                  : metadata.mode === 'full-text'
-                                    ? t('Find full-text PDF')
-                                    : t('Citation')}
-                            </Dialog.Title>
-                            <Dialog.Description
-                              className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
-                            >
-                              {selectedItem.item.title}
-                            </Dialog.Description>
-                          </>
-                        ) : (
-                          <>
-                            <div className="mb-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                              <span className="rounded bg-bg-200 px-1.5 py-0.5 font-medium text-foreground">
-                                {itemTypeLabels[selectedItem.item.itemType]}
-                              </span>
-                              {publicationSummary(selectedItem.item) ? (
-                                <span className="min-w-0 break-words">
-                                  {publicationSummary(selectedItem.item)}
-                                </span>
+                      </div>
+                    </div>
+                    {isAddingPdf ? pdfUploadNotice : null}
+                    {metadata.mode === 'full-text' ? (
+                      <LiteratureFullTextLookup
+                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                        item={selectedItem}
+                        onCompleteMetadata={() => changeDetailMode('complete')}
+                        onUpload={() => {
+                          changeDetailMode('view')
+                          requestAnimationFrame(() => pdfInputRef.current?.click())
+                        }}
+                        onAdded={(updated) => {
+                          updateMetadataItem(updated)
+                          if (detailController.getSnapshot().generation === generation) {
+                            detailController.replace(updated)
+                            changeDetailMode('view')
+                          }
+                          void loadEntries(true)
+                        }}
+                      />
+                    ) : metadata.mode === 'edit' ? (
+                      <>
+                        {metadata.awaitingReload || metadata.externallyUpdated() ? (
+                          <ErrorNotice
+                            className="mx-5 mt-4 w-auto shrink-0"
+                            role="alert"
+                            tone="amber"
+                            description={
+                              metadata.awaitingReload
+                                ? t('The reference was saved, but could not be reloaded.')
+                                : t(
+                                    'This reference changed while you were editing. Your draft has been kept.'
+                                  )
+                            }
+                            primaryButton={
+                              metadata.awaitingReload
+                                ? {
+                                    label: t('Retry'),
+                                    loading: metadata.saving,
+                                    onClick: () => void metadata.reloadSaved()
+                                  }
+                                : {
+                                    label: t('Load latest version'),
+                                    disabled: metadata.saving,
+                                    description: t(
+                                      'Discard this draft and load the latest saved metadata.'
+                                    ),
+                                    onClick: metadata.loadLatest
+                                  }
+                            }
+                          />
+                        ) : null}
+                        <LiteratureMetadataEditor
+                          key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
+                          item={metadata.editBase?.item ?? selectedItem.item}
+                          saving={metadata.saving || metadata.awaitingReload}
+                          saveDisabled={
+                            metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
+                          }
+                          error={
+                            removedDetailItemId === selectedItem.id
+                              ? t('This reference is no longer in your Library.')
+                              : metadata.awaitingReload || metadata.externallyUpdated()
+                                ? undefined
+                                : metadata.error
+                          }
+                          className="min-h-0 flex-1 max-h-none"
+                          onCancel={() => changeDetailMode('view')}
+                          onSave={(item) => void metadata.save(item)}
+                        />
+                      </>
+                    ) : metadata.mode === 'complete' ? (
+                      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 text-sm">
+                        <LiteratureMetadataLookup
+                          key={selectedItem.id}
+                          busy={metadata.completing}
+                          error={
+                            metadata.completionError?.itemId === selectedItem.id
+                              ? metadata.completionError.message
+                              : undefined
+                          }
+                          hasResult={Boolean(activeMetadataCompletion)}
+                          item={selectedItem}
+                          onOpenChange={handleDetailSelectOpenChange}
+                          onReset={() => {
+                            metadata.resetCompletion()
+                          }}
+                          onSearch={(identifier) => void metadata.complete('preview', identifier)}
+                        >
+                          {activeMetadataCompletion ? (
+                            <div className="space-y-4">
+                              {activeMetadataCompletion.filled.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    {activeMetadataCompletion.mode === 'commit'
+                                      ? t('Fields completed: {{total}}', {
+                                          total: activeMetadataCompletion.filled.length
+                                        })
+                                      : t('Fields to add: {{total}}', {
+                                          total: activeMetadataCompletion.filled.length
+                                        })}
+                                  </p>
+                                  <dl className="mt-2 divide-y divide-border-300/70 rounded-lg border border-border-300/70 bg-bg-000">
+                                    {activeMetadataCompletion.filled.map(({ field, value }) => (
+                                      <div
+                                        key={`${field}:${value}`}
+                                        className="grid grid-cols-[7rem_1fr] gap-3 px-3 py-2"
+                                      >
+                                        <dt className="text-xs text-muted-foreground">
+                                          {metadataFieldLabel(field)}
+                                        </dt>
+                                        <dd className="min-w-0 break-words text-xs">{value}</dd>
+                                      </div>
+                                    ))}
+                                  </dl>
+                                </div>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">
+                                  {t('No missing metadata was found.')}
+                                </p>
+                              )}
+                              {activeMetadataCompletion.conflicts.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    {t('Existing values kept')}
+                                  </p>
+                                  <div className="mt-2 space-y-2">
+                                    {activeMetadataCompletion.conflicts.map(
+                                      ({ currentValue, field, value }) => {
+                                        const valuesMatch = metadataValuesMatch(currentValue, value)
+                                        const providerLabel =
+                                          activeMetadataCompletion.provider === 'pubmed'
+                                            ? 'PubMed'
+                                            : 'Crossref'
+                                        return (
+                                          <div
+                                            key={field}
+                                            className="rounded-lg border border-border-300/70 bg-bg-000 px-3 py-2 text-xs"
+                                          >
+                                            <p
+                                              id={`${accessibilityId}-${field}-label`}
+                                              className="font-medium"
+                                            >
+                                              {metadataFieldLabel(field)}
+                                            </p>
+                                            <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
+                                              <span className="py-1 text-muted-foreground">
+                                                {t('Kept')}
+                                              </span>
+                                              <p className="min-w-0 break-words py-1 leading-5 text-foreground">
+                                                {currentValue}
+                                              </p>
+                                              <span aria-hidden="true" />
+                                              <span className="py-1 text-muted-foreground">
+                                                {providerLabel}
+                                              </span>
+                                              <p
+                                                id={`${accessibilityId}-${field}-candidate`}
+                                                className="min-w-0 break-words py-1 leading-5 text-foreground"
+                                              >
+                                                {value}
+                                              </p>
+                                              {valuesMatch ? (
+                                                <span className="self-start rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                                                  {t('Unchanged')}
+                                                </span>
+                                              ) : (
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  className="h-8 self-start px-3 text-xs"
+                                                  aria-pressed={metadata.overwriteFields.has(field)}
+                                                  aria-describedby={`${accessibilityId}-${field}-label ${accessibilityId}-${field}-candidate`}
+                                                  onClick={() => metadata.toggleOverwrite(field)}
+                                                >
+                                                  {metadata.overwriteFields.has(field) ? (
+                                                    <Check className="size-3" aria-hidden="true" />
+                                                  ) : null}
+                                                  {activeMetadataCompletion.provider === 'pubmed'
+                                                    ? t('Use PubMed')
+                                                    : t('Use Crossref')}
+                                                </Button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )
+                                      }
+                                    )}
+                                  </div>
+                                </div>
+                              ) : null}
+                              {activeMetadataCompletion.mode === 'preview' &&
+                              (activeMetadataCompletion.filled.length > 0 ||
+                                metadata.overwriteFields.size > 0) ? (
+                                <div className="flex justify-end gap-2 border-t border-border-300/80 pt-4">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={metadata.completing}
+                                    onClick={() => metadata.resetCompletion()}
+                                  >
+                                    {t('Cancel')}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={metadata.completing}
+                                    onClick={() => void metadata.complete('commit')}
+                                  >
+                                    {metadata.completing ? (
+                                      <LoaderCircle
+                                        className="size-3.5 animate-spin motion-reduce:animate-none"
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <Check className="size-3.5" aria-hidden="true" />
+                                    )}
+                                    {t('Apply metadata')}
+                                  </Button>
+                                </div>
                               ) : null}
                             </div>
-                            <Dialog.Title
-                              className={cn(
-                                dialogTitleClassName,
-                                'line-clamp-3 break-words leading-snug'
-                              )}
-                            >
-                              {selectedItem.item.title}
-                            </Dialog.Title>
-                            <Dialog.Description className="sr-only">
-                              {fullCreatorLabel(selectedItem.item) ||
-                                itemTypeLabels[selectedItem.item.itemType]}
-                            </Dialog.Description>
-                          </>
-                        )}
+                          ) : null}
+                        </LiteratureMetadataLookup>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      {metadata.mode === 'view' ? (
-                        <DropdownMenu modal={false}>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="transition-none"
-                              aria-label={t('More actions')}
-                            >
-                              <MoreHorizontal className="size-4" aria-hidden="true" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onSelect={() => {
-                                changeDetailMode('edit')
-                              }}
-                            >
-                              <Pencil className="mr-2 size-4" aria-hidden="true" />
-                              {t('Edit metadata')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onSelect={() => {
-                                metadata.resetCompletion()
-                                changeDetailMode('complete')
-                              }}
-                            >
-                              <Search className="mr-2 size-4" aria-hidden="true" />
-                              {t('Complete metadata')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => changeDetailMode('full-text')}>
-                              <Download className="mr-2 size-4" aria-hidden="true" />
-                              {t('Find full-text PDF')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onSelect={() => {
-                                changeDetailMode('citation')
-                              }}
-                            >
-                              <Quote className="mr-2 size-4" aria-hidden="true" />
-                              {t('Citation')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className={dialogCloseButtonClassName}
-                        aria-label={t('Close')}
-                        disabled={isAddingPdf}
-                        onClick={closeSelectedItemDetail}
-                      >
-                        <X className="size-4" aria-hidden="true" />
-                      </Button>
-                    </div>
-                  </div>
-                  {isAddingPdf ? pdfUploadNotice : null}
-                  {metadata.mode === 'full-text' ? (
-                    <LiteratureFullTextLookup
-                      key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                      item={selectedItem}
-                      onCompleteMetadata={() => changeDetailMode('complete')}
-                      onUpload={() => {
-                        changeDetailMode('view')
-                        requestAnimationFrame(() => pdfInputRef.current?.click())
-                      }}
-                      onAdded={(updated) => {
-                        updateMetadataItem(updated)
-                        if (detailController.getSnapshot().generation === generation) {
-                          detailController.replace(updated)
-                          changeDetailMode('view')
-                        }
-                        void loadEntries(true)
-                      }}
-                    />
-                  ) : metadata.mode === 'edit' ? (
-                    <>
-                      {metadata.awaitingReload || metadata.externallyUpdated() ? (
-                        <ErrorNotice
-                          className="mx-5 mt-4 w-auto shrink-0"
-                          role="alert"
-                          tone="amber"
-                          description={
-                            metadata.awaitingReload
-                              ? t('The reference was saved, but could not be reloaded.')
-                              : t(
-                                  'This reference changed while you were editing. Your draft has been kept.'
-                                )
-                          }
-                          primaryButton={
-                            metadata.awaitingReload
-                              ? {
-                                  label: t('Retry'),
-                                  loading: metadata.saving,
-                                  onClick: () => void metadata.reloadSaved()
-                                }
-                              : {
-                                  label: t('Load latest version'),
-                                  disabled: metadata.saving,
-                                  description: t(
-                                    'Discard this draft and load the latest saved metadata.'
-                                  ),
-                                  onClick: metadata.loadLatest
-                                }
-                          }
-                        />
-                      ) : null}
-                      <LiteratureMetadataEditor
-                        key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
-                        item={metadata.editBase?.item ?? selectedItem.item}
-                        saving={metadata.saving || metadata.awaitingReload}
-                        saveDisabled={
-                          metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
-                        }
-                        error={
-                          removedDetailItemId === selectedItem.id
-                            ? t('This reference is no longer in your Library.')
-                            : metadata.awaitingReload || metadata.externallyUpdated()
-                              ? undefined
-                              : metadata.error
-                        }
-                        className="min-h-0 flex-1 max-h-none"
-                        onCancel={() => changeDetailMode('view')}
-                        onSave={(item) => void metadata.save(item)}
-                      />
-                    </>
-                  ) : metadata.mode === 'complete' ? (
-                    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 text-sm">
-                      <LiteratureMetadataLookup
-                        key={selectedItem.id}
-                        busy={metadata.completing}
-                        error={
-                          metadata.completionError?.itemId === selectedItem.id
-                            ? metadata.completionError.message
-                            : undefined
-                        }
-                        hasResult={Boolean(activeMetadataCompletion)}
-                        item={selectedItem}
+                    ) : metadata.mode === 'citation' ? (
+                      <LiteratureCitationPanel
+                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                        initialStyle={citationStyleRef.current}
+                        itemId={selectedItem.id}
+                        locale={citationLocale}
+                        styles={citationStyles}
                         onOpenChange={handleDetailSelectOpenChange}
-                        onReset={() => {
-                          metadata.resetCompletion()
+                        onStyleChange={(style) => {
+                          citationStyleRef.current = style
                         }}
-                        onSearch={(identifier) => void metadata.complete('preview', identifier)}
-                      >
-                        {activeMetadataCompletion ? (
-                          <div className="space-y-4">
-                            {activeMetadataCompletion.filled.length > 0 ? (
-                              <div>
-                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  {activeMetadataCompletion.mode === 'commit'
-                                    ? t('Fields completed: {{total}}', {
-                                        total: activeMetadataCompletion.filled.length
-                                      })
-                                    : t('Fields to add: {{total}}', {
-                                        total: activeMetadataCompletion.filled.length
-                                      })}
-                                </p>
-                                <dl className="mt-2 divide-y divide-border-300/70 rounded-lg border border-border-300/70 bg-bg-000">
-                                  {activeMetadataCompletion.filled.map(({ field, value }) => (
-                                    <div
-                                      key={`${field}:${value}`}
-                                      className="grid grid-cols-[7rem_1fr] gap-3 px-3 py-2"
-                                    >
-                                      <dt className="text-xs text-muted-foreground">
-                                        {metadataFieldLabel(field)}
-                                      </dt>
-                                      <dd className="min-w-0 break-words text-xs">{value}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
+                        onManageStyles={() => {
+                          closeSelectedItemDetail()
+                          setCitationStylesOpen(true)
+                        }}
+                      />
+                    ) : (
+                      <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                        {selectedCollection?.smart && (
+                          <section className="space-y-3 py-4">
+                            <h3 className="font-medium">{t('Collection decision')}</h3>
+                            <SmartRuleSummary rule={selectedCollection.description} />
+                            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                              <div className="min-w-0 max-w-full">
+                                <SmartCollectionAssessment
+                                  inline
+                                  onUpdate={() => void updateSmartEvidence()}
+                                  updateDisabled={
+                                    isBatching ||
+                                    smartTableBlocked ||
+                                    !smartView?.configured ||
+                                    !smartView?.sourceAvailable
+                                  }
+                                  row={
+                                    items.find((item) => item.id === selectedItem.id)
+                                      ?.smartDecision ?? selectedItem.smartDecision
+                                  }
+                                />
                               </div>
-                            ) : (
-                              <p className="text-sm text-muted-foreground">
-                                {t('No missing metadata was found.')}
-                              </p>
-                            )}
-                            {activeMetadataCompletion.conflicts.length > 0 ? (
-                              <div>
-                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  {t('Existing values kept')}
-                                </p>
-                                <div className="mt-2 space-y-2">
-                                  {activeMetadataCompletion.conflicts.map(
-                                    ({ currentValue, field, value }) => {
-                                      const valuesMatch = metadataValuesMatch(currentValue, value)
-                                      const providerLabel =
-                                        activeMetadataCompletion.provider === 'pubmed'
-                                          ? 'PubMed'
-                                          : 'Crossref'
-                                      return (
-                                        <div
-                                          key={field}
-                                          className="rounded-lg border border-border-300/70 bg-bg-000 px-3 py-2 text-xs"
-                                        >
-                                          <p
-                                            id={`${accessibilityId}-${field}-label`}
-                                            className="font-medium"
-                                          >
-                                            {metadataFieldLabel(field)}
-                                          </p>
-                                          <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
-                                            <span className="py-1 text-muted-foreground">
-                                              {t('Kept')}
-                                            </span>
-                                            <p className="min-w-0 break-words py-1 leading-5 text-foreground">
-                                              {currentValue}
-                                            </p>
-                                            <span aria-hidden="true" />
-                                            <span className="py-1 text-muted-foreground">
-                                              {providerLabel}
-                                            </span>
-                                            <p
-                                              id={`${accessibilityId}-${field}-candidate`}
-                                              className="min-w-0 break-words py-1 leading-5 text-foreground"
-                                            >
-                                              {value}
-                                            </p>
-                                            {valuesMatch ? (
-                                              <span className="self-start rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                                                {t('Unchanged')}
-                                              </span>
-                                            ) : (
-                                              <Button
-                                                type="button"
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-8 self-start px-3 text-xs"
-                                                aria-pressed={metadata.overwriteFields.has(field)}
-                                                aria-describedby={`${accessibilityId}-${field}-label ${accessibilityId}-${field}-candidate`}
-                                                onClick={() => metadata.toggleOverwrite(field)}
-                                              >
-                                                {metadata.overwriteFields.has(field) ? (
-                                                  <Check className="size-3" aria-hidden="true" />
-                                                ) : null}
-                                                {activeMetadataCompletion.provider === 'pubmed'
-                                                  ? t('Use PubMed')
-                                                  : t('Use Crossref')}
-                                              </Button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )
-                                    }
-                                  )}
-                                </div>
-                              </div>
-                            ) : null}
-                            {activeMetadataCompletion.mode === 'preview' &&
-                            (activeMetadataCompletion.filled.length > 0 ||
-                              metadata.overwriteFields.size > 0) ? (
-                              <div className="flex justify-end gap-2 border-t border-border-300/80 pt-4">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={metadata.completing}
-                                  onClick={() => metadata.resetCompletion()}
-                                >
-                                  {t('Cancel')}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={metadata.completing}
-                                  onClick={() => void metadata.complete('commit')}
-                                >
-                                  {metadata.completing ? (
-                                    <LoaderCircle
-                                      className="size-3.5 animate-spin motion-reduce:animate-none"
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <Check className="size-3.5" aria-hidden="true" />
-                                  )}
-                                  {t('Apply metadata')}
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
+                              <SmartCollectionDecisionActions
+                                completed={
+                                  completedReevaluation?.collectionId === collectionId &&
+                                  completedReevaluation?.itemId === selectedItem.id
+                                }
+                                evaluating={
+                                  singleReevaluation?.collectionId === collectionId &&
+                                  singleReevaluation?.itemId === selectedItem.id
+                                }
+                                onReevaluate={() =>
+                                  void prepareSmartReevaluation([selectedItem.id])
+                                }
+                                row={
+                                  items.find((item) => item.id === selectedItem.id)
+                                    ?.smartDecision ?? selectedItem.smartDecision
+                                }
+                                disabled={
+                                  isBatching ||
+                                  pendingDecisions.has(`${collectionId}:${selectedItem.id}`) ||
+                                  smartRunningCollection === collectionId
+                                }
+                                onDecision={(decision) =>
+                                  void confirmSmartDecision(decision, [selectedItem.id], true)
+                                }
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {t(
+                                'Manual decisions are retained when the collection is updated. Use model decision restores automatic classification.'
+                              )}
+                            </p>
+                          </section>
+                        )}
+                        {fullCreatorLabel(selectedItem.item) ? (
+                          <section className="py-4">
+                            <h3 className="font-medium">{t('Authors')}</h3>
+                            <CollapsibleAuthors text={fullCreatorLabel(selectedItem.item)} />
+                          </section>
                         ) : null}
-                      </LiteratureMetadataLookup>
-                    </div>
-                  ) : metadata.mode === 'citation' ? (
-                    <LiteratureCitationPanel
-                      key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                      initialStyle={citationStyleRef.current}
-                      itemId={selectedItem.id}
-                      locale={citationLocale}
-                      styles={citationStyles}
-                      onOpenChange={handleDetailSelectOpenChange}
-                      onStyleChange={(style) => {
-                        citationStyleRef.current = style
-                      }}
-                      onManageStyles={() => {
-                        closeSelectedItemDetail()
-                        setCitationStylesOpen(true)
-                      }}
-                    />
-                  ) : (
-                    <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
-                      {fullCreatorLabel(selectedItem.item) ? (
+                        {selectedItem.item.abstract ? (
+                          <section className="py-4">
+                            <h3 className="font-medium">{t('Abstract')}</h3>
+                            <CollapsibleAbstract text={selectedItem.item.abstract} />
+                          </section>
+                        ) : null}
                         <section className="py-4">
-                          <h3 className="font-medium">{t('Authors')}</h3>
-                          <CollapsibleAuthors text={fullCreatorLabel(selectedItem.item)} />
-                        </section>
-                      ) : null}
-                      {selectedItem.item.abstract ? (
-                        <section className="py-4">
-                          <h3 className="font-medium">{t('Abstract')}</h3>
-                          <CollapsibleAbstract text={selectedItem.item.abstract} />
-                        </section>
-                      ) : null}
-                      <section className="py-4">
-                        <h3 className="font-medium">{t('Publication metadata')}</h3>
-                        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-                          {[
-                            [t('Reference type'), itemTypeLabels[selectedItem.item.itemType]],
-                            [t('Year'), selectedItem.item.issuedYear?.toString() ?? ''],
-                            [t('Publication'), selectedItem.item.containerTitle],
-                            [t('Publisher'), typeFieldText(selectedItem.item, 'publisher')],
-                            [t('Volume'), typeFieldText(selectedItem.item, 'volume')],
-                            [t('Issue'), typeFieldText(selectedItem.item, 'issue')],
-                            [t('Pages'), typeFieldText(selectedItem.item, 'pages')],
-                            [t('Language'), selectedItem.item.language]
-                          ]
-                            .filter((entry): entry is [string, string] => Boolean(entry[1]))
-                            .map(([label, value]) => (
-                              <div key={label} className="min-w-0">
-                                <dt className="text-xs text-muted-foreground">{label}</dt>
-                                <dd className="mt-0.5 truncate" title={value}>
-                                  {value}
-                                </dd>
-                              </div>
-                            ))}
-                        </dl>
-                        {selectedItem.item.identifiers.length > 0 ? (
-                          <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-border-300/70 pt-3">
-                            {selectedItem.item.identifiers.map((identifier) => {
-                              const value = normalizeLiteratureIdentifierValue(
-                                identifier.scheme,
-                                identifier.value
-                              )
-                              const href = createLiteratureIdentifierUrl(identifier.scheme, value)
-                              return (
-                                <div
-                                  key={`${identifier.scheme}:${identifier.value}`}
-                                  className="flex min-w-0 items-baseline gap-2"
-                                >
-                                  <dt className="text-xs uppercase text-muted-foreground">
-                                    {identifier.scheme}
-                                  </dt>
-                                  <dd className="min-w-0 break-all">
-                                    {href ? (
-                                      <ExternalTextLink
-                                        href={href}
-                                        aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
-                                      >
-                                        {value}
-                                      </ExternalTextLink>
-                                    ) : (
-                                      value
-                                    )}
+                          <h3 className="font-medium">{t('Publication metadata')}</h3>
+                          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
+                            {[
+                              [t('Reference type'), itemTypeLabels[selectedItem.item.itemType]],
+                              [t('Year'), selectedItem.item.issuedYear?.toString() ?? ''],
+                              [t('Publication'), selectedItem.item.containerTitle],
+                              [t('Publisher'), typeFieldText(selectedItem.item, 'publisher')],
+                              [t('Volume'), typeFieldText(selectedItem.item, 'volume')],
+                              [t('Issue'), typeFieldText(selectedItem.item, 'issue')],
+                              [t('Pages'), typeFieldText(selectedItem.item, 'pages')],
+                              [t('Language'), selectedItem.item.language]
+                            ]
+                              .filter((entry): entry is [string, string] => Boolean(entry[1]))
+                              .map(([label, value]) => (
+                                <div key={label} className="min-w-0">
+                                  <dt className="text-xs text-muted-foreground">{label}</dt>
+                                  <dd className="mt-0.5 truncate" title={value}>
+                                    {value}
                                   </dd>
                                 </div>
-                              )
-                            })}
+                              ))}
                           </dl>
-                        ) : null}
-                      </section>
-                      <LiteratureSources
-                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                        itemId={selectedItem.id}
-                      />
-                      <div className="py-4">
-                        <ResourceTagSummary
-                          reference={{
-                            resourceType: 'literature.item',
-                            resourceId: selectedItem.id
-                          }}
-                          onMenuOpenChange={handleDetailTagMenuOpenChange}
-                          keepMenuOpenOnSelect
-                        />
-                      </div>
-                      <div className="grid divide-y divide-border-300/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-                        <section className="min-w-0 py-4 sm:pr-4">
-                          <h3 className="font-medium">{t('Projects')}</h3>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {t('Use this reference in projects.')}
-                          </p>
-                          <LiteratureDetailLinkList
-                            key={`${selectedItem.id}:projects`}
-                            checkedIds={selectedItem.projectIds}
-                            entries={activeProjects}
-                            error={projectLinkError}
-                            kind="projects"
-                            loaded={projectsLoaded}
-                            onCheckedChange={setProjectLink}
-                          />
-                        </section>
-                        <section className="py-4 sm:pl-4">
-                          <h3 className="font-medium">{t('Collections')}</h3>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {t('Use this reference in collections.')}
-                          </p>
-                          <LiteratureDetailLinkList
-                            key={`${selectedItem.id}:collections`}
-                            checkedIds={selectedItem.collectionIds}
-                            entries={displayCollections}
-                            error={collectionLinkError}
-                            kind="collections"
-                            onCheckedChange={setCollectionLink}
-                          />
-                        </section>
-                      </div>
-                      <section className="py-4">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <h3 className="font-medium">{t('Attachments')}</h3>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="ml-auto"
-                            onClick={() => changeDetailMode('full-text')}
-                          >
-                            <Download className="size-3.5" aria-hidden="true" />
-                            {t('Find full-text PDF')}
-                          </Button>
-                          {selectedItem.attachments.length > 0 ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={isAddingPdf}
-                              onClick={() => pdfInputRef.current?.click()}
-                            >
-                              {isAddingPdf ? (
-                                <LoaderCircle
-                                  className="size-3.5 animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <FilePlus2 className="size-3.5" aria-hidden="true" />
-                              )}
-                              {t('Add PDF')}
-                            </Button>
+                          {selectedItem.item.identifiers.length > 0 ? (
+                            <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-border-300/70 pt-3">
+                              {selectedItem.item.identifiers.map((identifier) => {
+                                const value = normalizeLiteratureIdentifierValue(
+                                  identifier.scheme,
+                                  identifier.value
+                                )
+                                const href = createLiteratureIdentifierUrl(identifier.scheme, value)
+                                return (
+                                  <div
+                                    key={`${identifier.scheme}:${identifier.value}`}
+                                    className="flex min-w-0 items-baseline gap-2"
+                                  >
+                                    <dt className="text-xs uppercase text-muted-foreground">
+                                      {identifier.scheme}
+                                    </dt>
+                                    <dd className="min-w-0 break-all">
+                                      {href ? (
+                                        <ExternalTextLink
+                                          href={href}
+                                          aria-label={`${identifier.scheme.toUpperCase()}: ${value}`}
+                                        >
+                                          {value}
+                                        </ExternalTextLink>
+                                      ) : (
+                                        value
+                                      )}
+                                    </dd>
+                                  </div>
+                                )
+                              })}
+                            </dl>
                           ) : null}
-                          <input
-                            ref={pdfInputRef}
-                            type="file"
-                            accept="application/pdf,.pdf"
-                            className="sr-only"
-                            aria-label={t('Add PDF')}
-                            onChange={(event) => {
-                              const file = event.currentTarget.files?.[0]
-                              event.currentTarget.value = ''
-                              if (file) void addPdf(file)
+                        </section>
+                        <LiteratureSources
+                          key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                          itemId={selectedItem.id}
+                        />
+                        <div className="py-4">
+                          <ResourceTagSummary
+                            reference={{
+                              resourceType: 'literature.item',
+                              resourceId: selectedItem.id
                             }}
+                            onMenuOpenChange={handleDetailTagMenuOpenChange}
+                            keepMenuOpenOnSelect
                           />
                         </div>
-                        {pdfError ? (
-                          <p role="alert" className="mt-2 text-sm text-danger-000">
-                            {pdfError}
-                          </p>
-                        ) : null}
-                        <LiteratureAttachments
-                          readItem={detailController.read}
-                          key={selectedItem.id}
-                          item={selectedItem}
-                          onPreview={(version) => {
-                            const attachment = selectedItem.attachments.find((candidate) =>
-                              candidate.versions.some(
-                                (candidateVersion) => candidateVersion.id === version.id
-                              )
-                            )
-                            if (!attachment) return
-                            setPreviewItem({
-                              id: `literature:${version.id}`,
-                              sessionId: LITERATURE_PREVIEW_SESSION_ID,
-                              title: version.filename,
-                              type: 'file',
-                              source: 'literature',
-                              managedFileId: attachment.id,
-                              path: createLiteratureAttachmentVersionReference(version.id),
-                              format: 'pdf',
-                              name: version.filename,
-                              mimeType: version.contentType,
-                              size: version.sizeBytes,
-                              versionNumber: version.versionNumber
-                            })
-                          }}
-                        />
-                        {selectedItem.attachments.length === 0 ? (
-                          <button
-                            type="button"
-                            data-slot="literature-pdf-drop-zone"
-                            {...pdfDropZoneProps}
-                            disabled={isAddingPdf}
-                            className="relative mt-2 flex w-full cursor-pointer flex-col items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => pdfInputRef.current?.click()}
-                          >
-                            {isDraggingPdf ? (
-                              <FileDropOverlay label={t('Drop to upload')} className="rounded-lg" />
+                        <div className="grid divide-y divide-border-300/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+                          <section className="min-w-0 py-4 sm:pr-4">
+                            <h3 className="font-medium">{t('Projects')}</h3>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {t('Use this reference in projects.')}
+                            </p>
+                            <LiteratureDetailLinkList
+                              key={`${selectedItem.id}:projects`}
+                              checkedIds={selectedItem.projectIds}
+                              entries={activeProjects}
+                              error={projectLinkError}
+                              kind="projects"
+                              loaded={projectsLoaded}
+                              onCheckedChange={setProjectLink}
+                            />
+                          </section>
+                          <section className="py-4 sm:pl-4">
+                            <h3 className="font-medium">{t('Collections')}</h3>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {t('Use this reference in collections.')}
+                            </p>
+                            <LiteratureDetailLinkList
+                              key={`${selectedItem.id}:collections`}
+                              checkedIds={selectedItem.collectionIds}
+                              entries={displayCollections.filter((collection) => !collection.smart)}
+                              error={collectionLinkError}
+                              kind="collections"
+                              onCheckedChange={setCollectionLink}
+                            />
+                          </section>
+                        </div>
+                        <section className="py-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <h3 className="font-medium">{t('Attachments')}</h3>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="ml-auto"
+                              onClick={() => changeDetailMode('full-text')}
+                            >
+                              <Download className="size-3.5" aria-hidden="true" />
+                              {t('Find full-text PDF')}
+                            </Button>
+                            {selectedItem.attachments.length > 0 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={isAddingPdf}
+                                onClick={() => pdfInputRef.current?.click()}
+                              >
+                                {isAddingPdf ? (
+                                  <LoaderCircle
+                                    className="size-3.5 animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <FilePlus2 className="size-3.5" aria-hidden="true" />
+                                )}
+                                {t('Add PDF')}
+                              </Button>
                             ) : null}
-                            <span className="inline-flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                              {isAddingPdf ? (
-                                <LoaderCircle
-                                  className="size-4 animate-spin motion-reduce:animate-none"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Upload className="size-4" aria-hidden="true" />
-                              )}
-                            </span>
-                            <span className="text-sm font-medium text-foreground">
-                              {t('Add PDF')}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {t('Drag and drop or click to upload')}
-                            </span>
-                          </button>
-                        ) : null}
-                      </section>
-                    </div>
-                  )}
-                </Dialog.Content>
-              </Dialog.Portal>
-            ) : null}
-          </Dialog.Root>
-        )}
-      </LiteratureDetailBoundary>
-      <CollectionEditorDialog
-        ref={collectionEditorRef}
-        onSaved={({ id, revision, name, description }) => {
-          if (id && revision !== undefined) {
-            setCollections((current) =>
-              current.map((collection) =>
-                collection.id === id && collection.revision <= revision
-                  ? { ...collection, revision, name, description, updatedAt: Date.now() }
-                  : collection
-              )
-            )
-          }
-          void loadCollections().catch(() => setError(t('Literature could not be loaded.')))
-        }}
-      />
-      <AlertDialog.Root
-        open={Boolean(collectionPendingDelete)}
-        onOpenChange={(open) => {
-          if (!open && !isDeletingCollection) setCollectionPendingDelete(undefined)
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
-          >
-            <div className={dialogHeaderClassName}>
-              <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete “{{name}}”?', { name: dialogCollectionDeletion?.collection.name ?? '' })}
-              </AlertDialog.Title>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={dialogCloseButtonClassName}
-                aria-label={t('Close')}
-                disabled={isDeletingCollection}
-                onClick={() => setCollectionPendingDelete(undefined)}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
-            </div>
-            <div className={dialogBodyClassName}>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'References in this collection will remain in All references. This action cannot be undone.'
-                )}
-              </AlertDialog.Description>
-              {promotedCollections.length ? (
-                <div className="mt-3 space-y-2 text-sm">
-                  <p>{t('Child collections will move to the top level.')}</p>
-                  <ul className="space-y-2">
-                    {promotedCollections.map((child) => (
-                      <li
-                        key={child.id}
-                        className="flex flex-wrap items-center justify-between gap-2"
-                      >
-                        <span className="min-w-0 break-words">{child.name}</span>
-                        {conflictingCollections.some(({ id }) => id === child.id) ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isDeletingCollection}
-                            onClick={() => {
-                              setCollectionPendingDelete(undefined)
-                              openEditCollection(child)
+                            <input
+                              ref={pdfInputRef}
+                              type="file"
+                              accept="application/pdf,.pdf"
+                              className="sr-only"
+                              aria-label={t('Add PDF')}
+                              onChange={(event) => {
+                                const file = event.currentTarget.files?.[0]
+                                event.currentTarget.value = ''
+                                if (file) void addPdf(file)
+                              }}
+                            />
+                          </div>
+                          {pdfError ? (
+                            <p role="alert" className="mt-2 text-sm text-danger-000">
+                              {pdfError}
+                            </p>
+                          ) : null}
+                          <LiteratureAttachments
+                            readItem={detailController.read}
+                            key={selectedItem.id}
+                            item={selectedItem}
+                            onPreview={(version) => {
+                              const attachment = selectedItem.attachments.find((candidate) =>
+                                candidate.versions.some(
+                                  (candidateVersion) => candidateVersion.id === version.id
+                                )
+                              )
+                              if (!attachment) return
+                              setPreviewItem({
+                                id: `literature:${version.id}`,
+                                sessionId: LITERATURE_PREVIEW_SESSION_ID,
+                                title: version.filename,
+                                type: 'file',
+                                source: 'literature',
+                                managedFileId: attachment.id,
+                                path: createLiteratureAttachmentVersionReference(version.id),
+                                format: 'pdf',
+                                name: version.filename,
+                                mimeType: version.contentType,
+                                size: version.sizeBytes,
+                                versionNumber: version.versionNumber
+                              })
                             }}
-                          >
-                            {t('Rename conflicting collection')}
-                          </Button>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                  {conflictingCollections.length ? (
-                    <p role="alert">
-                      {t(
-                        'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
-                      )}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-              {collectionDeleteError ? (
-                <p className="mt-3 text-sm text-danger-000" role="alert">
-                  {collectionDeleteError}
-                </p>
-              ) : null}
-            </div>
-            <div
-              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
-            >
-              <AlertDialog.Cancel asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={dialogCancelButtonClassName}
-                  disabled={isDeletingCollection}
-                >
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={isDeletingCollection || conflictingCollections.length > 0}
-                onClick={() => void deleteCollection()}
-              >
-                {isDeletingCollection ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                {t('Delete collection')}
-              </Button>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-      <AlertDialog.Root
-        open={Boolean(restorePreview)}
-        onOpenChange={(open) => {
-          if (!open && !isBatching) setRestorePreview(undefined)
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
-          >
-            <div className={dialogHeaderClassName}>
-              <AlertDialog.Title className={dialogTitleClassName}>{t('Restore')}</AlertDialog.Title>
-            </div>
-            <div className={dialogBodyClassName}>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t('Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.', {
-                  recoverable: dialogRestorePreview?.itemIds.length ?? 0,
-                  skipped: dialogRestorePreview?.skipped ?? 0
-                })}
-              </AlertDialog.Description>
-            </div>
-            <div className={dialogFooterClassName}>
-              <AlertDialog.Cancel asChild>
-                <Button type="button" variant="ghost" disabled={isBatching}>
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <Button
-                type="button"
-                disabled={isBatching || !restorePreview?.itemIds.length}
-                onClick={() => {
-                  const ids = restorePreview?.itemIds
-                  setRestorePreview(undefined)
-                  if (ids?.length) void setItemsLifecycle(ids, 'active')
-                }}
-              >
-                {t('Restore')}
-              </Button>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-      <AlertDialog.Root
-        open={permanentDeleteIds.length > 0}
-        onOpenChange={(open) => {
-          if (!open && !isBatching) setPermanentDeleteIds([])
-        }}
-      >
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
-          >
-            <div className={dialogHeaderClassName}>
-              <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Delete permanently?')}
-              </AlertDialog.Title>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={dialogCloseButtonClassName}
-                aria-label={t('Close')}
-                disabled={isBatching}
-                onClick={() => setPermanentDeleteIds([])}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
-            </div>
-            <div className={dialogBodyClassName}>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.'
-                )}{' '}
-                {t(
-                  'PDF annotations, notes, and their tag assignments will also be deleted. Global Tags are kept.'
-                )}
-              </AlertDialog.Description>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                {t(
-                  'Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.'
-                )}
-              </p>
-              {permanentDeletionDiagnostic ? (
-                <div className="mt-3">
-                  <LiteratureDeletionNotice
-                    diagnostic={permanentDeletionDiagnostic}
-                    onNavigate={() => setPermanentDeleteIds([])}
-                  />
-                </div>
-              ) : permanentDeleteFailed ? (
-                <div className="mt-3">
-                  <LiteratureErrorNotice
-                    title={t('Literature could not be deleted permanently.')}
-                    description={t(
-                      'Refresh references to check their current state before trying again.'
+                          />
+                          {selectedItem.attachments.length === 0 ? (
+                            <button
+                              type="button"
+                              data-slot="literature-pdf-drop-zone"
+                              {...pdfDropZoneProps}
+                              disabled={isAddingPdf}
+                              className="relative mt-2 flex w-full cursor-pointer flex-col items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => pdfInputRef.current?.click()}
+                            >
+                              {isDraggingPdf ? (
+                                <FileDropOverlay
+                                  label={t('Drop to upload')}
+                                  className="rounded-lg"
+                                />
+                              ) : null}
+                              <span className="inline-flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                                {isAddingPdf ? (
+                                  <LoaderCircle
+                                    className="size-4 animate-spin motion-reduce:animate-none"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <Upload className="size-4" aria-hidden="true" />
+                                )}
+                              </span>
+                              <span className="text-sm font-medium text-foreground">
+                                {t('Add PDF')}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {t('Drag and drop or click to upload')}
+                              </span>
+                            </button>
+                          ) : null}
+                        </section>
+                      </div>
                     )}
-                    primaryButton={{
-                      label: t('Refresh'),
-                      onClick: () => {
-                        setPermanentDeleteIds([])
-                        clearSelection()
-                        void loadEntries(true)
-                      }
-                    }}
-                  />
-                </div>
+                  </Dialog.Content>
+                </Dialog.Portal>
               ) : null}
-            </div>
-            <div
-              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+            </Dialog.Root>
+          )}
+        </LiteratureDetailBoundary>
+        <CollectionEditorDialog
+          ref={collectionEditorRef}
+          scopes={[
+            ...activeProjects.map(({ id, name }) => ({ id, name, kind: 'project' as const })),
+            ...collections
+              .filter((entry) => !entry.smart)
+              .map(({ id, name }) => ({ id, name, kind: 'collection' as const }))
+          ]}
+          onSaved={({ id, revision, name, description }) => {
+            if (id && revision !== undefined) {
+              setCollections((current) =>
+                current.map((collection) =>
+                  collection.id === id && collection.revision <= revision
+                    ? { ...collection, revision, name, description, updatedAt: Date.now() }
+                    : collection
+                )
+              )
+            }
+            if (id && revision === undefined) selectLibrary(id)
+            void loadCollections().catch(() => setError(t('Literature could not be loaded.')))
+          }}
+        />
+        <AlertDialog.Root
+          open={Boolean(collectionPendingDelete)}
+          onOpenChange={(open) => {
+            if (!open && !isDeletingCollection) setCollectionPendingDelete(undefined)
+          }}
+        >
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
             >
-              <AlertDialog.Cancel asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={dialogCancelButtonClassName}
-                  disabled={isBatching}
-                >
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <Button
-                type="button"
-                className="border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white"
-                disabled={isBatching || permanentDeleteFailed}
-                onClick={() => void deleteItemsPermanently()}
-              >
-                {isBatching ? t('Deleting…') : t('Delete permanently')}
-              </Button>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-      <Dialog.Root
-        open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
-        onOpenChange={(open) => {
-          if (open || startingReadingProjectId) return
-          setReadingProjectQuery('')
-          setPendingLiteratureReading(undefined)
-          setReadingProjectError(undefined)
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content
-            className={dialogPanelClassName(
-              'flex max-h-[calc(100svh-2rem)] w-[min(440px,calc(100vw-2rem))] flex-col p-0'
-            )}
-          >
-            <div className={cn(dialogHeaderClassName, 'shrink-0')}>
-              <div>
-                <Dialog.Title className={dialogTitleClassName}>{t('Read with agent')}</Dialog.Title>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  {t('Choose a project for this Reading session.')}
-                </Dialog.Description>
-              </div>
-              <Dialog.Close asChild>
+              <div className={dialogHeaderClassName}>
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Delete “{{name}}”?', {
+                    name: dialogCollectionDeletion?.collection.name ?? ''
+                  })}
+                </AlertDialog.Title>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
+                  className={dialogCloseButtonClassName}
                   aria-label={t('Close')}
-                  disabled={Boolean(startingReadingProjectId)}
+                  disabled={isDeletingCollection}
+                  onClick={() => setCollectionPendingDelete(undefined)}
                 >
                   <X className="size-4" aria-hidden="true" />
                 </Button>
-              </Dialog.Close>
-            </div>
-            <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+              </div>
               <div className={dialogBodyClassName}>
-                {readingProjectError ? (
-                  <div className="mb-3">
-                    <p role="alert" className="text-sm text-danger-000">
-                      {readingProjectError}
-                    </p>
-                    {readingSelectionEntries ? (
-                      <Button
-                        className="mt-2"
-                        variant="outline"
-                        size="sm"
-                        disabled={Boolean(startingReadingProjectId)}
-                        onClick={() => {
-                          setPendingLiteratureReading(undefined)
-                          setReadingProjectError(undefined)
-                          setBatchReading({ entries: readingSelectionEntries })
-                        }}
-                      >
-                        {t('Back')}
-                      </Button>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    'References in this collection will remain in All references. This action cannot be undone.'
+                  )}
+                </AlertDialog.Description>
+                {promotedCollections.length ? (
+                  <div className="mt-3 space-y-2 text-sm">
+                    <p>{t('Child collections will move to the top level.')}</p>
+                    <ul className="space-y-2">
+                      {promotedCollections.map((child) => (
+                        <li
+                          key={child.id}
+                          className="flex flex-wrap items-center justify-between gap-2"
+                        >
+                          <span className="min-w-0 break-words">{child.name}</span>
+                          {conflictingCollections.some(({ id }) => id === child.id) ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isDeletingCollection}
+                              onClick={() => {
+                                setCollectionPendingDelete(undefined)
+                                openEditCollection(child)
+                              }}
+                            >
+                              {t('Rename conflicting collection')}
+                            </Button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                    {conflictingCollections.length ? (
+                      <p role="alert">
+                        {t(
+                          'A child collection would duplicate a top-level name. Rename it before deleting this collection.'
+                        )}
+                      </p>
                     ) : null}
                   </div>
                 ) : null}
-                {projectsLoaded ? (
-                  activeProjects.length > 0 ? (
-                    <ProjectPicker
-                      projects={activeProjects}
-                      query={readingProjectQuery}
-                      onQueryChange={setReadingProjectQuery}
-                      disabled={Boolean(startingReadingProjectId)}
-                      pendingId={startingReadingProjectId}
-                      onSelect={(id) => void startReadingInProject(id)}
-                    />
-                  ) : (
-                    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
-                      <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
-                      <div>
-                        <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
-                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                          {pendingLiteratureReading && pendingLiteratureReading.length > 1
-                            ? t(
-                                'Create a project to keep these papers and their Reading session together.'
-                              )
-                            : t(
-                                'Create a project to keep this paper and its Reading session together.'
-                              )}
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        disabled={Boolean(startingReadingProjectId)}
-                        onClick={readingProjectFormDialog.openCreateDialog}
-                      >
-                        <FolderPlus className="size-4" aria-hidden="true" />
-                        {t('Create project')}
-                      </Button>
-                    </div>
-                  )
-                ) : (
-                  <p role="status" className="text-sm text-muted-foreground">
-                    {t('Loading…')}
+                {collectionDeleteError ? (
+                  <p className="mt-3 text-sm text-danger-000" role="alert">
+                    {collectionDeleteError}
                   </p>
-                )}
+                ) : null}
               </div>
-            </ScrollArea>
-            {projectsLoaded && activeProjects.length > 0 ? (
               <div
-                className={`${dialogFooterClassName} shrink-0 flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+                className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
               >
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={dialogCancelButtonClassName}
+                    disabled={isDeletingCollection}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
                 <Button
                   type="button"
-                  variant="outline"
-                  disabled={Boolean(startingReadingProjectId)}
-                  onClick={readingProjectFormDialog.openCreateDialog}
+                  variant="destructive"
+                  disabled={isDeletingCollection || conflictingCollections.length > 0}
+                  onClick={() => void deleteCollection()}
                 >
-                  <FolderPlus className="size-4" aria-hidden="true" />
-                  {t('New project')}
+                  {isDeletingCollection ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  {t('Delete collection')}
                 </Button>
               </div>
-            ) : null}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-      <ProjectFormDialog {...readingProjectFormDialog.dialogProps} />
-      {batchReading ? (
-        <LiteratureReadingDialog
-          {...batchReading}
-          onClose={() => {
-            batchReadingRequest.current += 1
-            setBatchReading(undefined)
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+        <AlertDialog.Root
+          open={Boolean(restorePreview)}
+          onOpenChange={(open) => {
+            if (!open && !isBatching) setRestorePreview(undefined)
           }}
-          onContinue={(documents) => {
-            setBatchReading(undefined)
+        >
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+            >
+              <div className={dialogHeaderClassName}>
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Restore')}
+                </AlertDialog.Title>
+              </div>
+              <div className={dialogBodyClassName}>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t('Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.', {
+                    recoverable: dialogRestorePreview?.itemIds.length ?? 0,
+                    skipped: dialogRestorePreview?.skipped ?? 0
+                  })}
+                </AlertDialog.Description>
+              </div>
+              <div className={dialogFooterClassName}>
+                <AlertDialog.Cancel asChild>
+                  <Button type="button" variant="ghost" disabled={isBatching}>
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button
+                  type="button"
+                  disabled={isBatching || !restorePreview?.itemIds.length}
+                  onClick={() => {
+                    const ids = restorePreview?.itemIds
+                    setRestorePreview(undefined)
+                    if (ids?.length) void setItemsLifecycle(ids, 'active')
+                  }}
+                >
+                  {t('Restore')}
+                </Button>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+        <AlertDialog.Root
+          open={permanentDeleteIds.length > 0}
+          onOpenChange={(open) => {
+            if (!open && !isBatching) setPermanentDeleteIds([])
+          }}
+        >
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+            >
+              <div className={dialogHeaderClassName}>
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Delete permanently?')}
+                </AlertDialog.Title>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className={dialogCloseButtonClassName}
+                  aria-label={t('Close')}
+                  disabled={isBatching}
+                  onClick={() => setPermanentDeleteIds([])}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+              <div className={dialogBodyClassName}>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    'This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.'
+                  )}{' '}
+                  {t(
+                    'PDF annotations, notes, and their tag assignments will also be deleted. Global Tags are kept.'
+                  )}
+                </AlertDialog.Description>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  {t(
+                    'Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.'
+                  )}
+                </p>
+                {permanentDeletionDiagnostic ? (
+                  <div className="mt-3">
+                    <LiteratureDeletionNotice
+                      diagnostic={permanentDeletionDiagnostic}
+                      onNavigate={() => setPermanentDeleteIds([])}
+                    />
+                  </div>
+                ) : permanentDeleteFailed ? (
+                  <div className="mt-3">
+                    <LiteratureErrorNotice
+                      title={t('Literature could not be deleted permanently.')}
+                      description={t(
+                        'Refresh references to check their current state before trying again.'
+                      )}
+                      primaryButton={{
+                        label: t('Refresh'),
+                        onClick: () => {
+                          setPermanentDeleteIds([])
+                          clearSelection()
+                          void loadEntries(true)
+                        }
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </div>
+              <div
+                className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+              >
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={dialogCancelButtonClassName}
+                    disabled={isBatching}
+                  >
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button
+                  type="button"
+                  className="border-transparent bg-danger-000 text-white hover:bg-danger-000/90 hover:text-white"
+                  disabled={isBatching || permanentDeleteFailed}
+                  onClick={() => void deleteItemsPermanently()}
+                >
+                  {isBatching ? t('Deleting…') : t('Delete permanently')}
+                </Button>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+        {smartReevaluationNotice}
+        <Dialog.Root
+          open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
+          onOpenChange={(open) => {
+            if (open || startingReadingProjectId) return
             setReadingProjectQuery('')
+            setPendingLiteratureReading(undefined)
             setReadingProjectError(undefined)
-            if (selectedProject) void startReadingInProject(selectedProject.id, documents)
-            else setPendingLiteratureReading(documents)
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className={dialogOverlayClassName} />
+            <Dialog.Content
+              className={dialogPanelClassName(
+                'flex max-h-[calc(100svh-2rem)] w-[min(440px,calc(100vw-2rem))] flex-col p-0'
+              )}
+            >
+              <div className={cn(dialogHeaderClassName, 'shrink-0')}>
+                <div>
+                  <Dialog.Title className={dialogTitleClassName}>
+                    {t('Read with agent')}
+                  </Dialog.Title>
+                  <Dialog.Description className={dialogDescriptionClassName}>
+                    {t('Choose a project for this Reading session.')}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Close')}
+                    disabled={Boolean(startingReadingProjectId)}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </Dialog.Close>
+              </div>
+              <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+                <div className={dialogBodyClassName}>
+                  {readingProjectError ? (
+                    <div className="mb-3">
+                      <p role="alert" className="text-sm text-danger-000">
+                        {readingProjectError}
+                      </p>
+                      {readingSelectionEntries ? (
+                        <Button
+                          className="mt-2"
+                          variant="outline"
+                          size="sm"
+                          disabled={Boolean(startingReadingProjectId)}
+                          onClick={() => {
+                            setPendingLiteratureReading(undefined)
+                            setReadingProjectError(undefined)
+                            setBatchReading({ entries: readingSelectionEntries })
+                          }}
+                        >
+                          {t('Back')}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {projectsLoaded ? (
+                    activeProjects.length > 0 ? (
+                      <ProjectPicker
+                        projects={activeProjects}
+                        query={readingProjectQuery}
+                        onQueryChange={setReadingProjectQuery}
+                        disabled={Boolean(startingReadingProjectId)}
+                        pendingId={startingReadingProjectId}
+                        onSelect={(id) => void startReadingInProject(id)}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
+                        <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
+                        <div>
+                          <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
+                          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                            {pendingLiteratureReading && pendingLiteratureReading.length > 1
+                              ? t(
+                                  'Create a project to keep these papers and their Reading session together.'
+                                )
+                              : t(
+                                  'Create a project to keep this paper and its Reading session together.'
+                                )}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          disabled={Boolean(startingReadingProjectId)}
+                          onClick={readingProjectFormDialog.openCreateDialog}
+                        >
+                          <FolderPlus className="size-4" aria-hidden="true" />
+                          {t('Create project')}
+                        </Button>
+                      </div>
+                    )
+                  ) : (
+                    <p role="status" className="text-sm text-muted-foreground">
+                      {t('Loading…')}
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
+              {projectsLoaded && activeProjects.length > 0 ? (
+                <div
+                  className={`${dialogFooterClassName} shrink-0 flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={Boolean(startingReadingProjectId)}
+                    onClick={readingProjectFormDialog.openCreateDialog}
+                  >
+                    <FolderPlus className="size-4" aria-hidden="true" />
+                    {t('New project')}
+                  </Button>
+                </div>
+              ) : null}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        <ProjectFormDialog {...readingProjectFormDialog.dialogProps} />
+        {batchReading ? (
+          <LiteratureReadingDialog
+            {...batchReading}
+            onClose={() => {
+              batchReadingRequest.current += 1
+              setBatchReading(undefined)
+            }}
+            onContinue={(documents) => {
+              setBatchReading(undefined)
+              setReadingProjectQuery('')
+              setReadingProjectError(undefined)
+              if (selectedProject) void startReadingInProject(selectedProject.id, documents)
+              else setPendingLiteratureReading(documents)
+            }}
+          />
+        ) : null}
+        <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
+        <FilePreviewDialog
+          onFocusFallback={() => libraryEntryRef.current?.focus()}
+          item={previewItem}
+          allowReadingContext={false}
+          onReadWithAgent={requestReadWithAgent}
+          onClose={() => {
+            setPreviewItem(undefined)
+            setAnnotationToReveal(undefined)
+            const current = detailController.getSnapshot().item
+            if (current)
+              void window.api.literature
+                .get(current.id)
+                .then((updated) => {
+                  if (!updated) return
+                  if (detailController.getSnapshot().item?.id === updated.id)
+                    detailController.replace(updated)
+                  updateMetadataItem(updated)
+                })
+                .catch(() => undefined)
           }}
         />
-      ) : null}
-      <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
-      <FilePreviewDialog
-        onFocusFallback={() => libraryEntryRef.current?.focus()}
-        item={previewItem}
-        allowReadingContext={false}
-        onReadWithAgent={requestReadWithAgent}
-        onClose={() => {
-          setPreviewItem(undefined)
-          setAnnotationToReveal(undefined)
-          const current = detailController.getSnapshot().item
-          if (current)
-            void window.api.literature
-              .get(current.id)
-              .then((updated) => {
-                if (!updated) return
-                if (detailController.getSnapshot().item?.id === updated.id)
-                  detailController.replace(updated)
-                updateMetadataItem(updated)
-              })
-              .catch(() => undefined)
-        }}
-      />
-    </main>
+      </main>
+    </SmartDecisionPendingContext.Provider>
   )
 }
 

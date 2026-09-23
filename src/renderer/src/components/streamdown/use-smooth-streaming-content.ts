@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState } from 'react'
+import { startTransition, useEffect, useRef, useState, type RefObject } from 'react'
 
 const RESERVE_GRAPHEMES = 18
 const PREBUFFER_MS = 500
@@ -77,7 +77,14 @@ const useSmoothStreamingContent = (
   const [isPresenting, setIsPresenting] = useState(animateOnMount)
   const visibleContentRef = useRef(visibleContent)
   const targetContentRef = useRef(content)
-  const pendingGraphemesRef = useRef(animateOnMount ? splitGraphemes(content) : [])
+  // useRef arguments are evaluated on every render. Segment the initial body once, then
+  // let the effect enqueue only appended content as the presentation state advances.
+  const initialPendingRef = useRef<string[] | null>(null)
+  if (initialPendingRef.current === null) {
+    initialPendingRef.current = animateOnMount ? splitGraphemes(content) : []
+  }
+  // Initialization above and all subsequent writes guarantee an array for effect callbacks.
+  const pendingGraphemesRef = initialPendingRef as RefObject<string[]>
   const pendingIndexRef = useRef(0)
   const playbackStartedRef = useRef(false)
   const presentationSpeedRef = useRef<PresentationSpeed>(1)
@@ -90,6 +97,7 @@ const useSmoothStreamingContent = (
   useEffect(() => {
     const now = Date.now()
     const previousTarget = targetContentRef.current
+    const sourceWasOpen = sourceOpenRef.current
     sourceOpenRef.current = sourceOpen
     targetContentRef.current = content
     const commit = (value: string): void => {
@@ -116,6 +124,18 @@ const useSmoothStreamingContent = (
       setPresentationActive(sourceOpen)
       return
     }
+    // Preserve ordinary boundary pacing, but do not keep a closed source behind a large
+    // catch-up animation. Initial closed-source animation remains an explicit caller choice.
+    if (
+      sourceWasOpen &&
+      !sourceOpen &&
+      splitGraphemes(content.slice(visibleContentRef.current.length)).length > CATCH_UP_GRAPHEMES
+    ) {
+      resetPending()
+      commit(content)
+      setPresentationActive(false)
+      return
+    }
     if (!sourceOpen && !isPresentingRef.current) {
       resetPending()
       commit(content)
@@ -136,7 +156,9 @@ const useSmoothStreamingContent = (
           resetPending()
           bufferingStartedAtRef.current = now
         }
-        pendingGraphemesRef.current.push(...appended)
+        // Provider/durable updates can contain hundreds of thousands of graphemes. A
+        // spread call exceeds V8's argument limit and escapes the Markdown boundary.
+        for (const grapheme of appended) pendingGraphemesRef.current.push(grapheme)
         lastTargetUpdateAtRef.current = now
       }
     } else {
@@ -147,7 +169,7 @@ const useSmoothStreamingContent = (
     const hasPending = pendingGraphemesRef.current.length > pendingIndexRef.current
     if (sourceOpen || hasPending) setPresentationActive(true)
     else setPresentationActive(false)
-  }, [content, sourceOpen])
+  }, [content, sourceOpen, pendingGraphemesRef])
 
   useEffect(() => {
     if (!isPresenting) return
@@ -274,7 +296,7 @@ const useSmoothStreamingContent = (
         document.removeEventListener('visibilitychange', handleVisibilityChange)
       }
     }
-  }, [isPresenting])
+  }, [isPresenting, pendingGraphemesRef])
 
   return { content: visibleContent, isPresenting }
 }

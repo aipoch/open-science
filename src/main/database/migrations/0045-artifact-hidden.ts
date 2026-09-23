@@ -1,6 +1,6 @@
 // Visibility belongs to the logical file, so it survives new Versions and index reconciliation.
 const artifactHiddenMigration = {
-  id: '0044_artifact_hidden',
+  id: '0045_artifact_hidden',
   statements: ['ALTER TABLE "ArtifactLineage" ADD COLUMN "hiddenAt" DATETIME'] as const,
   operations: [] as const,
   verifiers: [

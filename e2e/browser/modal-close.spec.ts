@@ -40,14 +40,16 @@ async function openDialog(page: Page, name: string): Promise<void> {
     await page
       .getByRole('checkbox', { name: 'Select Audit trashed reference', exact: true })
       .check()
-    if (name === 'library-restore')
+    if (name === 'library-restore') {
+      const actions = page.getByRole('button', { name: 'More actions', exact: true }).first()
+      if ((await actions.getAttribute('aria-expanded')) !== 'true') await actions.click()
       await page.getByRole('button', { name: 'Restore', exact: true }).click()
-    else {
+    } else {
       await page.getByRole('button', { name: 'More actions', exact: true }).last().click()
       await page.getByRole('menuitem', { name: 'Delete permanently', exact: true }).click()
     }
   } else if (name === 'library-collection') {
-    await page.getByRole('button', { name: 'Collection actions' }).click()
+    await page.getByRole('button', { name: 'More actions', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Delete collection' }).click()
   } else if (name === 'oauth-connection')
     await page.getByRole('button', { name: 'Connected', exact: true }).click()
@@ -92,7 +94,10 @@ for (const name of cases) {
           : `/modal-close.html?case=${name}`
     )
     await openDialog(page, name)
-    const dialog = page.locator('[role=dialog],[role=alertdialog]').last()
+    const dialog =
+      name === 'library-restore'
+        ? page.getByRole('alertdialog', { name: 'Restore', exact: true })
+        : page.locator('[role=dialog],[role=alertdialog]').last()
     await expect(dialog).toBeVisible()
     await dialog.evaluate(async (el) => {
       await Promise.all(el.getAnimations().map((a) => a.finished))
@@ -158,7 +163,10 @@ for (const name of cases) {
           : `/modal-close.html?case=${name}`
     )
     await openDialog(page, name)
-    const dialog = page.locator('[role=dialog],[role=alertdialog]').last()
+    const dialog =
+      name === 'library-restore'
+        ? page.getByRole('alertdialog', { name: 'Restore', exact: true })
+        : page.locator('[role=dialog],[role=alertdialog]').last()
     await expect(dialog).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)

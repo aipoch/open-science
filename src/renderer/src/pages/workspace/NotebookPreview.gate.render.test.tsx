@@ -152,6 +152,47 @@ describe('EnvProvisionOverlay', () => {
     expect(retried).toBe(1)
   })
 
+  it('lets the user close a blocked environment gate when retry cannot help', () => {
+    act(() =>
+      root.render(
+        <EnvProvisionOverlay
+          ui={{ kind: 'error', message: 'KERNEL_STARTUP_FENCE: recovery is blocked' }}
+          onRetry={() => undefined}
+        />
+      )
+    )
+
+    const dismiss = container.querySelector(
+      '[data-testid="notebook-env-dismiss"]'
+    ) as HTMLButtonElement
+    expect(dismiss).not.toBeNull()
+
+    act(() => dismiss.click())
+
+    expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+  })
+
+  it('shows the same failure again after a retry cycle leaves and re-enters the error state', () => {
+    const error = { kind: 'error', message: 'KERNEL_STARTUP_FENCE: recovery is blocked' } as const
+    act(() => root.render(<EnvProvisionOverlay key="error" ui={error} onRetry={() => undefined} />))
+    act(() =>
+      (container.querySelector('[data-testid="notebook-env-dismiss"]') as HTMLButtonElement).click()
+    )
+    expect(container.querySelector('[data-testid="notebook-env-gate"]')).toBeNull()
+
+    act(() =>
+      root.render(
+        <EnvProvisionOverlay
+          key="preparing"
+          ui={{ kind: 'preparing', scope: 'python', phase: '', progress: 0 }}
+        />
+      )
+    )
+    act(() => root.render(<EnvProvisionOverlay key="error" ui={error} onRetry={() => undefined} />))
+
+    expect(container.querySelector('[data-testid="notebook-env-gate"]')).not.toBeNull()
+  })
+
   it('announces setup failures assertively', () => {
     act(() => root.render(<EnvProvisionOverlay ui={{ kind: 'error', message: 'offline' }} />))
     const gate = container.querySelector('[data-testid="notebook-env-gate"]')

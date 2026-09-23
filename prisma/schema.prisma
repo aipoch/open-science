@@ -19,26 +19,26 @@ datasource db {
 }
 
 model Project {
-  id               String               @id @default(cuid())
-  name             String
-  description      String               @default("")
-  agentContext     String               @default("")
-  sessionDefaults  String               @default("{}")
-  isExample        Boolean              @default(false)
-  pinned           Boolean              @default(false)
-  archivedAt       DateTime?
-  archiveRevision  Int                  @default(0)
-  deletedAt        DateTime?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  permissionGrants PermissionGrant[]
-  previewState     ProjectPreviewState?
-  visionEvidence   VisionEvidence[]
-  sessions         Session[]
-  memoryEntries    MemoryEntry[]
-  literatureItems  ProjectLiterature[]
-  bookmarks        Bookmark[]
-  pdfAnnotations   PdfAnnotation[]
+  id                   String                @id @default(cuid())
+  name                 String
+  description          String                @default("")
+  agentContext         String                @default("")
+  sessionDefaults      String                @default("{}")
+  isExample            Boolean               @default(false)
+  pinned               Boolean               @default(false)
+  archivedAt           DateTime?
+  archiveRevision      Int                   @default(0)
+  deletedAt            DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  permissionGrants     PermissionGrant[]
+  previewState         ProjectPreviewState?
+  visionEvidence       VisionEvidence[]
+  sessions             Session[]
+  memoryEntries        MemoryEntry[]
+  literatureItems      ProjectLiterature[]
+  bookmarks            Bookmark[]
+  pdfAnnotations       PdfAnnotation[]
   pdfAnnotationImports PdfAnnotationImport[]
 }
 
@@ -97,15 +97,15 @@ model PdfAnnotation {
 
 // Receipt survives individual annotation deletion, so exports can remove only imported originals.
 model PdfAnnotationImport {
-  id String @id
-  projectId String?
-  sessionId String?
-  sourceKind String
+  id           String   @id
+  projectId    String?
+  sessionId    String?
+  sourceKind   String
   sourceFileId String
-  versionId String
-  checksum String
-  resultJson String
-  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versionId    String
+  checksum     String
+  resultJson   String
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, sessionId])
   @@index([sourceKind, sourceFileId, versionId])
@@ -544,6 +544,8 @@ model LiteratureItem {
   attachments              LiteratureAttachment[]
   acceptedInboxCandidates  LiteratureInboxCandidate[]        @relation("AcceptedLiteratureItem")
   metadataCommitReceipts   LiteratureMetadataCommitReceipt[]
+  smartAssessments         LiteratureSmartAssessment[]
+  smartOverrides           LiteratureSmartOverride[]
 
   @@index([deletedAt, updatedAt])
   @@index([mergedIntoItemId])
@@ -712,6 +714,7 @@ model LiteratureSourceRecord {
 }
 
 model LiteratureCollection {
+  smart       LiteratureSmartCollection?
   revision    Int                        @default(1)
   id          String                     @id @default(cuid())
   name        String
@@ -1258,4 +1261,123 @@ model LiteratureMetadataCommitReceipt {
   item                      LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@index([itemId])
+}
+
+// Smart membership is independent of manually managed LiteratureCollectionItem rows.
+model LiteratureSmartCollection {
+  automaticPauseReason String?
+  evidenceMode         String                        @default("abstract")
+  autoUpdate           Boolean                       @default(false)
+  collectionId         String                        @id
+  scopeKind            String
+  scopeId              String?
+  ruleRevision         Int                           @default(1)
+  collection           LiteratureCollection          @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  assessments          LiteratureSmartAssessment[]
+  overrides            LiteratureSmartOverride[]
+  runs                 LiteratureSmartRun[]
+  ruleVersions         LiteratureSmartRuleRevision[]
+}
+
+model LiteratureSmartAssessment {
+  evidenceJson      String?
+  collectionId      String
+  itemId            String
+  ruleRevision      Int
+  inputDigest       String
+  policyKey         String
+  verdict           String
+  probabilitiesJson String                    @default("{}")
+  model             String
+  evaluatedAt       DateTime                  @default(now())
+  collection        LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+  item              LiteratureItem            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, itemId])
+  @@index([itemId])
+}
+
+model LiteratureSmartOverride {
+  collectionId String
+  itemId       String
+  decision     String
+  updatedAt    DateTime                  @updatedAt
+  collection   LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+  item         LiteratureItem            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, itemId])
+  @@index([itemId])
+}
+
+model LiteratureSmartRun {
+  snapshotJson String?
+  id           String                    @id @default(cuid())
+  collectionId String
+  kind         String
+  state        String
+  ruleRevision Int
+  policyKey    String
+  model        String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  collection   LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+
+  rule  LiteratureSmartRuleRevision @relation(fields: [collectionId, ruleRevision], references: [collectionId, revision])
+  items LiteratureSmartRunItem[]
+
+  @@index([collectionId, createdAt])
+}
+
+// Durable consumption facts, retained even after their collection/run is deleted.
+model ClassificationUsage {
+  eventId         String   @id
+  collectionId    String?
+  runId           String?
+  scenario        String
+  projectId       String?
+  sessionId       String?
+  providerId      String
+  model           String
+  occurredAt      DateTime
+  status          String
+  inputTokens     BigInt?
+  outputTokens    BigInt?
+  usageIncomplete Boolean  @default(true)
+
+  @@index([sessionId])
+  @@index([occurredAt])
+  @@index([collectionId])
+  @@index([runId])
+}
+
+model LiteratureSmartRuleRevision {
+  collectionId      String
+  revision          Int
+  description       String
+  inclusionCriteria String
+  exclusionCriteria String
+  scopeKind         String
+  scopeId           String?
+  evidenceMode      String
+  createdAt         DateTime                  @default(now())
+  collection        LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+  runs              LiteratureSmartRun[]
+
+  @@id([collectionId, revision])
+}
+
+model LiteratureSmartRunItem {
+  runId       String
+  itemId      String
+  digest      String
+  state       String             @default("pending")
+  failure     String?
+  deferred    Boolean            @default(false)
+  resultJson  String?
+  evaluatedAt DateTime?
+  run         LiteratureSmartRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, itemId])
+  @@index([runId, state])
+  @@index([itemId, evaluatedAt])
 }

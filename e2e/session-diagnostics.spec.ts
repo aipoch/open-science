@@ -61,6 +61,27 @@ test('exports selected diagnostics without changing the persisted session', asyn
   const sessionCheckbox = dialog.getByRole('checkbox', { name: /^session\.json/ })
   await expect(sessionCheckbox).toBeEnabled()
   await expect(sessionCheckbox).toBeChecked()
+  await dialog.getByRole('heading', { name: 'Export diagnostics', exact: true }).click()
+  await testInfo.attach('diagnostics-dialog', {
+    body: await page.screenshot({ path: testInfo.outputPath('diagnostics-dialog.png') }),
+    contentType: 'image/png'
+  })
+  await dialog.getByRole('button', { name: 'More information', exact: true }).hover()
+  await expect(page.getByRole('tooltip')).toContainText('The archive always includes')
+  await testInfo.attach('diagnostics-help', {
+    body: await page.screenshot({ path: testInfo.outputPath('diagnostics-help.png') }),
+    contentType: 'image/png'
+  })
+  await dialog.getByRole('heading', { name: 'Export diagnostics', exact: true }).click()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await dialog.locator('button[aria-label="Close"]').hover()
+  await expect(page.getByRole('tooltip')).toHaveText('Close')
+  await testInfo.attach('diagnostics-close-tooltip', {
+    body: await page.screenshot({ path: testInfo.outputPath('diagnostics-close-tooltip.png') }),
+    contentType: 'image/png'
+  })
+  await dialog.getByRole('heading', { name: 'Export diagnostics', exact: true }).click()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(dialog.getByRole('checkbox', { name: /^main\.log/ })).toBeChecked()
   await expect(dialog.getByRole('checkbox', { name: /^main\.1\.log/ })).toBeEnabled()
   await expect(dialog.getByRole('checkbox', { name: /^main\.1\.log/ })).not.toBeChecked()
@@ -87,7 +108,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
   expect(projected.format).toBe('diagnostic-session-projection')
   expect(projected.diagnosticFixture).toBeUndefined()
   expect(contents.join('\n')).not.toContain(prompt)
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await dialog.locator('button[aria-label="Close"]').click()
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeEnabled()
 
   // A damaged source yields safe metadata without retaining raw private text or triggering recovery.
@@ -117,7 +138,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
     await readFile(join(partialDirectory, 'session.json.metadata.json'), 'utf8')
   ).not.toContain(secret)
   expect(await readFile(join(partialDirectory, 'export.log'), 'utf8')).toContain('invalid-json')
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await dialog.locator('button[aria-label="Close"]').click()
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toBeEnabled()
 
   // Exercise the real session-scoped SQL reader against the live application database.

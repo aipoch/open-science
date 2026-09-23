@@ -718,6 +718,12 @@ const R_INVENTORY_SCRIPT = [
   '}'
 ].join('\n')
 
+// Windows Rscript treats a multi-line `-e` argument as only the first line. Keep the source
+// readable above, but pass it as one syntactic expression to every R `-e` invocation. The scripts
+// use braces and explicit separators, so replacing line breaks with semicolons preserves their
+// meaning while avoiding the silent-success/empty-stdout failure on Windows.
+const rInlineScript = (script: string): string => script.replace(/\r?\n/gu, ';')
+
 // These probes hash only Runtime/library directory metadata. They are intentionally cheaper than
 // enumerating and parsing every installed distribution, but still notice added/removed package
 // directories and metadata replacements made outside the app's package-manager journal.
@@ -879,7 +885,7 @@ const inspectInstalledDefault = async (
     ...(target.args ?? []),
     ...(target.language === 'python'
       ? [...(managedRoot ? ['-I'] : []), '-c', PYTHON_INVENTORY_SCRIPT]
-      : ['--vanilla', '--slave', '-e', R_INVENTORY_SCRIPT])
+      : ['--vanilla', '--slave', '-e', rInlineScript(R_INVENTORY_SCRIPT)])
   ]
   const { stdout } = await execute(target.command, args, {
     ...(signal ? { signal } : {}),
@@ -897,6 +903,9 @@ const inspectInstalledDefault = async (
       platform
     )
   })
+  if (target.language === 'r' && !stdout.includes('RUNTIME\t')) {
+    throw new Error('R package inventory probe returned no runtime marker.')
+  }
   return parseInventory(target.language, stdout)
 }
 
@@ -909,7 +918,7 @@ const captureFingerprintDefault = async (
     ...(target.args ?? []),
     ...(target.language === 'python'
       ? ['-c', PYTHON_FINGERPRINT_SCRIPT]
-      : ['--vanilla', '--slave', '-e', R_FINGERPRINT_SCRIPT])
+      : ['--vanilla', '--slave', '-e', rInlineScript(R_FINGERPRINT_SCRIPT)])
   ]
   const { stdout } = await execute(target.command, args, {
     timeout: INSPECTION_TIMEOUT_MS,
@@ -1046,6 +1055,21 @@ class EnvironmentStateTracker {
       if (fingerprintChanged) {
         cache.state = 'dirty'
         cache.dirtyReason = 'fingerprint-changed'
+      }
+
+      // R inventories written by older Windows builds can be empty because their multi-line `-e`
+      // probe was silently truncated. Treat that snapshot as invalid so the first read after an
+      // upgrade performs a live scan instead of preserving a false clean state for 24 hours.
+      if (target.language === 'r' && cache.state === 'clean' && cache.inventoryChecksum) {
+        try {
+          const inventory = await this.readInventory(target, cache.inventoryChecksum)
+          if (inventory.runtimeVersion && inventory.packages.length === 0) {
+            cache.state = 'dirty'
+            cache.dirtyReason = 'fingerprint-changed'
+          }
+        } catch {
+          // The normal refresh path below records unreadable snapshots and keeps the cache dirty.
+        }
       }
 
       if (cache.state === 'dirty' || expired || !fingerprint) {

@@ -76,7 +76,7 @@
       "src/main/artifacts/mcp-server.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/connectors/application.test.ts",
-      "src/main/connectors/custom-mcp-bootstrap.test.ts",
+      "src/main/connectors/custom-mcp/bootstrap.test.ts",
       "src/main/connectors/custom-skill-doc.test.ts",
       "src/main/connectors/descriptors/genomes-ucsc.test.ts",
       "src/main/connectors/descriptors/variants-gnomad.test.ts",
@@ -183,7 +183,15 @@
       "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/credential-identity/persistence.test.ts",
+      "src/main/settings/device-credentials.test.ts",
+      "src/main/settings/file-credential-storage.test.ts",
+      "src/renderer/src/stores/settings-connectors-slice.test.ts",
+      "src/main/credential-identity/ciphertext-inventory.test.ts",
+      "src/main/credential-identity/linux.test.ts",
+      "src/main/credential-identity/macos.test.ts",
+      "src/main/credential-identity/probe-logging.test.ts"
     ]
   },
   "capabilityOverlays": [],

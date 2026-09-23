@@ -125,6 +125,7 @@ import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { ReadingContextPicker } from './ReadingContextPicker'
 import { normalizeRunFailureError } from './error-report'
+import { isClaudeCliCompatibilityError } from '../../../../shared/claude-runtime'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -771,10 +772,20 @@ const ConversationPanel = ({
       ? activePendingPlan
       : undefined
   const resolvedRunError =
+    (isClaudeCliCompatibilityError(activeSession?.error ?? '')
+      ? t(
+          'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+        )
+      : undefined) ??
     localizeImageAnnotationSourceError(activeSession?.error, t) ??
     localizeVisionRunFailure(activeSession?.error, t) ??
     normalizeRunFailureError(activeSession?.error)
   const resolvedActionError =
+    (isClaudeCliCompatibilityError(actionError ?? '')
+      ? t(
+          'The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.'
+        )
+      : undefined) ??
     localizeImageAnnotationSourceError(actionError, t) ??
     localizeVisionRunFailure(actionError, t) ??
     actionError

@@ -7,8 +7,8 @@ import {
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig,
   type CustomMcpFailureAvailability
-} from './custom-mcp-bootstrap'
-import { McpToolCallError, type CustomMcpServerConfig } from './mcp-client-manager'
+} from './custom-mcp'
+import { McpToolCallError, type CustomMcpServerConfig } from './custom-mcp'
 import type { ConnectorCredentialId, ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import { customServerSecurityFingerprint } from '../settings/custom-server-identity'

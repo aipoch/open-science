@@ -161,13 +161,6 @@ const composeAcpRuntimePromptOwners = (
   const promptPreparation = new AcpPromptPreparationOwner({
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
-    recordClassificationUsage: async (record) => {
-      await options.auxiliaryUsage?.record({
-        ...record,
-        source: 'classification',
-        completedAtMs: Date.now()
-      })
-    },
     promptContent: base.promptContentOwner,
     imageInputCompatibility: options.imageInputCompatibility,
     presentation: base.sessionPresentationPolicy,
@@ -196,6 +189,7 @@ const composeAcpRuntimePromptOwners = (
     cwd: string
     skillRuntimeAllowlist?: readonly string[]
   }): Promise<void> => {
+    session.sessionUpdateProjector.clearAssistantOutput(input.appSessionId)
     if (!input.framework.beforePromptDispatch) return
     const connection = base.connectionResources.connection
     if (!connection) throw new Error('ACP connection is not available.')
@@ -362,10 +356,17 @@ const composeAcpRuntimePromptOwners = (
     finalization: {
       errorMessage,
       errorKind: acpErrorKind,
-      pushEvent: (event) => session.publication.pushEvent(event),
+      pushEvent: (event) => {
+        if ((event.kind === 'stop' || event.kind === 'error') && event.sessionId) {
+          session.sessionUpdateProjector.finishAssistantOutput(event.sessionId)
+        }
+        session.publication.pushEvent(event)
+      },
       ...(options.runtimeSessions
         ? {
             commitTerminal: async (event) => {
+              if (event.sessionId)
+                session.sessionUpdateProjector.finishAssistantOutput(event.sessionId)
               const durableEvent = {
                 ...event,
                 id: session.publication.nextEventId(),
@@ -382,6 +383,7 @@ const composeAcpRuntimePromptOwners = (
           }
         : {}),
       onPromptEnded: (sessionId, turnToken) => {
+        session.sessionUpdateProjector.clearAssistantOutput(sessionId)
         host.onPromptEnded?.(sessionId, turnToken)
         callbacks.onPromptEnded?.(sessionId, turnToken)
       },

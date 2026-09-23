@@ -16,7 +16,7 @@ import {
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
 import { isRecord } from '../value-guards'
-import { CodeBuddyOutputAdapter } from './codebuddy-output-adapter'
+import { AcpAssistantOutputAdapter } from './assistant-output-adapter'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
@@ -45,6 +45,7 @@ const isCodexAppOwnedUserChoiceTool = (
 
 type AcpSessionUpdateRouting = Readonly<{
   framework?: AgentFrameworkId
+  model?: string
   appSessionId?: string
   eventId: string
   timestamp?: number
@@ -164,7 +165,7 @@ const toolObservation = (
 class AcpSessionUpdateProjector {
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
   private readonly appOwnedUserChoiceToolCallIds = new Map<string, Set<string>>()
-  private readonly codeBuddyOutput = new CodeBuddyOutputAdapter()
+  private readonly assistantOutput = new AcpAssistantOutputAdapter()
 
   constructor(private readonly options: AcpSessionUpdateProjectorOptions) {}
 
@@ -175,13 +176,23 @@ class AcpSessionUpdateProjector {
   clearGeneration(): void {
     this.codexSkillActivity.setSkillsRoot(undefined)
     this.appOwnedUserChoiceToolCallIds.clear()
-    this.codeBuddyOutput.clear()
+    this.assistantOutput.clear()
   }
 
   clearSession(sessionId: string): void {
     this.codexSkillActivity.clearSession(sessionId)
     this.appOwnedUserChoiceToolCallIds.delete(sessionId)
-    this.codeBuddyOutput.clearSession(sessionId)
+    this.assistantOutput.clearSession(sessionId)
+  }
+
+  finishAssistantOutput(sessionId: string): void {
+    for (const event of this.assistantOutput.finishSession(sessionId)) {
+      this.options.pushEvent(deepFreeze(event))
+    }
+  }
+
+  clearAssistantOutput(sessionId: string): void {
+    this.assistantOutput.clearSession(sessionId)
   }
 
   dispose(): void {
@@ -195,6 +206,7 @@ class AcpSessionUpdateProjector {
       framework:
         this.options.registry.lookup(sessionId)?.aggregate.snapshot().frameworkId ??
         this.options.currentFramework(),
+      model: this.options.registry.lookup(sessionId)?.aggregate.snapshot().appliedModel,
       appSessionId: input.appSessionId,
       eventId: this.options.nextEventId(),
       visible: input.visible ?? true,
@@ -222,27 +234,34 @@ class AcpSessionUpdateProjector {
       )
     )
     const originalEvent = projection.event
+    const outputPrefix =
+      routing.visible && routed.update.sessionUpdate === 'tool_call'
+        ? this.assistantOutput.finishSession(routed.sessionId)
+        : []
     let projectedEvent =
       routing.framework === 'codebuddy' && originalEvent.kind === 'tool'
-        ? this.codeBuddyOutput.projectToolEvent(
+        ? this.assistantOutput.projectToolEvent(
             routed.sessionId,
             originalEvent,
             routed.update.sessionUpdate === 'tool_call'
           )
         : originalEvent
-    let codeBuddyVisibleEvents: readonly AcpRuntimeEvent[] | undefined
+    let assistantVisibleEvents: readonly AcpRuntimeEvent[] | undefined
     if (
-      routing.framework === 'codebuddy' &&
+      routing.visible &&
+      (routing.framework === 'codebuddy' ||
+        (routing.framework === 'opencode' && /(?:^|\/)minimax-/i.test(routing.model ?? ''))) &&
       routed.update.sessionUpdate === 'agent_message_chunk' &&
       originalEvent.kind === 'message' &&
       originalEvent.role === 'assistant' &&
       typeof originalEvent.text === 'string'
     ) {
-      codeBuddyVisibleEvents = this.codeBuddyOutput.projectAssistantChunk(
+      assistantVisibleEvents = this.assistantOutput.projectAssistantChunk(
         routed.sessionId,
-        originalEvent
+        originalEvent,
+        routing.framework === 'opencode'
       )
-      projectedEvent = codeBuddyVisibleEvents.at(-1) ?? {
+      projectedEvent = assistantVisibleEvents.at(-1) ?? {
         ...originalEvent,
         text: '',
         raw: undefined
@@ -370,6 +389,9 @@ class AcpSessionUpdateProjector {
       if (!routing.reconnectPending) {
         effects.push(deepFreeze({ kind: 'context-refresh' as const, sessionId: routed.sessionId }))
       }
+      for (const prefixEvent of outputPrefix) {
+        effects.push(deepFreeze({ kind: 'visible-event' as const, event: prefixEvent }))
+      }
       if (appOwnedUserChoiceTool) return Object.freeze(effects)
       if (event.kind === 'tool' && event.status === 'failed') {
         const canonicalTool = event.providerToolName
@@ -385,7 +407,7 @@ class AcpSessionUpdateProjector {
           })
         )
       }
-      for (const visibleEvent of codeBuddyVisibleEvents ?? [event]) {
+      for (const visibleEvent of assistantVisibleEvents ?? [event]) {
         if (
           (visibleEvent.kind === 'message' || visibleEvent.kind === 'thought') &&
           !visibleEvent.text

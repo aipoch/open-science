@@ -1,4 +1,4 @@
-import type { StoredCustomMcpServer } from '../settings/types'
+import type { StoredCustomMcpServer } from '../../settings/types'
 
 const hasCaseInsensitiveNameCollision = (values: Record<string, string> | undefined): boolean => {
   const names = Object.keys(values ?? {})

@@ -310,7 +310,7 @@ describe('useLiteratureEntries', () => {
     )
     const { result, onPage } = setup()
     await act(async () => {})
-    let pending!: Promise<void>
+    let pending!: Promise<unknown>
     act(() => {
       pending = result.current.refreshItems(['a'])
     })
@@ -372,7 +372,7 @@ describe('useLiteratureEntries', () => {
       )
       const { result, onPage } = setup()
       await act(async () => {})
-      let pending!: Promise<void>
+      let pending!: Promise<unknown>
       act(() => {
         pending = result.current.refreshItems(['a'])
       })
@@ -408,7 +408,7 @@ describe('useLiteratureEntries', () => {
     )
     const { result, onPage } = setup()
     await act(async () => {})
-    let pending!: Promise<void>
+    let pending!: Promise<unknown>
     act(() => {
       pending = result.current.refreshItems(['b'])
     })
@@ -444,7 +444,7 @@ describe('useLiteratureEntries', () => {
           reject = fail
         })
     )
-    let pending!: Promise<void>
+    let pending!: Promise<unknown>
     act(() => {
       pending = result.current.reload(true, true)
     })

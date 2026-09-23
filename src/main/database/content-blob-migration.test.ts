@@ -87,7 +87,8 @@ describe('Content blob migration', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     await expect(
@@ -176,10 +177,11 @@ describe('Content blob migration', () => {
                 '0041_bookmarks',
                 '0042_classification_usage',
                 '0043_pdf_annotations',
-                '0044_artifact_hidden'
+                '0044_literature_smart_collections',
+                '0045_artifact_hidden'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0044_artifact_hidden'
+        to: '0045_artifact_hidden'
       })
 
       await expect(

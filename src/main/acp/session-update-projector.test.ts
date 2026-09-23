@@ -9,6 +9,7 @@ import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
   framework?: 'claude-code' | 'codex' | 'opencode' | 'codebuddy'
+  model?: string
   appSessionId?: string
   eventId: string
   timestamp?: number
@@ -60,6 +61,7 @@ const createProjector = (
           aggregate: {
             snapshot: () => ({
               frameworkId: routing.framework,
+              appliedModel: routing.model,
               permissionProfile
             }),
             setPermissionProfile: (profile: SessionPermissionProfileState) => {
@@ -126,6 +128,209 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it.each(['opencode', 'codebuddy'] as const)(
+    'publishes pending %s text before hiding an app-owned user-choice tool',
+    (framework) => {
+      const projector = createProjector()
+      const routing: TestRouting = {
+        framework,
+        model: 'provider/MiniMax-M3',
+        eventId: 'prefix',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+      projector.route(
+        {
+          sessionId: 'session-one',
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '<thi' } }
+        },
+        routing
+      )
+      const effects = projector.route(
+        {
+          sessionId: 'session-one',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'choice',
+            title: 'open_science_notebook_ask_user_question',
+            status: 'pending'
+          }
+        },
+        { ...routing, eventId: 'tool' }
+      )
+      expect(effects.filter((e) => e.kind === 'visible-event').map((e) => e.event)).toMatchObject([
+        { kind: 'message', text: '<thi' }
+      ])
+    }
+  )
+
+  it('segments CodeBuddy thought identities when tools split a reused provider message', () => {
+    const projector = createProjector()
+    const routing: TestRouting = {
+      framework: 'codebuddy',
+      eventId: 'before',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+    const chunk: SessionNotification = {
+      sessionId: 'session-one',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        messageId: 'reused-message',
+        content: { type: 'text', text: '<think>reasoning</think>answer' }
+      }
+    }
+    const before = projector.route(chunk, routing).find((e) => e.kind === 'visible-event')!
+      .event as AcpRuntimeEvent
+    projector.route(
+      {
+        sessionId: 'session-one',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-one',
+          title: 'test',
+          status: 'pending'
+        }
+      },
+      { ...routing, eventId: 'tool' }
+    )
+    const after = projector
+      .route(chunk, { ...routing, eventId: 'after' })
+      .find((e) => e.kind === 'visible-event')!.event as AcpRuntimeEvent
+    expect(before).toMatchObject({ kind: 'thought', messageId: 'reused-message:thought' })
+    expect(after).toMatchObject({ kind: 'thought', messageId: 'reused-message:tool-one:thought' })
+  })
+
+  it.each([
+    ['opencode', 'provider/MiniMax-M3', true],
+    ['opencode', 'MiniMax-M2.5', true],
+    ['opencode', 'other-model', false],
+    ['opencode', undefined, false],
+    ['claude-code', 'MiniMax-M3', false],
+    ['codex', 'MiniMax-M3', false],
+    ['codebuddy', undefined, true]
+  ] as const)(
+    'normalizes inline reasoning only for the known %s / %s output contract',
+    (framework, model, split) => {
+      const projector = createProjector()
+      const routing: TestRouting = {
+        framework,
+        model,
+        eventId: 'one',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+      const events = ['<thi', 'nk>reasoning</thi', 'nk>answer'].flatMap((text, index) =>
+        projector
+          .route(
+            {
+              sessionId: 'session-1',
+              update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+            },
+            { ...routing, eventId: `chunk-${index}` }
+          )
+          .filter((effect) => effect.kind === 'visible-event')
+          .map((effect) => effect.event as AcpRuntimeEvent)
+      )
+      expect(
+        events
+          .filter((e) => e.kind === 'message')
+          .map((e) => e.text)
+          .join('')
+      ).toBe(split ? 'answer' : '<think>reasoning</think>answer')
+      expect(
+        events
+          .filter((e) => e.kind === 'thought')
+          .map((e) => e.text)
+          .join('')
+      ).toBe(split ? 'reasoning' : '')
+    }
+  )
+
+  it.each(['opencode', 'codebuddy', 'claude-code', 'codex'] as const)(
+    'preserves native thought events and tool lifecycle order for %s',
+    (framework) => {
+      const projector = createProjector()
+      const routing: TestRouting = {
+        framework,
+        model: 'MiniMax-M3',
+        eventId: 'native-thought',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+      const updates: SessionNotification['update'][] = [
+        { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'native thought' } },
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'calling tool' } },
+        { sessionUpdate: 'tool_call', toolCallId: 'tool-one', title: 'test', status: 'pending' },
+        { sessionUpdate: 'tool_call_update', toolCallId: 'tool-one', status: 'completed' },
+        { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'answer' } }
+      ]
+      const events = updates
+        .flatMap((update, index) =>
+          projector.route(
+            { sessionId: 'session-one', update },
+            { ...routing, eventId: `e-${index}` }
+          )
+        )
+        .filter((e) => e.kind === 'visible-event')
+        .map((e) => e.event as AcpRuntimeEvent)
+      expect(events.map((e) => e.kind)).toEqual(['thought', 'message', 'tool', 'tool', 'message'])
+      expect(events[0].text).toBe('native thought')
+      expect(events.filter((e) => e.kind === 'tool').map((e) => [e.toolCallId, e.status])).toEqual([
+        ['tool-one', 'pending'],
+        ['tool-one', 'completed']
+      ])
+    }
+  )
+
+  it('flushes partial output before tools and resets the next OpenCode model step', () => {
+    const projector = createProjector()
+    const routing: TestRouting = {
+      framework: 'opencode',
+      model: 'provider/MiniMax-M3',
+      eventId: 'prefix',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+    projector.route(
+      {
+        sessionId: 'one',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '<thi' } }
+      },
+      routing
+    )
+    const tool = projector.route(
+      {
+        sessionId: 'one',
+        update: { sessionUpdate: 'tool_call', toolCallId: 'tool', title: 'test', status: 'pending' }
+      },
+      { ...routing, eventId: 'tool' }
+    )
+    expect(tool.filter((e) => e.kind === 'visible-event').map((e) => e.event)).toMatchObject([
+      { kind: 'message', text: '<thi' },
+      { kind: 'tool', toolCallId: 'tool' }
+    ])
+    const after = projector.route(
+      {
+        sessionId: 'one',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: '<think>next reasoning</think>result' }
+        }
+      },
+      { ...routing, eventId: 'after' }
+    )
+    expect(after.filter((e) => e.kind === 'visible-event').map((e) => e.event)).toMatchObject([
+      { kind: 'thought', text: 'next reasoning' },
+      { kind: 'message', text: 'result' }
+    ])
+  })
+
   it('projects a provider tool replay through its app presentation identity', () => {
     const projector = createProjector(
       undefined,

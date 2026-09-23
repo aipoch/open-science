@@ -9,10 +9,10 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { z } from 'zod'
-import { McpClientManager, McpToolCallError, buildTransport } from './mcp-client-manager'
-import type { CustomMcpServerConfig } from './mcp-client-manager'
+import { McpClientManager, McpToolCallError, buildTransport } from './client-manager'
+import type { CustomMcpServerConfig } from './client-manager'
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
-import { EXTRA_PATH_DIRS } from '../settings/shell-path'
+import { EXTRA_PATH_DIRS } from '../../settings/shell-path'
 
 const { netFetch, stderrWarn } = vi.hoisted(() => ({
   netFetch: vi.fn(),
@@ -20,7 +20,7 @@ const { netFetch, stderrWarn } = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({ net: { fetch: netFetch } }))
-vi.mock('../logger', () => ({
+vi.mock('../../logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
     info: vi.fn(),

@@ -12,6 +12,7 @@ import { DRUG_REGULATORY_TOOLS } from './descriptors/drug-regulatory'
 import { EXPRESSION_TOOLS } from './descriptors/expression'
 import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
+import { GDC_TOOLS } from './descriptors/gdc'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { MOLECULE_TOOLS } from './descriptors/molecule'
@@ -40,6 +41,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...EXPRESSION_TOOLS,
   ...GENES_TOOLS,
   ...GENOMES_TOOLS,
+  ...GDC_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
   ...LITERATURE_TOOLS,
   ...MOLECULE_TOOLS,

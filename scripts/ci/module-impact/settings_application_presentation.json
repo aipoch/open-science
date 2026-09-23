@@ -423,7 +423,8 @@
       "src/renderer/src/pages/workspace/WorkspaceSubagentMessageRow.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/use-pdf-export.test.tsx",
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
     ]
   },
   "capabilityOverlays": [],

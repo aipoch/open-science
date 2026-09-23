@@ -15,8 +15,8 @@ import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/
 import { ApprovalBroker } from './approval-broker'
 import { CredentialRequestBroker } from './credential-request-broker'
 import { ParserEngine } from './engine'
-import { McpClientManager } from './mcp-client-manager'
-import { hasUsableCustomMcpCredentials, toCustomMcpConfig } from './custom-mcp-bootstrap'
+import { McpClientManager } from './custom-mcp'
+import { hasUsableCustomMcpCredentials, toCustomMcpConfig } from './custom-mcp'
 import { ConnectorRuntimeSettingsProjection } from './runtime-settings-projection'
 import { ConnectorService, type ConnectorCallContext } from './service'
 

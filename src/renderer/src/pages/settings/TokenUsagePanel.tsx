@@ -515,6 +515,33 @@ function TokenUsagePanel({
               ))}
             </div>
 
+            {summary.classificationTokens && (
+              <dl
+                data-slot="classification-usage"
+                className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground"
+              >
+                <div className="flex gap-2">
+                  <dt>{t('Other classification tokens')}</dt>
+                  <dd className="tabular-nums text-foreground">
+                    {formatNumber(summary.classificationTokens.conversation)}
+                  </dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt>{t('Literature classification tokens')}</dt>
+                  <dd className="tabular-nums text-foreground">
+                    {formatNumber(summary.classificationTokens.literature)}
+                  </dd>
+                </div>
+              </dl>
+            )}
+            {summary.incompleteRequests ? (
+              <p role="status" className="mt-3 text-xs text-status-warning-foreground">
+                {t(
+                  'Some classification requests have no reported token usage. Totals may be incomplete.'
+                )}
+              </p>
+            ) : null}
+
             <div className="mt-5 grid grid-cols-2 gap-x-5 gap-y-5 lg:grid-cols-4">
               {entitySummaryItems.map((item) => (
                 <div key={item.totalLabel} className="grid min-w-0 gap-5">

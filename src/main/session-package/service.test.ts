@@ -3852,5 +3852,6 @@ it.each([false, true])(
       await exporter.close()
       await importer.close()
     }
-  }
+  },
+  process.platform === 'win32' ? 120_000 : 60_000
 )

@@ -29,6 +29,7 @@ export type ActionMenuRegistration = Readonly<{
 export type OpenActionMenuOptions<Invocation = unknown> = {
   targetId: string
   pointer: ActionMenuPointer
+  align?: 'start' | 'end'
   focusTarget?: Element | null
   invocation?: Invocation
 }

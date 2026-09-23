@@ -528,7 +528,7 @@ describe('User Skill repository architecture', () => {
           'src/main/compute/session-catalog-hydration.integration.test.ts',
           'src/main/compute/skill-provisioning.test.ts',
           'src/main/connectors/application.test.ts',
-          'src/main/connectors/custom-mcp-bootstrap.test.ts',
+          'src/main/connectors/custom-mcp/bootstrap.test.ts',
           'src/main/connectors/custom-skill-doc.test.ts',
           'src/main/connectors/descriptors/genes-reactome.test.ts',
           'src/main/connectors/descriptors/genes.test.ts',
@@ -537,9 +537,9 @@ describe('User Skill repository architecture', () => {
           'src/main/connectors/descriptors/regulation.test.ts',
           'src/main/connectors/descriptors/variants-gnomad.test.ts',
           'src/main/connectors/descriptors/zinc.test.ts',
-          'src/main/connectors/mcp-client-manager.test.ts',
+          'src/main/connectors/custom-mcp/client-manager.test.ts',
           'src/main/connectors/mcp-payload-pagination.integration.test.ts',
-          'src/main/connectors/oauth-client.test.ts',
+          'src/main/connectors/custom-mcp/oauth-client.test.ts',
           'src/main/connectors/provision.test.ts',
           'src/main/connectors/registry.test.ts',
           'src/main/connectors/runtime-settings-projection.test.ts',
@@ -906,7 +906,8 @@ describe('User Skill repository architecture', () => {
           'src/main/pdf-annotations/service.test.ts',
           'src/main/session-package/ro-crate.integration.test.ts',
           'src/main/session-package/ro-crate.test.ts',
-          'src/main/settings/codex-bridge-tools.test.ts'
+          'src/main/settings/codex-bridge-tools.test.ts',
+          'src/main/literature/smart-collections.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

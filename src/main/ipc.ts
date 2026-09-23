@@ -1,5 +1,6 @@
 import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
 import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
+import { LiteratureSmartCollections } from './literature/smart-collections'
 import { RuntimeWriterOwner } from './session-persistence/runtime-writer'
 import { getDefaultPermissionProfile } from '../shared/permission-profiles'
 import { PackageLiteratureReader } from './session-package/literature-reader'
@@ -142,8 +143,8 @@ import { parseSystemProxyRules } from './settings/system-proxy'
 import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
-import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
-import { createMoleculePreviewHandler } from './connectors/molecule-preview'
+import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp'
+import { createMoleculePreviewHandler } from './connectors/molecule'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { connectorSkillSourceDir } from './connectors/provision'
 import { ImmutableInputAuthority } from './immutable-input-authority'
@@ -1974,6 +1975,7 @@ const createApplicationModules = async (
     loadUsage: async () => {
       await ensureSessionProjection()
       await auxiliaryUsageRecorder.flush()
+      await settingsService.classification.flushUsage()
       return sessionRepository.loadSessionUsageProjection()
     },
     loadOne: async ({ projectId, sessionId }) => {
@@ -2170,12 +2172,34 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
+  let smartCollectionRevision = 0
+  const smartCollections = new LiteratureSmartCollections(
+    () => getProjectDbClient(configRoot),
+    settingsService.classification,
+    (id) =>
+      applicationEvents.publish('literature:changed', {
+        revision: ++smartCollectionRevision,
+        collectionIds: [id]
+      }),
+    (request) => literatureDocumentReader.classificationEvidence(request)
+  )
+  await modules.add({ smartCollections }, ({ smartCollections: owner }) => ({
+    name: 'literature-smart-collections',
+    capability: owner,
+    start: () => owner.start(),
+    dispose: () => owner.dispose()
+  }))
   const literatureCatalog = new LiteratureCatalog(
     () => getProjectDbClient(configRoot),
     () => tagService.notifyAssignmentsChanged(),
     contentRepository,
     (remove) => sessionPersistenceCoordinator.withLiteratureAttachmentRemoval(remove),
-    (event) => applicationEvents.publish('literature:changed', event)
+    (event) =>
+      applicationEvents.publish('literature:changed', {
+        ...event,
+        revision: ++smartCollectionRevision
+      }),
+    smartCollections
   )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')

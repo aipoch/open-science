@@ -17,7 +17,7 @@ on:
 # Required to create a Release and upload assets.
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}

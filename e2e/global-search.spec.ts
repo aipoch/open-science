@@ -387,7 +387,9 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   ).toBe(120)
 })
 
-test('opens uploaded files from search using the existing file preview dialog', async ({ app }) => {
+test('opens uploaded files from search using the existing file preview dialog', async ({
+  app
+}, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await suppressWorkspaceStarNudge(page)
@@ -420,6 +422,7 @@ test('opens uploaded files from search using the existing file preview dialog', 
     'data-search-match-count',
     '1'
   )
+  await dialog.screenshot({ path: testInfo.outputPath('search-preview-current-match.png') })
   await content.click()
   await expect(page.getByRole('dialog', { name: 'Preview search-notes.md' })).toBeHidden()
   const bounds = (await content.boundingBox())!

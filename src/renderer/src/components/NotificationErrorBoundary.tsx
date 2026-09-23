@@ -28,10 +28,12 @@ const NotificationRecovery = ({
   surface: Surface
   className?: string
   reset: () => void
-}): React.JSX.Element => {
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const notificationRevision = useNotificationInboxStore((state) => state.revision)
+  const [dismissedRevision, setDismissedRevision] = useState<number | undefined>()
   const id = useId()
   useEffect(() => {
     if (surface !== 'center') return
@@ -45,6 +47,11 @@ const NotificationRecovery = ({
     window.addEventListener(OPEN_NOTIFICATION_CENTER_EVENT, openCenter)
     return () => window.removeEventListener(OPEN_NOTIFICATION_CENTER_EVENT, openCenter)
   }, [id, surface])
+
+  useEffect(() => {
+    if (surface !== 'toast' || dismissedRevision === undefined) return
+    if (notificationRevision !== dismissedRevision) reset()
+  }, [dismissedRevision, notificationRevision, reset, surface])
 
   const notice = (
     <ErrorNotice
@@ -71,8 +78,18 @@ const NotificationRecovery = ({
             })
         }
       }}
+      dismissButton={
+        surface === 'toast'
+          ? {
+              label: t('Close'),
+              onClick: () => setDismissedRevision(notificationRevision),
+              testId: 'notification-recovery-dismiss'
+            }
+          : undefined
+      }
     />
   )
+  if (surface === 'toast' && dismissedRevision === notificationRevision) return null
   if (surface !== 'center') {
     return (
       <div

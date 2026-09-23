@@ -987,7 +987,9 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.test.ts',
       'src/main/settings/settings-snapshot-commit-owner.test.ts',
       'src/main/settings/classification-settings.ts',
-      'src/main/settings/classification-settings.test.ts'
+      'src/main/settings/classification-settings.test.ts',
+      'src/main/settings/classification-usage.ts',
+      'src/main/settings/classification-usage.test.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',
@@ -1066,7 +1068,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/workflows/connectors-diagnostic.test.ts',
       'src/main/web-service/artifact-download.integration.test.ts',
       'src/main/web-service/controller.test.ts',
-      'src/main/web-service/task-api.test.ts'
+      'src/main/web-service/task-api.test.ts',
+      'src/main/literature/smart-collections.test.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual([
       'src/main/session-persistence/runtime-session-owner.test.ts',
@@ -1195,12 +1198,12 @@ describe('Settings backend ownership architecture', () => {
       'src/main/compute/session-catalog-hydration.integration.test.ts',
       'src/main/compute/skill-provisioning.test.ts',
       'src/main/connectors/application.test.ts',
-      'src/main/connectors/custom-mcp-bootstrap.test.ts',
+      'src/main/connectors/custom-mcp/bootstrap.test.ts',
       'src/main/connectors/custom-skill-doc.test.ts',
       'src/main/connectors/descriptors/variants-gnomad.test.ts',
-      'src/main/connectors/mcp-client-manager.test.ts',
+      'src/main/connectors/custom-mcp/client-manager.test.ts',
       'src/main/connectors/mcp-payload-pagination.integration.test.ts',
-      'src/main/connectors/oauth-client.test.ts',
+      'src/main/connectors/custom-mcp/oauth-client.test.ts',
       'src/main/connectors/provision.test.ts',
       'src/main/connectors/runtime-settings-projection.test.ts',
       'src/main/connectors/service.test.ts',
@@ -1495,7 +1498,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/pdf-annotations/repository.integration.test.ts',
       'src/main/pdf-annotations/service.test.ts',
       'src/main/session-package/ro-crate.integration.test.ts',
-      'src/main/session-package/ro-crate.test.ts'
+      'src/main/session-package/ro-crate.test.ts',
+      'src/main/literature/smart-collections.test.ts'
     ])
     expect(
       [

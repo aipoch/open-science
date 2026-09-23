@@ -1,4 +1,5 @@
 import { oversizedLiteratureReference } from '../../../../shared/literature-export'
+import { reconcileLiteraturePage } from './reconcile-literature-page'
 import { readLiteratureDisplayPage } from './literature-read-pages'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
@@ -39,7 +40,7 @@ const useLiteratureEntries = ({
   loading: boolean
   failed: boolean
   pageTransitionLoading: boolean
-  reload: (force?: boolean, preservePage?: boolean) => Promise<void>
+  reload: (force?: boolean, preservePage?: boolean) => Promise<boolean | undefined>
   refreshItems: (
     itemIds: string[],
     updatedItems?: LiteratureItemView[],
@@ -71,7 +72,7 @@ const useLiteratureEntries = ({
   const pageKey = `${scopeKey}:${request.offset ?? 0}`
 
   const reload = useCallback(
-    async (force = false, preservePage = false): Promise<void> => {
+    async (force = false, preservePage = false): Promise<boolean | undefined> => {
       const retained =
         preservePage && appliedPageRef.current?.key === pageKey ? appliedPageRef.current : undefined
       if (force) {
@@ -103,7 +104,7 @@ const useLiteratureEntries = ({
         appliedPageRef.current.page === cached
       ) {
         setLoading(false)
-        return
+        return true
       }
       if (!cached) setLoading(true)
       try {
@@ -122,6 +123,11 @@ const useLiteratureEntries = ({
           onEmptyPage(Math.max(0, (request.offset ?? 0) - (request.limit ?? 50)))
           return
         }
+        // Reconcile only the same query/page: never reuse a decision from another collection.
+        page = reconcileLiteraturePage(
+          appliedPageRef.current?.key === pageKey ? appliedPageRef.current.page : undefined,
+          page
+        )
         cacheRef.current.delete(pageKey)
         dirtyKeys.current.delete(pageKey)
         cacheRef.current.set(pageKey, page)
@@ -135,15 +141,18 @@ const useLiteratureEntries = ({
         else onPage(page, request, Boolean(cached))
         appliedPageRef.current = { key: pageKey, page }
         setLoadedKey(pageKey)
+        return true
       } catch (error) {
         if (generation === generationRef.current) {
           setOversizedItemId(oversizedLiteratureReference(error))
           if (!retained) setFailedKey(pageKey)
           onError(true)
+          return false
         }
       } finally {
         if (generation === generationRef.current) setLoading(false)
       }
+      return undefined
     },
     [enabled, onEmptyPage, onError, onPage, pageKey, request]
   )
@@ -197,7 +206,7 @@ const useLiteratureEntries = ({
           return
         const replacements = new Map(accepted.map((entry) => [entry.id, entry]))
         const current = appliedPageRef.current.page
-        const page = {
+        const page = reconcileLiteraturePage(current, {
           ...current,
           entries: current.entries.map((entry) =>
             'metadataRevision' in entry &&
@@ -205,7 +214,7 @@ const useLiteratureEntries = ({
               ? replacements.get(entry.id)!
               : entry
           )
-        }
+        })
         cacheRef.current.set(pageKey, page)
         appliedPageRef.current = { key: pageKey, page }
         if (visible.length) onPage(page, request, true, true)

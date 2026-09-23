@@ -267,6 +267,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       'PendingSessionReconciliation',
       'SessionTurnUsage',
       'SessionModelCallUsage',
+      'ClassificationUsage',
       'SessionRun',
       'SessionArtifactRef'
     ],
@@ -282,6 +283,10 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
             onDelete: 'Restrict'
           }
         ]
+      },
+      {
+        name: 'ClassificationUsage',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sessionId')]
       },
       {
         name: 'PendingSessionReconciliation',

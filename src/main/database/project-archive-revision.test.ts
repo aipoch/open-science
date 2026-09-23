@@ -35,7 +35,7 @@ describe('Project archive revision', () => {
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "archiveRevision"')
     await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_artifact_hidden')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden')"
     )
     await expect(
       migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
@@ -54,7 +54,8 @@ describe('Project archive revision', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_artifact_hidden'
+        '0044_literature_smart_collections',
+        '0045_artifact_hidden'
       ]
     })
     expect(

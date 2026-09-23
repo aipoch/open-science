@@ -9,12 +9,12 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
-import type { StoredCustomMcpOAuthState } from '../settings/types'
-import { augmentedPathEnv } from '../settings/shell-path'
-import { netFetchStandard } from '../skills/net-fetch'
-import { redactSensitiveText } from '../diagnostic-redaction'
-import { createLogger } from '../logger'
-import { assertSecureCustomMcpUrl } from './custom-mcp-url'
+import type { StoredCustomMcpOAuthState } from '../../settings/types'
+import { augmentedPathEnv } from '../../settings/shell-path'
+import { netFetchStandard } from '../../skills/net-fetch'
+import { redactSensitiveText } from '../../diagnostic-redaction'
+import { createLogger } from '../../logger'
+import { assertSecureCustomMcpUrl } from './url'
 
 const log = createLogger('connectors:mcp-client')
 const STDERR_LINE_LIMIT = 4 * 1024

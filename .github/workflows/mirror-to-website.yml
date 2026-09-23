@@ -43,8 +43,10 @@ jobs:
       # Tag comes from the required manual input; version is the tag without a leading 'v'.
       - name: Resolve tag and version
         id: ref
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
-          tag="${{ inputs.tag }}"
+          tag="$TAG_INPUT"
           if [ -z "$tag" ]; then
             echo "No tag resolved from event or input" >&2
             exit 1
@@ -57,7 +59,8 @@ jobs:
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ steps.ref.outputs.tag }}" --repo "${{ github.repository }}" --dir dist-assets
+          RELEASE_TAG: ${{ steps.ref.outputs.tag }}
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets
 
       # A dry-run exercises the real manifest/feed transforms without downloading every installer.
       # SHA256SUMS and updater feeds are small; sparse files reproduce each installer's published name

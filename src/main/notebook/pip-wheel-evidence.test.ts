@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFile, spawnSync } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { promisify } from 'node:util'
@@ -33,11 +33,15 @@ describe('legacy pip wheel evidence', () => {
   ])(
     'recovers a real %s pip installation with %s generated entry points only when their bytes match',
     async (installer, metadata) => {
-      const root = await mkdtemp(join(tmpdir(), 'wheel-entry-points-'))
+      // Keep RECORD-relative paths consistent with Python's canonical venv path on macOS.
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'wheel-entry-points-')))
       const prefix = join(root, 'env')
       const execute = promisify(execFile)
       try {
-        await execute(python!, ['-I', '-m', 'venv', prefix], { timeout: 30_000 })
+        // The first Windows ensurepip bootstrap can exceed 30s on a cold CI runner.
+        await execute(python!, ['-I', '-m', 'venv', prefix], {
+          timeout: process.platform === 'win32' ? 60_000 : 30_000
+        })
         const interpreter = join(
           prefix,
           process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
@@ -223,10 +227,11 @@ describe('legacy pip wheel evidence', () => {
         await writeFile(recordPath, record + '\n../../../bin/unexpected,,\n')
         expect(await probe()).toHaveLength(0)
       } finally {
-        await rm(root, { recursive: true, force: true })
+        // Windows may briefly retain Python/launcher handles after the child exits.
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     },
-    60_000
+    process.platform === 'win32' ? 90_000 : 60_000
   )
   it.each(['matched', 'unavailable', 'unused', 'changed-during-probe', 'retry'] as const)(
     'recovers only a required %s pip package through the environment capture owner',

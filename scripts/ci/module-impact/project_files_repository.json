@@ -316,7 +316,8 @@
       "src/main/settings/workflows.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/settings/application-commands.test.ts"
+      "src/main/settings/application-commands.test.ts",
+      "src/main/literature/smart-collections.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

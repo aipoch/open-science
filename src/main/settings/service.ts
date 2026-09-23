@@ -1,3 +1,5 @@
+import { ClassificationUsageRecorder } from './classification-usage'
+import { getProjectDbClient } from '../projects/prisma-client'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
@@ -478,6 +480,7 @@ class SettingsService {
     const outcomes = await Promise.allSettled([
       this.skillMarketplaceQueue.dispose(),
       this.providers.dispose(),
+      this.classification.flushUsage(false),
       this.runtimeManager.dispose()
     ])
     for (const outcome of outcomes) {
@@ -489,7 +492,12 @@ class SettingsService {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
     this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
-    this.classification = new ClassificationSettingsOwner(this.repository)
+    this.classification = new ClassificationSettingsOwner(
+      this.repository,
+      undefined,
+      undefined,
+      new ClassificationUsageRecorder(() => getProjectDbClient(this.configRoot))
+    )
     this.networkProxy = new NetworkProxySettingsOwner({
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)

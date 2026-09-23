@@ -1,5 +1,7 @@
 import { isMediaOverflowError } from './media-overflow'
 import { isUnsupportedCodexAcpVersionError } from './codex-runtime'
+import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from './claude-runtime'
+export { CLAUDE_CLI_INCOMPATIBLE_MESSAGE, isClaudeCliCompatibilityError } from './claude-runtime'
 
 // Classifies a failed run into "expected" (keep the message, no report button) vs "unknown/reportable"
 // (an opaque or internal failure worth a GitHub issue). The primary signal is STRUCTURAL, not textual:
@@ -139,6 +141,7 @@ const EXPECTED_RUN_FAILURE_MESSAGES = new Set<string>([
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
   IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE,
   CLAUDE_EXECUTABLE_MISSING_MESSAGE,

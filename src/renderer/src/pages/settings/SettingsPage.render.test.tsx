@@ -9,6 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
+import { MINIMUM_CLAUDE_CLI_VERSION } from '../../../../shared/claude-runtime'
 import type { ProviderView } from '../../../../shared/settings'
 import type { SpecialistView } from '../../../../shared/specialist'
 import { i18next } from '@/i18n'
@@ -5148,7 +5149,7 @@ describe('SettingsPage uninstall confirmation', () => {
     // Claude is managed but NOT the active framework (OpenCode is), so its Uninstall is enabled.
     // OpenCode carries a path so the "auto-detect when active + missing" effect doesn't run.
     const snapshot = {
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'opencode',
@@ -5195,7 +5196,7 @@ describe('SettingsPage uninstall confirmation', () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     // Claude is both managed and the active framework — its Uninstall must be disabled.
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5223,7 +5224,7 @@ describe('SettingsPage uninstall confirmation', () => {
       .fn()
       .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5272,7 +5273,7 @@ describe('SettingsPage uninstall confirmation', () => {
       .fn()
       .mockResolvedValue({ claudeReady: true, opencodeReady: true, activeProviderReady: true })
     const readySnapshot = {
-      claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -5318,7 +5319,7 @@ describe('SettingsPage uninstall confirmation', () => {
 
   // An inactive but managed Claude (OpenCode active) whose Uninstall would otherwise be enabled.
   const inactiveManagedClaudeSnapshot = {
-    claude: { resolvedPath: '/data/claude-code/bin/claude', version: '2.1.0' },
+    claude: { resolvedPath: '/data/claude-code/bin/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
     opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
     providers: [],
     agentFrameworkId: 'opencode',
@@ -5513,7 +5514,7 @@ describe('SettingsPage Codex framework', () => {
   it('offers Codex as a selectable framework behind the switch confirmation', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: {
         resolvedPath: '/data/codex-managed/adapter/dist/index.js',
@@ -5570,7 +5571,7 @@ describe('SettingsPage Codex framework', () => {
   it('switches to a ready CodeBuddy framework after confirmation', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
@@ -5625,7 +5626,7 @@ describe('SettingsPage Codex framework', () => {
   it('does not show the obsolete Skill limitation for active CodeBuddy', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
@@ -5661,7 +5662,7 @@ describe('SettingsPage Codex framework', () => {
   it('routes the default app-managed install action to installCodex', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
       codebuddy: {},
@@ -5717,7 +5718,7 @@ describe('SettingsPage Codex framework', () => {
   it('groups cards by install state and re-detects every framework from the section action', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const snapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: { resolvedPath: '/usr/local/bin/opencode', version: '1.18.3' },
       codex: {},
       providers: [],
@@ -5776,7 +5777,7 @@ describe('SettingsPage Codex framework', () => {
   it('keeps detected CodeBuddy in Installed even while preflight still needs repair', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: {},
       codebuddy: {
@@ -5820,7 +5821,7 @@ describe('SettingsPage Codex framework', () => {
   it('auto-detects a user-installed CodeBuddy when the Agent panel is shown', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const initialSnapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: {},
@@ -5867,7 +5868,7 @@ describe('SettingsPage Codex framework', () => {
   it('re-detects CodeBuddy after Settings is reopened', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     const initialSnapshot = {
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
       codebuddy: {},
@@ -5924,7 +5925,7 @@ describe('SettingsPage Codex framework', () => {
   it('keeps an outdated Codex ACP install in Installed and offers an update', async () => {
     const api = (window as unknown as { api: { settings: Record<string, unknown> } }).api
     api.settings.getSettings = vi.fn().mockResolvedValue({
-      claude: { resolvedPath: '/data/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
       codex: { resolvedPath: '/data/codex-acp', version: '1.1.4' },
       codebuddy: {},

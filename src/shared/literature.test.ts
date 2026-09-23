@@ -287,3 +287,16 @@ describe('Literature full-text transfer contract', () => {
     ).toThrow()
   })
 })
+
+it('bounds decision-only reads without accepting mutation fields', () => {
+  const request = { kind: 'read-smart-decisions', collectionId: 'collection', itemIds: ['paper'] }
+  expect(literatureCatalogCommandSchema.parse(request)).toEqual(request)
+  expect(literatureCatalogCommandSchema.safeParse({ ...request, itemIds: [] }).success).toBe(false)
+  expect(
+    literatureCatalogCommandSchema.safeParse({ ...request, itemIds: Array(101).fill('paper') })
+      .success
+  ).toBe(false)
+  expect(
+    literatureCatalogCommandSchema.safeParse({ ...request, decision: 'include' }).success
+  ).toBe(false)
+})

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Molecule } from 'openchemlib'
 
-import { createMoleculePreviewHandler } from './molecule-preview'
+import { createMoleculePreviewHandler } from './index'
 
 const ASPIRIN_SMILES = 'CC(=O)Oc1ccccc1C(=O)O'
 

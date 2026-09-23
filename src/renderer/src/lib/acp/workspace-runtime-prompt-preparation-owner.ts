@@ -2,6 +2,8 @@ import type { AcpMessageImage, AcpStateSnapshot } from '../../../../shared/acp'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  isClaudeCliCompatibilityError,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_TIMED_OUT_MESSAGE,
@@ -199,6 +201,8 @@ const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error
 
 const getResumeFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
+
+  if (isClaudeCliCompatibilityError(message)) return CLAUDE_CLI_INCOMPATIBLE_MESSAGE
 
   if (/cwd does not exist/i.test(message)) return RESUME_WORKSPACE_MISSING_MESSAGE
   if (/timed out/i.test(message)) return RESUME_TIMED_OUT_MESSAGE

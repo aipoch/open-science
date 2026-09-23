@@ -1,4 +1,5 @@
 import { ErrorNotice } from '@/components/error-notice'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
@@ -14,9 +15,12 @@ const EnvProvisionOverlay = ({
   onRetry?: () => void
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const [dismissedErrorKey, setDismissedErrorKey] = useState<string | undefined>(undefined)
 
   if (ui.kind === 'ready') return null
-  if (ui.kind === 'error')
+  if (ui.kind === 'error') {
+    const errorKey = JSON.stringify([ui.message, ui.scope ?? null, ui.sessionId ?? null])
+    if (dismissedErrorKey === errorKey) return null
     return (
       <div
         data-testid="notebook-env-gate"
@@ -28,6 +32,11 @@ const EnvProvisionOverlay = ({
           className="max-w-md [&_p]:max-h-24 [&_p]:overflow-y-auto"
           title={t('Environment setup needs attention')}
           description={ui.message}
+          dismissButton={{
+            label: t('Close'),
+            onClick: () => setDismissedErrorKey(errorKey),
+            testId: 'notebook-env-dismiss'
+          }}
           primaryButton={
             onRetry
               ? { label: t('Retry'), onClick: onRetry, testId: 'notebook-env-retry' }
@@ -36,6 +45,7 @@ const EnvProvisionOverlay = ({
         />
       </div>
     )
+  }
 
   const title =
     ui.scope === 'r'

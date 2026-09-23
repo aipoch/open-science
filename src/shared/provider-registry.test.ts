@@ -80,6 +80,7 @@ describe('provider registry', () => {
     expect(defaultVendorModel('opencode')).toBe('kimi-k2.7-code')
     expect(goModels).toEqual([
       'kimi-k2.7-code',
+      'grok-4.7',
       'grok-4.6',
       'gpt-5.6-luna',
       'glm-5.3-flash',
@@ -89,26 +90,35 @@ describe('provider registry', () => {
       'kimi-k3',
       'kimi-k2.6',
       'longcat-2.0',
+      'deepseek-v4.1-flash',
       'deepseek-v4-pro',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp',
+      'mimo-v2.6-flash',
+      'mimo-v2.6-pro',
       'mimo-v2.5',
       'mimo-v2.5-pro',
       'minimax-m3',
+      'muse-spark-1.3-contributor',
       'muse-spark-1.2-contributor',
       'qwen3.8-max',
+      'qwen3.8-flash',
       'qwen3.7-max',
       'qwen3.7-plus',
+      'hy4-preview',
       'hy3'
     ])
     expect(zenModels).toEqual([
       'kimi-k2.7-code',
+      'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
+      'claude-fable-5-1',
       'claude-fable-5',
       'claude-opus-5',
       'claude-sonnet-5',
+      'grok-4.7',
       'grok-4.6',
       'gpt-5.5',
       'gpt-5.5-pro',
@@ -131,21 +141,41 @@ describe('provider registry', () => {
       'claude-haiku-4-5',
       'grok-4.5',
       'grok-build-0.1',
+      'muse-spark-1.3',
       'muse-spark-1.2',
+      'qwen3.8-flash',
       'qwen3.7-max',
       'qwen3.7-plus',
       'qwen3.5-plus',
       'kimi-k3',
       'kimi-k2.6',
+      'deepseek-v4.1-flash',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
       'minimax-m3',
+      'glm-5.3',
+      'glm-5.3-flash',
       'glm-5.2',
       'glm-5.1',
       'big-pickle',
       'mimo-v2.5-free'
     ])
-    for (const excluded of ['minimax-m2.7', 'minimax-m2.5', 'qwen3.6-plus']) {
+    // Deliberately curated out, two standing policies: legacy lower-tier models are not backfilled
+    // (m2.x MiniMax, qwen3.6-plus, glm-5, kimi-k2.5, gpt-5.x codex variants older than gpt-5.3-codex),
+    // and the transient limited-time free entries stay out — the free roster churns too fast to ship
+    // bundled (big-pickle and mimo-v2.5-free predate this policy and are grandfathered).
+    for (const excluded of [
+      'minimax-m2.7',
+      'minimax-m2.5',
+      'qwen3.6-plus',
+      'glm-5',
+      'kimi-k2.5',
+      'gpt-5-codex',
+      'gpt-5.1-codex',
+      'muse-spark-1.3-contributor-free',
+      'mimo-v2.6-flash-free',
+      'nemotron-3-ultra-free'
+    ]) {
       expect(goModels).not.toContain(excluded)
       expect(zenModels).not.toContain(excluded)
     }
@@ -157,6 +187,122 @@ describe('provider registry', () => {
     expect(resolveVendorModelApiEndpoints('opencode', 'minimax-m3')).toEqual(['openai'])
     expect(isVendorModelMultimodal('opencode-go', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('opencode', 'gpt-5.3-codex-spark')).toBe(false)
+  })
+
+  it('exposes the 2026-09 OpenCode Zen additions with their documented capabilities', () => {
+    // Protocol per https://opencode.ai/docs/zen; context/vision/effort per
+    // https://models.dev/api.json (opencode), checked 2026-09-22.
+    expect(resolveVendorModelApiEndpoints('opencode', 'gpt-6-astra')).toEqual(['responses'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'claude-fable-5-1')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'grok-4.7')).toEqual(['responses'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'muse-spark-1.3')).toEqual(['responses'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'qwen3.8-flash')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'deepseek-v4.1-flash')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'glm-5.3')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode', 'glm-5.3-flash')).toEqual(['openai'])
+    expect(resolveModelContextWindow('opencode', 'gpt-6-astra')).toBe(1_050_000)
+    expect(resolveModelContextWindow('opencode', 'claude-fable-5-1')).toBe(1_000_000)
+    expect(resolveModelContextWindow('opencode', 'grok-4.7')).toBe(500_000)
+    expect(resolveModelContextWindow('opencode', 'muse-spark-1.3')).toBe(1_048_576)
+    expect(resolveModelContextWindow('opencode', 'qwen3.8-flash')).toBe(1_000_000)
+    expect(resolveModelContextWindow('opencode', 'deepseek-v4.1-flash')).toBe(1_000_000)
+    expect(resolveModelContextWindow('opencode', 'glm-5.3')).toBe(1_000_000)
+    expect(resolveModelContextWindow('opencode', 'glm-5.3-flash')).toBe(1_000_000)
+    expect(resolveVendorModelReasoningEffort('opencode', 'gpt-6-astra')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'claude-fable-5-1')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'grok-4.7')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'muse-spark-1.3')).toEqual({
+      supported: true,
+      // models.dev lists a fifth xhigh rung; the shipped preset keeps the 1.2 ceiling.
+      slots: ['minimal', 'low', 'medium', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'qwen3.8-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'xhigh', 'xhigh', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'deepseek-v4.1-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'glm-5.3')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode', 'glm-5.3-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(isVendorModelMultimodal('opencode', 'gpt-6-astra')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'claude-fable-5-1')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'grok-4.7')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'muse-spark-1.3')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'qwen3.8-flash')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'deepseek-v4.1-flash')).toBe(true)
+    expect(isVendorModelMultimodal('opencode', 'glm-5.3')).toBe(false)
+    expect(isVendorModelMultimodal('opencode', 'glm-5.3-flash')).toBe(true)
+  })
+
+  it('exposes the 2026-09 OpenCode Go additions with their documented capabilities', () => {
+    // Protocol per https://opencode.ai/docs/go; context/vision/effort per
+    // https://models.dev/api.json (opencode-go), checked 2026-09-22.
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'grok-4.7')).toEqual(['responses'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'deepseek-v4.1-flash')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'mimo-v2.6-flash')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'mimo-v2.6-pro')).toEqual(['openai'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'muse-spark-1.3-contributor')).toEqual([
+      'responses'
+    ])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'qwen3.8-flash')).toEqual(['anthropic'])
+    expect(resolveVendorModelApiEndpoints('opencode-go', 'hy4-preview')).toEqual(['openai'])
+    expect(resolveModelContextWindow('opencode-go', 'grok-4.7')).toBe(500_000)
+    expect(resolveModelContextWindow('opencode-go', 'deepseek-v4.1-flash')).toBe(1_000_000)
+    expect(resolveModelContextWindow('opencode-go', 'mimo-v2.6-flash')).toBe(1_048_576)
+    expect(resolveModelContextWindow('opencode-go', 'mimo-v2.6-pro')).toBe(1_048_576)
+    expect(resolveModelContextWindow('opencode-go', 'muse-spark-1.3-contributor')).toBe(1_048_576)
+    expect(resolveModelContextWindow('opencode-go', 'qwen3.8-flash')).toBe(1_000_000)
+    expect(resolveModelContextWindow('opencode-go', 'hy4-preview')).toBe(1_024_000)
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'grok-4.7')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'deepseek-v4.1-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'qwen3.8-flash')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'xhigh', 'xhigh', 'xhigh']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'muse-spark-1.3-contributor')).toEqual({
+      supported: true,
+      slots: ['minimal', 'low', 'medium', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'hy4-preview')).toEqual({
+      supported: true,
+      slots: ['none', 'high', 'high', 'high', 'high']
+    })
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'mimo-v2.6-flash')).toEqual({
+      supported: false
+    })
+    expect(resolveVendorModelReasoningEffort('opencode-go', 'mimo-v2.6-pro')).toEqual({
+      supported: false
+    })
+    expect(isVendorModelMultimodal('opencode-go', 'grok-4.7')).toBe(true)
+    expect(isVendorModelMultimodal('opencode-go', 'deepseek-v4.1-flash')).toBe(true)
+    expect(isVendorModelMultimodal('opencode-go', 'mimo-v2.6-flash')).toBe(true)
+    expect(isVendorModelMultimodal('opencode-go', 'mimo-v2.6-pro')).toBe(true)
+    expect(isVendorModelMultimodal('opencode-go', 'muse-spark-1.3-contributor')).toBe(true)
+    expect(isVendorModelMultimodal('opencode-go', 'qwen3.8-flash')).toBe(true)
+    expect(isVendorModelMultimodal('opencode-go', 'hy4-preview')).toBe(false)
   })
 
   it.each([
@@ -488,8 +634,28 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/anthropic')
     expect(resolveVendorOpenAiBaseUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1')
     expect(resolveVendorModelsUrl('xiaomimimo')).toBe('https://api.xiaomimimo.com/v1/models')
-    expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.5-pro')
+    expect(defaultVendorModel('xiaomimimo')).toBe('mimo-v2.6-pro')
+    expect(getOfficialVendorModelIds('xiaomimimo')).toEqual([
+      'mimo-v2.6-pro',
+      'mimo-v2.6-flash',
+      'mimo-v2.6-pro-ultraspeed',
+      'mimo-v2.5-pro',
+      'mimo-v2.5'
+    ])
   })
+
+  it.each(['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.6-pro-ultraspeed'])(
+    'resolves Xiaomi MIMO %s capabilities',
+    (model) => {
+      expect(resolveModelContextWindow('xiaomimimo', model)).toBe(1_000_000)
+      expect(resolveVendorModelApiEndpoints('xiaomimimo', model)).toEqual(['anthropic', 'openai'])
+      expect(isVendorModelMultimodal('xiaomimimo', model)).toBe(true)
+      expect(resolveVendorModelReasoningEffort('xiaomimimo', model)).toEqual({
+        supported: true,
+        slots: ['none', 'high', 'high', 'high', 'high']
+      })
+    }
+  )
 
   it.each([undefined, 'china', 'unknown'])(
     'preserves the China endpoint for SenseNova region %s',
@@ -1026,9 +1192,10 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('kimiforcode', 'kimi-for-coding-highspeed')).toBe(false)
     })
 
-    it('returns false for Xiaomi MIMO models (no vision support)', () => {
+    it('preserves Xiaomi MIMO legacy and unknown model vision defaults', () => {
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5-pro')).toBe(false)
       expect(isVendorModelMultimodal('xiaomimimo', 'mimo-v2.5')).toBe(false)
+      expect(isVendorModelMultimodal('xiaomimimo', 'mimo-unknown')).toBe(false)
     })
 
     it('enables SenseNova Flash Lite and hosted Kimi vision without enabling text-only models', () => {

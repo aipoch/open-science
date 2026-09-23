@@ -273,6 +273,44 @@ describe('AgentRuntimeManager', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it.each(['2.1.117', '2.1.0', undefined, 'unknown', '2.1.118-beta'])(
+    'rejects cached Claude CLI %s before starting an incompatible ACP session',
+    async (version) => {
+      const executable = join(storageRoot, 'claude')
+      await writeFile(executable, '')
+      await chmod(executable, 0o755)
+      inventory.claude.set(executable, version)
+      await expect(manager.resolveClaudeExecutable(executable)).rejects.toThrow(
+        'Update Claude Code to 2.1.118 or later'
+      )
+    }
+  )
+
+  it('rechecks a cached Claude executable after an external downgrade', async () => {
+    const executable = join(storageRoot, 'claude')
+    await writeFile(executable, '')
+    await chmod(executable, 0o755)
+    inventory.claude.set(executable, '2.1.118')
+    await expect(manager.resolveClaudeExecutable(executable)).resolves.toBe(executable)
+    inventory.claude.set(executable, '2.1.117')
+    await expect(manager.resolveClaudeExecutable(executable)).rejects.toThrow(
+      'Update Claude Code to 2.1.118 or later'
+    )
+  })
+
+  it('rejects an old newly detected Claude CLI and accepts it after an in-place update', async () => {
+    const executable = '/detected/claude'
+    inventory.claude.set(executable, '2.1.117')
+    manager = createManager({
+      detectDeps: { ...createClaudeDeps(inventory), env: { PATH: '/detected' } }
+    })
+    await expect(manager.resolveClaudeExecutable(undefined)).rejects.toThrow(
+      'Update Claude Code to 2.1.118 or later'
+    )
+    inventory.claude.set(executable, '2.1.118')
+    await expect(manager.resolveClaudeExecutable(undefined)).resolves.toBe(executable)
+  })
+
   it('persists successful detection for all three runtime storage shapes', async () => {
     // The injected detector platform is Linux, so keep these virtual inventory paths POSIX on every
     // host. Using the host path helpers makes the Windows keys disagree with the detector probes.
@@ -664,11 +702,11 @@ describe('AgentRuntimeManager', () => {
   it('avoids a third configured-runtime probe pass across the startup inspection chain', async () => {
     const claudePath = join(storageRoot, 'bin', 'claude')
     const opencodePath = join(storageRoot, 'bin', 'opencode')
-    inventory.claude.set(claudePath, '2.1.0')
+    inventory.claude.set(claudePath, '2.1.118')
     inventory.opencode.set(opencodePath, '1.19.0')
     inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
     inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
-    await repository.setClaudeInfo({ resolvedPath: claudePath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: claudePath, version: '2.1.118' })
     await repository.setOpencodeInfo(opencodePath, '1.19.0')
     await repository.setCodexInfo({
       resolvedPath: managedAdapterPath,
@@ -741,7 +779,7 @@ describe('AgentRuntimeManager', () => {
 
   it('projects a newly detected runtime without a third version subprocess', async () => {
     const claudePath = posix.join('/detected', 'claude')
-    inventory.claude.set(claudePath, '2.1.0')
+    inventory.claude.set(claudePath, '2.1.118')
     const claudeDeps = createClaudeDeps(inventory)
     const getVersion = vi.fn(claudeDeps.getVersion)
     manager = createManager({

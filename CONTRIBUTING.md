@@ -363,6 +363,22 @@ ci(review): unify automated AI reviews
   Nightly publication additionally requires the advisory runtime-certification and regression
   jobs of the source run to have succeeded.
 
+### PR and issue labels
+
+[`.github/labels.json`](.github/labels.json) defines PR type, `size:*`, and issue intake labels.
+PR labels refresh on opening, reopening, new commits and title edits; size counts added/deleted
+lines excluding lockfiles. File-based area labels are not generated. Other human/bot labels remain
+untouched. Labels do not control CI or merges.
+
+New template issues receive `needs-triage` and their category; maintainers remove `needs-triage`
+after assessment. Existing issues and PRs are not assigned intake labels in bulk.
+
+Catalog changes on `main` run **Sync Label Catalog**. Check its first successful run before relying
+on new template labels. Manual runs on `main` default to a dry-run preview; disable **dry-run** to
+apply. Sync creates labels and updates managed colors/descriptions without renaming labels. It also
+deletes the 10 retired area labels from the former catalog, removing their assignments from historical
+PRs and issues. Size labels and custom labels, including other `area:*` names, are preserved.
+
 ## Reporting Issues
 
 When filing a bug report, please include:
