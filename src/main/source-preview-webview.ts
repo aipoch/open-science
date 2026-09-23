@@ -94,10 +94,15 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
           navigationId
         })
     }
+    // Count the same events as the webview renderer, including programmatic loads and reloads.
+    const startNavigation = (
+      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>
+    ): void => {
+      if (event.isMainFrame && !event.isSameDocument) navigationId += 1
+    }
     const navigate = (
       event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>
     ): void => {
-      if (event.isMainFrame) navigationId += 1
       if (
         !(event.isMainFrame
           ? parseHttpsSourceUrl(event.url)
@@ -212,6 +217,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       registeredSourceGuests.delete(guest)
       cleanups.delete(guest)
       if (activeSources.get(host) === guest) activeSources.delete(host)
+      guest.removeListener('did-start-navigation', startNavigation)
       guest.removeListener('will-frame-navigate', navigate)
       guest.removeListener('will-redirect', redirect)
       guest.removeListener('focus', focus)
@@ -221,6 +227,7 @@ export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
       guest.removeListener('destroyed', cleanup)
     }
     cleanups.set(guest, cleanup)
+    guest.on('did-start-navigation', startNavigation)
     guest.on('will-frame-navigate', navigate)
     guest.on('will-redirect', redirect)
     guest.on('focus', focus)

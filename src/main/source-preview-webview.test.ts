@@ -108,6 +108,7 @@ describe('source guest security', () => {
     s.attach()
     for (const url of ['file:///private', 'http://example.com', 'open-science-preview://private']) {
       const event = { preventDefault: vi.fn(), isMainFrame: true, url }
+      s.guest.emit('did-start-navigation', { ...event, isSameDocument: false })
       s.guest.emit('will-frame-navigate', event)
       expect(event.preventDefault).toHaveBeenCalledOnce()
       event.preventDefault.mockClear()
@@ -129,11 +130,13 @@ describe('source guest security', () => {
   it('assigns a new navigation id to each consecutive top-level navigation', () => {
     const s = setup()
     s.attach()
+    s.guest.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
     s.guest.emit('will-frame-navigate', {
       preventDefault: vi.fn(),
       isMainFrame: true,
       url: 'http://one.example'
     })
+    s.guest.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
     s.guest.emit('will-frame-navigate', {
       preventDefault: vi.fn(),
       isMainFrame: true,
@@ -149,6 +152,30 @@ describe('source guest security', () => {
       url: 'http://two.example',
       navigationId: 2
     })
+  })
+  it('counts reloads before reporting a blocked redirect without will-frame-navigate', () => {
+    const s = setup()
+    s.attach()
+    // Initial load and reload both emit did-start-navigation, but reload skips will-frame-navigate.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      s.guest.emit('did-start-navigation', {
+        isMainFrame: true,
+        isSameDocument: false,
+        url: 'https://example.com/paper'
+      })
+    }
+    s.guest.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
+    s.guest.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
+    const event = { preventDefault: vi.fn() }
+    s.guest.emit('will-redirect', event, 'http://blocked.example', false, true)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(s.host.send).toHaveBeenCalledWith('source-preview:navigation-blocked', {
+      guestId: 12,
+      url: 'http://blocked.example',
+      navigationId: 3
+    })
+    s.guest.emit('destroyed')
+    expect(s.guest.listenerCount('did-start-navigation')).toBe(0)
   })
   it('registers only live HTTPS guests for storage access and removes them on destroy', () => {
     const s = setup()
