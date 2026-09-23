@@ -18,6 +18,12 @@ export type SensitiveContentFailure = {
   occurredAt: string
   evidence: SensitiveContentEvidence[]
 }
+export type SensitiveContentSource = {
+  storageKey: string
+  root: string
+  relativePath: string
+  checksum?: string
+}
 export type SessionDiagnosticItem = {
   id: string
   kind: 'session' | 'invalid-session' | 'log' | 'database' | 'sensitive-evidence' | 'sensitive-file'
@@ -49,6 +55,7 @@ export type SessionDiagnosticWorkerInput = SessionDiagnosticIdentity & {
   selectedItems?: string[]
   directory?: string
   sensitiveContent?: SensitiveContentFailure
+  sensitiveContentSources?: SensitiveContentSource[]
 }
 export type SessionDiagnosticWorkerResult =
   | { kind: 'inspection'; inspection: SessionDiagnosticInspection }

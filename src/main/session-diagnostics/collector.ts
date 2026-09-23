@@ -1,4 +1,5 @@
 import { constants } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, open, opendir, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import * as tar from 'tar'
@@ -40,7 +41,12 @@ const diagnosticFailure = (error: unknown): string => {
     ? `Diagnostic source failed (${code})`
     : 'Diagnostic source unavailable or collection failed'
 }
-type Source = SessionDiagnosticItem & { path?: string; root: string; output: string }
+type Source = SessionDiagnosticItem & {
+  path?: string
+  root: string
+  output: string
+  expectedChecksum?: string
+}
 
 // Check every descendant boundary, not only the final file, before any source access.
 async function checkPath(root: string, path: string): Promise<void> {
@@ -154,10 +160,16 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
           .filter((key): key is string => Boolean(key))
       )
     ].slice(0, 20)
+    const retainedSources = new Map(
+      (input.sensitiveContentSources ?? []).map((source) => [source.storageKey, source])
+    )
     for (const [index, key] of keys.entries()) {
       let path: string | undefined
+      const retained = retainedSources.get(key)
       try {
-        path = resolveStorageKey(input.dataRoot, key)
+        path = retained
+          ? resolveStorageKey(retained.root, retained.relativePath)
+          : resolveStorageKey(input.dataRoot, key)
       } catch {
         /* Invalid storage keys remain visible as unavailable diagnostic items. */
       }
@@ -167,8 +179,9 @@ async function discover(input: SessionDiagnosticWorkerInput): Promise<Source[]> 
         name: key.slice(0, 240),
         kind: 'sensitive-file',
         available: false,
-        root: input.dataRoot,
+        root: retained?.root ?? input.dataRoot,
         path,
+        expectedChecksum: retained?.checksum,
         output: `sensitive-content/files/${index}-${label}`
       })
     }
@@ -234,6 +247,11 @@ async function readBinarySource(source: Source): Promise<Buffer> {
     const after = await handle.stat()
     if (offset !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs)
       throw new DiagnosticCollectionError('Source changed during collection')
+    if (source.expectedChecksum) {
+      const checksum = createHash('sha256').update(buffer).digest('hex')
+      if (checksum !== source.expectedChecksum)
+        throw new DiagnosticCollectionError('Source changed since sensitive-content detection')
+    }
     return buffer
   } finally {
     await handle.close()

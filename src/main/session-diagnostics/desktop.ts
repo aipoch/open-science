@@ -10,13 +10,17 @@ import type {
   SessionDiagnosticRequest,
   SessionDiagnosticWorkerInput,
   SessionDiagnosticWorkerResult,
-  SensitiveContentFailure
+  SensitiveContentFailure,
+  SensitiveContentSource
 } from '../../shared/session-diagnostics'
 
 type Sources = Pick<
   SessionDiagnosticWorkerInput,
   'dataRoot' | 'configRoot' | 'logPath' | 'appVersion'
-> & { sensitiveContent?: SensitiveContentFailure }
+> & {
+  sensitiveContent?: SensitiveContentFailure
+  sensitiveContentSources?: SensitiveContentSource[]
+}
 type Options = {
   createWorker: (options: WorkerOptions) => Worker
   resolveSources: (identity: SessionDiagnosticRequest) => Sources

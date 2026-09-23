@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -139,6 +140,62 @@ describe('session diagnostics isolated collector', () => {
     expect(
       await readFile(join(input.directory!, 'content/sensitive-content/files/0-matched.bin'))
     ).toEqual(bytes)
+  })
+  it('uses the retained package source descriptor instead of a colliding data-root key', async () => {
+    const input = await fixture()
+    const sourceKey = 'objects/matched.bin'
+    const retainedRoot = join(input.configRoot, 'artifacts/project/session/.session-package/source')
+    const retained = Buffer.from('retained package bytes')
+    const lookalike = join(input.dataRoot, sourceKey)
+    await mkdir(join(retainedRoot, 'objects'), { recursive: true })
+    await mkdir(dirname(lookalike), { recursive: true })
+    await writeFile(join(retainedRoot, sourceKey), retained)
+    await writeFile(lookalike, 'unrelated local bytes')
+    input.sensitiveContent = {
+      occurredAt: '2026-09-23T00:00:00.000Z',
+      evidence: [
+        {
+          location: `${sourceKey} @4`,
+          offset: 4,
+          rule: 'assignment',
+          matchLength: 16,
+          leftBoundary: 'whitespace',
+          rightBoundary: 'punctuation',
+          context: 'token=[redacted]',
+          valueLength: 16,
+          valueHash: 'a'.repeat(64),
+          sourceStorageKey: sourceKey
+        }
+      ]
+    }
+    input.sensitiveContentSources = [
+      {
+        storageKey: sourceKey,
+        root: retainedRoot,
+        relativePath: sourceKey,
+        checksum: createHash('sha256').update(retained).digest('hex')
+      }
+    ]
+    const inspection = await runSessionDiagnosticWorker({ ...input, action: 'inspect' })
+    expect(inspection).toMatchObject({ kind: 'inspection' })
+    if (inspection.kind !== 'inspection') return
+    expect(inspection.inspection.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'sensitive-file:0',
+          available: true,
+          sizeBytes: retained.length
+        })
+      ])
+    )
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: ['sensitive-file:0']
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    expect(
+      await readFile(join(input.directory!, 'content/sensitive-content/files/0-matched.bin'))
+    ).toEqual(retained)
   })
   it('rejects ancestor symlinks and permits oversized metadata sources during inspection', async () => {
     const input = await fixture()

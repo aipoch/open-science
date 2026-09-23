@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { findSensitivePackageText, isPrivatePackageValue } from './sensitive-content'
+import { createHash } from 'node:crypto'
+import {
+  buildSensitiveContentEvidence,
+  findSensitivePackageText,
+  isPrivatePackageValue
+} from './sensitive-content'
 
 describe('package text policy', () => {
   it.each([
@@ -60,6 +65,30 @@ describe('package text policy', () => {
     expect(isPrivatePackageValue('Bearer [redacted]')).toBe(false)
     expect(isPrivatePackageValue('[redacted]extra')).toBe(true)
   })
+})
+
+it('hashes and measures the sensitive value instead of the detector span', () => {
+  const text = '{"apiKey":"secret-value"}'
+  const match = findSensitivePackageText(text)
+  expect(match).toMatchObject({ rule: 'field', valueLength: 'secret-value'.length })
+  expect(match).toBeDefined()
+  const evidence = buildSensitiveContentEvidence(text, match!, 'records.json @0')
+  expect(text.slice(match!.valueOffset, match!.valueOffset! + match!.valueLength!)).toBe(
+    'secret-value'
+  )
+  expect(evidence.valueLength).toBe('secret-value'.length)
+  expect(evidence.valueHash).toBe(createHash('sha256').update('secret-value').digest('hex'))
+  expect(evidence.matchLength).toBeGreaterThan(evidence.valueLength!)
+})
+
+it('keeps oversized detector spans within the operation contract bounds', () => {
+  const text = `apiKey=${'a'.repeat(12_000)}`
+  const match = findSensitivePackageText(text)
+  expect(match).toBeDefined()
+  const evidence = buildSensitiveContentEvidence(text, match!, 'objects/result.json @0')
+  expect(evidence.matchLength).toBe(10_000)
+  expect(evidence.valueLength).toBeUndefined()
+  expect(evidence.valueHash).toMatch(/^[a-f0-9]{64}$/)
 })
 
 it('keeps matched values out of location errors', async () => {

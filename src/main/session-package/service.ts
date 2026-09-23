@@ -88,7 +88,8 @@ import {
   buildSensitiveContentEvidence,
   findSensitivePackageText,
   isPrivatePackageValue,
-  PackageSensitiveContentError
+  PackageSensitiveContentError,
+  type PackageSensitiveContentSource
 } from './sensitive-content'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
 import { defaultFileDurability } from '../storage/file-durability'
@@ -302,7 +303,8 @@ const assertShareableFile = async (
   path: string,
   signal?: AbortSignal,
   location = 'file',
-  sourceStorageKey?: string
+  sourceStorageKey?: string,
+  source?: PackageSensitiveContentSource
 ): Promise<void> => {
   // Classify actual bytes, including extensionless evidence. UTF-16 is text when identified
   // by its BOM. PDF is a container even when all its bytes happen to be valid UTF-8.
@@ -325,7 +327,8 @@ const assertShareableFile = async (
             `${location} @${offset - tail.length + match.offset}`,
             sourceStorageKey,
             offset - tail.length
-          )
+          ),
+          source
         )
     }
     offset += decoded.length
@@ -637,7 +640,15 @@ export class SessionPackageService {
                 join(source, entry.path),
                 this.signal,
                 entry.storageKey ?? entry.path,
+                entry.storageKey,
                 entry.storageKey
+                  ? {
+                      storageKey: entry.storageKey,
+                      root: source,
+                      relativePath: entry.path,
+                      checksum: entry.checksum
+                    }
+                  : undefined
               )
             await copyFileWithinBudget(
               join(source, entry.path),
@@ -897,7 +908,13 @@ export class SessionPackageService {
               join(directory, objectPath),
               this.signal,
               storageKey,
-              sourceKey(storageKey)
+              sourceKey(storageKey),
+              {
+                storageKey: sourceKey(storageKey),
+                root: this.options.storageRoot,
+                relativePath: sourceKey(storageKey),
+                checksum: copied.checksum
+              }
             )
           inventory.push({
             path: objectPath,

@@ -1,5 +1,8 @@
 import { PACKAGE_REQUIRES_UPDATE } from './archive'
-import { PackageSensitiveContentError } from './sensitive-content'
+import {
+  PackageSensitiveContentError,
+  type PackageSensitiveContentSource
+} from './sensitive-content'
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '../../shared/diagnostic-redaction'
 import { formatPackageBytes } from '../../shared/session-package'
@@ -66,7 +69,8 @@ export class SessionPackageDesktop {
       onOperationChanged?: (snapshot: PackageOperationSnapshot) => void
       onSensitiveContentFailure?: (
         request: SessionPackageRequest,
-        evidence: SensitiveContentEvidence[]
+        evidence: SensitiveContentEvidence[],
+        sources: PackageSensitiveContentSource[]
       ) => void
       assertCanStart?: () => void
     }
@@ -339,7 +343,11 @@ export class SessionPackageDesktop {
       if (error instanceof PackageSensitiveContentError && request && error.evidence) {
         this.operations.setSensitiveContent([error.evidence])
         try {
-          this.options.onSensitiveContentFailure?.(request, [error.evidence])
+          this.options.onSensitiveContentFailure?.(
+            request,
+            [error.evidence],
+            error.source ? [error.source] : []
+          )
         } catch {
           // Diagnostic capture must not change the package operation result.
         }
@@ -457,7 +465,11 @@ export class SessionPackageDesktop {
           if (error instanceof PackageSensitiveContentError && error.evidence) {
             this.operations.setSensitiveContent([error.evidence])
             try {
-              this.options.onSensitiveContentFailure?.(request, [error.evidence])
+              this.options.onSensitiveContentFailure?.(
+                request,
+                [error.evidence],
+                error.source ? [error.source] : []
+              )
             } catch {
               // Diagnostic capture must not change the package operation result.
             }
