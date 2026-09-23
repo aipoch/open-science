@@ -682,34 +682,40 @@ export const createSessionDetailsOwner = (
     const claimKey = `${keyOf(session.projectId, session.id)}\0${generation.requestId}`
     if (retriedAdmissionClaims.has(claimKey)) return false
     retriedAdmissionClaims.add(claimKey)
-    const queued = await dependencies.sessions.mutateSession(
-      session.projectId,
-      session.id,
-      (current) => {
-        const currentGeneration = current.sessionDetailsGeneration
-        if (
-          current.sessionDetailsSource !== 'fallback' ||
-          currentGeneration?.status !== 'failed' ||
-          'startedAt' in currentGeneration ||
-          currentGeneration.requestId !== generation.requestId ||
-          !hasValidGenerationAuthority(current)
-        ) {
-          return { kind: 'unchanged' }
-        }
-        return {
-          kind: 'write',
-          session: {
-            ...current,
-            sessionDetailsGeneration: {
-              status: 'queued',
-              sourceMessageId: currentGeneration.sourceMessageId,
-              requestId: currentGeneration.requestId,
-              queuedAt: now()
+    let queued: SessionDetailsSession | undefined
+    try {
+      queued = await dependencies.sessions.mutateSession(
+        session.projectId,
+        session.id,
+        (current) => {
+          const currentGeneration = current.sessionDetailsGeneration
+          if (
+            current.sessionDetailsSource !== 'fallback' ||
+            currentGeneration?.status !== 'failed' ||
+            'startedAt' in currentGeneration ||
+            currentGeneration.requestId !== generation.requestId ||
+            !hasValidGenerationAuthority(current)
+          ) {
+            return { kind: 'unchanged' }
+          }
+          return {
+            kind: 'write',
+            session: {
+              ...current,
+              sessionDetailsGeneration: {
+                status: 'queued',
+                sourceMessageId: currentGeneration.sourceMessageId,
+                requestId: currentGeneration.requestId,
+                queuedAt: now()
+              }
             }
           }
         }
-      }
-    )
+      )
+    } catch {
+      retriedAdmissionClaims.delete(claimKey)
+      return false
+    }
     if (!queued) {
       retriedAdmissionClaims.delete(claimKey)
       return false
