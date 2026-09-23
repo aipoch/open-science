@@ -3063,7 +3063,8 @@ const createApplicationModules = async (
                   )
                 }
               },
-              delivery.messageId
+              delivery.messageId,
+              delivery.onRootAdmissionQueued
             )
           }
         )
