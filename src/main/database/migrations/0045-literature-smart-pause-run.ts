@@ -12,12 +12,50 @@ const literatureSmartPauseRunMigration = {
          AND (candidate."state" = 'interrupted'
            OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND candidate."state" = 'failed'))
          AND (
-           SELECT COUNT(*)
-           FROM "LiteratureSmartRun" same_collection
-           WHERE same_collection."collectionId" = "LiteratureSmartCollection"."collectionId"
-             AND (same_collection."state" = 'interrupted'
-               OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND same_collection."state" = 'failed'))
-         ) = 1
+           (
+             EXISTS (
+               SELECT 1
+               FROM "ClassificationUsage" usage
+               WHERE usage."runId" = candidate."id"
+                 AND usage."scenario" = 'literature-automatic'
+             )
+             AND (
+               SELECT COUNT(*)
+               FROM "LiteratureSmartRun" automatic_candidate
+               WHERE automatic_candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
+                 AND (automatic_candidate."state" = 'interrupted'
+                   OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND automatic_candidate."state" = 'failed'))
+                 AND EXISTS (
+                   SELECT 1
+                   FROM "ClassificationUsage" automatic_usage
+                   WHERE automatic_usage."runId" = automatic_candidate."id"
+                     AND automatic_usage."scenario" = 'literature-automatic'
+                 )
+             ) = 1
+           )
+           OR (
+             NOT EXISTS (
+               SELECT 1
+               FROM "LiteratureSmartRun" automatic_candidate
+               WHERE automatic_candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
+                 AND (automatic_candidate."state" = 'interrupted'
+                   OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND automatic_candidate."state" = 'failed'))
+                 AND EXISTS (
+                   SELECT 1
+                   FROM "ClassificationUsage" automatic_usage
+                   WHERE automatic_usage."runId" = automatic_candidate."id"
+                     AND automatic_usage."scenario" = 'literature-automatic'
+                 )
+             )
+             AND (
+               SELECT COUNT(*)
+               FROM "LiteratureSmartRun" same_collection
+               WHERE same_collection."collectionId" = "LiteratureSmartCollection"."collectionId"
+                 AND (same_collection."state" = 'interrupted'
+                   OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND same_collection."state" = 'failed'))
+             ) = 1
+           )
+         )
        LIMIT 1
      )
      WHERE "automaticPauseRunId" IS NULL

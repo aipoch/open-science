@@ -166,3 +166,87 @@ it('adds empty smart storage while preserving ordinary collections, membership a
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('backfills an automatic pause from durable automatic usage evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
+  const client = createProjectDbClient(root)
+  try {
+    await migrateApplicationDatabase(client)
+    await client.literatureCollection.create({
+      data: {
+        id: 'paused',
+        name: 'Paused',
+        nameKey: 'paused',
+        smart: {
+          create: {
+            scopeKind: 'library',
+            autoUpdate: true,
+            automaticPauseReason: 'run-limit'
+          }
+        }
+      }
+    })
+    await client.literatureSmartRuleRevision.create({
+      data: {
+        collectionId: 'paused',
+        revision: 1,
+        description: '',
+        inclusionCriteria: 'Trials',
+        exclusionCriteria: '',
+        scopeKind: 'library',
+        evidenceMode: 'abstract'
+      }
+    })
+    await client.literatureSmartRun.createMany({
+      data: [
+        {
+          id: 'automatic-run',
+          collectionId: 'paused',
+          kind: 'refresh',
+          state: 'interrupted',
+          ruleRevision: 1,
+          policyKey: 'fixture'
+        },
+        {
+          id: 'manual-run',
+          collectionId: 'paused',
+          kind: 'refresh',
+          state: 'interrupted',
+          ruleRevision: 1,
+          policyKey: 'fixture'
+        }
+      ]
+    })
+    await client.classificationUsage.create({
+      data: {
+        eventId: 'automatic-usage',
+        collectionId: 'paused',
+        runId: 'automatic-run',
+        scenario: 'literature-automatic',
+        providerId: 'fixture',
+        model: 'fixture',
+        occurredAt: new Date(),
+        status: 'completed',
+        inputTokens: 1n,
+        outputTokens: 1n,
+        usageIncomplete: false
+      }
+    })
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "LiteratureSmartCollection" DROP COLUMN "automaticPauseRunId"'
+    )
+    await client.$executeRawUnsafe('ALTER TABLE "LiteratureSmartRun" DROP COLUMN "abandonedAt"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
+    )
+
+    await migrateApplicationDatabase(client)
+
+    await expect(
+      client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
+    ).resolves.toMatchObject({ automaticPauseRunId: 'automatic-run' })
+  } finally {
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
+  }
+})
