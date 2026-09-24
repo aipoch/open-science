@@ -94,9 +94,14 @@ const CODEX_MODE_IDS = {
 // contract. This must live in CODEX_CONFIG (rather than only custom model metadata), because trusted
 // bundled models intentionally do not receive an app-authored model catalog.
 const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
+  // Open-Science owns the Skill projection and MCP surface. Native Codex plugin/app discovery can
+  // advertise provider-installed, plugin-qualified Skills that the app runtime cannot load.
+  apps: false,
   memories: false,
   multi_agent: false,
   multi_agent_v2: false,
+  plugins: false,
+  remote_plugin: false,
   // The bounded Skill loader must remain callable without deferred tool discovery.
   code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
   // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations

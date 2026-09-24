@@ -328,7 +328,7 @@ describe('codexFramework', () => {
     expect(codexNativeModelInstructions).not.toContain('coding agent')
   })
 
-  it('disables native multi-agent, Shell, and memory across every backend route', () => {
+  it('disables native plugins, apps, multi-agent, Shell, and memory across every backend route', () => {
     const framework = createCodexFramework()
     const configurations = [
       framework.prepareModelConfig(
@@ -398,9 +398,12 @@ describe('codexFramework', () => {
 
     expect(codexConfigs.map(({ features }) => features)).toEqual(
       configurations.map((_configuration, index) => ({
+        apps: false,
         memories: false,
         multi_agent: false,
         multi_agent_v2: false,
+        plugins: false,
+        remote_plugin: false,
         code_mode: {
           direct_only_tool_namespaces:
             index === 2 ? ['mcp__skills', 'mcp__open_science_plan'] : ['mcp__skills']
@@ -942,9 +945,12 @@ describe('codexFramework', () => {
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
           features: {
+            apps: false,
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            plugins: false,
+            remote_plugin: false,
             code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
@@ -967,9 +973,12 @@ describe('codexFramework', () => {
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
           features: {
+            apps: false,
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            plugins: false,
+            remote_plugin: false,
             code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
