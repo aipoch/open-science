@@ -35,14 +35,30 @@ const run = (
     child.on('close', (code) => resolveRun({ code, stderr, stdout }))
   })
 
+const transientGatewayFailure = (result: Awaited<ReturnType<typeof run>>): boolean =>
+  result.code === 7 && /Failed to connect to localhost port \d+/u.test(result.stderr)
+
+const retryDelays = [50, 100, 200, 400] as const
+
 // Release the command before any assertion runs. `run` settles only after the child closed, so
 // termination evidence exists here; a command left behind makes `dispose` fail without termination
 // evidence, which keeps the process-wide owner held and fails every later test in this file.
 const runAndCleanup = async (
   wrapped: NotebookSandboxedProcess,
-  cwd: string
+  cwd: string,
+  options: Readonly<{ retryTransientGatewayFailure?: boolean }> = {}
 ): Promise<Awaited<ReturnType<typeof run>> & { annotatedStderr: string }> => {
-  const result = await run(wrapped, cwd)
+  let result = await run(wrapped, cwd)
+  // macOS seatbelt can race the freshly opened localhost gateway while the sandboxed process is
+  // starting. Retry only this transport-level failure with bounded backoff; the final policy
+  // assertions still require the expected curl status and diagnostic marker.
+  if (options.retryTransientGatewayFailure) {
+    for (const delay of retryDelays) {
+      if (!transientGatewayFailure(result)) break
+      await new Promise((resolveRetry) => setTimeout(resolveRetry, delay))
+      result = await run(wrapped, cwd)
+    }
+  }
   const annotatedStderr = wrapped.annotateStderr(result.stderr)
   expect(await wrapped.cleanup('exit', { processesTerminated: true })).toEqual({
     processesTerminated: true,
@@ -424,7 +440,9 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
         cwd,
         onNetworkAccessRequest: async () => false
       })
-      const denied = await runAndCleanup(deniedProcess, cwd)
+      const denied = await runAndCleanup(deniedProcess, cwd, {
+        retryTransientGatewayFailure: true
+      })
       expect(denied.code, denied.annotatedStderr).toBe(22)
       expect(denied.stdout).not.toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
       expect(denied.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
