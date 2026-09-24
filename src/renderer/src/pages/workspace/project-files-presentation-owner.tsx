@@ -325,7 +325,7 @@ const FileListRow = ({
         title={file.name}
         onClick={onPreview}
       >
-        <span className="flex size-7 shrink-0 items-center justify-center rounded bg-bg-200 text-text-300">
+        <span className="flex size-7 shrink-0 items-center justify-center text-text-300">
           <FileTypeIcon name={file.name} mimeType={file.mimeType} />
         </span>
         <ExtensionPreservingFileName

@@ -99,7 +99,7 @@ const PreviewActiveContent = ({
 }
 
 const previewTabClassName =
-  'group flex h-8 max-w-[160px] shrink-0 items-center gap-1 rounded-md pl-2 pr-1 text-[12px] transition-colors'
+  'group flex h-8 max-w-[160px] shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1 text-[12px] transition-colors'
 
 const getPreviewTabId = (itemId: string): string => `preview-tab-${encodeURIComponent(itemId)}`
 const getPreviewPanelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
@@ -366,7 +366,7 @@ const PreviewTab = ({
           title={tabTitle}
         >
           {tab.type === 'file' ? (
-            <FileTypeIcon name={tab.name} mimeType={tab.mimeType} className="size-3.5" />
+            <FileTypeIcon name={tab.name} mimeType={tab.mimeType} />
           ) : tab.type === 'source' ? (
             <Globe2
               data-source-preview-tab-icon=""

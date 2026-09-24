@@ -50,7 +50,7 @@ type FileTypeIconProps = {
 }
 
 const FILE_ICON_BASE_CLASS_NAME =
-  'inline-flex size-4 shrink-0 items-center justify-center rounded-md border border-border-200/60 bg-bg-200 p-0.5'
+  'inline-flex size-5 shrink-0 items-center justify-center rounded-md border border-border-200/60 bg-bg-200 p-0.5'
 
 export const FileTypeIcon = ({
   name,
