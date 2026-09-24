@@ -328,6 +328,13 @@ describe('post-merge Windows validation', () => {
       if: "${{ matrix.platform == 'win' && inputs.sign_windows }}",
       run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked'
     })
+    const verification = readFileSync('scripts/ci/verify-windows-signature.ps1', 'utf8')
+    expect(verification).toContain(
+      "Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' -Recurse"
+    )
+    expect(verification).toContain('resources/micromamba.exe')
+    expect(verification).toContain('resources/micromamba-compat.exe')
+    expect(verification).toContain('notebook-appcontainer-host.exe')
   })
 
   it('provides an isolated Windows-only SignPath dry-run', () => {

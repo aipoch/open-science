@@ -36,3 +36,33 @@ it('signs the unpacked credential executables before signing the outer macOS app
     expect(position).toBeLessThan(calls.findIndex((args) => args.at(-1) === app))
   }
 })
+
+it('signs the Windows executables copied as loose extraResources only for Azure builds', async () => {
+  const calls: string[] = []
+  const exports: { default?: (context: unknown) => Promise<void> } = {}
+  runInNewContext(readFileSync('build/adhoc-sign.cjs', 'utf8'), {
+    exports,
+    console: { log: vi.fn() },
+    require: (id: string) => {
+      if (id === 'node:path') return posix
+      if (id === 'node:fs') return { existsSync: () => true }
+      if (id === 'node:child_process') return { execFileSync: vi.fn() }
+      throw new Error(`Unexpected module ${id}`)
+    }
+  })
+  const options: { azureSignOptions?: object } = { azureSignOptions: {} }
+  const packager = {
+    platformSpecificBuildOptions: options,
+    signIf: vi.fn(async (file: string) => calls.push(file))
+  }
+  await exports.default!({ electronPlatformName: 'win32', appOutDir: '/fixture', packager })
+  expect(calls).toEqual([
+    '/fixture/resources/micromamba.exe',
+    '/fixture/resources/micromamba-compat.exe',
+    '/fixture/resources/notebook-network-sandbox/windows/x64/notebook-appcontainer-host.exe'
+  ])
+
+  delete options.azureSignOptions
+  await exports.default!({ electronPlatformName: 'win32', appOutDir: '/fixture', packager })
+  expect(calls).toHaveLength(3)
+})

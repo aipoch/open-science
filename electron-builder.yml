@@ -92,8 +92,8 @@ extraResources:
       - '*.d.ts'
       - 'LICENSE'
       - 'package.json'
-# Windows: an unsigned NSIS installer. SmartScreen shows a bypassable "unknown publisher" prompt.
-# The afterPack ad-hoc-sign hook is a no-op off macOS, so it is safe on this target.
+# Windows: stable releases use Azure Artifact Signing; nightly and other builds remain unsigned.
+# The afterPack hook signs loose extraResources EXEs only when Azure signing is configured.
 win:
   # Windows ProgID is a persisted association identity; other platforms use a display name.
   fileAssociations:

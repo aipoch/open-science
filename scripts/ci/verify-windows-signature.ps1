@@ -15,11 +15,20 @@ if ($installers.Count -ne 1) {
 
 $files = @($installers[0].FullName)
 if ($CheckUnpacked) {
-  $unpacked = Join-Path $InstallerDir 'win-unpacked/open-science.exe'
-  if (-not (Test-Path -LiteralPath $unpacked -PathType Leaf)) {
-    throw "Missing packaged Windows executable: $unpacked"
+  $unpacked = Join-Path $InstallerDir 'win-unpacked'
+  foreach ($relativePath in @(
+    'open-science.exe',
+    'resources/micromamba.exe',
+    'resources/micromamba-compat.exe',
+    'resources/notebook-network-sandbox/windows/x64/notebook-appcontainer-host.exe'
+  )) {
+    $expected = Join-Path $unpacked $relativePath
+    if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) {
+      throw "Missing packaged Windows executable: $expected"
+    }
   }
-  $files += $unpacked
+  $files += @(Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' -Recurse |
+      Select-Object -ExpandProperty FullName)
 }
 
 foreach ($file in $files) {

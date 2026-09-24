@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 
-// electron-builder afterPack hook: apply a valid deep ad-hoc signature on macOS.
+// electron-builder afterPack hook: sign loose resources before the outer application.
 //
 // Without an Apple "Developer ID Application" certificate, electron-builder skips code
 // signing entirely. That leaves the bundle with only Electron's linker-level ad-hoc
@@ -24,6 +24,24 @@ const path = require('node:path')
 
 /** @param {import('electron-builder').AfterPackContext} context */
 exports.default = async function adhocSign(context) {
+  if (context.electronPlatformName === 'win32') {
+    // electron-builder signs EXEs in app.asar.unpacked, but its extraResources copier skips its
+    // signing transformer for individual source files. These are the copies the installed app runs.
+    if (!context.packager.platformSpecificBuildOptions.azureSignOptions) return
+    for (const relativePath of [
+      'resources/micromamba.exe',
+      'resources/micromamba-compat.exe',
+      'resources/notebook-network-sandbox/windows/x64/notebook-appcontainer-host.exe'
+    ]) {
+      const executable = path.join(context.appOutDir, relativePath)
+      if (!fs.existsSync(executable)) {
+        throw new Error(`[windows-sign] missing bundled executable: ${relativePath}`)
+      }
+      await context.packager.signIf(executable)
+      console.log(`[windows-sign] signed bundled executable: ${relativePath}`)
+    }
+    return
+  }
   if (context.electronPlatformName !== 'darwin') return
 
   let appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
