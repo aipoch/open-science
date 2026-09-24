@@ -17,6 +17,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import type { Annotation } from '../../../../shared/annotations'
 import type { LiteratureItemView } from '../../../../shared/literature'
+import { SOURCE_PREVIEW_PARTITION } from '../../../../shared/source-preview'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { literatureReadingDocument } from '../literature/literature-reading'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
@@ -669,7 +670,7 @@ describe('PreviewPanel', () => {
     expect(iframe?.tagName).toBe('WEBVIEW')
     expect(iframe?.hasAttribute('allowpopups')).toBe(false)
     expect(iframe?.hasAttribute('preload')).toBe(false)
-    expect(iframe?.hasAttribute('partition')).toBe(false)
+    expect(iframe?.getAttribute('partition')).toBe(SOURCE_PREVIEW_PARTITION)
   })
 
   it('closes a source preview from the header action', async () => {
