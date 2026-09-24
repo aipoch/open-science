@@ -381,6 +381,12 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
   const images = page.locator(
     '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
   )
+  // The response text can render before the artifact references have been resolved into image
+  // nodes. Wait for the turn to finish before scrolling individual figures into view.
+  await expect(page.getByTestId('message-completion-live-region')).toContainText(
+    'Response completed.',
+    { timeout: 60_000 }
+  )
   // Offscreen figures stay as placeholders until they approach the viewport.
   // Visit each figure so this also verifies decoding on smaller Windows windows.
   for (const index of [1, 2, 3]) {
@@ -402,9 +408,6 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
       .toEqual({ complete: true, width: 1024, height: 1024 })
   }
   await expect(images).toHaveCount(3)
-  await expect(page.getByTestId('message-completion-live-region')).toContainText(
-    'Response completed.'
-  )
   const events = await page.evaluate(async () => (await window.api.acp.getState()).events)
   expect(
     events

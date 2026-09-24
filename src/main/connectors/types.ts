@@ -20,7 +20,9 @@ export type ToolContext = {
     options?: { allowHttpStatuses?: readonly number[] }
   ): Promise<{ body: unknown; headers: Headers; status: number }>
   // POST a JSON body and parse the JSON response — for GraphQL / POST-only APIs (e.g. gnomAD).
-  postJson(url: string, body: unknown): Promise<unknown>
+  // POST a JSON body and parse the JSON response. Set retry:false for submissions where a
+  // lost response leaves the provider job outcome unknown and replaying could create a duplicate.
+  postJson(url: string, body: unknown, options?: { retry?: false }): Promise<unknown>
   // Submit multipart data once and parse JSON; never retry a potentially created job.
   postForm(url: string, body: FormData): Promise<unknown>
   credentials: ConnectorCredentials

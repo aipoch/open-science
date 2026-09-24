@@ -69,6 +69,8 @@ const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
   ],
   [CODEX_VERSION]: [
     'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
     'gpt-daybreak-blue-latest',
     'gpt-daybreak-red-latest',
     'gpt-5.6-sol',

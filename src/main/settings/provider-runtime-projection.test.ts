@@ -36,6 +36,63 @@ describe('ProviderRuntimeProjectionOwner', () => {
     })
   })
 
+  it('exposes current OpenAI models to API and Codex subscription providers', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+
+    const openai: StoredProvider = {
+      id: 'openai',
+      type: 'official',
+      vendorId: 'openai',
+      name: 'OpenAI'
+    }
+    const codex: StoredProvider = {
+      id: 'builtin-codex-isolated',
+      type: 'codex-isolated',
+      name: 'Codex subscription'
+    }
+
+    expect(owner.toProviderView(openai).models).toEqual(
+      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+    )
+    expect(owner.toProviderView(codex).models).toEqual(
+      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+    )
+  })
+
+  it('resolves Claude Opus 5.5 for API and pinned subscription targets', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const framework = getAgentFramework('claude-code')
+    const providers: StoredProvider[] = [
+      {
+        id: 'anthropic',
+        type: 'official',
+        vendorId: 'anthropic',
+        name: 'Anthropic'
+      },
+      {
+        id: 'builtin-claude-isolated',
+        type: 'claude-isolated',
+        name: 'Claude subscription',
+        model: 'claude-opus-5-5'
+      }
+    ]
+
+    for (const provider of providers) {
+      const target = owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'claude-opus-5-5' },
+        framework
+      )
+
+      expect(target.effectiveModel).toBe('claude-opus-5-5')
+      expect(target.provider).toMatchObject({
+        model: 'claude-opus-5-5',
+        contextWindow: 1_000_000,
+        supportsImageInput: true
+      })
+    }
+  })
+
   it.each(['claude-code', 'opencode', 'codex'] as const)(
     'resolves an omitted model from the changing provider default for %s',
     (frameworkId) => {

@@ -419,7 +419,7 @@ describe('notebook local RPC server', () => {
     'other-turn'
   ] as const)('discharges only owner-verified kernel failures (%s)', async (scenario) => {
     const root = await createStorageRoot()
-    const exit = (kind: 'repl' | 'python' = 'repl') =>
+    const exit = (kind: 'repl' | 'python' = 'repl'): NotebookKernelExitError =>
       new NotebookKernelExitError('exited', {
         execution: 'may-have-run',
         retryAfter: 'cleanup-verified',
@@ -464,7 +464,7 @@ describe('notebook local RPC server', () => {
       'default-project',
       'root-frame-session-1'
     )
-    const bind = (id: string) =>
+    const bind = (id: string): void =>
       server.setArtifactTurnBinding('session-1', {
         ownerExecutionId: id,
         projectId: 'default-project',
@@ -476,7 +476,7 @@ describe('notebook local RPC server', () => {
           promptMessageId: id
         }
       })
-    const call = async (method = 'executeControl') => {
+    const call = async (method = 'executeControl'): Promise<{ status: number; body: unknown }> => {
       const response = await fetchLocalRpc(
         connection,
         {
