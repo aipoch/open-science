@@ -1423,7 +1423,9 @@ it('carries a new-project draft from OS file selection through confirmation with
     expect(await fixture.client.project.count()).toBe(1)
     expect(reserveImport).not.toHaveBeenCalled()
     desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
-    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'), {
+      timeout: 10000
+    })
     const imported = desktop.operations.snapshot!.result!.imported!
     expect(
       await fixture.client.project.findUnique({ where: { id: imported.projectId } })

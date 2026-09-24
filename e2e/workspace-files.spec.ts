@@ -743,6 +743,9 @@ test('reviews an uploaded PowerPoint without remounting its paged surface', asyn
   await expect(page.getByRole('button', { name: `Remove attachment ${fileName}` })).toBeVisible()
   await sendPrompt(page, 'Review the attached presentation.', 'Deterministic reply:')
 
+  // Present the window before pointer input enters the isolated Office frame. Hidden Windows
+  // BrowserWindows can expose the frame DOM before its compositor accepts mouse input.
+  await app.showMainWindow()
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await page.getByRole('button', { name: `Preview uploaded file ${fileName}`, exact: true }).click()
   const preview = page.getByRole('dialog', { name: `Preview ${fileName}`, exact: true })
