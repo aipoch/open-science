@@ -298,17 +298,18 @@ const compositionQueue = review.arc.flatMap((item, arcIndex) => {
 For every queued entry, pass its claim, data summaries/Version IDs, `width_mm`,
 `delegatePrefix`, moved-in/out panels, and accepted `killActions` into the root
 `figure-composer` workflow. Incorporate these content changes into its outline
-and verify them against the final output, including supplement/caption destinations. Record the actual
-final `version_id` returned by the successful `write_artifact_file` call; never
-accept a model-proposed or merely non-empty string as the composite identity.
-After each successful publication, update both persistent maps using the queue
-entry and the actual returned `version_id`:
+and verify them against the final output, including supplement/caption destinations. Record the
+accepted composite Version ID only after the producer child's structured output
+matches its finalized `figure.png` Artifact and the independent reviewer accepts
+that same Version. Never accept a model-proposed or merely non-empty string as
+the composite identity. After each accepted composition, update both persistent
+maps using the queue entry and that validated Version ID:
 
 ```javascript
 currentFiguresByKey.set(entry.figure, {
   key: entry.figure,
   claim: entry.claim,
-  composite_vid: publishedComposite.version_id
+  composite_vid: acceptedCompositeVersionId
 })
 currentDataVersionIdsByFigure.set(entry.figure, [...entry.dataVersionIds])
 ```
@@ -324,8 +325,8 @@ review request's `inputs`. Never invent an identity, hard-code the next
 revision, omit queue entries beyond the first four, or substitute a redrawn
 Version for an untouched figure.
 
-The current notebook request schema records the composer's collected delegated
-panel Versions through `artifactVersionInputs`. The main process resolves those
+The producer's notebook request records the composer's collected delegated
+panel Versions through `artifactVersionInputs`. The application resolves those
 identities and persists them as `inputFiles` with `artifact-version` source kind;
 callers supply identities only and never paths or provenance metadata.
 
