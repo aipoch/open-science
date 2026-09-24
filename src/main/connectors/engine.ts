@@ -32,12 +32,10 @@ function redactUrl(url: string): string {
 export class ConnectorHttpError extends Error {
   override readonly name = 'ConnectorHttpError'
   readonly status: number
-  readonly url: string
 
   constructor(status: number, url: string, suffix = '') {
     super(`HTTP ${status} for ${redactUrl(url)}.${suffix}`)
     this.status = status
-    this.url = url
   }
 }
 
