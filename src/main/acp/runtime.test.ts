@@ -5745,8 +5745,13 @@ describe('ACP runtime session management', () => {
     const teardown = createDeferred<ReturnType<typeof runtime.getSnapshot>>()
     const disconnect = vi.spyOn(runtime, 'disconnect').mockReturnValue(teardown.promise)
     const first = runtime.cancelPrompt({ sessionId: session.sessionId })
-    const second = runtime.cancelPrompt({ sessionId: session.sessionId })
     fireCancelTimeout?.()
+    vi.spyOn(
+      runtime as unknown as { readonly connection: unknown },
+      'connection',
+      'get'
+    ).mockReturnValue(undefined)
+    const second = runtime.cancelPrompt({ sessionId: session.sessionId })
 
     let secondSettled = false
     void second.then(
@@ -5763,7 +5768,7 @@ describe('ACP runtime session management', () => {
 
     teardown.resolve({ ...runtime.getSnapshot(), status: 'closed', sessionIds: [] })
     await expect(first).rejects.toThrow('not confirmed')
-    await expect(second).rejects.toThrow('not confirmed')
+    await expect(second).resolves.toMatchObject({ status: 'connected' })
     promptGate.resolve()
   })
 

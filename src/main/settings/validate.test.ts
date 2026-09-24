@@ -233,6 +233,18 @@ describe('validate: request construction', () => {
 
     expect(request.url).toBe('https://api.deepseek.com/responses')
   })
+
+  it('adds /v1 before /responses for a custom gateway root with a path prefix', () => {
+    const request = buildValidationRequest({
+      type: 'custom',
+      baseUrl: 'https://host/proxy',
+      model: 'custom-responses',
+      key: 'test-token',
+      apiEndpoints: ['responses']
+    })
+
+    expect(request.url).toBe('https://host/proxy/v1/responses')
+  })
 })
 
 describe('validate: classification', () => {

@@ -169,13 +169,15 @@ const normalizeResponsesBaseUrl = (
     .replace(/\/responses$/i, '')
   if (!normalized) return undefined
 
-  // Codex posts to `{base_url}/responses`, so a bare origin (e.g. the official
-  // `https://api.openai.com`) would target `.../responses` and miss the `/v1` version segment.
-  // Append `/v1` only when the input carries no path at all; gateways that already include `/v1`
-  // or a custom path are left untouched.
+  // Codex posts to `{base_url}/responses`. Explicit native/OpenAI bases preserve their published
+  // path; a custom provider's baseUrl is a root, so add `/v1` even when that root has a path prefix.
   try {
     const { pathname } = new URL(normalized)
-    if (options.appendVersionPath !== false && (pathname === '' || pathname === '/')) {
+    const appendVersionPath =
+      options.appendVersionPath === true ||
+      (options.appendVersionPath === undefined && (pathname === '' || pathname === '/'))
+    if (appendVersionPath) {
+      if (/\/v1$/i.test(pathname)) return normalized
       return `${normalized}/v1`
     }
   } catch {
@@ -191,8 +193,13 @@ const resolveResponsesBaseUrl = (provider: {
   baseUrl?: string
 }): string | undefined => {
   const exactBase = provider.responsesBaseUrl?.trim()
-  const base = exactBase || provider.openaiBaseUrl || provider.baseUrl
-  return normalizeResponsesBaseUrl(base, { appendVersionPath: !exactBase })
+  const openAiBase = provider.openaiBaseUrl?.trim()
+  const base = exactBase || openAiBase || provider.baseUrl
+  return normalizeResponsesBaseUrl(base, {
+    // A custom provider's baseUrl is a root even when it has a path prefix (`/proxy`); only an
+    // explicitly projected OpenAI base is already versioned. A native Responses base is exact.
+    appendVersionPath: !exactBase && !openAiBase
+  })
 }
 
 const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {

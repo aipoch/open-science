@@ -1850,6 +1850,10 @@ class AcpRuntime {
 
   // Requests cancellation without clearing in-flight state before the agent stops.
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+    // A timed-out cancellation may already be closing the shared connection. Wait before taking
+    // any early permission/continuation path so every caller observes the same teardown boundary.
+    const pendingCancellationTeardown = this.cancellationTeardowns?.get(request.sessionId)
+    if (pendingCancellationTeardown) await pendingCancellationTeardown.catch(() => undefined)
     const cancelPromptRequest = this.promptTurnWorkflow.captureCancellation(request.sessionId)
     const connection = this.connection
     const activeSession = this.activeSessionFor(request.sessionId)
