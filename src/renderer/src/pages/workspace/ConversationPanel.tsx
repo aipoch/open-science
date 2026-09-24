@@ -856,7 +856,6 @@ const ConversationPanel = ({
     actionError
   const errorKey = JSON.stringify([
     activeSession?.id,
-    activeSession?.status === 'error' ? activeSession.updatedAt : null,
     activeSession?.status === 'error' ? activeSession.error : null,
     actionError
   ])

@@ -6734,7 +6734,23 @@ describe('ConversationPanel error box + report affordance', () => {
       view: {
         activeSession: {
           ...errorSession,
+          autoReviewEnabled: true,
           updatedAt: errorSession.updatedAt + 1
+        }
+      }
+    })
+    expect(errorBoxText()).toBe('')
+
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'running', error: undefined }
+      }
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          updatedAt: errorSession.updatedAt + 2
         }
       }
     })
