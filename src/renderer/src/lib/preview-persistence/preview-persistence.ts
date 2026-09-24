@@ -5,11 +5,13 @@ import {
   MAX_PERSISTED_PREVIEW_ITEMS,
   createEmptyPersistedPreviewState,
   normalizePersistedPreviewState,
+  type PersistedPreviewFileItem,
   type PersistedPreviewState,
   type PreviewStateSnapshot,
   type SavePreviewStateResult,
   type SavePreviewStateRequest
 } from '../../../../shared/preview-state'
+import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { getUploadedAttachmentPath } from '../../../../shared/uploads'
 import {
   usePreviewWorkbenchStore,
@@ -153,6 +155,28 @@ const indexAuthoritativeArtifactIds = (sessions: ChatSession[]): ReadonlyMap<str
   return artifactIdByRecordId
 }
 
+const canonicalizeLiteraturePreviewState = (
+  state: PersistedPreviewState
+): PersistedPreviewState => {
+  const canonicalItems = state.items.map((item: PersistedPreviewFileItem) => {
+    if (item.source !== 'literature') return item
+    const versionId = parseLiteratureAttachmentVersionReference(item.path)
+    return versionId ? { ...item, id: `literature:${versionId}` } : item
+  })
+  const items = [...new Map(canonicalItems.map((item) => [item.id, item])).values()]
+  const activeItem = state.items.find((item) => item.id === state.activeItemId)
+  const activeVersionId =
+    activeItem?.source === 'literature'
+      ? parseLiteratureAttachmentVersionReference(activeItem.path)
+      : undefined
+
+  return {
+    ...state,
+    activeItemId: activeVersionId ? `literature:${activeVersionId}` : state.activeItemId,
+    items
+  }
+}
+
 // Applies only the changes made after `base` to the authoritative state. This preserves remote tabs
 // while retaining local actions since the last accepted snapshot, including the rejected write.
 const rebasePreviewState = (
@@ -160,6 +184,9 @@ const rebasePreviewState = (
   local: PersistedPreviewState,
   authoritative: PersistedPreviewState
 ): PersistedPreviewState => {
+  base = canonicalizeLiteraturePreviewState(base)
+  local = canonicalizeLiteraturePreviewState(local)
+  authoritative = canonicalizeLiteraturePreviewState(authoritative)
   const baseItems = new Map(base.items.map((item) => [item.id, item]))
   const localItems = new Map(local.items.map((item) => [item.id, item]))
   const mergedItems = authoritative.items
@@ -222,6 +249,7 @@ const createPreviewSaveScheduler = (
   }
 
   const schedule = ({ projectId, state }: PreviewSaveInput): void => {
+    state = canonicalizeLiteraturePreviewState(state)
     const queue = queues.get(projectId) ?? {
       pendingState: undefined,
       pendingBaseState: undefined,
@@ -264,8 +292,9 @@ const createPreviewSaveScheduler = (
               expectedRevision: revisions.get(projectId) ?? 0
             })
             if (result.status === 'conflict') {
-              const authoritativeState =
+              const authoritativeState = canonicalizeLiteraturePreviewState(
                 result.snapshot?.state ?? createEmptyPersistedPreviewState()
+              )
               const localState = queue.pendingState ?? nextState
               const localBaseState = nextBaseState
               const revision = result.snapshot?.revision ?? 0
@@ -358,7 +387,10 @@ const createPreviewSaveScheduler = (
     }
 
     revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, snapshot?.revision ?? 0))
-    acceptedStates.set(projectId, snapshot?.state ?? createEmptyPersistedPreviewState())
+    acceptedStates.set(
+      projectId,
+      canonicalizeLiteraturePreviewState(snapshot?.state ?? createEmptyPersistedPreviewState())
+    )
     return true
   }
 
@@ -428,50 +460,59 @@ const toRestoredSlice = (
   // Hydrated sessions hold finalized upload paths while persisted tabs may still reference staging.
   const uploadByPreviewId = synchronizeUploadPreviewIndex(sessions)
   const artifactIdByRecordId = indexAuthoritativeArtifactIds(sessions)
+  const restoredItems = persisted.items.map((item) => {
+    const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
+    // Restore managed identity only from authoritative data for the persisted source.
+    const hasArtifactSource = item.source === undefined || item.source === 'artifact'
+    const artifactId = hasArtifactSource
+      ? (item.artifactId ?? artifactIdByRecordId.get(item.id))
+      : undefined
+    const hydratedManagedFileId =
+      item.source === 'upload' ? upload?.managedFileId : hasArtifactSource ? artifactId : undefined
+    const managedFileId = item.managedFileId ?? hydratedManagedFileId
+    const mimeType = upload?.mimeType ?? item.mimeType
+    const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
+
+    return {
+      id: item.id,
+      sessionId: upload?.sessionId ?? item.sessionId,
+      title: item.title,
+      type: 'file' as const,
+      source: item.source as PreviewFileSource | undefined,
+      path: upload?.path ?? item.path,
+      // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
+      format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
+      name: item.name,
+      ...(mimeType ? { mimeType } : {}),
+      ...(upload?.size !== undefined || item.size !== undefined
+        ? { size: upload?.size ?? item.size }
+        : {}),
+      ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
+      ...(artifactId ? { artifactId } : {}),
+      ...(managedFileId ? { managedFileId } : {}),
+      ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
+      ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
+      ...(item.originSession ? { originSession: item.originSession } : {})
+    }
+  })
+  const canonicalizedItems = restoredItems.map((item) => {
+    if (item.source !== 'literature') return item
+    const versionId = parseLiteratureAttachmentVersionReference(item.path)
+    return versionId ? { ...item, id: `literature:${versionId}` } : item
+  })
+  const uniqueItems = [...new Map(canonicalizedItems.map((item) => [item.id, item])).values()]
+  const activeItem = persisted.items.find((item) => item.id === persisted.activeItemId)
+  const activeVersionId =
+    activeItem?.source === 'literature'
+      ? parseLiteratureAttachmentVersionReference(activeItem.path)
+      : undefined
+  const activeItemId = activeVersionId ? `literature:${activeVersionId}` : persisted.activeItemId
 
   return {
     panelState: persisted.panelState,
-    activeItemId: persisted.activeItemId,
+    activeItemId,
     items: [
-      ...persisted.items.map((item) => {
-        const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
-        // Restore managed identity only from authoritative data for the persisted source.
-        const hasArtifactSource = item.source === undefined || item.source === 'artifact'
-        const artifactId = hasArtifactSource
-          ? (item.artifactId ?? artifactIdByRecordId.get(item.id))
-          : undefined
-        const hydratedManagedFileId =
-          item.source === 'upload'
-            ? upload?.managedFileId
-            : hasArtifactSource
-              ? artifactId
-              : undefined
-        const managedFileId = item.managedFileId ?? hydratedManagedFileId
-        const mimeType = upload?.mimeType ?? item.mimeType
-        const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
-
-        return {
-          id: item.id,
-          sessionId: upload?.sessionId ?? item.sessionId,
-          title: item.title,
-          type: 'file' as const,
-          source: item.source as PreviewFileSource | undefined,
-          path: upload?.path ?? item.path,
-          // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
-          format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
-          name: item.name,
-          ...(mimeType ? { mimeType } : {}),
-          ...(upload?.size !== undefined || item.size !== undefined
-            ? { size: upload?.size ?? item.size }
-            : {}),
-          ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
-          ...(artifactId ? { artifactId } : {}),
-          ...(managedFileId ? { managedFileId } : {}),
-          ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
-          ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
-          ...(item.originSession ? { originSession: item.originSession } : {})
-        }
-      }),
+      ...uniqueItems,
       ...(persisted.subagents
         ? [
             {

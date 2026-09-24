@@ -683,6 +683,7 @@ class AcpRuntime {
   private durablePlanDeliveries?: Map<string, { projectId: string; commandId: string }>
   private readonly planDeliveryClaimRetries = new Map<string, PlanDeliveryClaimRetry>()
   private readonly planDeliveryPreparations = new Set<string>()
+  private readonly planDeliveryPreparationRequests = new Map<string, string | undefined>()
   // Incomplete lines belong to the process stream, not the one-second reporting window.
   private readonly agentStderrTails = new WeakMap<
     ChildProcessWithoutNullStreams,
@@ -2522,12 +2523,31 @@ class AcpRuntime {
     sessionId: string,
     expectedCommandId?: string
   ): Promise<void> {
+    // A resume scan can still be reading the old context when a response commits a
+    // new command. Coalesce wakeups, not commands: every wakeup must get a fresh read
+    // after the current inspection, while durable receipts still own dispatch.
+    if (!this.planDeliveryPreparationRequests.has(sessionId)) {
+      this.planDeliveryPreparationRequests.set(sessionId, expectedCommandId)
+    } else if (this.planDeliveryPreparationRequests.get(sessionId) !== expectedCommandId) {
+      // Mixed command-specific retries and general wakeups must inspect the current
+      // command, rather than letting a stale retry mask a newer committed response.
+      this.planDeliveryPreparationRequests.set(sessionId, undefined)
+    }
     if (this.planDeliveryPreparations.has(sessionId)) return
     this.planDeliveryPreparations.add(sessionId)
     try {
-      await this.prepareDurablePlanDelivery(projectId, sessionId, expectedCommandId)
+      while (this.planDeliveryPreparationRequests.has(sessionId)) {
+        const commandId = this.planDeliveryPreparationRequests.get(sessionId)
+        this.planDeliveryPreparationRequests.delete(sessionId)
+        await this.prepareDurablePlanDelivery(projectId, sessionId, commandId)
+      }
     } finally {
       this.planDeliveryPreparations.delete(sessionId)
+      if (this.planDeliveryPreparationRequests.has(sessionId)) {
+        const commandId = this.planDeliveryPreparationRequests.get(sessionId)
+        this.planDeliveryPreparationRequests.delete(sessionId)
+        this.scheduleQueuedPlanDelivery(projectId, sessionId, commandId)
+      }
     }
   }
 

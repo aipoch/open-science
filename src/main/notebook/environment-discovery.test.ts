@@ -13,7 +13,40 @@ import {
 } from './environment-discovery'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
 
-describe('defaultDiscoveryDeps Windows conda R probes', () => {
+describe('defaultDiscoveryDeps Windows conda probes', () => {
+  it('keeps a rebuilt Windows conda Python runnable when its DLLs require an activated PATH', async () => {
+    const prefix = 'C:\\Program Files\\OpenScience\\runtime\\envs\\.p'
+    const interpreter = `${prefix}\\python.exe`
+    const exec = vi.fn(
+      async (
+        _file: string,
+        _args: readonly string[],
+        options: { env?: NodeJS.ProcessEnv }
+      ): Promise<{ stdout: string; stderr: string }> => {
+        if (options.env?.PATH?.split(';')[0] !== prefix) {
+          throw new Error('conda DLL search path was not activated')
+        }
+        return { stdout: 'Python 3.12.10', stderr: '' }
+      }
+    )
+    const defaults = defaultDiscoveryDeps('C:\\Program Files\\OpenScience\\runtime', undefined, {
+      platform: 'win32',
+      env: { PATH: 'C:\\Windows\\System32' },
+      exec
+    })
+
+    const [found] = await discoverInterpreters('python', {
+      ...defaults,
+      candidatePaths: async () => [interpreter]
+    })
+
+    expect(found).toMatchObject({
+      interpreterPath: interpreter,
+      runnable: true,
+      version: '3.12.10'
+    })
+  })
+
   it('probes an R environment version through Rscript instead of launching R.exe', async () => {
     const interpreter = 'C:\\Program Files\\R\\R-4.6.0\\bin\\x64\\R.exe'
     const exec = vi.fn(async (): Promise<{ stdout: string; stderr: string }> => ({

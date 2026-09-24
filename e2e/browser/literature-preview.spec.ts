@@ -1,5 +1,57 @@
 import { expect, test } from '@playwright/test'
 
+test('prepares PDF text and area evidence before the first conversation message', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 960 })
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('/modal-library-close.html?preview=new-conversation')
+  const text = page.locator('.textLayer span').filter({ hasText: 'Literature attachment preview' })
+  await expect(text).toBeVisible()
+  const box = (await text.boundingBox())!
+  await page.mouse.move(box.x + 1, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 8 })
+  await page.mouse.up()
+  await page.getByRole('button', { name: 'Citate', exact: true }).click()
+  await expect(page.locator('[data-annotation-draft-chip]')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Select area for Agent', exact: true }).click()
+  const area = page.locator('[data-pdf-region-selection]')
+  await expect(area).toBeVisible()
+  const region = (await area.boundingBox())!
+  await page.mouse.move(region.x + 30, region.y + 130)
+  await page.mouse.down()
+  await page.mouse.move(region.x + 350, region.y + 225, { steps: 8 })
+  await page.mouse.up()
+  await expect(page.locator('[data-annotation-draft-chip]')).toHaveCount(2)
+  await page.getByRole('textbox', { name: 'Message draft' }).fill('Explain the selected evidence.')
+  await page.getByRole('button', { name: 'Capture first send' }).click()
+  const snapshot = JSON.parse((await page.locator('[data-send-snapshot]').textContent())!)
+  expect(snapshot.draftKey).toBe('new:draft-project')
+  expect(
+    snapshot.annotations.map(
+      (annotation: { selector: { kind: string } }) => annotation.selector.kind
+    )
+  ).toEqual(['text', 'region'])
+  expect(
+    snapshot.annotations.every(
+      (annotation: { source: { versionId: string; projectId: string } }) =>
+        annotation.source.versionId === 'version-2' &&
+        annotation.source.projectId === 'draft-project'
+    )
+  ).toBe(true)
+  expect(snapshot.pendingPdfContextVersions).toEqual([
+    {
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: 'attachment-1',
+      sourceVersionId: 'version-2'
+    }
+  ])
+  await page.screenshot({ path: testInfo.outputPath('new-conversation-pdf-evidence.png') })
+  expect(errors).toEqual([])
+})
+
 for (const reducedMotion of ['no-preference', 'reduce'] as const) {
   test(`attachment preview preserves its parent dialog with ${reducedMotion} motion`, async ({
     page

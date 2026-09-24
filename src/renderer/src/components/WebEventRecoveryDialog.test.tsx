@@ -11,6 +11,8 @@ import {
 
 import { WebEventRecoveryDialog } from './WebEventRecoveryDialog'
 
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
 let container: HTMLDivElement
 let root: Root
 
@@ -31,7 +33,7 @@ afterEach(() => {
 describe('WebEventRecoveryDialog', () => {
   it('exposes a copyable fallback and blocks reload until the copy is saved when quota is exhausted', async () => {
     configureComposerDraftStorage('scope')
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(Object.getPrototypeOf(sessionStorage), 'setItem').mockImplementation(() => {
       throw new Error('quota')
     })
     writeComposerDraft('project', 'session', {

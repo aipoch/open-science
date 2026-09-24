@@ -131,8 +131,10 @@ const laneOf = (command: Pick<DurableMessageCommand, 'sourceFrameId' | 'targetFr
 export class ReliableMessageDeliveryOwner {
   private readonly preparedContinuations = new Map<string, PreparedContinuation>()
   private readonly lanePumps = new Map<string, Promise<void>>()
-  private upwardPump?: Promise<void>
+  private readonly upwardPumps = new Set<Promise<void>>()
   private upwardWakePending = false
+  private readonly upwardInFlight = new Set<string>()
+  private readonly upwardAdmissionQueued = new Set<string>()
 
   constructor(private readonly options: MessageDeliveryOwnerOptions) {}
 
@@ -478,19 +480,12 @@ export class ReliableMessageDeliveryOwner {
 
   private wakeLane(command: DurableMessageCommand, session: SessionKey): void {
     if (command.direction === 'to_parent') {
-      if (this.upwardPump) {
+      if (this.upwardPumps.size > 0) {
         this.upwardWakePending = true
+        if (this.upwardAdmissionQueued.size > 0) this.launchUpwardPump(session)
         return
       }
-      const pump = this.pumpUpward(session).finally(() => {
-        if (this.upwardPump === pump) this.upwardPump = undefined
-        if (this.upwardWakePending) {
-          this.upwardWakePending = false
-          this.wakeLane(command, session)
-        }
-      })
-      this.upwardPump = pump
-      void pump.catch(() => undefined)
+      this.launchUpwardPump(session)
       return
     }
     const lane = laneOf(command)
@@ -502,13 +497,29 @@ export class ReliableMessageDeliveryOwner {
     void pump.catch(() => undefined)
   }
 
+  private launchUpwardPump(session: SessionKey): void {
+    const pump = this.pumpUpward(session)
+    this.upwardPumps.add(pump)
+    void pump
+      .finally(() => {
+        this.upwardPumps.delete(pump)
+        if (this.upwardPumps.size === 0 && this.upwardWakePending) {
+          this.upwardWakePending = false
+          this.launchUpwardPump(session)
+        }
+      })
+      .catch(() => undefined)
+  }
+
   private async pumpUpward(session: SessionKey): Promise<void> {
     for (;;) {
       const snapshot = await this.options.records.snapshot()
       const candidates = snapshot.messageCommands
         .filter(
           (candidate) =>
-            candidate.direction === 'to_parent' && candidate.receipt.status === 'queued'
+            candidate.direction === 'to_parent' &&
+            candidate.receipt.status === 'queued' &&
+            !this.upwardInFlight.has(candidate.messageId)
         )
         .filter(
           (command) =>
@@ -527,7 +538,13 @@ export class ReliableMessageDeliveryOwner {
         )
       const command = candidates[0]
       if (!command) return
-      if (!(await this.dispatch(command, session))) return
+      this.upwardInFlight.add(command.messageId)
+      try {
+        if (!(await this.dispatch(command, session))) return
+      } finally {
+        this.upwardInFlight.delete(command.messageId)
+        this.upwardAdmissionQueued.delete(command.messageId)
+      }
     }
   }
 
@@ -583,6 +600,10 @@ export class ReliableMessageDeliveryOwner {
             rootBranchRevision: command.rootBranchRevision,
             text: command.text,
             kind: command.kind,
+            onRootAdmissionQueued: () => {
+              this.upwardAdmissionQueued.add(command.messageId)
+              this.launchUpwardPump(session)
+            },
             startDispatch: async () => {
               const started = await this.options.records.markMessageDispatchStarted(
                 command.messageId,

@@ -376,10 +376,22 @@ those panel crops first at native resolution. For full QA, crop the saved PNG to
 each panel and look:
 
 ```python
+from PIL import Image
+
 fig.savefig("figure.png")
-for letter, box in panel_crops(fig).items():
-    print(letter, box)  # pass each box to the Agent's image-viewing tool
+with Image.open("figure.png") as saved:
+    for letter, box in panel_crops(fig).items():
+        saved.crop(box).save(f"panel_{letter}.png")
 ```
+
+`panel_crops` returns **pixels with a top-left origin**, for cropping the saved
+image. Never pass these boxes to `savefig(bbox_inches=...)` or construct a
+`Bbox.from_extents` for a new render from them: `bbox_inches` uses inches and a
+bottom-left origin. At 300 dpi, treating pixel dimensions as inches multiplies
+the raster area by 90,000 and can exhaust system memory. Use the saved-image
+crop above, with matching DPI, `bbox_inches`, and `pad_inches` settings for
+`savefig` and `panel_crops`. Panels outside an explicit saved bounding box are
+omitted from the crops.
 
 For each crop: Is every glyph and mark legible against its background? Does the
 smallest plotted element have a stroke or stub? Do any leaders cross? Could any

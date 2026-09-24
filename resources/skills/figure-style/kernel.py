@@ -287,13 +287,18 @@ def panel_crops(fig, dpi=None, pad_px=6, bbox_inches=None, pad_inches=None):
     ``bbox_inches`` mirrors ``Figure.savefig`` semantics: ``None`` means
     *consult rcParams* (so under :func:`apply_figure_style` it resolves to
     ``'tight'``); pass an explicit ``Bbox`` only if you saved with one. The
-    boxes are clamped to the saved image extent regardless.
+    boxes are clamped to the saved image extent; panels with no intersection
+    are omitted.
 
-        >>> fig.savefig("fig.png")            # bbox_inches='tight' via rcParams
-        >>> panel_crops(fig)                   # return boxes to the JS control plane
+        >>> from PIL import Image
+        >>> fig.savefig("fig.png")  # bbox_inches='tight' via rcParams
+        >>> with Image.open("fig.png") as saved:
+        ...     for letter, box in panel_crops(fig).items():
+        ...         saved.crop(box).save(f"panel_{letter}.png")
 
-    The Agent inspects those boxes with its JS image-viewing tool. Python has
-    no ``host`` bridge.
+    Match savefig's DPI, bbox_inches and pad_inches when overriding defaults.
+    Returned boxes are pixels, never savefig bbox_inches (inches). Passing them
+    back to savefig as inches can allocate an enormous raster.
     """
     import matplotlib as mpl
     import matplotlib.text
@@ -372,10 +377,12 @@ def panel_crops(fig, dpi=None, pad_px=6, bbox_inches=None, pad_inches=None):
         bx1 = (bb.x1 / fig.dpi - ox_in) * dpi
         by0 = H_px - (bb.y1 / fig.dpi - oy_in) * dpi
         by1 = H_px - (bb.y0 / fig.dpi - oy_in) * dpi
-        out[letter] = (
-            max(int(bx0) - pad_px, 0),
-            max(int(by0) - pad_px, 0),
-            min(int(bx1) + pad_px, W_px),
-            min(int(by1) + pad_px, H_px),
+        box = (
+            min(max(int(bx0) - pad_px, 0), W_px),
+            min(max(int(by0) - pad_px, 0), H_px),
+            max(min(int(bx1) + pad_px, W_px), 0),
+            max(min(int(by1) + pad_px, H_px), 0),
         )
+        if box[0] < box[2] and box[1] < box[3]:
+            out[letter] = box
     return out

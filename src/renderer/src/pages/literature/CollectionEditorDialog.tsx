@@ -21,7 +21,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { useLiteratureChanges } from './useLiteratureChanges'
 import * as Dialog from '@/components/ui/dialog'
 import { Info, LoaderCircle, X } from 'lucide-react'
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
@@ -80,6 +80,16 @@ export const CollectionEditorDialog = forwardRef<
   const [editingCollection, setEditingCollection] = useState<LiteratureCollectionView>()
   const [smart, setSmart] = useState(false)
   const [scope, setScope] = useState<SmartScope>({ kind: 'library' })
+  const scopeMarker = (kind: 'project' | 'collection'): ReactElement => (
+    <span
+      className={cn(
+        'shrink-0 rounded px-1.5 text-[10px] font-semibold leading-4 uppercase',
+        kind === 'project' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+      )}
+    >
+      {kind === 'project' ? t('Project') : t('Collection')}
+    </span>
+  )
   const [evidenceMode, setEvidenceMode] = useState<SmartEvidenceMode>('abstract')
   const [autoUpdate, setAutoUpdate] = useState(false)
   const [name, setName] = useState('')
@@ -358,7 +368,20 @@ export const CollectionEditorDialog = forwardRef<
                             aria-label={t('Scope')}
                             className="w-full"
                           >
-                            <SelectValue />
+                            <SelectValue>
+                              {scope.kind === 'library' ? (
+                                t('All references')
+                              ) : (
+                                <span className="flex items-center gap-2">
+                                  {scopeMarker(scope.kind)}
+                                  <span className="truncate">
+                                    {scopes.find(
+                                      (entry) => entry.kind === scope.kind && entry.id === scope.id
+                                    )?.name ?? t('Unavailable')}
+                                  </span>
+                                </span>
+                              )}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value={JSON.stringify({ kind: 'library' })}>
@@ -391,8 +414,11 @@ export const CollectionEditorDialog = forwardRef<
                                     <SelectItem
                                       key={entry.id}
                                       value={JSON.stringify({ kind, id: entry.id })}
+                                      textValue={entry.name}
                                     >
-                                      {entry.name}
+                                      <span className="inline-flex items-center gap-2">
+                                        {scopeMarker(kind)} {entry.name}
+                                      </span>
                                     </SelectItem>
                                   ))}
                               </SelectGroup>

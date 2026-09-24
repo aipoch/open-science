@@ -2,6 +2,20 @@ import { z } from 'zod'
 import { PROJECT_NAME_MAX_LENGTH } from './projects'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
+export type SensitiveContentEvidence = {
+  location: string
+  offset: number
+  rule: 'field' | 'assignment' | 'url' | 'token'
+  matchLength: number
+  label?: string
+  leftBoundary: 'start' | 'whitespace' | 'punctuation' | 'letter' | 'number' | 'mark' | 'other'
+  rightBoundary: 'end' | 'whitespace' | 'punctuation' | 'letter' | 'number' | 'mark' | 'other'
+  context: string
+  valueLength?: number
+  valueHash: string
+  sourceStorageKey?: string
+}
+
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
 export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
@@ -91,6 +105,7 @@ export type PackageOperationSnapshot = {
     recovery?: SessionPackageRequest & { operationId: string; outcome: 'committed' | 'unconfirmed' }
   }
   error?: string
+  sensitiveContent?: SensitiveContentEvidence[]
   cleanupPending?: boolean
   transferBytesPerSecond?: number
   ioBytesPerSecond?: number
@@ -316,6 +331,42 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .strict()
       .optional(),
     error: z.string().optional(),
+    sensitiveContent: z
+      .array(
+        z
+          .object({
+            location: z.string().max(1200),
+            offset: z.number().int().nonnegative(),
+            rule: z.enum(['field', 'assignment', 'url', 'token']),
+            matchLength: z.number().int().positive().max(10000),
+            label: z.string().max(200).optional(),
+            leftBoundary: z.enum([
+              'start',
+              'whitespace',
+              'punctuation',
+              'letter',
+              'number',
+              'mark',
+              'other'
+            ]),
+            rightBoundary: z.enum([
+              'end',
+              'whitespace',
+              'punctuation',
+              'letter',
+              'number',
+              'mark',
+              'other'
+            ]),
+            context: z.string().max(1200),
+            valueLength: z.number().int().nonnegative().max(10000).optional(),
+            valueHash: z.string().regex(/^[a-f0-9]{64}$/),
+            sourceStorageKey: z.string().max(2048).optional()
+          })
+          .strict()
+      )
+      .max(20)
+      .optional(),
     cleanupPending: z.boolean().optional(),
     transferBytesPerSecond: transferRateSchema.optional(),
     ioBytesPerSecond: z.number().nonnegative().optional()

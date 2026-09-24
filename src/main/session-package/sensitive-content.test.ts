@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { findSensitivePackageText, isPrivatePackageValue } from './sensitive-content'
+import { createHash } from 'node:crypto'
+import {
+  buildSensitiveContentEvidence,
+  findSensitivePackageText,
+  isPrivatePackageValue
+} from './sensitive-content'
 
 describe('package text policy', () => {
   it.each([
@@ -13,7 +18,13 @@ describe('package text policy', () => {
     'https://example.org/?token=%5Bredacted%5D',
     'https://[example]',
     'file:///tmp/results.csv',
-    '{"inputTokens":"1024"}'
+    '{"inputTokens":"1024"}',
+    'one-token bluffs. A hyphenated phrase is not a command-line flag.',
+    'prefix--token value is not a standalone command-line flag.',
+    'café-token valeur is not a standalone command-line flag.',
+    'cafe\u0301-token valeur is not a standalone command-line flag.',
+    '研究-token 内容 is not a standalone command-line flag.',
+    'naïve--token example is not a standalone command-line flag.'
   ])('accepts empty, redacted or noncredential text: %s', (value) => {
     expect(findSensitivePackageText(value)).toBeUndefined()
   })
@@ -34,6 +45,8 @@ describe('package text policy', () => {
     '{"pass\\u0077ord":"synthetic-private-value"}',
     'password = os.environ["PASSWORD"]',
     'curl --token synthetic-private-value',
+    'curl -token synthetic-private-value',
+    '研究：--token synthetic-private-value',
     'https://user:synthetic-private-value@example.org/',
     'Bearer synthetic-private-value',
     'ghp_syntheticprivatevalue',
@@ -52,6 +65,50 @@ describe('package text policy', () => {
     expect(isPrivatePackageValue('Bearer [redacted]')).toBe(false)
     expect(isPrivatePackageValue('[redacted]extra')).toBe(true)
   })
+})
+
+it('hashes and measures the sensitive value instead of the detector span', () => {
+  const text = '{"apiKey":"secret-value"}'
+  const match = findSensitivePackageText(text)
+  expect(match).toMatchObject({ rule: 'field', valueLength: 'secret-value'.length })
+  expect(match).toBeDefined()
+  const evidence = buildSensitiveContentEvidence(text, match!, 'records.json @0')
+  expect(text.slice(match!.valueOffset, match!.valueOffset! + match!.valueLength!)).toBe(
+    'secret-value'
+  )
+  expect(evidence.valueLength).toBe('secret-value'.length)
+  expect(evidence.valueHash).toBe(createHash('sha256').update('secret-value').digest('hex'))
+  expect(evidence.matchLength).toBeGreaterThan(evidence.valueLength!)
+})
+
+it('locates credentials in JSON-escaped URL authorities', () => {
+  const text = String.raw`https:\/\/[redacted]:secret-value@example.org`
+  const match = findSensitivePackageText(text)
+  expect(match).toMatchObject({ rule: 'url', valueLength: 'secret-value'.length })
+  expect(text.slice(match!.valueOffset, match!.valueOffset! + match!.valueLength!)).toBe(
+    'secret-value'
+  )
+})
+
+it.each([
+  'https://example.org/#token=secret-value',
+  'https://example.org/#view?token=secret-value'
+])('scans sensitive query values in URL fragments: %s', (text) => {
+  const match = findSensitivePackageText(text)
+  expect(match).toMatchObject({ rule: 'url', valueLength: 'secret-value'.length })
+  expect(text.slice(match!.valueOffset, match!.valueOffset! + match!.valueLength!)).toBe(
+    'secret-value'
+  )
+})
+
+it('keeps oversized detector spans within the operation contract bounds', () => {
+  const text = `apiKey=${'a'.repeat(12_000)}`
+  const match = findSensitivePackageText(text)
+  expect(match).toBeDefined()
+  const evidence = buildSensitiveContentEvidence(text, match!, 'objects/result.json @0')
+  expect(evidence.matchLength).toBe(10_000)
+  expect(evidence.valueLength).toBeUndefined()
+  expect(evidence.valueHash).toMatch(/^[a-f0-9]{64}$/)
 })
 
 it('keeps matched values out of location errors', async () => {

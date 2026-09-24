@@ -3542,6 +3542,68 @@ describe('production delegated-work composition', () => {
     ).toBe('accepted')
   })
 
+  it('pre-admits another upward lane while the first parent delivery is settling', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-parent-admission-fairness-'))
+    const deliveries: string[] = []
+    const releases = new Map<string, () => void>()
+    const harness = await createCompositionHarness(root, 'opencode', undefined, undefined, {
+      parentMessages: {
+        deliver: async (delivery) => {
+          deliveries.push(delivery.messageId)
+          delivery.onRootAdmissionQueued?.()
+          await delivery.startDispatch()
+          await new Promise<void>((resolve) => releases.set(delivery.messageId, resolve))
+          return 'provider_prompt_accepted'
+        }
+      }
+    })
+    const delegated = await harness.composition.host.delegate(
+      harness.caller,
+      [
+        { task: 'Ask the parent from lane A', name: 'Ask the parent from lane A' },
+        { task: 'Ask the parent from lane B', name: 'Ask the parent from lane B' }
+      ],
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    for (const control of harness.execution.controls()) control.accept()
+
+    const send = (
+      child: (typeof delegated.children)[number],
+      requestId: string
+    ): ReturnType<typeof harness.composition.host.sendMessage> =>
+      harness.composition.host.sendMessage(
+        {
+          ...harness.caller,
+          frameId: child.frameId,
+          attemptId: child.attemptId,
+          role: 'delegate',
+          toolInvocationId: requestId
+        },
+        'parent',
+        requestId
+      )
+
+    const first = await send(delegated.children[0], 'parent-admission-fairness-a')
+    const second = await send(delegated.children[1], 'parent-admission-fairness-b')
+    await expect.poll(() => deliveries).toHaveLength(2)
+    await expect.poll(() => releases.size).toBe(2)
+    releases.get(first.message_id)!()
+    releases.get(second.message_id)!()
+    await expect.poll(() => deliveries).toHaveLength(2)
+    await expect
+      .poll(() =>
+        harness
+          .durable()
+          .runtimeContext?.delegatedWork?.messageCommands?.filter(({ requestId }) =>
+            requestId.startsWith('parent-admission-fairness-')
+          )
+          .map(({ receipt }) => receipt.status)
+          .sort()
+      )
+      .toEqual(['accepted', 'accepted'])
+  })
+
   it('retries an upward lane when a wake arrives during a parked dispatch', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-parent-wake-race-'))
     let releaseFirst!: () => void

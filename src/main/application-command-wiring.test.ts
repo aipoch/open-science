@@ -66,7 +66,7 @@ describe('production application command wiring', () => {
       between(ipcSource, 'surfaceAdapters = afterAcpAdapters', 'const reviewerModelRuntime =')
     )
     expect(phase).toContain(
-      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld })'
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld, onSensitiveContentFailure: rememberSensitiveContentFailure })'
     )
     expect(occurrences(ipcSource, 'createSessionPackageDesktop(')).toBe(1)
     expect(ipcSource).not.toContain('new SessionPackageDesktop')

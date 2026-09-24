@@ -5,6 +5,8 @@ const scenarios = [
   { action: 'approve', restart: true },
   { action: 'dismiss', restart: true },
   { action: 'comment', restart: true },
+  { action: 'comment', restart: 'crash' },
+  { action: 'comment', restart: false },
   { action: 'question', restart: true },
   { action: 'question', restart: false },
   { action: 'permission-allow', restart: true },
@@ -12,7 +14,7 @@ const scenarios = [
 ] as const
 
 for (const { action, restart } of scenarios) {
-  test(`delivers ${action} ${restart ? 'after a real application restart' : 'in the live session'}`, async ({
+  test(`delivers ${action} ${restart === 'crash' ? 'after an application crash with a parked Plan' : restart ? 'after a real application restart' : 'in the live session'}`, async ({
     app
   }, testInfo) => {
     test.setTimeout(180_000)
@@ -55,20 +57,99 @@ for (const { action, restart } of scenarios) {
         contentType: 'application/json'
       })
     await page.screenshot({ path: testInfo.outputPath('before-restart.png') })
+    if (action === 'comment' && restart === true) {
+      const panel = page.getByTestId('plan-composer')
+      const expandedHeight = (await panel.boundingBox())!.height
+      await expect(
+        panel.locator('article').getByRole('button', { name: 'Collapse Plan' })
+      ).toHaveCount(0)
+      const toggleBounds = (await page
+        .getByRole('button', { name: 'Collapse Plan' })
+        .boundingBox())!
+      expect(toggleBounds.y + toggleBounds.height).toBeLessThanOrEqual(
+        (await panel.locator('article').boundingBox())!.y
+      )
+      await panel.screenshot({ path: testInfo.outputPath('expanded-plan-control.png') })
+      const panelBounds = (await panel.boundingBox())!
+      expect(
+        Math.abs(toggleBounds.x + toggleBounds.width / 2 - panelBounds.x - panelBounds.width / 2)
+      ).toBeLessThan(1)
+      await page.getByRole('button', { name: 'Collapse Plan' }).hover()
+      await panel.screenshot({ path: testInfo.outputPath('hover-plan-control.png') })
+      const controlX = toggleBounds.x + toggleBounds.width / 2
+      const controlY = toggleBounds.y + toggleBounds.height / 2
+      await page.mouse.move(controlX, controlY)
+      await page.mouse.down()
+      await page.mouse.move(controlX, controlY - 24, { steps: 4 })
+      await page.mouse.move(controlX, controlY, { steps: 4 })
+      await page.mouse.up()
+      await expect(page.getByRole('button', { name: 'Collapse Plan' })).toHaveAttribute(
+        'aria-expanded',
+        'true'
+      )
+      await page.getByRole('textbox', { name: 'Respond to Plan' }).fill('Keep this revision draft.')
+      await page.getByRole('button', { name: 'Collapse Plan' }).click()
+      await expect(page.getByRole('textbox', { name: 'Respond to Plan' })).toBeHidden()
+      await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
+      expect((await panel.boundingBox())!.height).toBeLessThan(expandedHeight)
+      await page.screenshot({ path: testInfo.outputPath('collapsed-plan.png') })
+      await panel.screenshot({ path: testInfo.outputPath('collapsed-plan-control.png') })
+      await page.getByRole('button', { name: 'Expand Plan' }).focus()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('textbox', { name: 'Respond to Plan' })).toHaveValue(
+        'Keep this revision draft.'
+      )
+      await page.getByRole('button', { name: 'Collapse Plan' }).click()
+    }
     if (restart) {
-      const quittingPage = page
-      const restarting = app.restart()
-      // A live generate_plan waiter triggers the ordinary running-work quit confirmation.
-      const confirmQuit = quittingPage.getByRole('button', { name: 'Quit', exact: true })
-      await confirmQuit
-        .waitFor({ state: 'visible', timeout: 5_000 })
-        .then(() => confirmQuit.click())
-        .catch(() => undefined)
-      page = await restarting
+      if (restart === 'crash') {
+        await expect
+          .poll(async () =>
+            page.evaluate(async () =>
+              (await window.api.sessions.loadAll()).sessions[0]?.activities?.some(
+                ({ id }) => id === 'e2e-restart-plan-generation'
+              )
+            )
+          )
+          .toBe(true)
+        expect(
+          await page.evaluate(async () =>
+            Boolean((await window.api.sessions.loadAll()).sessions[0]?.activeRun)
+          )
+        ).toBe(true)
+        page = await app.restartAfterCrash({ force: true })
+      } else {
+        const quittingPage = page
+        const restarting = app.restart()
+        // A live generate_plan waiter triggers the ordinary running-work quit confirmation.
+        const confirmQuit = quittingPage.getByRole('button', { name: 'Quit', exact: true })
+        await confirmQuit
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => confirmQuit.click())
+          .catch(() => undefined)
+        page = await restarting
+      }
       await page
         .getByRole('region', { name: 'Recent sessions' })
         .getByRole('button', { name: prompt })
         .click()
+      if (action === 'comment' && restart === true) {
+        await expect(page.getByRole('button', { name: 'Collapse Plan' })).toBeVisible()
+        await expect(page.getByRole('textbox', { name: 'Respond to Plan' })).toBeVisible()
+      }
+    }
+    if (action === 'comment' && !restart) {
+      await page.evaluate(async () => {
+        const session = (await window.api.sessions.loadAll()).sessions[0]
+        await window.api.acp.cancel({ sessionId: session.id })
+      })
+      await expect
+        .poll(async () =>
+          page.evaluate(async () =>
+            Boolean((await window.api.sessions.loadAll()).sessions[0]?.activeRun)
+          )
+        )
+        .toBe(false)
     }
     if (action === 'approve' || action === 'dismiss' || action === 'comment') {
       const stoppedPlan = await page.evaluate(async () => {
@@ -113,7 +194,21 @@ for (const { action, restart } of scenarios) {
       await page.getByRole('button', { name: 'Send Plan feedback' }).click()
     }
     const expected = `Restart verification: ${action === 'approve' ? 'Plan approval' : action === 'dismiss' ? 'Plan dismissal' : action === 'comment' ? 'Plan feedback' : action === 'permission-allow' ? 'Permission approval' : action === 'permission-deny' ? 'Permission denial' : 'Question answer'} delivered.`
-    await expect(page.getByText(expected, { exact: false })).toBeVisible({ timeout: 40_000 })
+    try {
+      await expect(page.getByText(expected, { exact: false })).toBeVisible({ timeout: 40_000 })
+    } finally {
+      if (action === 'comment') {
+        await testInfo.attach('plan-feedback-delivery', {
+          body: JSON.stringify(
+            await page.evaluate(async () => ({
+              sessions: (await window.api.sessions.loadAll()).sessions,
+              runtime: await window.api.acp.getState()
+            }))
+          ),
+          contentType: 'application/json'
+        })
+      }
+    }
     await expect
       .poll(async () =>
         page.evaluate(async (text) => {

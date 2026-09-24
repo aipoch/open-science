@@ -45,7 +45,7 @@ if ($isolatedRoot.Trim()) {
   $ownershipRoot = Join-Path $isolatedRoot "notebook-sandbox\$installationId"
 } elseif (Test-OwnershipState $legacyOwnershipRoot) {
   if (Test-OwnershipState $ownershipRoot) {
-    Write-Error 'Notebook isolation ownership is ambiguous. Resolve both existing ownership directories before uninstalling.'
+    Write-Error "Notebook isolation ownership is ambiguous. Resolve both existing ownership directories before uninstalling. currentRoot=$ownershipRoot legacyRoot=$legacyOwnershipRoot"
     exit 1
   }
   $ownershipRoot = $legacyOwnershipRoot
@@ -56,8 +56,10 @@ if (-not $HostPath) {
   $journal = Join-Path $ownershipRoot 'creating.json'
   $leaseRoot = Join-Path $ownershipRoot 'acl-leases'
   $hasLease = (Test-Path -LiteralPath $leaseRoot -PathType Container) -and (Get-ChildItem -LiteralPath $leaseRoot -Filter '*.json' -ErrorAction SilentlyContinue)
-  if ((Test-Path -LiteralPath $receipt -PathType Leaf) -or (Test-Path -LiteralPath $journal -PathType Leaf) -or $hasLease) {
-    Write-Error 'The Notebook isolation host is missing while owned resources still require cleanup.'
+  $hasReceipt = Test-Path -LiteralPath $receipt -PathType Leaf
+  $hasJournal = Test-Path -LiteralPath $journal -PathType Leaf
+  if ($hasReceipt -or $hasJournal -or $hasLease) {
+    Write-Error "The Notebook isolation host is missing while owned resources still require cleanup. sandboxRoot=$SandboxRoot ownershipRoot=$ownershipRoot receipt=$hasReceipt journal=$hasJournal aclLeases=$([bool]$hasLease)"
     exit 1
   }
   exit 0
@@ -89,15 +91,19 @@ try {
   Stop-SandboxHostProcesses $SandboxRoot
   & $HostPath prepare-remove $installationId $ownershipRoot
   if ($LASTEXITCODE -ne 0) {
-    Write-Error "Notebook isolation preparation exited $LASTEXITCODE."
+    Write-Error "Notebook isolation preparation exited $LASTEXITCODE. host=$HostPath ownershipRoot=$ownershipRoot"
     exit $LASTEXITCODE
   }
   $removeCode = Invoke-OwnedHost 'remove'
   if ($removeCode -ne 0) {
+    Write-Error "Notebook isolation removal exited $removeCode. host=$HostPath ownershipRoot=$ownershipRoot"
     exit $removeCode
   }
   & $HostPath finish-remove $installationId $ownershipRoot
   $finishCode = [int]$LASTEXITCODE
+  if ($finishCode -ne 0) {
+    Write-Error "Notebook isolation finalization exited $finishCode. host=$HostPath ownershipRoot=$ownershipRoot"
+  }
   Stop-SandboxHostProcesses $SandboxRoot
   exit $finishCode
 } catch {

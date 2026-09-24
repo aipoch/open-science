@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import {
   useCallback,
   useEffectEvent,
@@ -16,7 +17,13 @@ const PANEL_MAX_VIEWPORT_RATIO = 0.7
 const PANEL_RESIZE_STEP_PX = 32
 
 type ResizeBounds = { min: number; max: number }
-type DragState = { pointerId: number; startHeight: number; startY: number }
+type DragState = {
+  pointerId: number
+  startHeight: number
+  startX: number
+  startY: number
+  moved: boolean
+}
 
 type ResizableBottomPanelProps = Readonly<{
   children: ReactNode
@@ -27,6 +34,8 @@ type ResizableBottomPanelProps = Readonly<{
   constrainGrowthToOverflow?: boolean
   minimumContentSelector?: string
   minimumContentIndex?: number
+  collapseControl?: Readonly<{ label: string; onToggle: () => void }>
+  collapsed?: boolean
 }>
 
 const ResizableBottomPanel = ({
@@ -37,10 +46,13 @@ const ResizableBottomPanel = ({
   variant = 'floating',
   constrainGrowthToOverflow = false,
   minimumContentSelector,
-  minimumContentIndex = 0
+  minimumContentIndex = 0,
+  collapsed = false,
+  collapseControl
 }: ResizableBottomPanelProps): React.JSX.Element => {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<DragState | undefined>(undefined)
+  const suppressClickRef = useRef(false)
   const [height, setHeight] = useState<number>()
   const observerRef = useRef<ResizeObserver | undefined>(undefined)
   const observedTargetsRef = useRef(new Set<Element>())
@@ -100,8 +112,8 @@ const ResizableBottomPanel = ({
         ? current
         : next
     )
-    if (height !== undefined && height > bounds.max) setHeight(bounds.max)
-  }, [height, resizeBounds])
+    if (!collapsed && height !== undefined && height > bounds.max) setHeight(bounds.max)
+  }, [collapsed, height, resizeBounds])
   const measureObservedResize = useEffectEvent(measure)
 
   useLayoutEffect(() => {
@@ -138,8 +150,10 @@ const ResizableBottomPanel = ({
     setHeight(Math.min(bounds.max, Math.max(bounds.min, Math.round(nextHeight))))
   }
 
-  const handlePointerDown = (event: PointerEvent<HTMLDivElement>): void => {
+  const handlePointerDown = (event: PointerEvent<HTMLElement>): void => {
+    suppressClickRef.current = false
     if (
+      collapsed ||
       !surfaceRef.current ||
       event.isPrimary === false ||
       (event.button !== 0 && event.pointerType === 'mouse')
@@ -150,25 +164,36 @@ const ResizableBottomPanel = ({
     dragStateRef.current = {
       pointerId: event.pointerId,
       startHeight: surfaceRef.current.getBoundingClientRect().height,
-      startY: event.clientY
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false
     }
   }
 
-  const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
+  const handlePointerMove = (event: PointerEvent<HTMLElement>): void => {
     const dragState = dragStateRef.current
     if (!dragState || dragState.pointerId !== event.pointerId) return
+    if (Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY) >= 4) {
+      dragState.moved = true
+      suppressClickRef.current = true
+    }
+    if (collapseControl && !dragState.moved) return
     resizeTo(dragState.startHeight - (event.clientY - dragState.startY))
   }
 
-  const endPointerDrag = (event: PointerEvent<HTMLDivElement>): void => {
+  const endPointerDrag = (event: PointerEvent<HTMLElement>): void => {
     if (dragStateRef.current?.pointerId !== event.pointerId) return
+    if (event.type === 'pointercancel' || event.type === 'lostpointercapture') {
+      suppressClickRef.current = true
+    }
+    dragStateRef.current = undefined
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    dragStateRef.current = undefined
   }
 
-  const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+    if (collapsed) return
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
     event.preventDefault()
     const currentHeight = surfaceRef.current?.getBoundingClientRect().height
@@ -178,44 +203,87 @@ const ResizableBottomPanel = ({
     )
   }
 
+  const resizeHandle = !collapsed ? (
+    <div
+      role="separator"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+      aria-valuenow={size.now}
+      aria-valuetext={`${size.now}px`}
+      aria-valuemin={size.min}
+      aria-valuemax={size.max}
+      aria-controls={panelId}
+      className={`group z-20 grid cursor-ns-resize touch-none select-none place-items-center focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
+        variant === 'integrated'
+          ? 'absolute top-0 left-1/2 h-8 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-bg-10/0 to-bg-000/95 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28'
+          : 'absolute top-0 inset-x-0 h-8 rounded-lg [@media(pointer:coarse)]:h-11'
+      }`}
+      onKeyDown={handleResizeKeyDown}
+      onLostPointerCapture={endPointerDrag}
+      onPointerCancel={endPointerDrag}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={endPointerDrag}
+    >
+      <span
+        aria-hidden="true"
+        className="relative z-10 h-1 w-12 rounded-full bg-text-300/70 transition-colors duration-200 group-hover:bg-text-100 group-focus-visible:bg-text-100 group-active:bg-text-000"
+      />
+    </div>
+  ) : null
+
   return (
     <div
       ref={surfaceRef}
       className={`relative z-10 flex min-h-0 w-full min-w-0 max-h-[min(70dvh,44rem)] flex-col overflow-visible px-px pb-px ${
-        variant === 'integrated'
-          ? 'h-[min(70dvh,44rem)] pt-0'
-          : 'pt-8 [@media(pointer:coarse)]:pt-11'
+        collapsed && !collapseControl
+          ? 'pt-0'
+          : variant === 'integrated'
+            ? 'h-[min(70dvh,44rem)] pt-0'
+            : 'pt-8 [@media(pointer:coarse)]:pt-11'
       }`}
       data-testid={testId}
-      style={height === undefined ? undefined : { height }}
+      style={collapsed || height === undefined ? undefined : { height }}
     >
-      <div
-        role="separator"
-        tabIndex={0}
-        aria-label={ariaLabel}
-        aria-orientation="horizontal"
-        aria-valuenow={size.now}
-        aria-valuetext={`${size.now}px`}
-        aria-valuemin={size.min}
-        aria-valuemax={size.max}
-        aria-controls={panelId}
-        className={`group absolute top-0 z-20 grid cursor-ns-resize touch-none select-none place-items-center focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
-          variant === 'integrated'
-            ? 'left-1/2 h-8 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-bg-10/0 to-bg-000/95 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28'
-            : 'inset-x-0 h-8 rounded-lg [@media(pointer:coarse)]:h-11'
-        }`}
-        onKeyDown={handleResizeKeyDown}
-        onLostPointerCapture={endPointerDrag}
-        onPointerCancel={endPointerDrag}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endPointerDrag}
-      >
-        <span
-          aria-hidden="true"
-          className="relative z-10 h-1 w-12 rounded-full bg-text-300/70 transition-colors duration-200 group-hover:bg-text-100 group-focus-visible:bg-text-100 group-active:bg-text-000"
-        />
-      </div>
+      {collapseControl ? (
+        <button
+          type="button"
+          aria-label={collapseControl.label}
+          title={collapseControl.label}
+          aria-expanded={!collapsed}
+          aria-controls={panelId}
+          onClick={(event) => {
+            const suppress = suppressClickRef.current && event.detail !== 0
+            suppressClickRef.current = false
+            if (!suppress) collapseControl.onToggle()
+          }}
+          onKeyDown={handleResizeKeyDown}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endPointerDrag}
+          onPointerCancel={endPointerDrag}
+          onLostPointerCapture={endPointerDrag}
+          className="group absolute left-1/2 top-0 z-20 grid h-8 w-20 -translate-x-1/2 cursor-pointer touch-none select-none place-items-center rounded-full text-text-300 transition-colors hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-ns-resize [@media(pointer:coarse)]:h-11"
+        >
+          {collapsed ? (
+            <ChevronUp className="size-4" aria-hidden="true" />
+          ) : (
+            <>
+              <span
+                aria-hidden="true"
+                className="col-start-1 row-start-1 h-1 w-12 rounded-full bg-text-300/70 group-hover:opacity-0 group-focus-visible:opacity-0"
+              />
+              <ChevronDown
+                aria-hidden="true"
+                className="col-start-1 row-start-1 size-4 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
+              />
+            </>
+          )}
+        </button>
+      ) : (
+        resizeHandle
+      )}
       <div
         id={panelId}
         className={`min-h-0 flex-1 overscroll-contain rounded-2xl border border-border-200 bg-bg-000 ${
