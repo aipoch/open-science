@@ -6,11 +6,12 @@ import {
   ChevronDown,
   Folder,
   Monitor,
+  EyeOff,
   Paperclip,
   Plus,
   Server
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { GrantedLocalRoot } from '../../../../shared/local-fs'
 import type { ProjectFileItem } from '../../../../shared/project-files'
 
+import { ArtifactHideButton } from './ArtifactHideButton'
 import { ArtifactPreview } from './artifact-preview'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { FileTypeIcon } from './file-type-icon'
@@ -47,6 +49,9 @@ import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProb
 
 type ProjectFilesViewMode = 'grid' | 'list'
 
+// Restricted collections provide ephemeral previews/actions and never invoke ordinary readers.
+type RestrictedFilePresentation = { preview: ReactNode; actions: ReactNode }
+
 // Keeps collection semantics visible in both the menu rows and the currently selected trigger.
 const ProjectFilesFilterIcon = ({
   kind,
@@ -55,6 +60,7 @@ const ProjectFilesFilterIcon = ({
   kind: ProjectFilesFilterOption['kind']
   className: string
 }): React.JSX.Element => {
+  if (kind === 'hidden') return <EyeOff className={className} aria-hidden="true" />
   if (kind === 'uploads') {
     return <Paperclip className={className} strokeWidth={1.8} aria-hidden="true" />
   }
@@ -144,6 +150,9 @@ const FileActionButtons = ({
         className
       )}
     >
+      {source === 'artifact' ? (
+        <ArtifactHideButton projectId={projectId} fileId={fileId} name={name} />
+      ) : null}
       <ManagedFileDownloadButton
         source={source}
         path={path}
@@ -188,7 +197,8 @@ const FileTile = ({
   timestamp,
   previewLabel,
   onPreview,
-  onOpenInPanel
+  onOpenInPanel,
+  restrictedPresentation
 }: {
   name: string
   previewArtifact: MessageArtifact
@@ -201,14 +211,15 @@ const FileTile = ({
   timestamp?: number
   previewLabel: string
   onPreview: () => void
-  onOpenInPanel: () => void
+  onOpenInPanel?: () => void
+  restrictedPresentation?: RestrictedFilePresentation
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const sizeLabel = formatByteSize(size)
   const relativeTimeLabel = formatRelativeFileTime(timestamp, t)
   const [setTileElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
-    enabled: isNearViewport,
+    enabled: isNearViewport && !restrictedPresentation,
     projectId,
     sessionId,
     managedFileId: fileId,
@@ -237,15 +248,19 @@ const FileTile = ({
             missing && 'opacity-40'
           )}
         >
-          <ArtifactPreview
-            artifact={previewArtifact}
-            preview={preview}
-            source={source}
-            projectId={projectId}
-            sessionId={sessionId}
-            managedFileId={fileId}
-            isVisible={isNearViewport}
-          />
+          {restrictedPresentation ? (
+            restrictedPresentation.preview
+          ) : (
+            <ArtifactPreview
+              artifact={previewArtifact}
+              preview={preview}
+              source={source}
+              projectId={projectId}
+              sessionId={sessionId}
+              managedFileId={fileId}
+              isVisible={isNearViewport}
+            />
+          )}
           {missing ? (
             <span className="absolute left-1.5 top-1.5 rounded bg-text-000/75 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
               {t(FILE_MISSING_TAG_KEY)}
@@ -273,16 +288,22 @@ const FileTile = ({
           ) : null}
         </span>
       </button>
-      <FileActionButtons
-        source={source}
-        path={previewArtifact.path}
-        projectId={projectId}
-        fileId={fileId}
-        name={name}
-        disabled={missing}
-        className="right-1.5 top-1.5"
-        onOpenInPanel={onOpenInPanel}
-      />
+      {restrictedPresentation ? (
+        <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+          {restrictedPresentation.actions}
+        </div>
+      ) : (
+        <FileActionButtons
+          source={source}
+          path={previewArtifact.path}
+          projectId={projectId}
+          fileId={fileId}
+          name={name}
+          disabled={missing}
+          className="right-1.5 top-1.5"
+          onOpenInPanel={onOpenInPanel!}
+        />
+      )}
     </div>
   )
 }
@@ -293,17 +314,19 @@ const FileListRow = ({
   file,
   previewLabel,
   onPreview,
-  onOpenInPanel
+  onOpenInPanel,
+  restrictedPresentation
 }: {
   file: ProjectFileItem
   previewLabel: string
   onPreview: () => void
-  onOpenInPanel: () => void
+  onOpenInPanel?: () => void
+  restrictedPresentation?: RestrictedFilePresentation
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [setRowElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const missing = useUnavailablePreviewProbe({
-    enabled: isNearViewport,
+    enabled: isNearViewport && !restrictedPresentation,
     projectId: file.projectId,
     sessionId: file.sessionId,
     managedFileId: file.sourceFileId,
@@ -348,16 +371,22 @@ const FileListRow = ({
           </span>
         ) : null}
       </button>
-      <FileActionButtons
-        source={file.source}
-        path={file.path}
-        projectId={file.projectId}
-        fileId={file.sourceFileId}
-        name={file.name}
-        disabled={missing}
-        className="right-2 top-1/2 -translate-y-1/2"
-        onOpenInPanel={onOpenInPanel}
-      />
+      {restrictedPresentation ? (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+          {restrictedPresentation.actions}
+        </div>
+      ) : (
+        <FileActionButtons
+          source={file.source}
+          path={file.path}
+          projectId={file.projectId}
+          fileId={file.sourceFileId}
+          name={file.name}
+          disabled={missing}
+          className="right-2 top-1/2 -translate-y-1/2"
+          onOpenInPanel={onOpenInPanel!}
+        />
+      )}
     </div>
   )
 }
@@ -369,13 +398,15 @@ const ProjectFileItems = ({
   viewMode,
   previewById,
   onPreview,
-  onOpenInPanel
+  onOpenInPanel,
+  restrictedPresentation
 }: {
   files: ProjectFileItem[]
   viewMode: ProjectFilesViewMode
   previewById: Map<string, ArtifactPreviewResult | undefined>
   onPreview: (file: ProjectFileItem) => void
-  onOpenInPanel: (file: ProjectFileItem) => void
+  onOpenInPanel?: (file: ProjectFileItem) => void
+  restrictedPresentation?: (file: ProjectFileItem) => RestrictedFilePresentation
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -400,7 +431,8 @@ const ProjectFileItems = ({
               file={file}
               previewLabel={previewLabel}
               onPreview={() => onPreview(file)}
-              onOpenInPanel={() => onOpenInPanel(file)}
+              onOpenInPanel={() => onOpenInPanel?.(file)}
+              restrictedPresentation={restrictedPresentation?.(file)}
             />
           )
         }
@@ -419,7 +451,8 @@ const ProjectFileItems = ({
             timestamp={file.mtimeMs ?? file.sortAtMs}
             previewLabel={previewLabel}
             onPreview={() => onPreview(file)}
-            onOpenInPanel={() => onOpenInPanel(file)}
+            onOpenInPanel={() => onOpenInPanel?.(file)}
+            restrictedPresentation={restrictedPresentation?.(file)}
           />
         )
       })}
@@ -499,7 +532,9 @@ const ProjectFilesFilterMenu = ({
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
   const grantedRoots = useGrantedFoldersStore((state) => state.roots)
-  const fixedOptions = options.filter((option) => option.kind !== 'session')
+  const fixedOptions = options.filter(
+    (option) => option.kind !== 'session' && option.kind !== 'hidden'
+  )
   const sessionOptions = options.filter((option) => option.kind === 'session')
   const visibleSessionOptions = showAllSessions
     ? sessionOptions
@@ -626,6 +661,16 @@ const ProjectFilesFilterMenu = ({
                   })}
             </DropdownMenuItem>
           ) : null}
+          {options
+            .filter((option) => option.kind === 'hidden')
+            .map((option) => (
+              <FilterMenuItem
+                key={option.id}
+                option={option}
+                isSelected={option.id === selectedOptionId}
+                onSelect={onSelect}
+              />
+            ))}
         </DropdownMenuGroup>
 
         {/* "This computer" section: browse files on the machine Kiro runs on */}

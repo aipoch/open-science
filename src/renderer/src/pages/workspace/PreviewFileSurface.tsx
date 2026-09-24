@@ -1,3 +1,4 @@
+import { useArtifactHiddenState, usePreviewPathVisibility } from './use-artifact-hidden-state'
 import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
@@ -8,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  EyeOff,
   FileDiff,
   GitBranch,
   Link2,
@@ -282,10 +284,14 @@ const PreviewFileHeader = ({
   const viewInContextEntry = previewActions.entries.find(
     (entry) => entry.kind === 'action' && entry.action === 'view-in-context'
   )
+  const hideEntry = previewActions.entries.find(
+    (entry) => entry.kind === 'action' && entry.action === 'hide'
+  )
   const managedMenuEntries = [
     ...(provenanceActionEntry ? [provenanceActionEntry] : []),
     ...(provenanceActionEntry && viewInContextEntry ? [{ kind: 'separator' as const }] : []),
-    ...(viewInContextEntry ? [viewInContextEntry] : [])
+    ...(viewInContextEntry ? [viewInContextEntry] : []),
+    ...(hideEntry ? [hideEntry] : [])
   ]
 
   return (
@@ -414,6 +420,26 @@ const PreviewFileHeader = ({
                   disabled={viewInContextDisabled ?? false}
                   tooltipClassName={tooltipClassName}
                 />
+              ) : null}
+              {hideEntry?.kind === 'action' && provenanceEntry === 'trailing' ? (
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className={previewHeaderActionClassName}
+                        disabled={hideEntry.disabled}
+                        aria-label={t('Hide {{name}}', { name: item.name })}
+                        onClick={() => void previewActions.execute('hide')}
+                      >
+                        <EyeOff aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className={tooltipClassName}>{t('Hide file')}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               ) : null}
               <ManagedFileDownloadButton
                 source={item.source ?? 'artifact'}
@@ -638,7 +664,14 @@ const ManagedVersionNavigation = ({
 
 // The content slot is shared by both presentations so every supported file type follows the same
 // renderer path. Callers can temporarily suppress it while another surface owns the preview.
-const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
+type PreviewFileSurfaceContentProps = PreviewFileSurfaceProps & {
+  onHideArtifact: (identity: { projectId: string; fileId: string }) => Promise<void>
+}
+
+const PreviewFileSurfaceContent = forwardRef<
+  PreviewFileSurfaceHandle,
+  PreviewFileSurfaceContentProps
+>(
   (
     {
       item,
@@ -666,7 +699,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       onAnnotationError,
       onPdfContextError,
       onLinkReadingContext,
-      onUnlinkReadingContext
+      onUnlinkReadingContext,
+      onHideArtifact
     },
     ref
   ): React.JSX.Element => {
@@ -1452,6 +1486,20 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   }
                 }
               : {}),
+            ...(resolvedPreviewItem.source === 'artifact' &&
+            resolvedPreviewItem.projectId &&
+            resolvedPreviewItem.managedFileId
+              ? {
+                  hide: {
+                    disabled: isDirty || mode === 'edit',
+                    execute: () =>
+                      onHideArtifact({
+                        projectId: resolvedPreviewItem.projectId!,
+                        fileId: resolvedPreviewItem.managedFileId!
+                      })
+                  }
+                }
+              : {}),
             ...(openProvenance ? { provenance: { execute: openProvenance } } : {}),
             ...(canViewInContext
               ? {
@@ -1882,12 +1930,52 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
 
 PreviewFileSurfaceContent.displayName = 'PreviewFileSurfaceContent'
 
+// Unmount the entire content owner when visibility is revoked, removing cached bytes and embeds.
 const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfaceProps>(
-  (props, ref) => (
-    <PdfExportProvider>
-      <PreviewFileSurfaceContent {...props} ref={ref} />
-    </PdfExportProvider>
-  )
+  (props, ref) => {
+    const hidden = useArtifactHiddenState(props.item.projectId)
+    const { t } = useTranslation()
+    const item = props.item
+    // This owner survives visibility revocation; only identity changes/unmount revoke its close.
+    const hideOwnerGeneration = useRef(0)
+    const identity = JSON.stringify([
+      item.projectId,
+      item.source,
+      item.id,
+      item.managedFileId,
+      item.artifactId
+    ])
+    useLayoutEffect(() => {
+      const generation = ++hideOwnerGeneration.current
+      return () => {
+        hideOwnerGeneration.current = generation + 1
+      }
+    }, [identity])
+    const hideArtifact = async (identity: { projectId: string; fileId: string }): Promise<void> => {
+      const generation = hideOwnerGeneration.current
+      await window.api.projectFiles.setArtifactHidden({ ...identity, hidden: true })
+      if (hideOwnerGeneration.current === generation) props.onClose()
+    }
+    const pathAllowed = usePreviewPathVisibility(
+      item.source === 'local' || (!item.source && !item.managedFileId && !item.artifactId)
+        ? item.path
+        : undefined
+    )
+    const denied =
+      !pathAllowed ||
+      (item.source !== 'upload' &&
+        item.source !== 'local' &&
+        item.source !== 'literature' &&
+        (!hidden.ready ||
+          hidden.ids.has(item.managedFileId ?? item.artifactId ?? item.id) ||
+          hidden.ids.has(item.selectedVersionId ?? '')))
+    if (denied) return <div className="p-4 text-sm text-text-300">{t('File unavailable')}</div>
+    return (
+      <PdfExportProvider>
+        <PreviewFileSurfaceContent {...props} ref={ref} onHideArtifact={hideArtifact} />
+      </PdfExportProvider>
+    )
+  }
 )
 PreviewFileSurface.displayName = 'PreviewFileSurface'
 

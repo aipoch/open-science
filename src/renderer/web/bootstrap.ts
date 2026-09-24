@@ -1,3 +1,5 @@
+import { saveWebProjectArchive } from './project-archive'
+import type { SaveProjectArtifactsRequest } from '../../shared/file-save'
 import {
   configureComposerDraftStorage,
   preserveComposerDraftsForRecovery
@@ -502,6 +504,8 @@ const installWebApi = async (): Promise<EventCursor> => {
         downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
         return Promise.resolve({ saved: true })
       },
+      saveProjectArtifacts: (request: SaveProjectArtifactsRequest) =>
+        saveWebProjectArchive(request, invoke, downloadBlob, WEB_BLOB_DOWNLOAD_MAX_BYTES),
       saveManagedFile: async (request: SaveManagedFileRequest) => {
         const showSaveFilePicker = (
           window as unknown as { showSaveFilePicker?: BrowserSaveFilePicker }

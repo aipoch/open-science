@@ -6601,6 +6601,15 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Resultados de IA en directo. Las decisiones manuales siguen determinando la pertenencia a la colección.",
     "Start an update to see the screening process.": "Inicie una actualización para ver el proceso de selección.",
     "Pending candidates": "Candidatos pendientes",
-    "Pause analysis": "Pausar análisis"
+    "Pause analysis": "Pausar análisis",
+    "Hidden": "Ocultos",
+    "Hide {{name}}": "Ocultar {{name}}",
+    "Unhide {{name}}": "Mostrar {{name}}",
+    "Could not change file visibility.": "No se pudo cambiar la visibilidad del archivo.",
+    "Could not load project files.": "No se pudieron cargar los archivos del proyecto.",
+    "Could not load file preview.": "No se pudo cargar la vista previa del archivo.",
+    "Download this file to view it.": "Descargue este archivo para verlo.",
+    "Preview truncated.": "Vista previa truncada.",
+    "Hide file": "Ocultar archivo"
   }
 }

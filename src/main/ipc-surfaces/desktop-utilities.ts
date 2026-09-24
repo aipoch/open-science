@@ -18,6 +18,7 @@ type DesktopUtilitiesOwners = {
   logs: LogsCommandOwner
   github: GithubCommandOwner
   cli: CliCommandOwner
+  openHiddenArtifactVersion?: RegisterFileSaveHandlersOptions['openHiddenArtifactVersion']
 }
 
 export const createDesktopUtilitiesElectronSurface = ({
@@ -27,11 +28,13 @@ export const createDesktopUtilitiesElectronSurface = ({
   translate,
   logs,
   github,
-  cli
+  cli,
+  openHiddenArtifactVersion
 }: DesktopUtilitiesOwners): NamedElectronSurfaceAdapter =>
   createElectronSurfaceAdapter('desktop-utilities', () => {
     registerFileSaveHandlers({
       resolveManagedFilePath,
+      openHiddenArtifactVersion,
       openLatestManagedFile: (source, request) =>
         managedFileVersions.openLatest({ source, ...request }),
       openManagedFileVersion: (source, request) =>

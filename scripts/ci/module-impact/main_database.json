@@ -84,7 +84,8 @@
     "src/main/database/pdf-annotations-migration.test.ts",
     "src/main/database/migrations/0043-pdf-annotations.ts",
     "src/main/database/literature-smart-collections-migration.test.ts",
-    "src/main/database/migrations/0044-literature-smart-collections.ts"
+    "src/main/database/migrations/0044-literature-smart-collections.ts",
+    "src/main/database/migrations/0045-artifact-hidden.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -471,6 +472,7 @@
       "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts",
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
     ]
   },

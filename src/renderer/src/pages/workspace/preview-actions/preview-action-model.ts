@@ -3,6 +3,7 @@ import {
   ClipboardCopy,
   Download,
   Eye,
+  EyeOff,
   GitBranch,
   Maximize2,
   PackagePlus,
@@ -23,6 +24,7 @@ export type PreviewCapabilityId =
   | 'view-in-context'
   | 'download'
   | 'open-fullscreen'
+  | 'hide'
   | 'close'
 
 export type PreviewActionBinding = ActionMenuBinding<undefined>
@@ -39,6 +41,7 @@ export const PREVIEW_CAPABILITY_CATALOG: Record<PreviewCapabilityId, ActionMenuD
   'view-in-context': { labelKey: 'View in context', icon: Eye },
   download: { labelKey: 'Download', icon: Download },
   'open-fullscreen': { labelKey: 'Open full screen preview', icon: Maximize2 },
+  hide: { labelKey: 'Hide file', icon: EyeOff },
   close: { labelKey: 'Close', icon: X }
 }
 
@@ -58,6 +61,7 @@ export const MANAGED_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
   { kind: 'action', action: 'view-in-context' },
   { kind: 'action', action: 'open-fullscreen' },
   { kind: 'action', action: 'download' },
+  { kind: 'action', action: 'hide' },
   { kind: 'action', action: 'close' }
 ]
 

@@ -307,6 +307,9 @@ describe('registerProjectFilesIpcHandlers', () => {
       isIndexComplete: true
     }
     const injected: ProjectFilesHandlers = {
+      setArtifactHidden: vi.fn(),
+      getHiddenArtifactIds: vi.fn(),
+      readHiddenArtifact: vi.fn(),
       getOverview: vi.fn().mockResolvedValue(overview),
       readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
@@ -329,6 +332,9 @@ describe('registerProjectFilesIpcHandlers', () => {
   it('preserves an injected handler identity when registration fails', async () => {
     const failure = new Error('registration failed')
     const injected: ProjectFilesHandlers = {
+      setArtifactHidden: vi.fn(),
+      getHiddenArtifactIds: vi.fn(),
+      readHiddenArtifact: vi.fn(),
       getOverview: vi.fn().mockResolvedValue({
         totalCount: 0,
         uploadCount: 0,

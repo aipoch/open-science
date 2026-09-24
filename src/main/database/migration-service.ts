@@ -3,6 +3,7 @@ import { classificationUsageMigration } from './migrations/0042-classification-u
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
 import { pdfAnnotationsMigration } from './migrations/0043-pdf-annotations'
+import { artifactHiddenMigration } from './migrations/0045-artifact-hidden'
 import {
   literatureSearchTextMigration,
   backfillLiteratureSearchText
@@ -861,6 +862,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...artifactHiddenMigration,
+    checksum: checksumMigrationPayload(
+      artifactHiddenMigration.id,
+      artifactHiddenMigration.statements,
+      artifactHiddenMigration.verifiers,
+      artifactHiddenMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1302,6 +1314,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, contentVerificationObservationMigration.verifiers)
   await runMigrationVerifiers(client, literatureMetadataCommitReceiptMigration.verifiers)
   await runMigrationVerifiers(client, literatureCollectionRevisionMigration.verifiers)
+  await runMigrationVerifiers(client, artifactHiddenMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {

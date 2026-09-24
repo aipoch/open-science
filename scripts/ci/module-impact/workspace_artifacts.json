@@ -12,6 +12,7 @@
     "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx",
     "src/renderer/src/pages/workspace/PreviewProvenanceSplit.tsx",
     "src/renderer/src/pages/workspace/ProvenanceLoadNotice.tsx",
+    "src/renderer/src/pages/workspace/HiddenArtifactFiles.tsx",
     "src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx",
     "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
     "src/renderer/src/pages/workspace/artifact-environment-lock-store.test.ts",
@@ -33,7 +34,14 @@
     "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
     "src/renderer/src/pages/workspace/project-artifact-download-data.ts",
     "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts",
-    "src/renderer/src/pages/workspace/session-artifact-download-data.ts"
+    "src/renderer/src/pages/workspace/session-artifact-download-data.ts",
+    "src/renderer/src/pages/workspace/use-artifact-hidden-state.test.tsx",
+    "src/renderer/src/pages/workspace/use-artifact-hidden-state.ts",
+    "src/renderer/web/project-archive.test.ts",
+    "src/renderer/web/project-archive.ts",
+    "src/renderer/src/pages/workspace/ArtifactHideButton.tsx",
+    "src/renderer/src/pages/workspace/project-files-section.tsx",
+    "src/renderer/src/pages/workspace/HiddenArtifactFiles.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
@@ -58,6 +66,7 @@
       "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactSourcesPanel.test.tsx",
+      "src/renderer/src/pages/workspace/use-artifact-hidden-state.test.tsx",
       "src/renderer/src/pages/workspace/DownloadProjectArtifactsDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/artifact-environment-lock-store.test.ts",
@@ -70,7 +79,9 @@
       "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
-      "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts"
+      "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts",
+      "src/renderer/web/project-archive.test.ts",
+      "src/renderer/src/pages/workspace/HiddenArtifactFiles.test.tsx"
     ],
     "contract": [],
     "consumer": [
@@ -296,7 +307,8 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.test.tsx",
-      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
+      "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

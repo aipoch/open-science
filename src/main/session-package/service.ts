@@ -193,6 +193,43 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const assertNoHiddenArtifactReferences = async (
+  client: PrismaClient,
+  values: readonly unknown[]
+): Promise<void> => {
+  const hiddenIds = new Set(
+    (
+      await client.artifactVersion.findMany({
+        where: { artifact: { is: { hiddenAt: { not: null } } } },
+        select: { id: true }
+      })
+    ).map((row) => row.id)
+  )
+  if (!hiddenIds.size) return
+  const visit = (value: unknown, seen: Set<object>): boolean => {
+    if (typeof value === 'string') {
+      if (hiddenIds.has(value)) return true
+      if (value.split(/[\0/:]/).some((part) => hiddenIds.has(part))) return true
+      const trimmed = value.trim()
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return visit(JSON.parse(trimmed), seen)
+        } catch {
+          return false
+        }
+      }
+      return false
+    }
+    if (!value || typeof value !== 'object') return false
+    if (seen.has(value)) return false
+    seen.add(value)
+    if (Array.isArray(value)) return value.some((entry) => visit(entry, seen))
+    return Object.values(value).some((entry) => visit(entry, seen))
+  }
+  if (values.some((value) => visit(value, new Set())))
+    throw new Error('Session package references a hidden artifact.')
+}
+
 const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   if (!isRecord(envelope)) return false
   const hasEnvelopeField = Object.hasOwn(envelope, 'version') || Object.hasOwn(envelope, 'session')
@@ -551,6 +588,26 @@ export class SessionPackageService {
               (await readPackageJson(join(source, entry.path))) as NotebookRunDocument
           )
       )
+      const readForwardedEvidence = async (): Promise<unknown[]> =>
+        Promise.all(
+          manifest.inventory
+            .filter((entry) => entry.storageKey?.endsWith('/evidence.json'))
+            .map((entry) => readPackageJson(join(source, entry.path)))
+        )
+      const forwardClient = await this.options.getClient()
+      const assertForwardedArtifactsSafe = async (): Promise<void> => {
+        const localRecords = mapPackageReferences(records, origin.identities) as PackageRecords
+        await assertNoHiddenArtifactReferences(forwardClient, [
+          forwardedSession,
+          session,
+          records,
+          localRecords,
+          manifest,
+          notebooks,
+          await readForwardedEvidence()
+        ])
+      }
+      await assertForwardedArtifactsSafe()
       const inheritedExclusions = packageReproducibilityExclusions(records)
       const selectable = selectablePackageFiles(records, notebooks).filter(
         (file) => !alreadyExcluded.has(file.storageKey)
@@ -669,11 +726,15 @@ export class SessionPackageService {
           options.onProgress?.({ phase: 'validating' })
           await validatePackageDirectory(staging, this.signal)
           await validatePackageRecords(staging, forwarded, records, this.signal)
-          if (options.consumeSnapshot) await options.consumeSnapshot(staging)
-          else {
+          if (options.consumeSnapshot) {
+            await assertForwardedArtifactsSafe()
+            await options.consumeSnapshot(staging)
+          } else {
             options.onProgress?.({ phase: 'compressing' })
-            await publishUserFile(path, (temporary) =>
-              writePackageArchive(staging, temporary, this.signal)
+            await publishUserFile(
+              path,
+              (temporary) => writePackageArchive(staging, temporary, this.signal),
+              { validateDestination: assertForwardedArtifactsSafe }
             )
           }
           return preview(forwarded, forwardedSession)
@@ -722,6 +783,28 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
+    let validatedExecutionEvidenceKeys: readonly string[] = []
+    await assertNoHiddenArtifactReferences(client, [session, notebooks, records])
+    const assertExportedArtifactsVisible = async (): Promise<void> => {
+      const executionEvidence = await Promise.all(
+        validatedExecutionEvidenceKeys
+          .filter((key) => key.endsWith('/evidence.json'))
+          .map((key) => readPackageJson(resolveStorageKey(this.options.storageRoot, key)))
+      )
+      await assertNoHiddenArtifactReferences(client, [
+        session,
+        notebooks,
+        records,
+        executionEvidence
+      ])
+      const versionIds = records.tables.ArtifactVersion.map((row) => String(row.id))
+      if (!versionIds.length) return
+      const hidden = await client.artifactVersion.findFirst({
+        where: { id: { in: versionIds }, artifact: { is: { hiddenAt: { not: null } } } },
+        select: { id: true }
+      })
+      if (hidden) throw new Error('The Session changed during export. Try again.')
+    }
     const retainedOrigin = session.forkOrigin ? await this.readOrigin(request) : undefined
     if (retainedOrigin?.literature)
       records.literature = mapPackageReferences(
@@ -743,6 +826,7 @@ export class SessionPackageService {
       request,
       this.signal
     )
+    await assertNoHiddenArtifactReferences(client, [session, notebooks, records])
     const inheritedExclusions = [
       ...new Map(
         [
@@ -761,6 +845,13 @@ export class SessionPackageService {
       notebooks,
       this.signal
     )
+    const executionEvidence = await Promise.all(
+      executionKeys
+        .filter((key) => key.endsWith('/evidence.json'))
+        .map((key) => readPackageJson(resolveStorageKey(this.options.storageRoot, key)))
+    )
+    validatedExecutionEvidenceKeys = executionKeys
+    await assertNoHiddenArtifactReferences(client, executionEvidence)
     const sharedSession = encodeSessionDataPaths(
       withoutPrivateAuthority(session),
       this.options.storageRoot
@@ -871,6 +962,7 @@ export class SessionPackageService {
         let completedBytes = 0
         let completedFiles = 0
         for (const storageKey of sizes.keys()) {
+          await assertExportedArtifactsVisible()
           assertPortablePackageStorageKey(storageKey)
           await assertPackageSourcePath(this.options.storageRoot, sourceKey(storageKey))
           const original = resolveStorageKey(this.options.storageRoot, sourceKey(storageKey))
@@ -1020,11 +1112,15 @@ export class SessionPackageService {
           !isDeepStrictEqual(currentRecords, records)
         )
           throw new Error('The Session changed during export. Try again.')
-        if (options.consumeSnapshot) await options.consumeSnapshot(directory)
-        else {
+        if (options.consumeSnapshot) {
+          await assertExportedArtifactsVisible()
+          await options.consumeSnapshot(directory)
+        } else {
           options.onProgress?.({ phase: 'compressing' })
-          await publishUserFile(path, (temporaryPath) =>
-            writePackageArchive(directory, temporaryPath, this.signal)
+          await publishUserFile(
+            path,
+            (temporaryPath) => writePackageArchive(directory, temporaryPath, this.signal),
+            { validateDestination: assertExportedArtifactsVisible }
           )
         }
         return preview(manifest, session)

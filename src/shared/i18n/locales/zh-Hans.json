@@ -6277,6 +6277,15 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "实时 AI 判定。合集是否收录仍以人工决定为准。",
     "Start an update to see the screening process.": "开始更新后即可查看筛选过程。",
     "Pending candidates": "待筛选论文",
-    "Pause analysis": "暂停分析"
+    "Pause analysis": "暂停分析",
+    "Hidden": "已隐藏",
+    "Hide {{name}}": "隐藏 {{name}}",
+    "Unhide {{name}}": "取消隐藏 {{name}}",
+    "Could not change file visibility.": "无法更改文件可见性。",
+    "Could not load project files.": "无法加载项目文件。",
+    "Could not load file preview.": "无法加载文件预览。",
+    "Download this file to view it.": "请下载此文件以查看。",
+    "Preview truncated.": "预览已截断。",
+    "Hide file": "隐藏文件"
   }
 }

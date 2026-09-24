@@ -90,6 +90,18 @@ class ManagedFileIndexRepository {
     this.mutationOwner.markReconciliationIncomplete(projectId)
   }
 
+  getHiddenArtifactIds(
+    projectId: string
+  ): Promise<import('../../shared/project-files').HiddenArtifactIdentity[]> {
+    return this.queryOwner.getHiddenArtifactIds(projectId)
+  }
+
+  setArtifactHidden(
+    request: import('../../shared/project-files').SetArtifactHiddenRequest
+  ): Promise<void> {
+    return this.mutationOwner.setArtifactHidden(request)
+  }
+
   async getOverview(
     request: string | GetProjectFilesOverviewRequest
   ): Promise<ProjectFilesOverview> {

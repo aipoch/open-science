@@ -316,6 +316,11 @@ describe('ProjectFilesView', () => {
       )
 
     window.api.projectFiles = {
+      setArtifactHidden: vi.fn().mockResolvedValue(undefined),
+      getHiddenArtifactIds: vi.fn().mockResolvedValue([]),
+      readHiddenArtifact: vi
+        .fn()
+        .mockResolvedValue({ content: '', encoding: 'utf8', size: 0, truncated: false }),
       readExportFiles: vi.fn(),
       searchArtifacts: vi.fn(),
       getOverview: vi.fn(async (request) => {
@@ -387,6 +392,27 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
   }
+
+  it('offers Hide on generated files and keeps a dedicated Hidden filter reachable', async () => {
+    await renderView([
+      createSession({
+        artifacts: [
+          {
+            id: 'artifact-hide',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt'
+          }
+        ]
+      })
+    ])
+    const hide = container.querySelector<HTMLButtonElement>('[aria-label="Hide result.txt"]')
+    expect(hide).not.toBeNull()
+    await act(async () => {
+      clickDropdownTrigger(container.querySelector('[aria-label="Filter project files"]'))
+    })
+    expect(document.querySelector('[data-filter-id="hidden"]')?.textContent).toContain('Hidden')
+  })
 
   it('renders an empty state when the project has no files', async () => {
     await renderView([])

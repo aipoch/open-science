@@ -38,9 +38,9 @@ export const registerLocalFsIpcHandlers = (
   )
   ipcMainHandle(LOCAL_FS_GET_ROOTS_CHANNEL, (): LocalRoots => service.getRoots())
   ipcMainHandle(LOCAL_FS_LIST_DRIVES_CHANNEL, (): Promise<LocalDrive[]> => service.listDrives())
-  ipcMainHandle(LOCAL_FS_REVEAL_CHANNEL, (_event, path: string): void => {
+  ipcMainHandle(LOCAL_FS_REVEAL_CHANNEL, (_event, path: string): Promise<void> =>
     service.revealInFolder(path)
-  })
+  )
   ipcMainHandle(LOCAL_FS_OPEN_PATH_CHANNEL, (_event, path: string): Promise<string> =>
     service.openPath(path)
   )

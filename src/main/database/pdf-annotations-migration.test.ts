@@ -43,7 +43,7 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
       'DELETE FROM "_open_science_migrations" WHERE id >= \'0043_pdf_annotations\''
     )
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: ['0043_pdf_annotations', '0044_literature_smart_collections']
+      applied: ['0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden']
     })
     expect(await client.bookmark.findMany()).toEqual(before)
     expect(await client.pdfAnnotation.count()).toBe(0)

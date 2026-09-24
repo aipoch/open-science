@@ -6738,6 +6738,15 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Результаты ИИ в реальном времени. Ручные решения по-прежнему определяют состав коллекции.",
     "Start an update to see the screening process.": "Запустите обновление, чтобы увидеть процесс отбора.",
     "Pending candidates": "Кандидаты в ожидании",
-    "Pause analysis": "Приостановить анализ"
+    "Pause analysis": "Приостановить анализ",
+    "Hidden": "Скрытые",
+    "Hide {{name}}": "Скрыть {{name}}",
+    "Unhide {{name}}": "Показать {{name}}",
+    "Could not change file visibility.": "Не удалось изменить видимость файла.",
+    "Could not load project files.": "Не удалось загрузить файлы проекта.",
+    "Could not load file preview.": "Не удалось загрузить предпросмотр файла.",
+    "Download this file to view it.": "Скачайте этот файл, чтобы просмотреть его.",
+    "Preview truncated.": "Предпросмотр сокращён.",
+    "Hide file": "Скрыть файл"
   }
 }

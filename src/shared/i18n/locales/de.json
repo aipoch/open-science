@@ -6435,6 +6435,15 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Live-KI-Ergebnisse. Manuelle Entscheidungen bestimmen weiterhin die Zugehörigkeit zur Sammlung.",
     "Start an update to see the screening process.": "Starten Sie eine Aktualisierung, um den Sichtungsverlauf zu sehen.",
     "Pending candidates": "Ausstehende Kandidaten",
-    "Pause analysis": "Analyse pausieren"
+    "Pause analysis": "Analyse pausieren",
+    "Hidden": "Ausgeblendet",
+    "Hide {{name}}": "{{name}} ausblenden",
+    "Unhide {{name}}": "{{name}} einblenden",
+    "Could not change file visibility.": "Die Sichtbarkeit der Datei konnte nicht geändert werden.",
+    "Could not load project files.": "Die Projektdateien konnten nicht geladen werden.",
+    "Could not load file preview.": "Die Dateivorschau konnte nicht geladen werden.",
+    "Download this file to view it.": "Laden Sie diese Datei herunter, um sie anzuzeigen.",
+    "Preview truncated.": "Vorschau gekürzt.",
+    "Hide file": "Datei ausblenden"
   }
 }

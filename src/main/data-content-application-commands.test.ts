@@ -129,6 +129,9 @@ const createDependencies = () => {
   }
   const preview = { load: vi.fn(), save: vi.fn(), delete: vi.fn() }
   const projectFiles = {
+    setArtifactHidden: vi.fn(),
+    getHiddenArtifactIds: vi.fn(),
+    readHiddenArtifact: vi.fn(),
     getOverview: vi.fn(),
     listArtifactGroups: vi.fn(),
     readExportFiles: vi.fn(),
@@ -343,6 +346,9 @@ describe('Data and content application commands', () => {
         'preview-resources:acquire',
         'preview-resources:read-range',
         'preview-resources:release',
+        'project-files:set-artifact-hidden',
+        'project-files:get-hidden-artifact-ids',
+        'project-files:read-hidden-artifact',
         'project-files:get-overview',
         'project-files:list-artifact-groups',
         'project-files:list-files',
@@ -504,6 +510,21 @@ describe('Data and content application commands', () => {
         args: [request('preview-resource-release')],
         owner: deps.managedPreview.release,
         passCallerLease: true
+      },
+      {
+        key: 'projectFilesSetArtifactHidden',
+        args: [request('hide')],
+        owner: deps.projectFiles.setArtifactHidden
+      },
+      {
+        key: 'projectFilesGetHiddenArtifactIds',
+        args: [request('hidden-ids')],
+        owner: deps.projectFiles.getHiddenArtifactIds
+      },
+      {
+        key: 'projectFilesReadHiddenArtifact',
+        args: [request('hidden-read')],
+        owner: deps.projectFiles.readHiddenArtifact
       },
       {
         key: 'projectFilesGetOverview',

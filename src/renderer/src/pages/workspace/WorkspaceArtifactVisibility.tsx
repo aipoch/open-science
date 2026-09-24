@@ -1,3 +1,4 @@
+import { useArtifactHiddenState } from './use-artifact-hidden-state'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
@@ -211,6 +212,7 @@ const useWorkspaceArtifactVisibility = (
   const projectId = activeSession?.projectId
   const messages = activeSession?.messages
   const artifacts = activeSession?.artifacts
+  const hidden = useArtifactHiddenState(projectId)
   const graph = activeSession?.conversationGraph
   const scopedArtifacts = useMemo(
     () => artifacts?.map((artifact) => resolveMessageArtifactScope(artifact, projectId, sessionId)),
@@ -251,7 +253,17 @@ const useWorkspaceArtifactVisibility = (
   )
   const artifactsForMessage = useCallback(
     (message: ChatSession['messages'][number]) => {
-      if (sessionId === undefined) return []
+      if (sessionId === undefined || !hidden.ready) return []
+      const visibleArtifacts = scopedArtifacts?.filter(
+        (artifact) =>
+          !hidden.ids.has(artifact.artifactId ?? artifact.id) &&
+          !hidden.ids.has(artifact.versionId ?? artifact.id)
+      )
+      const visibleHistorical = new Map(
+        [...historicalArtifacts].filter(
+          ([id, artifact]) => !hidden.ids.has(id) && !hidden.ids.has(artifact?.artifactId ?? id)
+        )
+      )
       const projectedVersionIdsForTurn =
         message.role === 'agent' &&
         message.responseToMessageId &&
@@ -259,18 +271,20 @@ const useWorkspaceArtifactVisibility = (
           ? projectedArtifactVersionIdsByRootMessageId.get(message.responseToMessageId)
           : undefined
       if (!projectedVersionIdsForTurn || projectedVersionIdsForTurn.length === 0) {
-        return getMessageArtifacts(scopedArtifacts, message, historicalArtifacts)
+        return getMessageArtifacts(visibleArtifacts, message, visibleHistorical)
       }
       return getMessageArtifacts(
-        scopedArtifacts,
+        visibleArtifacts,
         {
           ...message,
           artifactIds: [...(message.artifactIds ?? []), ...projectedVersionIdsForTurn]
         },
-        historicalArtifacts
+        visibleHistorical
       )
     },
     [
+      hidden.ready,
+      hidden.ids,
       historicalArtifacts,
       projectedArtifactVersionIdsByRootMessageId,
       scopedArtifacts,

@@ -1,7 +1,15 @@
 import { ErrorNotice } from '@/components/error-notice'
+import { HiddenArtifactFiles } from './HiddenArtifactFiles'
+import {
+  SectionHeader,
+  PageLoadError,
+  FilePageFooter,
+  loadMoreButtonClassName,
+  type FilePageLoadMode
+} from './project-files-section'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
-import { ChevronDown, LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
+import { LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -45,7 +53,6 @@ import {
 } from './project-files-query-model'
 import { FILE_PAGE_SIZE, type PageState } from './use-project-files-index'
 
-type FilePageLoadMode = 'manual' | 'scroll'
 type GrantedRootMutationKind = 'change' | 'remove'
 
 type GrantedRootMutationError = {
@@ -54,8 +61,6 @@ type GrantedRootMutationError = {
   retry: () => Promise<unknown>
 }
 
-// Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
-const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
 // Shares count grammar between the toolbar summary and independently paginated section headers.
 const formatFileCount = (count: number, t: TFunction): string =>
   t('{{count}} files', { defaultValue_one: '{{count}} file', count })
@@ -77,115 +82,6 @@ const ELAPSED_AGO = {
 const formatElapsedAgo = (timestamp: number, t: TFunction): string => {
   const { unit, count } = relativeTimeParts(timestamp)
   return unit === 'now' ? t('now') : t(ELAPSED_AGO[unit], { count })
-}
-
-const SectionHeader = ({
-  id,
-  title,
-  countLabel,
-  isCollapsed,
-  hideTopBorder = false,
-  onToggle
-}: {
-  id: string
-  title: string
-  countLabel: string
-  isCollapsed: boolean
-  hideTopBorder?: boolean
-  onToggle: (id: string) => void
-}): React.JSX.Element => (
-  <button
-    type="button"
-    data-testid="project-file-section-header"
-    className={cn(
-      'flex w-full min-w-0 items-center gap-1.5 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-100',
-      id.startsWith('session:') && 'cursor-default',
-      !hideTopBorder && 'border-t border-border-300/40'
-    )}
-    aria-expanded={!isCollapsed}
-    onClick={() => onToggle(id)}
-  >
-    <ChevronDown
-      className={cn(
-        'size-3 shrink-0 text-text-300 transition-transform motion-reduce:transition-none',
-        isCollapsed && '-rotate-90'
-      )}
-      strokeWidth={2}
-      aria-hidden="true"
-    />
-    <span className="min-w-0 flex-1 truncate">{title}</span>
-    <span className="shrink-0 text-[11px] text-text-300">{countLabel}</span>
-  </button>
-)
-
-const PageLoadError = ({
-  message,
-  onRetry
-}: {
-  message: string
-  onRetry: () => void
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  return (
-    <div className="px-4 py-3">
-      <ErrorNotice
-        role="alert"
-        description={message}
-        primaryButton={{ label: t('Retry'), onClick: onRetry }}
-      />
-    </div>
-  )
-}
-
-// All mode uses a compact per-section button; category mode normally scroll-loads. Both modes share
-// the same terminal state so each upload/session section says No more independently.
-const FilePageFooter = ({
-  page,
-  mode,
-  visibleItemCount,
-  loadMoreLabel,
-  onLoadMore
-}: {
-  page: PageState<ProjectFileItem> | undefined
-  mode: FilePageLoadMode
-  visibleItemCount: number
-  loadMoreLabel: string
-  onLoadMore: () => void
-}): React.JSX.Element | null => {
-  const { t } = useTranslation()
-
-  if (!page?.isLoaded || page.error || page.items.length === 0) return null
-
-  const hasMore = visibleItemCount < page.items.length || Boolean(page.nextCursor)
-
-  if (!hasMore && !page.isLoading) {
-    return (
-      <div
-        data-testid="project-files-end"
-        className="px-4 py-2 text-center text-[11px] text-text-000"
-      >
-        {t('No more')}
-      </div>
-    )
-  }
-
-  if (mode !== 'manual' || !hasMore) return null
-
-  return (
-    <div className="flex justify-center px-4 py-2">
-      <Button
-        type="button"
-        variant="ghost"
-        size="xs"
-        className={loadMoreButtonClassName}
-        aria-label={loadMoreLabel}
-        disabled={page.isLoading}
-        onClick={onLoadMore}
-      >
-        {t(page.isLoading ? 'Loading...' : 'Load more')}
-      </Button>
-    </div>
-  )
 }
 
 // Renders one independently paginated artifact collection. All mode reveals local batches of 20 with
@@ -301,6 +197,7 @@ const ProjectFilesViewContent = ({
     (state) => state.expandedToolItemId === PROJECT_FILES_PREVIEW_ID
   )
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
+  const [hiddenFileCount, setHiddenFileCount] = useState(0)
   const [viewMode, setViewMode] = useState<ProjectFilesViewMode>('grid')
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
   const fileDialogCleanupState = useRef({ version: 0 })
@@ -690,7 +587,10 @@ const ProjectFilesViewContent = ({
             ) : null}
           </div>
           <div className="shrink-0 text-[11px] tabular-nums text-text-000">
-            {formatFileCount(visibleFileCount, t)}
+            {formatFileCount(
+              effectiveFilterId === 'hidden' ? hiddenFileCount : visibleFileCount,
+              t
+            )}
           </div>
         </div>
       ) : null}
@@ -699,6 +599,14 @@ const ProjectFilesViewContent = ({
         <LocalFileBrowser
           onEntryCountChange={setLocalEntryCount}
           requestedPath={localRequestedPath}
+        />
+      ) : effectiveFilterId === 'hidden' && activeProjectId ? (
+        <HiddenArtifactFiles
+          key={activeProjectId}
+          projectId={activeProjectId}
+          query={debouncedSearchQuery}
+          viewMode={viewMode}
+          onCountChange={setHiddenFileCount}
         />
       ) : (
         <div data-testid="project-files-scroll" className="min-h-0 flex-1 overflow-y-auto pb-4">

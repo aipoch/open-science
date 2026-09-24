@@ -6277,6 +6277,15 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "AI の判定をリアルタイムで表示します。コレクションへの追加は引き続き手動の判断を優先します。",
     "Start an update to see the screening process.": "更新を開始するとスクリーニングの進行状況が表示されます。",
     "Pending candidates": "未処理の候補",
-    "Pause analysis": "分析を一時停止"
+    "Pause analysis": "分析を一時停止",
+    "Hidden": "非表示",
+    "Hide {{name}}": "{{name}} を非表示にする",
+    "Unhide {{name}}": "{{name}} を再表示する",
+    "Could not change file visibility.": "ファイルの表示設定を変更できませんでした。",
+    "Could not load project files.": "プロジェクトファイルを読み込めませんでした。",
+    "Could not load file preview.": "ファイルのプレビューを読み込めませんでした。",
+    "Download this file to view it.": "このファイルを表示するにはダウンロードしてください。",
+    "Preview truncated.": "プレビューは省略されています。",
+    "Hide file": "ファイルを非表示にする"
   }
 }

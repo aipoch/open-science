@@ -265,7 +265,7 @@ import {
   registerConversationExportIpcHandler
 } from './session-persistence/conversation-export'
 import { SessionProjectionDiagnostics } from './session-persistence/projection-diagnostics'
-import { createProjectFilesHandlers } from './project-files/ipc'
+import { createProjectFilesHandlers, readHiddenArtifactChunk } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
 import { createManagedFileVersionHandlers } from './managed-file-versions/ipc'
 import { ManagedFileVersionService } from './managed-file-versions/service'
@@ -1295,7 +1295,9 @@ const createApplicationModules = async (
   }
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
-  const artifactRepository = createDefaultArtifactRepository()
+  const artifactRepository = createDefaultArtifactRepository((path) =>
+    managedFileVersionService.assertArtifactPathVisible(path)
+  )
   const notebookRepository = new NotebookRunRepository(resolveDataRoot())
   const notebookDependencyAnalyzer = new NotebookDependencyAnalyzer({
     storageRoot: resolveDataRoot(),
@@ -1350,8 +1352,10 @@ const createApplicationModules = async (
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(grantedRootsRepository, () =>
-    shutdownNotebooksBeforePolicyChange('granted-roots')
+  const localFsService = new LocalFsService(
+    grantedRootsRepository,
+    () => shutdownNotebooksBeforePolicyChange('granted-roots'),
+    (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
@@ -1376,6 +1380,7 @@ const createApplicationModules = async (
   }
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
+    assertPathVisible: (path) => managedFileVersionService.assertArtifactPathVisible(path),
     resolvePath: resolveManagedFilePath,
     openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
     openLatestManagedFile: (source, request) =>
@@ -1899,6 +1904,13 @@ const createApplicationModules = async (
     projectFilesRepository,
     sessionPersistenceCoordinator,
     projectDeletionCoordinator,
+    {
+      onChanged: (event) => broadcastToRenderers('project-files:changed', event),
+      readHiddenArtifact: (request) =>
+        readHiddenArtifactChunk(request, (identity) =>
+          managedFileVersionService.openHiddenArtifactVersion(identity, identity.versionId)
+        )
+    },
     (file) =>
       managedFileVersionService.openVersion(
         {
@@ -2637,8 +2649,10 @@ const createApplicationModules = async (
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
   // Absolute Compute inputs may be legacy managed artifacts or exact immutable files staged for
   // the submitting Notebook Session. Both resolvers enforce their own storage boundary.
-  const computeArtifactResolver = createComputeArtifactResolver(resolveDataRoot(), (path) =>
-    artifactRepository.resolveManagedFilePath({ path })
+  const computeArtifactResolver = createComputeArtifactResolver(
+    resolveDataRoot(),
+    (path) => artifactRepository.resolveManagedFilePath({ path }),
+    (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   const sessionLimitPersistence = {
     resolve: (sessionId: string, expectedProjectId?: string) =>
@@ -2691,7 +2705,8 @@ const createApplicationModules = async (
     },
     sessionLimitPersistence,
     computeJobResultDelivery,
-    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId)
+    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId),
+    (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   surfaceAdapters = beforeAcpAdapters
   const {
@@ -3420,7 +3435,12 @@ const createApplicationModules = async (
       translate,
       logs: logsCommandOwner,
       github: githubCommandOwner,
-      cli: cliCommandOwner
+      cli: cliCommandOwner,
+      openHiddenArtifactVersion: (request) =>
+        managedFileVersionService.openHiddenArtifactVersion(
+          { projectId: request.projectId, fileId: request.fileId },
+          request.versionId
+        )
     })
   )
   // ACP identity resolution and the Specialist settings IPC must use the same service instance.

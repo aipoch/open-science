@@ -288,6 +288,18 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: PreviewResources.ReleaseManagedPreviewRequest],
     void
   >('preview-resources:release'),
+  projectFilesSetArtifactHidden: projectFilesCommand(
+    'project-files:set-artifact-hidden',
+    'setArtifactHidden'
+  ),
+  projectFilesGetHiddenArtifactIds: projectFilesCommand(
+    'project-files:get-hidden-artifact-ids',
+    'getHiddenArtifactIds'
+  ),
+  projectFilesReadHiddenArtifact: projectFilesCommand(
+    'project-files:read-hidden-artifact',
+    'readHiddenArtifact'
+  ),
   projectFilesGetOverview: projectFilesCommand('project-files:get-overview', 'getOverview'),
   projectFilesListArtifactGroups: projectFilesCommand(
     'project-files:list-artifact-groups',
@@ -530,6 +542,9 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.previewResourceRelease
   ] as const),
   defineApplicationCommandGroup('project-files', [
+    dataContentApplicationCommands.projectFilesSetArtifactHidden,
+    dataContentApplicationCommands.projectFilesGetHiddenArtifactIds,
+    dataContentApplicationCommands.projectFilesReadHiddenArtifact,
     dataContentApplicationCommands.projectFilesGetOverview,
     dataContentApplicationCommands.projectFilesListArtifactGroups,
     dataContentApplicationCommands.projectFilesListFiles,
@@ -730,6 +745,12 @@ const registerDataContentApplicationCommands = (
         dependencies.managedPreview.release(callerLease, args[0])
     })
     scope.registerGroup(dataContentApplicationCommandGroups[4], {
+      'project-files:set-artifact-hidden': ({ args }) =>
+        dependencies.projectFiles.setArtifactHidden(args[0]),
+      'project-files:get-hidden-artifact-ids': ({ args }) =>
+        dependencies.projectFiles.getHiddenArtifactIds(args[0]),
+      'project-files:read-hidden-artifact': ({ args }) =>
+        dependencies.projectFiles.readHiddenArtifact(args[0]),
       'project-files:get-overview': ({ args }) => dependencies.projectFiles.getOverview(args[0]),
       'project-files:list-artifact-groups': ({ args }) =>
         dependencies.projectFiles.listArtifactGroups(args[0]),

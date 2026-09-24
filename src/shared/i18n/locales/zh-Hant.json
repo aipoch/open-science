@@ -6277,6 +6277,15 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "即時 AI 判定。合集是否收錄仍以人工決定為準。",
     "Start an update to see the screening process.": "開始更新後即可檢視篩選過程。",
     "Pending candidates": "待篩選論文",
-    "Pause analysis": "暫停分析"
+    "Pause analysis": "暫停分析",
+    "Hidden": "已隱藏",
+    "Hide {{name}}": "隱藏 {{name}}",
+    "Unhide {{name}}": "取消隱藏 {{name}}",
+    "Could not change file visibility.": "無法變更檔案可見性。",
+    "Could not load project files.": "無法載入專案檔案。",
+    "Could not load file preview.": "無法載入檔案預覽。",
+    "Download this file to view it.": "請下載此檔案以檢視。",
+    "Preview truncated.": "預覽已截斷。",
+    "Hide file": "隱藏檔案"
   }
 }
