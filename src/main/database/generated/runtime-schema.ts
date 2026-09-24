@@ -1042,6 +1042,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureSmartCollection" (
     "automaticPauseReason" TEXT,
+    "automaticPauseRunId" TEXT,
     "evidenceMode" TEXT NOT NULL DEFAULT 'abstract',
     "autoUpdate" BOOLEAN NOT NULL DEFAULT false,
     "collectionId" TEXT NOT NULL PRIMARY KEY,

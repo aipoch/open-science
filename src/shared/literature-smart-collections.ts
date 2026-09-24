@@ -108,6 +108,7 @@ export const smartCollectionCommandSchemas = [
         'reset-overrides'
       ]),
       itemId: id.optional(),
+      runId: id.optional(),
       summaryOnly: z.boolean().optional(),
       itemIds: z.array(id).min(1).max(10000).optional(),
       decision: z.enum(['include', 'exclude', 'automatic']).optional(),

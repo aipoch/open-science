@@ -1265,6 +1265,7 @@ model LiteratureMetadataCommitReceipt {
 // Smart membership is independent of manually managed LiteratureCollectionItem rows.
 model LiteratureSmartCollection {
   automaticPauseReason String?
+  automaticPauseRunId  String?
   evidenceMode         String                        @default("abstract")
   autoUpdate           Boolean                       @default(false)
   collectionId         String                        @id

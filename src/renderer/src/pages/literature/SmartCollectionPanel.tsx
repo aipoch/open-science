@@ -146,7 +146,7 @@ export function SmartCollectionPanel({
   const [confirmPreview, setConfirmPreview] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmRecompute, setConfirmRecompute] = useState(false)
-  const [confirmAbandon, setConfirmAbandon] = useState(false)
+  const [confirmAbandon, setConfirmAbandon] = useState<string>()
   const load = useCallback(
     async () =>
       (
@@ -196,7 +196,8 @@ export function SmartCollectionPanel({
       | 'abandon'
       | 'reset-overrides'
       | 'resume-automatic'
-      | 'resume'
+      | 'resume',
+    targetRunId?: string
   ): Promise<void> => {
     if (decisionPending || busy || refreshFailed) return
     setResumeUnavailable(false)
@@ -223,7 +224,8 @@ export function SmartCollectionPanel({
         kind: 'smart-collection',
         offset: 0,
         collectionId,
-        action
+        action,
+        ...(action === 'abandon' && targetRunId ? { runId: targetRunId } : {})
       })
       state.finishWrite(receipt.smart)
       setRefreshFailed(receipt.smartRefreshFailed === true)
@@ -235,7 +237,7 @@ export function SmartCollectionPanel({
       setConfirmRecompute(false)
       setConfirmPreview(false)
       setConfirmReset(false)
-      setConfirmAbandon(false)
+      setConfirmAbandon(undefined)
     } catch (failure) {
       const unavailable = String(failure).includes(SMART_COLLECTION_RESUME_UNAVAILABLE)
       setResumeUnavailable(unavailable)
@@ -403,7 +405,7 @@ export function SmartCollectionPanel({
                 size="icon-sm"
                 aria-label={t('Abandon run')}
                 disabled={busy || decisionPending || refreshFailed}
-                onClick={() => setConfirmAbandon(true)}
+                onClick={() => setConfirmAbandon(view.run?.id)}
               >
                 <Trash2 className="size-4" aria-hidden="true" />
               </Button>
@@ -626,7 +628,7 @@ export function SmartCollectionPanel({
           }}
           secondaryButton={{
             label: t('Abandon run'),
-            onClick: () => setConfirmAbandon(true),
+            onClick: () => setConfirmAbandon(view.run?.id),
             disabled: busy || decisionPending || refreshFailed
           }}
         />
@@ -874,7 +876,7 @@ export function SmartCollectionPanel({
         </div>
       )}
       <ConfirmActionDialog
-        open={confirmAbandon}
+        open={Boolean(confirmAbandon)}
         title={t('Abandon run')}
         description={t(
           'Abandon this run? Completed results will be kept, and this run will not resume.'
@@ -883,8 +885,8 @@ export function SmartCollectionPanel({
         confirmLabel={t('Abandon run')}
         destructive
         loading={busy}
-        onCancel={() => setConfirmAbandon(false)}
-        onConfirm={() => void run('abandon')}
+        onCancel={() => setConfirmAbandon(undefined)}
+        onConfirm={() => void run('abandon', confirmAbandon)}
       />
     </section>
   )

@@ -2887,7 +2887,11 @@ it('abandons a paused automatic run without resuming it', async () => {
   })
   await db.literatureSmartCollection.update({
     where: { collectionId: id },
-    data: { autoUpdate: true, automaticPauseReason: 'run-limit' }
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'run-limit',
+      automaticPauseRunId: run.id
+    }
   })
   await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'interrupted' } })
 
@@ -2895,6 +2899,7 @@ it('abandons a paused automatic run without resuming it', async () => {
     kind: 'smart-collection',
     collectionId: id,
     action: 'abandon',
+    runId: run.id,
     offset: 0
   })
 
@@ -2916,13 +2921,18 @@ it('abandons a failed storage-error run and clears its durable pause', async () 
   await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'failed' } })
   await db.literatureSmartCollection.update({
     where: { collectionId: id },
-    data: { autoUpdate: true, automaticPauseReason: 'storage-error' }
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'storage-error',
+      automaticPauseRunId: run.id
+    }
   })
 
   await owner.execute({
     kind: 'smart-collection',
     collectionId: id,
     action: 'abandon',
+    runId: run.id,
     offset: 0
   })
 
@@ -2932,6 +2942,57 @@ it('abandons a failed storage-error run and clears its durable pause', async () 
     run: { id: run.id, state: 'cancelled', done: 1 }
   })
   expect(classify).toHaveBeenCalledOnce()
+})
+
+it('does not clear an automatic pause when abandoning a newer manual run', async () => {
+  const id = await create()
+  await refresh(id)
+  const automaticRun = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'run-limit',
+      automaticPauseRunId: automaticRun.id
+    }
+  })
+  await db.literatureSmartRun.update({
+    where: { id: automaticRun.id },
+    data: { state: 'interrupted' }
+  })
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'recompute',
+    offset: 0
+  })
+  const manualRun = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartRun.update({
+    where: { id: manualRun.id },
+    data: { state: 'interrupted' }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: manualRun.id,
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: 'run-limit',
+    run: { id: manualRun.id, state: 'cancelled' }
+  })
+  expect(
+    await db.literatureSmartRun.findUniqueOrThrow({ where: { id: automaticRun.id } })
+  ).toMatchObject({ state: 'interrupted' })
 })
 
 it('drains paid requests and retains a durable pause when both result and failure writes fail', async () => {

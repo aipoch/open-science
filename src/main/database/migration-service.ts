@@ -1,4 +1,5 @@
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
+import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -858,6 +859,17 @@ const MIGRATION_MANIFEST = [
       literatureSmartCollectionsMigration.statements,
       literatureSmartCollectionsMigration.verifiers,
       literatureSmartCollectionsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureSmartPauseRunMigration,
+    checksum: checksumMigrationPayload(
+      literatureSmartPauseRunMigration.id,
+      literatureSmartPauseRunMigration.statements,
+      literatureSmartPauseRunMigration.verifiers,
+      literatureSmartPauseRunMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

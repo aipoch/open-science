@@ -91,10 +91,11 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
-        '0044_literature_smart_collections'
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run'
       ],
       from: '0015_session_model_call_usage',
-      to: '0044_literature_smart_collections'
+      to: '0045_literature_smart_pause_run'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
