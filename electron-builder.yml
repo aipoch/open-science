@@ -93,7 +93,8 @@ extraResources:
       - 'LICENSE'
       - 'package.json'
 # Windows: stable releases use Azure Artifact Signing; nightly and other builds remain unsigned.
-# The afterPack hook signs loose extraResources EXEs only when Azure signing is configured.
+# The afterPack hook signs unsigned bundled PE files, including DLLs and native addons,
+# only when Azure signing is configured.
 win:
   # Windows ProgID is a persisted association identity; other platforms use a display name.
   fileAssociations:
