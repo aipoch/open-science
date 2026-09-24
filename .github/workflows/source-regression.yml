@@ -6,6 +6,15 @@ on:
   schedule:
     - cron: '37 5,17 * * *' # UTC; 01:37 and 13:37 Asia/Singapore
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Validation scope
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - workspace-images
 
 permissions:
   actions: read
@@ -36,11 +45,14 @@ jobs:
       - name: Build Electron application
         run: npm run build:e2e
       - name: Build web application
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         run: npm run build:web
       - name: Install headless Chromium
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         run: npx playwright install chromium --only-shell
       - name: Run complete Mac functional journeys
         id: functional
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional
@@ -48,13 +60,22 @@ jobs:
         run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000
       - name: Run complete Mac workspace journeys
         id: workspace
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
         run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000
+      - name: Test workspace message images
+        id: workspace_images
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'workspace-images' }}
+        run: >-
+          npx playwright test e2e/workspace-files.spec.ts
+          --grep 'normalizes OpenCode inline thinking before publishing sanitized message images'
+          --fail-on-flaky-tests
       - name: Run complete Mac browser and visual coverage
         id: presentation
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         continue-on-error: true
         run: |
           # Browser coverage reaches the tab-motion cases near five minutes on
@@ -64,11 +85,13 @@ jobs:
           npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout="$presentation_timeout"
       - name: Run complete Mac accessibility checks
         id: accessibility
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         continue-on-error: true
         run: npm run test:e2e:accessibility:signal
       # Collect both outcomes using one build and one macOS slot. Neither failure is advisory.
       - name: Run supplemental regressions
         id: regressions
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         continue-on-error: true
         uses: ./.github/actions/source-regression
         with:
@@ -76,6 +99,7 @@ jobs:
           include-capacity: 'true'
       - name: Run supplemental delegation
         id: delegation
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
         continue-on-error: true
         uses: ./.github/actions/source-regression
         with:
@@ -92,7 +116,7 @@ jobs:
             playwright-report/
           if-no-files-found: warn
       - name: Enforce complete Mac core and presentation suites
-        if: always()
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
         shell: bash
         env:
           FUNCTIONAL: ${{ steps.functional.outcome }}
@@ -102,13 +126,19 @@ jobs:
         run: |
           [[ "$FUNCTIONAL" == "success" && "$WORKSPACE" == "success" && "$PRESENTATION" == "success" && "$ACCESSIBILITY" == "success" ]]
       - name: Enforce both supplemental suites
-        if: always()
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
         shell: bash
         env:
           REGRESSIONS: ${{ steps.regressions.outcome }}
           DELEGATION: ${{ steps.delegation.outcome }}
         run: |
           [[ "$REGRESSIONS" == "success" && "$DELEGATION" == "success" ]]
+      - name: Enforce workspace image dry-run
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'workspace-images' }}
+        shell: bash
+        env:
+          WORKSPACE_IMAGES: ${{ steps.workspace_images.outcome }}
+        run: '[[ "$WORKSPACE_IMAGES" == "success" ]]'
 
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:

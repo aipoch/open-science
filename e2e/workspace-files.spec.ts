@@ -396,18 +396,23 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
         exact: true
       })
       .scrollIntoViewIfNeeded()
-    const image = page.getByRole('img', { name: `Sanitized message figure ${index}`, exact: true })
-    await image
-      .or(page.getByText(`Sanitized message figure ${index}`, { exact: true }))
-      .first()
-      .evaluate((node) => node.scrollIntoView({ block: 'center' }))
+    const alt = `Sanitized message figure ${index}`
     await expect
       .poll(() =>
-        image.evaluate((img: HTMLImageElement) => ({
-          complete: img.complete,
-          width: img.naturalWidth,
-          height: img.naturalHeight
-        }))
+        page.evaluate((label) => {
+          // The placeholder is replaced by <img> while loading. Resolve it fresh on each poll,
+          // then scroll the image itself so native lazy loading can begin below the caption.
+          const figure = [
+            ...document.querySelectorAll<HTMLElement>(
+              '[data-slot="message-scroller-content"] [data-session-artifact-image], [data-slot="message-scroller-content"] [data-session-artifact-image-status]'
+            )
+          ].find((node) => node.querySelector('img')?.alt === label || node.textContent === label)
+          figure?.scrollIntoView({ block: 'center' })
+          const img = figure?.querySelector('img')
+          return img
+            ? { complete: img.complete, width: img.naturalWidth, height: img.naturalHeight }
+            : undefined
+        }, alt)
       )
       .toEqual({ complete: true, width: 1024, height: 1024 })
   }

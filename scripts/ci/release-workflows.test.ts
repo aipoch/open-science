@@ -79,7 +79,7 @@ describe('release and scheduled workflow topology', () => {
     const sandboxSmoke = step(sandbox, 'Test AppContainer ownership and removal lifecycle')
 
     expect(job.strategy?.matrix?.shard).toBe(
-      "${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
+      "${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}"
     )
     expect(dependencies).toMatchObject({
       needs: 'plan',
@@ -103,7 +103,7 @@ describe('release and scheduled workflow topology', () => {
     expect(schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions', 'scheduled-fixes']
     })
     expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(plan).toMatchObject({
@@ -116,7 +116,7 @@ describe('release and scheduled workflow topology', () => {
     })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
-      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
       'timeout-minutes': 60
     })
     expect(sandbox).toMatchObject({
@@ -139,6 +139,15 @@ describe('release and scheduled workflow topology', () => {
     expect(regressions.env?.TEST_NAME_PATTERN).toBe("${{ inputs.test_name_pattern || '.*' }}")
     expect(regressions.run).toContain('--testNamePattern="$TEST_NAME_PATTERN"')
     expect(regressions.run).toContain('--maxWorkers=1 --testTimeout=60000 --hookTimeout=60000')
+    const scheduledFixes = step(job, 'Test scheduled Windows fixes')
+    expect(scheduledFixes.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}"
+    )
+    expect(scheduledFixes.run).toContain(
+      'src/main/managed-file-versions/version-file-operator.test.ts'
+    )
+    expect(scheduledFixes.run).toContain('src/main/settings/service.test.ts')
+    expect(scheduledFixes.run).not.toContain('--shard')
     for (const file of [
       'cli/locate-app.test.ts',
       'scripts/credential-helper-signing.test.ts',

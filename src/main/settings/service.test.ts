@@ -8611,13 +8611,8 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('does not re-verify shared Claude after it is disconnected during validation', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const probeGate = Promise.withResolvers<void>()
+    const probe = vi.fn(() => probeGate.promise)
     const auth = sharedAuth()
     vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })
     const service = createService(undefined, {
@@ -8628,9 +8623,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     await service.upsertProvider({ type: 'claude-shared' })
 
     const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
-    await service.logoutClaudeShared()
-    finishProbe?.()
+    try {
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce(), { timeout: 20_000 })
+      await service.logoutClaudeShared()
+    } finally {
+      probeGate.resolve()
+      await validation
+    }
 
     await expect(validation).resolves.toMatchObject({ ok: true, applied: false })
     const provider = (await repository.getSettings()).providers.find(
@@ -8642,13 +8641,8 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('records shared Claude validation after an unrelated active provider switch', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const probeGate = Promise.withResolvers<void>()
+    const probe = vi.fn(() => probeGate.promise)
     const auth = sharedAuth()
     vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })
     const service = createService(undefined, {
@@ -8677,9 +8671,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     await service.setActiveProvider(firstId)
 
     const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
-    await service.setActiveProvider(secondId)
-    finishProbe?.()
+    try {
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce(), { timeout: 20_000 })
+      await service.setActiveProvider(secondId)
+    } finally {
+      probeGate.resolve()
+      await validation
+    }
 
     await expect(validation).resolves.toMatchObject({ ok: true, applied: true })
     expect(
