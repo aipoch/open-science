@@ -17,7 +17,8 @@ import {
   resolveModelContextWindow,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
-  resolveVendorOpenAiBaseUrl
+  resolveVendorOpenAiBaseUrl,
+  resolveVendorResponsesBaseUrl
 } from '../../shared/provider-registry'
 import {
   resolveProviderEffectiveModel,
@@ -242,6 +243,7 @@ class ProviderRuntimeProjectionOwner {
         vendorId: provider.vendorId,
         baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
         openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
+        responsesBaseUrl: resolveVendorResponsesBaseUrl(provider.vendorId, provider.region),
         model,
         ...(contextWindow === undefined ? {} : { contextWindow }),
         key,

@@ -1901,6 +1901,7 @@ class AcpRuntime {
     }
 
     let cancellationAccepted = false
+    let teardownAfterCancellationTimeout: Promise<AcpStateSnapshot> | undefined
     const onAccepted = (): void => {
       cancellationAccepted = true
       cancelPromptRequest?.()
@@ -1915,24 +1916,30 @@ class AcpRuntime {
       this.emitState()
     }
     if (connection && activeSession) {
-      await this.sessionInteractions.cancelPrompt({
-        sessionId: request.sessionId,
-        notify: () =>
-          connection.agent.notify(acp.methods.agent.session.cancel, {
-            sessionId: activeSession.sessionId
-          }),
-        onAccepted,
-        onTimeout: () => {
-          this.pushEvent({
-            kind: 'error',
-            level: 'error',
-            sessionId: request.sessionId,
-            title: 'Prompt cancellation timed out',
-            text: 'Cancellation was not confirmed before the deadline. The agent connection is being closed; process termination is not yet confirmed.'
-          })
-          void this.disconnect()
-        }
-      })
+      try {
+        await this.sessionInteractions.cancelPrompt({
+          sessionId: request.sessionId,
+          notify: () =>
+            connection.agent.notify(acp.methods.agent.session.cancel, {
+              sessionId: activeSession.sessionId
+            }),
+          onAccepted,
+          onTimeout: () => {
+            this.pushEvent({
+              kind: 'error',
+              level: 'error',
+              sessionId: request.sessionId,
+              title: 'Prompt cancellation timed out',
+              text: 'Cancellation was not confirmed before the deadline. The agent connection is being closed; process termination is not yet confirmed.'
+            })
+            teardownAfterCancellationTimeout = this.disconnect()
+            void teardownAfterCancellationTimeout.catch(() => undefined)
+          }
+        })
+      } catch (error) {
+        await teardownAfterCancellationTimeout?.catch(() => undefined)
+        throw error
+      }
     } else if (cancelPromptRequest) {
       onAccepted()
     }

@@ -16,6 +16,29 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it('projects DeepSeek native Responses traffic to its documented origin', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'deepseek',
+      type: 'official',
+      vendorId: 'deepseek',
+      name: 'DeepSeek',
+      model: 'deepseek-flash'
+    }
+
+    expect(resolveProviderDraft(provider)).toMatchObject({
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      responsesBaseUrl: 'https://api.deepseek.com'
+    })
+    expect(owner.resolveProvider(provider, 'deepseek-flash')).toMatchObject({
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      responsesBaseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-flash'
+    })
+  })
+
   it.each([
     [undefined, 'cn'],
     ['china', 'cn'],

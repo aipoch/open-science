@@ -709,6 +709,36 @@ describe('codexFramework', () => {
     expect(config.persistentSystemPrompt).toBe('Stable bridge guidance.')
   })
 
+  it('uses the DeepSeek Responses API base documented for deepseek-flash', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'official',
+        vendorId: 'deepseek',
+        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        baseUrl: 'https://api.deepseek.com/anthropic',
+        openaiBaseUrl: 'https://api.deepseek.com/v1',
+        responsesBaseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-flash',
+        key: 'sk-plaintext-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
+      model_providers: {
+        'open-science': {
+          base_url: 'https://api.deepseek.com',
+          wire_api: 'responses'
+        }
+      }
+    })
+  })
+
   it('drives a native-Responses vendor directly on its OpenAI /v1 base, ignoring the bridge', () => {
     const framework = createCodexFramework()
     // A dual-endpoint vendor (e.g. MiniMax) advertises openai + responses and keeps its Anthropic

@@ -17,6 +17,7 @@ import {
   resolveVendorModelsUrl,
   resolveVendorModelReasoningEffort,
   resolveVendorOpenAiBaseUrl,
+  resolveVendorResponsesBaseUrl,
   usesVendorAnthropicApiKeyHeader,
   vendorHasRegions,
   type OfficialVendorId
@@ -395,6 +396,7 @@ describe('provider registry', () => {
     ])
     expect(defaultVendorModel('deepseek')).toBe('deepseek-v4-pro')
     expect(resolveVendorOpenAiBaseUrl('deepseek')).toBe('https://api.deepseek.com/v1')
+    expect(resolveVendorResponsesBaseUrl('deepseek')).toBe('https://api.deepseek.com')
     expect(resolveVendorApiEndpoints('deepseek')).toEqual(['anthropic', 'openai'])
   })
 

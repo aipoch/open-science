@@ -5673,6 +5673,52 @@ describe('ACP runtime session management', () => {
     }
   )
 
+  it('waits for the shared runtime teardown before settling a timed-out cancellation', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['cancel-timeout-teardown-session'], {
+      onPrompt: () => promptGate.promise
+    })
+    let fireCancelTimeout: (() => void) | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      cancelTimeoutMs: 1,
+      setTimer: (callback) => {
+        fireCancelTimeout = callback
+        return 1 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: vi.fn()
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
+    void prompt.catch(() => undefined)
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    const teardown = createDeferred<ReturnType<typeof runtime.getSnapshot>>()
+    const disconnect = vi.spyOn(runtime, 'disconnect').mockReturnValue(teardown.promise)
+    const cancellation = runtime.cancelPrompt({ sessionId: session.sessionId })
+    fireCancelTimeout?.()
+
+    let settled = false
+    void cancellation.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(settled).toBe(false)
+
+    teardown.resolve({ ...runtime.getSnapshot(), status: 'closed', sessionIds: [] })
+    await expect(cancellation).rejects.toThrow('not confirmed')
+    promptGate.resolve()
+  })
+
   it('confirms Stop from the prompt finalizer when the cancellation write is still pending', async () => {
     const process = new FakeAgentProcess()
     const promptGate = createDeferred()

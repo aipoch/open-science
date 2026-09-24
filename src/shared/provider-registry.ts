@@ -50,6 +50,9 @@ export type VendorRegion = {
   // The region's OpenAI /v1/chat/completions base, when it differs from the Anthropic `baseUrl` and the
   // vendor supports both endpoints. Falls back to the region's `baseUrl` when absent.
   openaiBaseUrl?: string
+  // The region's native Responses API base, when it differs from the OpenAI chat base. Falls back to
+  // `openaiBaseUrl` and then `baseUrl` when absent.
+  responsesBaseUrl?: string
   // Where the user creates/copies a key for this endpoint; falls back to the vendor-level one.
   apiKeyUrl?: string
   // Full URL of the vendor's model-list endpoint for this region; falls back to the vendor-level one.
@@ -111,10 +114,12 @@ export type OfficialVendor = {
   }
   // Single-endpoint vendors set `baseUrl`; multi-region vendors set `regions` instead (never both).
   // For dual-endpoint vendors, `baseUrl` is the Anthropic /v1/messages route and `openaiBaseUrl` is the
-  // separate OpenAI /v1/chat/completions root. Set both only for a vendor whose apiEndpoints include
-  // 'openai'.
+  // separate OpenAI /v1/chat/completions root. `responsesBaseUrl` may differ when the vendor's native
+  // Responses API uses a different base path. Set these only when the vendor exposes the
+  // corresponding endpoint.
   baseUrl?: string
   openaiBaseUrl?: string
+  responsesBaseUrl?: string
   regions?: VendorRegion[]
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.
   apiKeyUrl?: string
@@ -251,11 +256,11 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // DeepSeek exposes both routes: Anthropic /v1/messages under `/anthropic`, and the OpenAI-compatible
     // route under `/v1`. The same model ids work on both, so it's safe to prefer OpenAI where the
     // framework supports it (e.g. OpenCode). openaiBaseUrl is the exact version-carrying base clients
-    // append `/chat/completions` to, and the same `/v1` root serves `/v1/responses` for Responses-capable
-    // models.
+    // append `/chat/completions` to. Native Responses uses the documented origin base instead.
     apiEndpoints: ['anthropic', 'openai'],
     baseUrl: 'https://api.deepseek.com/anthropic',
     openaiBaseUrl: 'https://api.deepseek.com/v1',
+    responsesBaseUrl: 'https://api.deepseek.com',
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     modelsListUrl: 'https://api.deepseek.com/v1/models',
     models: [
@@ -1487,6 +1492,24 @@ export const resolveVendorOpenAiBaseUrl = (
   const region = regions.find((candidate) => candidate.id === regionId) ?? regions[0]
 
   return region?.openaiBaseUrl
+}
+
+// Resolves a vendor's explicitly published native Responses API base, when it differs from the
+// OpenAI chat base. This is intentionally separate because DeepSeek's Responses API uses the origin
+// while its Chat Completions API uses `/v1`.
+export const resolveVendorResponsesBaseUrl = (
+  id: OfficialVendorId,
+  regionId?: string
+): string | undefined => {
+  const vendor = VENDORS_BY_ID.get(id)
+
+  if (!vendor) return undefined
+  if (vendor.responsesBaseUrl) return vendor.responsesBaseUrl
+
+  const regions = vendor.regions ?? []
+  const region = regions.find((candidate) => candidate.id === regionId) ?? regions[0]
+
+  return region?.responsesBaseUrl
 }
 
 // Resolves where the user gets an API key for a vendor, preferring the selected region's console and

@@ -31,6 +31,9 @@ export type ResolvedProvider = {
   // Distinct OpenAI /v1/chat/completions base for a dual-endpoint vendor (e.g. DeepSeek). Used only
   // when the chosen endpoint is openai; falls back to baseUrl when absent.
   openaiBaseUrl?: string
+  // Native Responses API base when it differs from the OpenAI chat base (e.g. DeepSeek). Used only
+  // when the chosen endpoint is responses; falls back to openaiBaseUrl and then baseUrl.
+  responsesBaseUrl?: string
   model?: string
   // Model token limits. Context is the shared request/response budget; input/output are independent
   // provider-reported caps and remain absent when unknown.

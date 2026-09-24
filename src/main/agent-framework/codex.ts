@@ -159,7 +159,10 @@ const isolatedCodexHomeEnv = (codexHome: string, platform: NodeJS.Platform): Nod
   CODEX_HOME: codexHome
 })
 
-const normalizeResponsesBaseUrl = (value: string | undefined): string | undefined => {
+const normalizeResponsesBaseUrl = (
+  value: string | undefined,
+  options: { appendVersionPath?: boolean } = {}
+): string | undefined => {
   const normalized = value
     ?.trim()
     .replace(/\/+$/, '')
@@ -172,7 +175,9 @@ const normalizeResponsesBaseUrl = (value: string | undefined): string | undefine
   // or a custom path are left untouched.
   try {
     const { pathname } = new URL(normalized)
-    if (pathname === '' || pathname === '/') return `${normalized}/v1`
+    if (options.appendVersionPath !== false && (pathname === '' || pathname === '/')) {
+      return `${normalized}/v1`
+    }
   } catch {
     // Non-URL inputs pass through unchanged.
   }
@@ -205,12 +210,15 @@ const buildCodexModelOptions = (input: {
 
 const buildCodexConfig = (provider: {
   baseUrl?: string
+  preserveBaseUrl?: boolean
   model?: string
   contextWindow?: number
   key?: string
   reasoningEffort?: ModelReasoningEffort
 }): Record<string, unknown> => {
-  const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl)
+  const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl, {
+    appendVersionPath: !provider.preserveBaseUrl
+  })
   const contextWindow =
     provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : undefined
 
@@ -243,6 +251,7 @@ type CodexNativeModelCatalogInput = {
   vendorId?: OfficialVendorId
   baseUrl?: string
   openaiBaseUrl?: string
+  responsesBaseUrl?: string
   nativeVersion?: string
   contextWindow?: number
   supportsImageInput?: boolean
@@ -542,13 +551,13 @@ export const createCodexFramework = ({
       (provider.apiEndpoints?.includes('responses') ?? false)
     const useLocalResponsesEndpoint = useChatBridge || useNativeCompatibility
     const codexModel = useChatBridge ? CODEX_BRIDGE_MODEL : provider.model
-    // A dual-endpoint vendor keeps its Anthropic route in
-    // `baseUrl` and its OpenAI/Responses `/v1` root in `openaiBaseUrl`, so post to the latter; a
-    // Responses-only provider (e.g. OpenAI) carries its base in `baseUrl`. The Chat bridge and the
-    // protocol-preserving native compatibility endpoint both expose a local Responses URL.
+    // A dual-endpoint vendor keeps its Anthropic route in `baseUrl` and its OpenAI Chat base in
+    // `openaiBaseUrl`. Native Responses may use a separate base, so prefer that when supplied.
+    // The Chat bridge and the protocol-preserving native compatibility endpoint both expose a local
+    // Responses URL.
     const responsesBaseUrl = useLocalResponsesEndpoint
       ? bridge.baseUrl
-      : (provider.openaiBaseUrl ?? provider.baseUrl)
+      : (provider.responsesBaseUrl ?? provider.openaiBaseUrl ?? provider.baseUrl)
     const authentication: AgentAuthentication | undefined =
       provider.key && !useLocalResponsesEndpoint
         ? {
@@ -586,6 +595,7 @@ export const createCodexFramework = ({
         model: codexModel,
         contextWindow: provider.contextWindow,
         baseUrl: responsesBaseUrl,
+        preserveBaseUrl: provider.responsesBaseUrl !== undefined && !useLocalResponsesEndpoint,
         key: useLocalResponsesEndpoint ? undefined : provider.key,
         reasoningEffort: ctx.reasoningEffort
       }),
