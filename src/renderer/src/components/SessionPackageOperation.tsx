@@ -16,7 +16,6 @@ import {
   X
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -174,11 +173,7 @@ const PackageProgressMeter = ({
   )
 }
 
-export const PackageExportProgressButton = ({
-  showLabel = false
-}: {
-  showLabel?: boolean
-}): React.JSX.Element | null => {
+export const PackageExportProgressButton = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { operation, open, dismissedId, setOpen } = usePackageOperationStore()
   if (
@@ -214,7 +209,7 @@ export const PackageExportProgressButton = ({
         className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
         aria-hidden="true"
       />
-      <span className={cn('truncate', !showLabel && 'hidden lg:inline')}>{status}</span>
+      <span className="hidden truncate lg:inline">{status}</span>
     </Button>
   )
 }

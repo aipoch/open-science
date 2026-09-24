@@ -87,8 +87,8 @@ test('New conversation keeps background export accessible in the workspace heade
   await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
 })
 
-for (const width of [1280, 414]) {
-  test(`Project index shows background export in content below the header at ${width}px`, async ({
+for (const width of [1280, 414, 320]) {
+  test(`Project index shows background export beside the brand at ${width}px`, async ({
     page
   }, testInfo) => {
     await page.setViewportSize({ width, height: 800 })
@@ -96,7 +96,9 @@ for (const width of [1280, 414]) {
     await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
     const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
     await expect(progressButton).toBeVisible()
-    expect(await progressButton.evaluate((element) => element.closest('header'))).toBeNull()
+    expect(
+      await progressButton.evaluate((element) => element.previousElementSibling?.textContent)
+    ).toBe('Open-Science')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('project-index-progress.png') })
     await progressButton.click()

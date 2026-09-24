@@ -388,7 +388,7 @@ afterEach(() => {
 })
 
 describe('HomePage package export progress', () => {
-  it('shows background progress in the page body and reopens its detail', () => {
+  it('shows background progress beside the brand and reopens its detail', () => {
     usePackageOperationStore.setState({
       operation: {
         id: 'export-1',
@@ -409,8 +409,8 @@ describe('HomePage package export progress', () => {
       'button[aria-label="Copying files… · View progress"]'
     )
     expect(button).not.toBeNull()
-    expect(button?.closest('header')).toBeNull()
-    expect(button?.textContent).toContain('Copying files…')
+    expect(button?.closest('header')).not.toBeNull()
+    expect(button?.previousElementSibling?.textContent).toBe('Open-Science')
     act(() => button?.click())
     expect(usePackageOperationStore.getState().open).toBe(true)
   })

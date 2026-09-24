@@ -642,7 +642,7 @@ const HomePage = ({
     <TooltipProvider delayDuration={200}>
       <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
         <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
-          <header className="flex items-start justify-between gap-3">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <a
@@ -653,6 +653,7 @@ const HomePage = ({
                 >
                   Open-Science
                 </a>
+                <PackageExportProgressButton />
                 {hasCompleteSessionCatalog &&
                 (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
                   <div className="flex items-center gap-1.5 text-xs font-medium">
@@ -745,9 +746,6 @@ const HomePage = ({
             </div>
           </header>
           <PackageOperationIndicator />
-          <div className="mt-4 flex justify-end empty:hidden">
-            <PackageExportProgressButton showLabel />
-          </div>
 
           {sessionUpdates.length > 0 ? (
             <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
