@@ -290,6 +290,23 @@ describe('release certification evidence', () => {
       databaseCompatibilityFloor: { sqliteVersion: '3.45.0' },
       platforms: expect.arrayContaining([expect.objectContaining({ platform: 'windows-x64' })])
     })
+    await expect(
+      aggregateEvidence({ argv: [...args, '--require-signed-windows'] })
+    ).rejects.toThrow(/requires passed Authenticode certification/)
+    await writeFile(
+      join(root, 'certification-windows-x64.json'),
+      JSON.stringify({
+        ...recordFor('windows-x64'),
+        checks: { ...recordFor('windows-x64').checks, authenticode: 'passed' }
+      })
+    )
+    await expect(
+      aggregateEvidence({ argv: [...args, '--require-signed-windows'] })
+    ).resolves.toMatchObject({ sourceSha: 'abc123' })
+    await writeFile(
+      join(root, 'certification-windows-x64.json'),
+      JSON.stringify(recordFor('windows-x64'))
+    )
 
     await writeFile(
       join(root, 'certification-macos-arm64.json'),

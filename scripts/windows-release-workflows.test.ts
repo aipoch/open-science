@@ -258,16 +258,29 @@ describe('post-merge Windows validation', () => {
     expect(uploadEvidence.if).toBe('${{ !inputs.install_only }}')
   })
 
-  it('keeps Windows packaging unsigned until signing credentials are available', () => {
+  it('signs stable Windows packages through the protected OIDC environment', () => {
     const build = readWorkflow('build.yml')
     const job = build.jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
     const prepareMacSigning = findStep(job, 'Prepare macOS signing keychain')
+    const azureLogin = findStep(job, 'Sign in to Azure for Windows code signing')
     const packageStep = findStep(job, 'Build & package')
+    const verifyWindows = findStep(job, 'Verify signed Windows package')
     const cleanupMacSigning = findStep(job, 'Clean up macOS signing keychain')
 
     expect(names).not.toContain('Require Windows signing credentials')
-    expect(names).not.toContain('Verify Windows Authenticode signature')
+    expect(job.environment).toBe(
+      "${{ inputs.sign_windows && matrix.platform == 'win' && 'windows-signing' || '' }}"
+    )
+    expect(job.permissions).toMatchObject({ contents: 'read', 'id-token': 'write' })
+    expect(azureLogin).toMatchObject({
+      if: "${{ matrix.platform == 'win' && inputs.sign_windows }}",
+      with: {
+        'client-id': '${{ vars.AZURE_CLIENT_ID }}',
+        'tenant-id': '${{ vars.AZURE_TENANT_ID }}',
+        'subscription-id': '${{ vars.AZURE_SUBSCRIPTION_ID }}'
+      }
+    })
     expect(prepareMacSigning).toMatchObject({
       id: 'mac_signing',
       if: "${{ matrix.platform == 'mac' && !inputs.nightly }}"
@@ -280,8 +293,12 @@ describe('post-merge Windows validation', () => {
     expect(prepareMacSigning.run).toContain('-P "${MAC_CSC_KEY_PASSWORD:-}"')
     expect(prepareMacSigning.run).toContain('-k "$keychain_password"')
     expect(prepareMacSigning.run).toContain("grep -q 'Developer ID Application:'")
-    expect(packageStep.env).toEqual({
+    expect(packageStep.env).toMatchObject({
       CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}',
+      AZURE_SIGNING_PUBLISHER: '${{ vars.AZURE_SIGNING_PUBLISHER }}',
+      AZURE_SIGNING_ENDPOINT: '${{ vars.AZURE_SIGNING_ENDPOINT }}',
+      AZURE_SIGNING_ACCOUNT: '${{ vars.AZURE_SIGNING_ACCOUNT }}',
+      AZURE_SIGNING_PROFILE: '${{ vars.AZURE_SIGNING_PROFILE }}',
       NODE_OPTIONS: '--max-old-space-size=8192'
     })
     expect(packageStep.run).toContain(
@@ -303,7 +320,14 @@ describe('post-merge Windows validation', () => {
       'rm -f "$MAC_SIGNING_CERTIFICATE" "$MAC_SIGNING_KEYCHAIN_LIST"'
     )
     expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
-    expect(packageStep.run).not.toContain('publisherName')
+    expect(packageStep.run).toContain('-c.win.forceCodeSigning=true')
+    expect(packageStep.run).toContain(
+      '"-c.win.azureSignOptions.publisherName=$AZURE_SIGNING_PUBLISHER"'
+    )
+    expect(verifyWindows).toMatchObject({
+      if: "${{ matrix.platform == 'win' && inputs.sign_windows }}",
+      run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked'
+    })
   })
 
   it('provides an isolated Windows-only SignPath dry-run', () => {
@@ -372,6 +396,7 @@ describe('post-merge Windows validation', () => {
     const downloadPackage = findStep(smoke, 'Download packaged artifacts')
     const macos = findStep(smoke, 'Smoke test macOS packages')
     const windows = findStep(smoke, 'Smoke test Windows installer')
+    const windowsSignature = findStep(smoke, 'Verify Windows Authenticode signature')
     const linux = findStep(smoke, 'Smoke test Linux packages')
     const evidence = findStep(smoke, 'Record platform certification evidence')
     const uploadEvidence = findStep(smoke, 'Upload platform certification evidence')
@@ -411,6 +436,12 @@ describe('post-merge Windows validation', () => {
     expect(macos.if).toBe("${{ !inputs.install_only && matrix.platform == 'mac' }}")
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
+    expect(windowsSignature).toMatchObject({
+      if: "${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}",
+      env: { AZURE_SIGNING_PUBLISHER: '${{ vars.AZURE_SIGNING_PUBLISHER }}' },
+      run: './scripts/ci/verify-windows-signature.ps1 -InstallerDir dist'
+    })
+    expect(evidence.run).toContain('authenticode=passed')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
     // Hosted runner indexes can reference superseded packages that now return HTTP 404.
     expect(linux.run).toMatch(/sudo apt-get update\s+sudo apt-get install --yes \.\/dist\/\*\.deb/)
@@ -695,7 +726,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
-    ).not.toContain('--require-signed-windows')
+    ).toContain('--require-signed-windows')
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).not.toContain('--require-windows-update')
@@ -754,7 +785,9 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       run: 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main'
     })
     expect(release.jobs.build.needs).toBe('release-preflight')
-    expect(release.jobs.build.with?.require_windows_signing).toBeUndefined()
+    expect(release.jobs.build.with?.sign_windows).toBe(
+      "${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
+    )
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
     expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
     expect(release.jobs.publish.if).toBe(stableTagCondition)

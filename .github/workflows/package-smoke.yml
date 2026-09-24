@@ -25,6 +25,10 @@ on:
         type: string
         required: false
         default: ''
+      require_windows_signing:
+        description: Require a valid Authenticode signature from the configured publisher.
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       setup_only:
@@ -78,6 +82,7 @@ jobs:
     needs: setup
     if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
+    environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -114,6 +119,13 @@ jobs:
         timeout-minutes: 10
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
+      - name: Verify Windows Authenticode signature
+        if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
+        shell: pwsh
+        env:
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist
+
       - name: Smoke test Linux packages
         if: ${{ !inputs.install_only && matrix.platform == 'linux' }}
         timeout-minutes: 10
@@ -138,6 +150,9 @@ jobs:
           authenticode=not-applicable
           if [ "${{ matrix.platform }}" = "win" ]; then
             authenticode=not-required
+            if [ "${{ inputs.require_windows_signing }}" = "true" ]; then
+              authenticode=passed
+            fi
           fi
           node scripts/ci/release-certification-evidence.mjs write \
             --platform "${{ matrix.name }}" \

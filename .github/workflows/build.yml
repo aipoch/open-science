@@ -42,6 +42,10 @@ on:
           Used by the Nightly macos-x64 packaging dry-run; release/nightly leave it empty.
         type: string
         default: ''
+      sign_windows:
+        description: Sign the stable Windows package with Azure Artifact Signing.
+        type: boolean
+        default: false
 
 # Builds only read the repo and upload run artifacts; every publish step lives in the caller.
 permissions:
@@ -289,6 +293,10 @@ jobs:
     # workflow's result, so release/nightly callers cannot reach publish if verification fails.
     if: ${{ needs.setup.result == 'success' }}
     runs-on: ${{ matrix.os }}
+    environment: ${{ inputs.sign_windows && matrix.platform == 'win' && 'windows-signing' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     # Observed packaging legs: macOS 6–16 min (Intel renderer build is the slow one), Linux/Windows
     # 6–12 min. Generous ceilings still stop a hung electron-builder well before the 6 h default.
     timeout-minutes: ${{ matrix.platform == 'mac' && 45 || 30 }}
@@ -463,6 +471,14 @@ jobs:
           security find-identity -v -p codesigning "$keychain" | \
             grep -q 'Developer ID Application:'
 
+      - name: Sign in to Azure for Windows code signing
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
@@ -472,15 +488,22 @@ jobs:
       # keychain above and electron-builder consumes only that keychain path. With no cert — or for
       # any nightly (kept ad-hoc for speed) — Developer ID signing is skipped and the afterPack hook
       # (build/adhoc-sign.cjs) applies a valid ad-hoc signature so Gatekeeper shows the bypassable
-      # "unidentified developer" prompt instead of "damaged". Linux has no signing concept. All
-      # secrets are optional — the build works with none set.
+      # "unidentified developer" prompt instead of "damaged". Stable Windows tag builds use
+      # Artifact Signing through the GitHub OIDC login above; all other Windows builds remain
+      # unsigned. Linux packages do not use this signing service.
       - name: Build & package
         id: package
         shell: bash
         env:
-          # Windows remains unsigned until a code-signing certificate is provisioned. Stable macOS
-          # jobs consume the explicitly prepared keychain without exposing CSC_LINK to electron-builder.
+          # Stable macOS jobs consume the explicitly prepared keychain without exposing CSC_LINK to
+          # electron-builder. Azure's PowerShell module uses the preceding Azure CLI OIDC login.
           CSC_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
           # macos-26-intel Node 22 x64 defaults to a ~2 GB old-space. The renderer production graph
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
@@ -494,6 +517,24 @@ jobs:
           if [ "${{ inputs.nightly }}" = "true" ]; then
             base=$(node -p "require('./package.json').version")
             eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
+          fi
+          windows_signing_args=()
+          if [ "${{ inputs.sign_windows }}" = "true" ] && [ "${{ matrix.platform }}" = "win" ]; then
+            for name in AZURE_SIGNING_PUBLISHER AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT AZURE_SIGNING_PROFILE; do
+              if [ -z "${!name:-}" ]; then
+                echo "::error::Missing windows-signing environment variable: $name" >&2
+                exit 1
+              fi
+            done
+            # Keep the Azure configuration on the stable Windows leg only. electron-builder signs
+            # the application and NSIS installer before generating latest.yml and blockmaps.
+            windows_signing_args=(
+              -c.win.forceCodeSigning=true
+              "-c.win.azureSignOptions.publisherName=$AZURE_SIGNING_PUBLISHER"
+              "-c.win.azureSignOptions.endpoint=$AZURE_SIGNING_ENDPOINT"
+              "-c.win.azureSignOptions.codeSigningAccountName=$AZURE_SIGNING_ACCOUNT"
+              "-c.win.azureSignOptions.certificateProfileName=$AZURE_SIGNING_PROFILE"
+            )
           fi
           if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
@@ -520,8 +561,16 @@ jobs:
               # primary-signature assessment. Certificate-free and nightly builds must stay ad-hoc.
               unsigned_args=(-c.dmg.sign=false)
             fi
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" --publish never
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" \
+              "${windows_signing_args[@]}" --publish never
           fi
+
+      - name: Verify signed Windows package
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: pwsh
+        env:
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked
 
       # Keep each native feed unique even when notarization is skipped. The installed app still
       # polls latest-mac.yml; only the publication job combines the two architecture artifacts.

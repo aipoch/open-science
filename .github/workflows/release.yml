@@ -55,8 +55,12 @@ jobs:
   build:
     needs: release-preflight
     uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      id-token: write
     with:
       verify_only: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
+      sign_windows: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     secrets: inherit
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
@@ -65,6 +69,8 @@ jobs:
     if: ${{ !inputs.verify_only }}
     needs: build
     uses: ./.github/workflows/package-smoke.yml
+    with:
+      require_windows_signing: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 
   # Exercise advisory regression in this low-privilege build run and retain its diagnostics without
   # allowing known flakes to override the blocking build + package-smoke result.
@@ -128,6 +134,7 @@ jobs:
           --directory artifacts
           --output artifacts/RELEASE-CERTIFICATION.json
           --expected-sha "$GITHUB_SHA"
+          --require-signed-windows
 
       # Merge build or post-notarization feeds; partial mac artifacts fail before publication.
       - name: Merge mac update feed
