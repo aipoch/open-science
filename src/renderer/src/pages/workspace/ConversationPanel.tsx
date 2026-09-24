@@ -672,6 +672,7 @@ const ConversationPanel = ({
     () => new Map<string, StopSubmissionState>()
   )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
+  const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -830,6 +831,12 @@ const ConversationPanel = ({
     localizeImageAnnotationSourceError(actionError, t) ??
     localizeVisionRunFailure(actionError, t) ??
     actionError
+  const errorKey = JSON.stringify([
+    activeSession?.id,
+    activeSession?.status === 'error' ? activeSession.updatedAt : null,
+    activeSession?.status === 'error' ? activeSession.error : null,
+    resolvedActionError
+  ])
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
     visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
@@ -1371,16 +1378,25 @@ const ConversationPanel = ({
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : resolvedActionError || activeSession?.status === 'error' ? (
-                  <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+                ) : (resolvedActionError || activeSession?.status === 'error') &&
+                  dismissedErrorKey !== errorKey ? (
+                  <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+                    <button
+                      type="button"
+                      onClick={() => setDismissedErrorKey(errorKey)}
+                      aria-label={t('Dismiss error')}
+                      className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-red-900/40"
+                    >
+                      <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                    </button>
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
                     {resolvedActionError ? (
-                      <span className="min-w-0 break-words">{resolvedActionError}</span>
+                      <span className="min-w-0 break-words pr-6">{resolvedActionError}</span>
                     ) : null}
                     {activeSession?.status === 'error' ? (
                       <div className="flex flex-col items-stretch gap-2">
-                        <span className="min-w-0 break-words">{resolvedRunError}</span>
+                        <span className="min-w-0 break-words pr-6">{resolvedRunError}</span>
                         {/* Actions stay with the run's own error, so the shown and reported text are
                             always the same error. Shown only for an unknown failure — a recognized one
                             (app guidance or a known provider error) keeps its message but is not a bug

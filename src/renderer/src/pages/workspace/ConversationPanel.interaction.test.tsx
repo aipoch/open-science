@@ -6718,6 +6718,42 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).not.toBeNull()
   })
 
+  it('dismisses the current error without changing the run and shows a later failure', () => {
+    renderPanel({ view: { activeSession: errorSession } })
+
+    const dismiss = container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')
+    expect(dismiss).not.toBeNull()
+    act(() => dismiss?.click())
+    expect(errorBoxText()).toBe('')
+    expect(reportButton()).toBeNull()
+
+    renderPanel({ view: { activeSession: errorSession } })
+    expect(errorBoxText()).toBe('')
+
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          updatedAt: errorSession.updatedAt + 1
+        }
+      }
+    })
+    expect(errorBoxText()).toContain('Run failed: connection reset')
+    expect(reportButton()).not.toBeNull()
+  })
+
+  it('dismisses a transient action error', () => {
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: 'Could not send message'
+      }
+    })
+
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
+    expect(errorBoxText()).toBe('')
+  })
+
   it('renders the error box for a failed run even when it has no error text', () => {
     renderPanel({
       view: {
