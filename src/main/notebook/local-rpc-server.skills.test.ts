@@ -90,7 +90,7 @@ describe('notebook RPC skillsCall route', () => {
       expect(response.status).toBe(200)
       expect(dispatch).toHaveBeenCalledWith(
         { op: 'delete', params: { name: 'demo' } },
-        { sessionId: 'trusted-session' }
+        expect.objectContaining({ sessionId: 'trusted-session', signal: expect.any(AbortSignal) })
       )
     } finally {
       connection.release()

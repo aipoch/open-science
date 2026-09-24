@@ -1500,6 +1500,8 @@ class AcpRuntimeCoordinator {
     sessionId: string
     title: string
     rawInput: unknown
+    configurationPlan?: unknown
+    permissionPrompts?: 'none'
     signal?: AbortSignal
   }): Promise<boolean> {
     return this.runtimeForSession(input.sessionId).requestAppApproval(input)

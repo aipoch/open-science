@@ -564,3 +564,27 @@ it.each(['binding', 'kernel'] as const)(
     expect(configured?.removeEnvironment).not.toHaveBeenCalled()
   }
 )
+
+it('does not let an Auto session create a dedicated environment to bypass installation review', async () => {
+  const { owner, manager: configured } = harness({
+    requiresInstallationPlan: (id) => id === 'auto-session'
+  })
+  await expect(
+    owner.manage({
+      action: 'create',
+      language: 'python',
+      name: 'dedicated',
+      packages: ['numpy'],
+      sessionId: 'auto-session'
+    })
+  ).rejects.toThrow('complete installation plan')
+  expect(configured!.createNamedEnvironment).not.toHaveBeenCalled()
+  await expect(owner.manage({ action: 'list' })).resolves.toEqual({ environments: [] })
+  await owner.manage({
+    action: 'create',
+    language: 'python',
+    name: 'manual',
+    sessionId: 'ask-session'
+  })
+  expect(configured!.createNamedEnvironment).toHaveBeenCalledOnce()
+})

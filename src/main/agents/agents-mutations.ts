@@ -1,3 +1,5 @@
+import type { ApproveConfigurationPlan, ConfigurationPlan } from './configuration-plan-approval'
+import type { TrustedCallingSession } from '../../shared/agents-contract'
 // host.agents ordinary-mutation operation module (issue 03).
 //
 // This module implements ordinary Specialist mutations + read-back: create, mutable-field update,
@@ -21,8 +23,7 @@
 //  - Main validates every payload before reaching the repository: unknown, malformed, non-finite,
 //    or wrong-shaped fields are rejected here.
 //
-// This module does NOT own conversational review or a permission card — that is the /customize Skill
-// (later slice). Ordinary mutations do not request a system permission card.
+// Concrete review runs after validation/reference resolution, immediately before the domain write.
 
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
 import { applyNameOrIdFilter } from './name-or-id-filter'
@@ -57,6 +58,8 @@ export type AgentsMutationDeps = {
   specialistService: SpecialistService
   catalog: AgentsMutationCatalog
   approvalGateway?: ApprovalGateway
+  approvePlan?: ApproveConfigurationPlan
+  context?: TrustedCallingSession
 }
 
 // The ordinary-mutation request union this module serves. The privileged ops (delete/switch) are
@@ -308,7 +311,13 @@ const handleCreate = async (
     input.selectedCapabilities = emptySelectedConfig()
   }
 
-  return deps.specialistService.create(input)
+  await approveMutation(deps, {
+    kind: 'agent-configuration',
+    operation: 'create',
+    target: name,
+    changes: input
+  })
+  return deps.specialistService.create(input, deps.context?.signal)
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +392,14 @@ const handleUpdate = async (
     input.fullAccess = capability.fullAccess
   }
 
-  return deps.specialistService.update(input)
+  await approveMutation(deps, {
+    kind: 'agent-configuration',
+    operation: 'update',
+    target: current.id,
+    before: current,
+    changes: input
+  })
+  return deps.specialistService.update(input, deps.context?.signal)
 }
 
 // ---------------------------------------------------------------------------
@@ -439,14 +455,45 @@ const handleAttachDetach = async (
         : await resolveOrPassThrough(await deps.catalog.listConnectors(), ref, op)
   }
 
+  await approveMutation(deps, {
+    kind: 'agent-configuration',
+    operation: op,
+    target: current.id,
+    before: current,
+    changes: { id: current.id, reference: stableId, revision, mode }
+  })
   if (op === 'attach_skill')
-    return deps.specialistService.attachSkill(current.id, stableId, revision, mode)
+    return deps.specialistService.attachSkill(
+      current.id,
+      stableId,
+      revision,
+      mode,
+      deps.context?.signal
+    )
   if (op === 'detach_skill')
-    return deps.specialistService.detachSkill(current.id, stableId, revision, mode)
+    return deps.specialistService.detachSkill(
+      current.id,
+      stableId,
+      revision,
+      mode,
+      deps.context?.signal
+    )
   if (op === 'attach_connector') {
-    return deps.specialistService.attachConnector(current.id, stableId, revision, mode)
+    return deps.specialistService.attachConnector(
+      current.id,
+      stableId,
+      revision,
+      mode,
+      deps.context?.signal
+    )
   }
-  return deps.specialistService.detachConnector(current.id, stableId, revision, mode)
+  return deps.specialistService.detachConnector(
+    current.id,
+    stableId,
+    revision,
+    mode,
+    deps.context?.signal
+  )
 }
 
 // Resolves a reference to a stable id when it matches the catalog, otherwise returns the literal
@@ -464,6 +511,14 @@ const resolveOrPassThrough = async <T extends SkillCatalogReadModel | ConnectorR
     // Ambiguity on a detach is harmless: fall back to the literal reference.
   }
   return ref
+}
+
+async function approveMutation(deps: AgentsMutationDeps, plan: ConfigurationPlan): Promise<void> {
+  if (!(await deps.approvePlan?.(structuredClone(plan), deps.context ?? {}))) {
+    throw agentsPublicError('Configuration change was not approved.')
+  }
+  deps.context?.signal?.throwIfAborted()
+  // Revision checks at the repository commit remain authoritative after this asynchronous review.
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
+import { prepareProtectedRuntime } from './prepare-protected-runtime'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { assertShellSearchScope } from './shell-search-scope'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
@@ -352,6 +353,8 @@ const prepareShellLaunchOptions = async (
   const baseEnv = shellEnv
   let sandboxed: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
   try {
+    if (options.processSandbox && runtimePlatform === 'linux')
+      await prepareProtectedRuntime(options.runtimeRoot)
     sandboxed = options.processSandbox
       ? await options.processSandbox.wrap({
           target: shellRuntimeSandboxTarget(runtimeBinding),
@@ -396,6 +399,8 @@ const prepareShellLaunchOptions = async (
             ],
             deniedReadRoots: options.protectedDirs ?? [],
             deniedWriteRoots: [
+              join(options.runtimeRoot, 'envs'),
+              join(options.runtimeRoot, 'approval-plans'),
               ...(options.inputRoot ? [options.inputRoot] : []),
               ...(options.protectedDirs ?? [])
             ]

@@ -73,6 +73,8 @@ export type TrustedControlInvocationIdentity = {
 }
 
 export type TrustedCallingSession = {
+  signal?: AbortSignal
+  permissionPrompts?: 'none'
   sessionId?: string
   callerRole?: 'main' | 'delegate'
 } & Partial<TrustedControlInvocationIdentity>
@@ -293,7 +295,9 @@ export const AGENTS_RESERVED_PARAM_KEYS = [
   'targetSpecialistId',
   'reconfigure',
   'context_reset',
-  'contextReset'
+  'contextReset',
+  'signal',
+  'permissionPrompts'
 ] as const
 
 export type AgentsReservedParamKey = (typeof AGENTS_RESERVED_PARAM_KEYS)[number]

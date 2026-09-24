@@ -234,6 +234,14 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   for (const root of layout.readWriteRoots) argumentsList.push('--bind', root, root)
   // Only explicit grants may receive a read-only override. Binding an otherwise hidden deny-write path
   // would expose host data and can require creating a target beneath a sealed private root.
+  const sealMissingPath = (path: string): void => {
+    // A missing target cannot be read. If its parent is writable, protect its absence too.
+    // Conservatively seal the nearest existing ancestor; never create files in a host grant.
+    let ancestor = dirname(path)
+    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor)
+    if (layout.readWriteRoots.some((root) => contains(root, path)))
+      argumentsList.push('--ro-bind', ancestor, ancestor)
+  }
   for (const deniedRoot of layout.deniedWriteRoots) {
     for (const grantedRoot of [...layout.readOnlyRoots, ...layout.readWriteRoots]) {
       const root = contains(grantedRoot, deniedRoot)
@@ -241,8 +249,16 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
         : contains(deniedRoot, grantedRoot)
           ? grantedRoot
           : undefined
-      if (root) argumentsList.push('--ro-bind', root, root)
+      if (root) {
+        if (existsSync(root)) argumentsList.push('--ro-bind', root, root)
+        else sealMissingPath(root)
+      }
     }
+  }
+  // Seal missing targets before masking existing files: a later parent bind would reveal an
+  // earlier child mask again. All deny-read masks must be the final mounts on their paths.
+  for (const root of layout.deniedReadRoots) {
+    if (!existsSync(root)) sealMissingPath(root)
   }
   for (const root of layout.deniedReadRoots) {
     // Sealed sensitive roots already hide ungranted paths. Creating another mask there can
@@ -253,6 +269,7 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
         (grantedRoot) => !contains(grantedRoot, root) && !contains(root, grantedRoot)
       )
     if (alreadyHidden) continue
+    if (!existsSync(root)) continue
     if (pathIsDirectory(root)) argumentsList.push('--tmpfs', root)
     else argumentsList.push('--ro-bind', '/dev/null', root)
   }

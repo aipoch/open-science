@@ -863,6 +863,8 @@ class NotebookExecutionOwner {
                       runtimeRoot: session.runtimeRoot,
                       protectedDirs: [
                         getAppClaudeConfigDir(this.options.configRoot),
+                        join(this.options.configRoot, 'skills'),
+                        join(this.options.configRoot, 'specialists.json'),
                         ...helperPlan.protectedGenerationRoots
                       ],
                       timeoutMs: request.timeoutMs,
@@ -1328,7 +1330,11 @@ class NotebookExecutionOwner {
                   dataRoot: session.dataRoot,
                   ...this.fileEvidenceLocation(session),
                   runtimeRoot: session.runtimeRoot,
-                  protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
+                  protectedDirs: [
+                    getAppClaudeConfigDir(this.options.configRoot),
+                    join(this.options.configRoot, 'skills'),
+                    join(this.options.configRoot, 'specialists.json')
+                  ],
                   timeoutMs: request.timeoutMs,
                   signal,
                   mcpRpcEndpoint: mcpRpc?.endpoint,
@@ -1405,7 +1411,11 @@ class NotebookExecutionOwner {
     const runtimeRoot = session.runtimeRoot
     const handoffDir = join(session.notebookSessionRoot, 'handoff')
     const inputRoot = this.inputRoot(session)
-    const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
+    const protectedDirs = [
+      getAppClaudeConfigDir(this.options.configRoot),
+      join(this.options.configRoot, 'skills'),
+      join(this.options.configRoot, 'specialists.json')
+    ]
     const environment = buildShellEnv(
       handoffDir,
       shellRuntimePlatform(runtimeBinding, platform),

@@ -6601,6 +6601,9 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Résultats IA en direct. Les décisions manuelles restent prioritaires pour l’appartenance à la collection.",
     "Start an update to see the screening process.": "Lancez une mise à jour pour voir le déroulement du filtrage.",
     "Pending candidates": "Candidats en attente",
-    "Pause analysis": "Mettre l’analyse en pause"
+    "Pause analysis": "Mettre l’analyse en pause",
+    "Review configuration changes": "Examiner les modifications de configuration",
+    "Approval applies only to the target and content shown below.": "L’approbation s’applique uniquement à la cible et au contenu affichés ci-dessous.",
+    "Review installation plan": "Examiner le plan d’installation"
   }
 }

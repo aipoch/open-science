@@ -109,7 +109,7 @@ export class SkillPackageTransactionOwner {
     }
   }
 
-  async promote(staged: StagedSkillPackage): Promise<void> {
+  async promote(staged: StagedSkillPackage, assertCommitAllowed?: () => void): Promise<void> {
     const live = this.skillDirectory(staged.source, staged.directoryName)
     const backup = join(dirname(live), `.${basename(live)}.backup-${staged.generation}`)
     try {
@@ -117,6 +117,7 @@ export class SkillPackageTransactionOwner {
         () => true,
         () => false
       )
+      assertCommitAllowed?.()
       if (hadExisting) await rename(live, backup)
 
       try {

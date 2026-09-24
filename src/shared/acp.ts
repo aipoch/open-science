@@ -701,6 +701,7 @@ export type AcpPermissionRequest = {
   // Main-process provenance for application-owned approvals. Provider payloads are rebuilt by the
   // permission broker and cannot set this projection. It is transient and never persisted.
   appOwned?: true
+  approvalPlan?: import('./approval-plan-preview').ApprovalPlanPreview
   // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
   // storage; restored authority is still reloaded and validated independently before use.
   durable?: true

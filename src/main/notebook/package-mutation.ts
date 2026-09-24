@@ -1,3 +1,4 @@
+import type { ApproveWheelInstall } from './approved-wheel-install'
 import { randomUUID } from 'node:crypto'
 
 import type { PackageMirror } from '../../shared/mirror'
@@ -41,6 +42,10 @@ type NotebookPackageMutationInput = Readonly<{
 }>
 
 type NotebookPackageMutationOwnerOptions = {
+  installationApproval?: (
+    target: NotebookPackageAdmittedTarget,
+    signal?: AbortSignal
+  ) => ApproveWheelInstall | undefined
   storageRoot: string
   runtimeRoot: string
   environmentOperations: Pick<
@@ -75,6 +80,32 @@ type NotebookPackageMutationOwnerOptions = {
 /** Owns the complete crash-recoverable transaction for one admitted package mutation. */
 class NotebookPackageMutationOwner {
   constructor(private readonly options: NotebookPackageMutationOwnerOptions) {}
+
+  private installationApproval(
+    target: NotebookPackageAdmittedTarget,
+    signal?: AbortSignal
+  ): ApproveWheelInstall | undefined {
+    const approve = this.options.installationApproval?.(target, signal)
+    if (!approve) return undefined
+    if (target.request.permissionPrompts === 'none') return async () => false
+    return async (plan) => {
+      const names = plan.packages.map((pkg) => pkg.name)
+      const inspect = () =>
+        this.options.environmentStateTracker.inspectPackages(
+          target.environmentCaptureTarget,
+          names,
+          { fresh: true, ...(signal ? { signal } : {}) }
+        )
+      const before = await inspect()
+      if (before.inventory.validation !== 'full-scan' || before.packages.length !== names.length)
+        return false
+      if (!(await approve({ ...plan, installed: before.packages }))) return false
+      signal?.throwIfAborted()
+      if (await this.options.recheckAuthorization(target)) return false
+      const after = await inspect()
+      return JSON.stringify(before.packages) === JSON.stringify(after.packages)
+    }
+  }
 
   private async alreadySatisfied(
     target: NotebookPackageAdmittedTarget,
@@ -233,6 +264,7 @@ class NotebookPackageMutationOwner {
                 ...(this.options.packageSpawn
                   ? { spawn: this.options.packageSpawn(target, mirror) }
                   : {}),
+                approveInstallationPlan: this.installationApproval(target, signal),
                 micromambaRunner: this.options.micromambaRunner,
                 storageRoot: this.options.storageRoot,
                 condaChannel: mirror.condaChannel,

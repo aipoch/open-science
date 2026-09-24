@@ -326,7 +326,8 @@ const toExecuteNotebookCodeRequest = (
 const resolveNotebookLocalRpcHandler = (
   capability: NotebookLocalRpcCapability,
   method: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  trustedPolicy: { permissionPrompts?: 'none' } = {}
 ): NotebookLocalRpcHandler => {
   assertSessionParams(params)
 
@@ -400,8 +401,15 @@ const resolveNotebookLocalRpcHandler = (
       return (request) =>
         capability.inspectPackages(parseNotebookLocalRpcRequest('inspectPackages', request))
     case 'managePackages':
-      return (request, signal) =>
-        capability.managePackages(parseNotebookLocalRpcRequest('managePackages', request), signal)
+      return (request, signal) => {
+        const parsed = parseNotebookLocalRpcRequest('managePackages', request)
+        return capability.managePackages(
+          trustedPolicy.permissionPrompts
+            ? { ...parsed, permissionPrompts: trustedPolicy.permissionPrompts }
+            : parsed,
+          signal
+        )
+      }
     case 'manageEnvironments':
       return (request, signal) =>
         capability.manageEnvironments(

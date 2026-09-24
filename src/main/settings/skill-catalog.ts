@@ -1,3 +1,4 @@
+import type { ReviewStagedSkill } from '../skills/skill-publication-review'
 import type { SpecialistListItem } from '../../shared/specialist'
 import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -364,12 +365,18 @@ class SkillCatalogModule {
       : this.userSkills.withSkillReadLock(id, read)
   }
 
-  async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
+  async publishHostSkill(
+    name: string,
+    sourcePath: string,
+    overwrite: boolean,
+    reviewStaged?: ReviewStagedSkill
+  ): Promise<string> {
     const id = await this.userSkills.publishPersonalDirectory(
       name,
       sourcePath,
       overwrite,
-      await this.bundledSkillNames()
+      await this.bundledSkillNames(),
+      reviewStaged
     )
     await this.refreshRegisteredHelpers()
     return id

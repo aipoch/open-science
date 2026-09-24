@@ -634,3 +634,37 @@ describe('permission policy', () => {
     ).toBeUndefined()
   })
 })
+
+describe('Auto runtime lifecycle', () => {
+  it.each([
+    'notebook_state',
+    'list_notebook_runtimes',
+    'notebook_bind_runtime',
+    'notebook_switch_runtime',
+    'notebook_restart'
+  ])('automates only trusted %s in Auto without a persistent grant', (name) => {
+    const request = createPermissionRequest('other', undefined, {
+      title: name,
+      providerToolName: name
+    })
+    const trusted = withTrustedMcpToolIdentity(request, `open-science-notebook/${name}`)
+    expect(resolveAutomaticPermission(trusted, { profile: 'auto' })).toBe(
+      resolveAllowOptionId(request)
+    )
+    expect(resolveAutomaticPermission(request, { profile: 'auto' })).toBeUndefined()
+    expect(resolveAutomaticPermission(trusted, { profile: 'ask' })).toBeUndefined()
+  })
+  it.each([
+    'notebook_execute',
+    'repl_execute',
+    'bash_execute',
+    'manage_environments',
+    'manage_packages'
+  ])('does not silently expand %s before execution boundaries are proven', (name) => {
+    const request = withTrustedMcpToolIdentity(
+      createPermissionRequest('execute'),
+      `open-science-notebook/${name}`
+    )
+    expect(resolveAutomaticPermission(request, { profile: 'auto' })).toBeUndefined()
+  })
+})

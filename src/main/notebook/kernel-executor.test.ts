@@ -713,7 +713,11 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
       const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
       expect(sandboxInvocation.filesystem.readOnlyRoots).toContain(restoredPrefix)
-      expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
+      expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([
+        join(request.runtimeRoot, 'envs'),
+        join(request.runtimeRoot, 'approval-plans'),
+        restoredPrefix
+      ])
     } finally {
       await executor.shutdown()
     }

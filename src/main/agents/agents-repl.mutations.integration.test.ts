@@ -114,7 +114,11 @@ gate('host.agents repl mutation integration', () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-mut-profile-'))
     runtimeStorage = await mkdtemp(join(tmpdir(), 'os-agents-mut-runtime-'))
     const specialistService = createSpecialistService(profileStorage)
-    const agentsService = new AgentsService({ specialistService, catalog: stubCatalog })
+    const agentsService = new AgentsService({
+      approvePlan: async () => true,
+      specialistService,
+      catalog: stubCatalog
+    })
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,

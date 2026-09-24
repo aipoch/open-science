@@ -1,3 +1,4 @@
+import { installApprovedWheels, type ApproveWheelInstall } from './approved-wheel-install'
 import {
   createWriteStream,
   existsSync,
@@ -89,6 +90,8 @@ const markPackageProcessTreeTerminated = <T>(error: T): T => {
 }
 
 export type InstallRequest = OptionalProjectIdScope & {
+  // Host-only policy, supplied separately after the RPC request schema has stripped caller fields.
+  permissionPrompts?: 'none'
   language: NotebookLanguage
   packages: string[]
   usePip?: boolean
@@ -191,6 +194,7 @@ export const DEFAULT_PACKAGE_OPERATION_TIMEOUT_MS = 600_000
 // condaChannel/pypiIndex/cranMirror are resolved PackageMirror values (see shared/mirror.ts);
 // integration passes the effectiveMirror() output, this module stays mirror-shape agnostic.
 export type InstallDeps = {
+  approveInstallationPlan?: ApproveWheelInstall
   spawn: InstallSpawn
   // Internal tool preparation must remain covered by the exact Conda lock. Never bootstrap renv
   // through the very native-package fallback whose capture depends on it.
@@ -1645,6 +1649,29 @@ export async function installPackages(
   // interpreter) and only for installs — external uninstall is disabled and would fall through to the
   // managed uninstall path, so it is refused here as defense-in-depth even though the caller also gates
   // it upstream.
+  if (deps.approveInstallationPlan && req.operation !== 'uninstall') {
+    if (req.language !== 'python' || (!req.usePip && !deps.interpreter)) {
+      return {
+        ok: false,
+        needsRestart: false,
+        log: '',
+        error:
+          'Auto installation currently requires Python wheel packages with usePip:true. Conda, R, source builds and automatic fallback do not yet provide an enforceable concrete plan.'
+      }
+    }
+    const command = deps.interpreter?.command ?? pythonBin(prefix)
+    const args = [...(deps.interpreter?.args ?? []), '-m', 'pip']
+    return installApprovedWheels({
+      cacheRoot: join(root, 'approval-plans'),
+      packages: req.packages,
+      index: deps.pypiIndex,
+      run: (pipArgs, configEnv) =>
+        run(command, [...args, ...pipArgs], { ...spawnEnv, ...configEnv }),
+      approve: deps.approveInstallationPlan,
+      signal: deps.signal
+    })
+  }
+
   if (deps.interpreter) {
     if (req.operation === 'uninstall') {
       return {

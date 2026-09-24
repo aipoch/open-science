@@ -314,6 +314,18 @@ const resolveAutomaticPermission = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
+  if (
+    context?.profile === 'auto' &&
+    new Set([
+      'open-science-notebook/notebook_state',
+      'open-science-notebook/list_notebook_runtimes',
+      'open-science-notebook/notebook_bind_runtime',
+      'open-science-notebook/notebook_switch_runtime',
+      'open-science-notebook/notebook_restart'
+    ]).has(trustedMcpToolIdentity(params) ?? '')
+  )
+    return resolveAllowOptionId(params)
+
   if (context?.profile === 'full') {
     return resolveAllowOptionId(params)
   }

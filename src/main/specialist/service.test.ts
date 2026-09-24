@@ -1084,6 +1084,7 @@ it('does not disable a record for an unrelated appearance diagnostic', async () 
 describe('Specialist errors through host.agents', () => {
   it('preserves owned domain failures but hides unknown dependencies', async () => {
     const agents = new AgentsService({
+      approvePlan: async () => true,
       specialistService: service,
       catalog: { listSkillCatalog: async () => [], getConnectors: async () => undefined }
     })
@@ -1109,4 +1110,23 @@ describe('Specialist errors through host.agents', () => {
       'Internal operation failed.'
     )
   })
+})
+
+it('rechecks cancellation after repository reads before committing an approved update', async () => {
+  const repository = new SpecialistRepository(tmpDir)
+  const guarded = new SpecialistService(repository)
+  const created = await guarded.create({ name: 'cancellable' })
+  const controller = new AbortController()
+  const read = repository.getAllWithIntegrity.bind(repository)
+  let reads = 0
+  vi.spyOn(repository, 'getAllWithIntegrity').mockImplementation(async () => {
+    const snapshot = await read()
+    // Service validation reads first; the serial repository mutation reads again before writing.
+    if (++reads === 2) controller.abort()
+    return snapshot
+  })
+  await expect(
+    guarded.update({ id: created.id, revision: 1, systemPrompt: 'cancelled' }, controller.signal)
+  ).rejects.toThrow()
+  expect((await read()).document.specialists[0].systemPrompt).toBe('')
 })

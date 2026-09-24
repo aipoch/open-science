@@ -6275,6 +6275,9 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "실시간 AI 판정입니다. 컬렉션 포함 여부는 수동 결정을 우선합니다.",
     "Start an update to see the screening process.": "업데이트를 시작하면 선별 프로세스를 볼 수 있습니다.",
     "Pending candidates": "대기 중인 후보",
-    "Pause analysis": "분석 일시 중지"
+    "Pause analysis": "분석 일시 중지",
+    "Review configuration changes": "설정 변경 검토",
+    "Approval applies only to the target and content shown below.": "승인은 아래에 표시된 대상과 내용에만 적용됩니다.",
+    "Review installation plan": "설치 계획 검토"
   }
 }

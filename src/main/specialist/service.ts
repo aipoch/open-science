@@ -376,12 +376,15 @@ export class SpecialistService {
     return this.getByName(name)
   }
 
-  create(input: CreateSpecialistInput): Promise<SpecialistView> {
-    const run = (): Promise<SpecialistView> => this.createAfterRecovery(input)
+  create(input: CreateSpecialistInput, signal?: AbortSignal): Promise<SpecialistView> {
+    const run = (): Promise<SpecialistView> => this.createAfterRecovery(input, signal)
     return this.withCreateRecoveryBarrier ? this.withCreateRecoveryBarrier(run) : run()
   }
 
-  private async createAfterRecovery(input: CreateSpecialistInput): Promise<SpecialistView> {
+  private async createAfterRecovery(
+    input: CreateSpecialistInput,
+    signal?: AbortSignal
+  ): Promise<SpecialistView> {
     assertCreateInputShape(input)
     await this.assertCreatableName(input.name)
 
@@ -424,13 +427,13 @@ export class SpecialistService {
     }
 
     try {
-      await this.repo.insert(stored)
+      await this.repo.insert(stored, signal)
     } catch (error) {
       if (input.id !== undefined || !(error instanceof SpecialistIdConflictError)) {
         throw error
       }
       stored.id = randomUUID()
-      await this.repo.insert(stored)
+      await this.repo.insert(stored, signal)
     }
     // Do NOT log systemPrompt content per cross-cutting requirement.
     log.info('creating specialist', { id: stored.id, name: stored.name })
@@ -460,7 +463,7 @@ export class SpecialistService {
   // Atomically patches presentation/instructions fields on an existing specialist.
   // The stable name is immutable. `revision` must match the stored record
   // (optimistic concurrency); the repository bumps it and rejects stale writes.
-  async update(input: UpdateSpecialistInput): Promise<SpecialistView> {
+  async update(input: UpdateSpecialistInput, signal?: AbortSignal): Promise<SpecialistView> {
     if (!input || typeof input.id !== 'string' || typeof input.revision !== 'number') {
       throw agentsPublicError('Update requires id and revision.')
     }
@@ -522,7 +525,7 @@ export class SpecialistService {
 
     log.info('updating specialist', { id: input.id })
 
-    const updatedDoc = await this.repo.update(input.id, patch, input.revision)
+    const updatedDoc = await this.repo.update(input.id, patch, input.revision, signal)
     this.notify()
     const updated = updatedDoc.specialists.find((s) => s.id === input.id)
     if (!updated) throw agentsPublicError(`Specialist ${input.id} not found after update.`)
@@ -594,7 +597,8 @@ export class SpecialistService {
     mode: SpecialistCapabilityMode,
     field: 'skillIds' | 'connectorIds' | 'excludedSkillIds' | 'excludedConnectorIds',
     value: string,
-    attach: boolean
+    attach: boolean,
+    signal?: AbortSignal
   ): Promise<SpecialistView> {
     await this.assertContentMutableId(id)
     const current = await this.getById(id)
@@ -604,21 +608,22 @@ export class SpecialistService {
       config[field as 'excludedSkillIds' | 'excludedConnectorIds'] = attach
         ? [...new Set([...values, value])]
         : values.filter((entry) => entry !== value)
-      return this.update({ id, revision: expectedRevision, fullAccess: config })
+      return this.update({ id, revision: expectedRevision, fullAccess: config }, signal)
     }
     const config = structuredClone(current.selectedCapabilities)
     const values = config[field as 'skillIds' | 'connectorIds']
     config[field as 'skillIds' | 'connectorIds'] = attach
       ? [...new Set([...values, value])]
       : values.filter((entry) => entry !== value)
-    return this.update({ id, revision: expectedRevision, selectedCapabilities: config })
+    return this.update({ id, revision: expectedRevision, selectedCapabilities: config }, signal)
   }
 
   async attachSkill(
     id: string,
     skillId: string,
     expectedRevision: number,
-    mode: SpecialistCapabilityMode = 'selected'
+    mode: SpecialistCapabilityMode = 'selected',
+    signal?: AbortSignal
   ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
@@ -626,7 +631,8 @@ export class SpecialistService {
       mode,
       mode === 'full' ? 'excludedSkillIds' : 'skillIds',
       skillId,
-      mode !== 'full'
+      mode !== 'full',
+      signal
     )
   }
 
@@ -634,7 +640,8 @@ export class SpecialistService {
     id: string,
     skillId: string,
     expectedRevision: number,
-    mode: SpecialistCapabilityMode = 'selected'
+    mode: SpecialistCapabilityMode = 'selected',
+    signal?: AbortSignal
   ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
@@ -642,7 +649,8 @@ export class SpecialistService {
       mode,
       mode === 'full' ? 'excludedSkillIds' : 'skillIds',
       skillId,
-      mode === 'full'
+      mode === 'full',
+      signal
     )
   }
 
@@ -650,7 +658,8 @@ export class SpecialistService {
     id: string,
     connectorId: string,
     expectedRevision: number,
-    mode: SpecialistCapabilityMode = 'selected'
+    mode: SpecialistCapabilityMode = 'selected',
+    signal?: AbortSignal
   ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
@@ -658,7 +667,8 @@ export class SpecialistService {
       mode,
       mode === 'full' ? 'excludedConnectorIds' : 'connectorIds',
       connectorId,
-      mode !== 'full'
+      mode !== 'full',
+      signal
     )
   }
 
@@ -666,7 +676,8 @@ export class SpecialistService {
     id: string,
     connectorId: string,
     expectedRevision: number,
-    mode: SpecialistCapabilityMode = 'selected'
+    mode: SpecialistCapabilityMode = 'selected',
+    signal?: AbortSignal
   ): Promise<SpecialistView> {
     return this.patchCollection(
       id,
@@ -674,7 +685,8 @@ export class SpecialistService {
       mode,
       mode === 'full' ? 'excludedConnectorIds' : 'connectorIds',
       connectorId,
-      mode === 'full'
+      mode === 'full',
+      signal
     )
   }
 

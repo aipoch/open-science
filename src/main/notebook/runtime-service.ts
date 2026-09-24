@@ -1,3 +1,5 @@
+import type { ApproveWheelInstall } from './approved-wheel-install'
+import type { NotebookPackageAdmittedTarget } from './package-admission'
 import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
@@ -211,6 +213,11 @@ type McpRpcConnectionBinding = {
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {
+  requiresInstallationPlan?: (sessionId: string) => boolean
+  installationApproval?: (
+    target: NotebookPackageAdmittedTarget,
+    signal?: AbortSignal
+  ) => ApproveWheelInstall | undefined
   admitSessionWork?: (projectId: string, sessionId: string) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
@@ -599,6 +606,7 @@ class NotebookRuntimeService {
       notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session)
     })
     this.environmentManagement = new NotebookEnvironmentManagementOwner({
+      requiresInstallationPlan: options.requiresInstallationPlan,
       runtimeRoot,
       manager: options.environmentManager,
       sessions: () => this.sessions.values(),
@@ -620,6 +628,7 @@ class NotebookRuntimeService {
         logger: this.runtimeLogger
       })
     this.packageOperations = new NotebookPackageOperations({
+      installationApproval: options.installationApproval,
       storageRoot: options.dataRoot,
       runtimeRoot,
       locale: options.locale ?? DEFAULT_LOCALE,

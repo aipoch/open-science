@@ -1,3 +1,8 @@
+import {
+  reviewSkillPublication,
+  type ReviewStagedSkill,
+  type SkillPublicationReview
+} from './skill-publication-review'
 import { randomUUID } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -17,13 +22,22 @@ import { isUnsafeSkillArchivePath } from './zip-extract'
 export type HostSkillsCatalog = {
   list(): Promise<BundledSkill[]>
   withSkillRead<T>(id: string, read: (skill: BundledSkill) => Promise<T>): Promise<T | undefined>
-  publishPersonalDirectory(name: string, sourcePath: string, overwrite: boolean): Promise<string>
+  publishPersonalDirectory(
+    name: string,
+    sourcePath: string,
+    overwrite: boolean,
+    reviewStaged: ReviewStagedSkill
+  ): Promise<string>
   deletePublished(id: string): Promise<void>
 }
 
 type HostSkillsServiceOptions = {
   storageRoot: string
   catalog: HostSkillsCatalog
+  approvePublish?: (
+    plan: SkillPublicationReview,
+    context: TrustedCallingSession
+  ) => Promise<boolean>
   approveDelete?: (
     request: { name: string; origin: 'draft' | BundledSkill['source'] },
     context: TrustedCallingSession
@@ -72,6 +86,7 @@ type HostSkillPublishResult = Readonly<{
   id: string
   name: string
   origin: 'personal'
+  draftRetained?: boolean
 }>
 
 type HostSkillDeleteResult =
@@ -187,7 +202,7 @@ export class HostSkillsService {
       if (op === 'read') return await this.read(params)
       if (op === 'validate') return await this.validate(params)
       if (op === 'edit') return await this.mutate(() => this.edit(params))
-      if (op === 'publish') return await this.mutate(() => this.publish(params))
+      if (op === 'publish') return await this.mutate(() => this.publish(params, context))
       if (op === 'delete') return await this.mutate(() => this.delete(params, context))
       throw new Error('Unknown operation')
     } catch (error) {
@@ -472,7 +487,10 @@ export class HostSkillsService {
     return { status: 'edited', name: draft.name, path: relativePath, origin: 'draft' }
   }
 
-  private async publish(params: Params): Promise<HostSkillPublishResult> {
+  private async publish(
+    params: Params,
+    context: TrustedCallingSession
+  ): Promise<HostSkillPublishResult> {
     const name = asString(params.name)?.trim()
     if (!name || !SAFE_SKILL_NAME.test(name)) throw new Error('a draft name is required')
     const overwrite = params.overwrite === true
@@ -484,9 +502,44 @@ export class HostSkillsService {
     const validation = await this.validationResult(draft, name, 'draft', name)
     if (!validation.valid) throw new Error(validation.errors[0]?.message ?? 'Skill is invalid')
 
-    const id = await this.options.catalog.publishPersonalDirectory(name, draft, overwrite)
+    let approvedFiles: SkillPublicationReview['files'] | undefined
+    const id = await this.options.catalog.publishPersonalDirectory(
+      name,
+      draft,
+      overwrite,
+      async (staging, previous, unchanged) => {
+        const plan = await reviewSkillPublication(staging, name, overwrite)
+        if (previous)
+          plan.previousFiles = (await reviewSkillPublication(previous, name, true)).files
+        if (!unchanged && !(await this.options.approvePublish?.(structuredClone(plan), context))) {
+          throw new Error('Skill publication was not approved; the draft is unchanged.')
+        }
+        context.signal?.throwIfAborted()
+        approvedFiles = plan.files
+        // The catalog transaction holds the destination lock throughout review. Only the immutable
+        // staged package is promoted, never the draft that arbitrary code could edit while waiting.
+        if (
+          previous &&
+          JSON.stringify((await reviewSkillPublication(previous, name, true)).files) !==
+            JSON.stringify(plan.previousFiles)
+        ) {
+          throw new Error('Published Skill changed during review; request a new approval.')
+        }
+        const current = await reviewSkillPublication(staging, name, overwrite)
+        if (JSON.stringify(current.files) !== JSON.stringify(plan.files)) {
+          throw new Error('Skill publication changed during review; request a new approval.')
+        }
+        context.signal?.throwIfAborted()
+        return () => context.signal?.throwIfAborted()
+      }
+    )
+    let draftRetained = false
     try {
-      await rm(draft, { recursive: true, force: true })
+      // A native writer may have changed the draft while review was pending. Never discard it.
+      draftRetained =
+        JSON.stringify((await reviewSkillPublication(draft, name, overwrite)).files) !==
+        JSON.stringify(approvedFiles)
+      if (!draftRetained) await rm(draft, { recursive: true, force: true })
     } catch (error) {
       throw new Error(
         `Skill "${id}" was published, but draft cleanup failed and catalog refresh was not attempted. ` +
@@ -505,7 +558,13 @@ export class HostSkillsService {
         { cause: error }
       )
     }
-    return { status: 'published', id, name, origin: 'personal' }
+    return {
+      status: 'published',
+      id,
+      name,
+      origin: 'personal',
+      ...(draftRetained ? { draftRetained: true } : {})
+    }
   }
 
   private async delete(

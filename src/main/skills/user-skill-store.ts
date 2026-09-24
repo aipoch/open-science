@@ -16,6 +16,7 @@ import {
   getBoundedBase64ByteLength,
   SKILL_IMPORT_LIMITS
 } from './import-limits'
+import { reviewSkillPublication, type ReviewStagedSkill } from './skill-publication-review'
 import { inspectSkillPackage } from './skill-package-inspection'
 import type { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import {
@@ -301,7 +302,8 @@ export class UserSkillStore {
     sourcePath: string,
     overwrite: boolean,
     validatePackage: ValidatePackage,
-    reservedNames: readonly string[] = []
+    reservedNames: readonly string[] = [],
+    reviewStaged?: ReviewStagedSkill
   ): Promise<string> {
     const normalizedName = name.trim()
     assertUsableSkillName(normalizedName)
@@ -314,12 +316,14 @@ export class UserSkillStore {
       if (
         reservedNames.includes(normalizedName) ||
         importedTaken ||
-        (!overwrite && personalTaken)
+        (!overwrite && personalTaken && !reviewStaged)
       ) {
         throw new Error(`A skill named "${normalizedName}" already exists.`)
       }
 
       await this.assertOrdinaryReplacement('personal', normalizedName)
+      let unchanged = false
+      const review: { assertCommitAllowed?: () => void } = {}
       const staged = await this.transactions.stage('personal', normalizedName, async (staging) => {
         await cp(sourcePath, staging, {
           recursive: true,
@@ -338,8 +342,23 @@ export class UserSkillStore {
           }
         })
         await validatePackage(staging)
+        if (reviewStaged) {
+          const previous = personalTaken
+            ? this.skillDirectory('personal', normalizedName)
+            : undefined
+          if (previous) {
+            const oldFiles = (await reviewSkillPublication(previous, normalizedName, true)).files
+            const newFiles = (await reviewSkillPublication(staging, normalizedName, true)).files
+            unchanged = JSON.stringify(oldFiles) === JSON.stringify(newFiles)
+            if (!overwrite && !unchanged)
+              throw new Error(`A skill named "${normalizedName}" already exists.`)
+          }
+          review.assertCommitAllowed =
+            (await reviewStaged(staging, previous, unchanged)) || undefined
+        }
       })
-      await this.transactions.promote(staged)
+      if (unchanged) await this.transactions.discard(staged)
+      else await this.transactions.promote(staged, review.assertCommitAllowed)
       return `personal-${normalizedName}`
     }, ['personal'])
   }

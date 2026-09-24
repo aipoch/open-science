@@ -1036,3 +1036,83 @@ describe('NotebookPackageMutationOwner', () => {
     expect(readOperationChild(runtimeRoot, operationId)).toMatchObject({ spawning: true })
   })
 })
+
+describe('installation plan at the actual mutation boundary', () => {
+  it.each(['decline', 'changed', 'revoked', 'approve'] as const)(
+    'handles %s after the full dependency plan is resolved',
+    async (scenario) => {
+      const plan = {
+        kind: 'package-installation' as const,
+        installer: 'pip' as const,
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.0',
+            url: 'https://example.org/numpy.whl',
+            sha256: 'a'.repeat(64),
+            requested: true
+          }
+        ]
+      }
+      const approve = vi.fn(async () => scenario !== 'decline')
+      let version = '1.0'
+      let reviews = 0
+      const { owner, options, target } = ownerHarness({
+        canSkipInstall: () => false,
+        installationApproval: () => async (reviewed) => {
+          reviews++
+          expect(reviewed).toMatchObject({ installed: [{ name: 'numpy', version: '1.0' }] })
+          if (scenario === 'changed') version = '3.0'
+          return approve()
+        },
+        recheckAuthorization: async () =>
+          scenario === 'revoked' && reviews
+            ? {
+                status: 'refused',
+                result: { ok: false, needsRestart: false, log: '', error: 'revoked' }
+              }
+            : undefined,
+        installPackages: async (_request, deps) => {
+          const ok = await deps!.approveInstallationPlan!(plan)
+          return { ok, needsRestart: false, log: ok ? 'installed' : 'not started', method: 'pip' }
+        }
+      })
+      vi.mocked(options.environmentStateTracker.inspectPackages).mockImplementation(async () => ({
+        inventory: { source: 'full-scan', validation: 'full-scan' },
+        packages: [
+          {
+            name: 'numpy',
+            requested: 'numpy',
+            status: 'installed',
+            version,
+            versionStatus: 'known'
+          }
+        ]
+      }))
+      const result = await owner.mutate({ target, mirror: {} })
+      expect(result.ok).toBe(scenario === 'approve')
+      expect(approve).toHaveBeenCalledOnce()
+    }
+  )
+})
+
+it('denies required installation approval for a no-prompt caller before requesting a decision', async () => {
+  const approve = vi.fn(async () => true)
+  const { owner, target } = ownerHarness({
+    canSkipInstall: () => false,
+    installationApproval: () => approve,
+    installPackages: async (_request, deps) => ({
+      ok: await deps!.approveInstallationPlan!({
+        kind: 'package-installation',
+        installer: 'pip',
+        packages: []
+      }),
+      needsRestart: false,
+      log: ''
+    })
+  })
+  target.request.permissionPrompts = 'none'
+  const result = await owner.mutate({ target, mirror: {} })
+  expect(result.ok).toBe(false)
+  expect(approve).not.toHaveBeenCalled()
+})

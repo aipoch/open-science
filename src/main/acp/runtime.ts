@@ -2948,6 +2948,8 @@ class AcpRuntime {
     sessionId: string
     title: string
     rawInput: unknown
+    configurationPlan?: unknown
+    permissionPrompts?: 'none'
     signal?: AbortSignal
   }): Promise<boolean> {
     return this.permissionContext.requestAppApproval(input)

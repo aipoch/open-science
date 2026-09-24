@@ -1239,3 +1239,18 @@ describe('ACP permission context', () => {
     expect(context.snapshot()).toEqual({ pendingRequests: [], sessions: {} })
   })
 })
+
+it('retains a trusted call-specific no-prompt policy even when the root Session allows prompts', async () => {
+  const emitPermissionRequest = vi.fn()
+  const context = new AcpPermissionContext({ emitPermissionRequest, routing: permissionRouting() })
+  expect(
+    await context.requestAppApproval({
+      sessionId: 'root',
+      title: 'Review',
+      rawInput: {},
+      permissionPrompts: 'none',
+      configurationPlan: { kind: 'agent-configuration' }
+    })
+  ).toBe(false)
+  expect(emitPermissionRequest).not.toHaveBeenCalled()
+})

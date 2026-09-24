@@ -144,6 +144,7 @@ const composeService = (opts: {
   let approvals = 0
   const approvalGateway = opts.gateway ?? passthroughApprovalGateway
   const agentsService = new AgentsService({
+    approvePlan: async () => true,
     specialistService,
     catalog: stubCatalog,
     sessionBinding,

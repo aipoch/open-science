@@ -57,6 +57,7 @@ const catalog = (overrides: Partial<AgentsCatalogSource> = {}): AgentsCatalogSou
 describe('AgentsService read surface', () => {
   it('list() returns summary records without system prompts or a synthetic Reviewer row', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([profile()]),
       catalog: catalog()
     })
@@ -72,6 +73,7 @@ describe('AgentsService read surface', () => {
 
   it('get(name) returns detail including the system prompt', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([profile()]),
       catalog: catalog()
     })
@@ -99,6 +101,7 @@ describe('AgentsService read surface', () => {
 
   it('get() rejects a missing name with a host.agents.get-prefixed error', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([]),
       catalog: catalog()
     })
@@ -107,6 +110,7 @@ describe('AgentsService read surface', () => {
 
   it('list_skills() returns the full catalog including Main-disabled skills', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([]),
       catalog: catalog()
     })
@@ -157,6 +161,7 @@ describe('AgentsService read surface', () => {
       ]
     }
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([]),
       catalog: catalog({ getConnectors: vi.fn(async () => stored) })
     })
@@ -181,6 +186,7 @@ describe('AgentsService read surface', () => {
 
   it('filters by exact stable id first', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([]),
       catalog: catalog()
     })
@@ -191,6 +197,7 @@ describe('AgentsService read surface', () => {
 
   it('rejects an ambiguous public name with a stable-id instruction', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: specialistService([]),
       catalog: catalog({
         listSkillCatalog: vi.fn(async () => [
@@ -227,6 +234,7 @@ describe('AgentsService read surface', () => {
       })
     }
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: failing as unknown as SpecialistService,
       catalog: catalog()
     })
@@ -290,6 +298,7 @@ describe('AgentsService connector runtime availability', () => {
     const attachConnector = vi.fn(async () => profile())
     profiles.attachConnector = attachConnector
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: profiles,
       catalog: catalog({ getConnectors: vi.fn(async () => stored) }),
       customServerAvailability: (id) => (id === 'cust-1' ? 'unavailable' : undefined)
@@ -326,6 +335,7 @@ describe('AgentsService connector runtime availability', () => {
     const attachConnector = vi.fn(async () => profile())
     profiles.attachConnector = attachConnector
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: profiles,
       catalog: catalog({ getConnectors: vi.fn(async () => stored) })
     })
@@ -351,6 +361,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
   it('threads the trusted calling session into the delete approval request', async () => {
     const seenSessions: unknown[] = []
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: mutatingSpecialistService([profile()]),
       catalog: catalog(),
       approvalGateway: {
@@ -373,6 +384,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
   it('updates displayName without changing immutable name or consulting approval', async () => {
     const decided: unknown[] = []
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: mutatingSpecialistService([profile()]),
       catalog: catalog(),
       approvalGateway: {
@@ -401,6 +413,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
   it('passes an empty session to the gateway when no trusted context is supplied (test compatibility)', async () => {
     const seenSessions: unknown[] = []
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: mutatingSpecialistService([profile()]),
       catalog: catalog(),
       approvalGateway: {

@@ -59,8 +59,8 @@ const makeFixture = async (): Promise<{
       if (id === featured.id) return read(featured)
       return userSkills.withSkillReadLock(id, read)
     },
-    publishPersonalDirectory: (name, sourcePath, overwrite) =>
-      userSkills.publishPersonalDirectory(name, sourcePath, overwrite),
+    publishPersonalDirectory: (name, sourcePath, overwrite, reviewStaged) =>
+      userSkills.publishPersonalDirectory(name, sourcePath, overwrite, [], reviewStaged),
     deletePublished: (id) => userSkills.delete(id)
   }
   const approveDelete = vi.fn(async () => true)
@@ -72,6 +72,7 @@ const makeFixture = async (): Promise<{
     approveDelete,
     reload,
     service: new HostSkillsService({
+      approvePublish: async () => true,
       storageRoot: root,
       catalog,
       approveDelete,
@@ -870,4 +871,111 @@ describe('HostSkillsService', () => {
     expect(await userSkills.list()).toHaveLength(0)
     expect(reload).toHaveBeenCalledTimes(1)
   })
+})
+
+describe('Skill publication concrete approval', () => {
+  it('keeps draft editing automatic but refuses publish without a configured decision', async () => {
+    const { root, catalog, userSkills } = await makeFixture()
+    const service = new HostSkillsService({ storageRoot: root, catalog })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'reviewed',
+        path: 'SKILL.md',
+        content: '---\nname: reviewed\ndescription: Example.\n---\nExact body.'
+      }
+    })
+    await expect(
+      service.dispatch({ op: 'publish', params: { name: 'reviewed' } }, { sessionId: 's' })
+    ).rejects.toThrow('not approved')
+    expect(await userSkills.list()).toHaveLength(0)
+    expect(await readFile(join(root, 'skills/drafts/reviewed/SKILL.md'), 'utf8')).toContain(
+      'Exact body'
+    )
+  })
+  it('reviews the complete staged package under the catalog lock and ignores later draft replacement', async () => {
+    const { root, catalog, userSkills } = await makeFixture()
+    const approvePublish = vi.fn(
+      async (plan: import('./skill-publication-review').SkillPublicationReview) => {
+        expect(plan.files[0]).toMatchObject({
+          path: 'SKILL.md',
+          content: expect.stringContaining('Exact body')
+        })
+        await writeFile(join(root, 'skills/drafts/reviewed/SKILL.md'), 'unapproved replacement')
+        return true
+      }
+    )
+    const service = new HostSkillsService({ storageRoot: root, catalog, approvePublish })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'reviewed',
+        path: 'SKILL.md',
+        content: '---\nname: reviewed\ndescription: Example.\n---\nExact body.'
+      }
+    })
+    await service.dispatch({ op: 'publish', params: { name: 'reviewed' } }, { sessionId: 's' })
+    const published = (await userSkills.list())[0]
+    expect(await readFile(join(published.sourceDir!, 'SKILL.md'), 'utf8')).toContain('Exact body')
+    expect(approvePublish).toHaveBeenCalledOnce()
+  })
+})
+
+it('does not republish or reapprove a committed identical package when retrying draft cleanup', async () => {
+  const { root, catalog, userSkills } = await makeFixture()
+  const approvePublish = vi.fn(async () => true)
+  const service = new HostSkillsService({ storageRoot: root, catalog, approvePublish })
+  await service.dispatch({
+    op: 'edit',
+    params: {
+      name: 'retryable',
+      path: 'SKILL.md',
+      content: '---\nname: retryable\ndescription: Example.\n---\nApproved.'
+    }
+  })
+  cleanupFailure.path = join(root, 'skills', 'drafts', 'retryable')
+  await expect(
+    service.dispatch({ op: 'publish', params: { name: 'retryable' } }, { sessionId: 's' })
+  ).rejects.toThrow('was published')
+  const published = (await userSkills.list())[0]
+  const before = (await import('node:fs/promises')).stat(join(published.sourceDir!, 'SKILL.md'))
+  cleanupFailure.path = undefined
+  await expect(
+    service.dispatch({ op: 'publish', params: { name: 'retryable' } }, { sessionId: 's' })
+  ).resolves.toMatchObject({ status: 'published' })
+  expect(
+    (await (await import('node:fs/promises')).stat(join(published.sourceDir!, 'SKILL.md'))).ino
+  ).toBe((await before).ino)
+  expect(approvePublish).toHaveBeenCalledOnce()
+})
+
+it('preserves the draft and published catalog when the invocation is cancelled during approval', async () => {
+  const { root, catalog, userSkills } = await makeFixture()
+  const controller = new AbortController()
+  const service = new HostSkillsService({
+    storageRoot: root,
+    catalog,
+    approvePublish: async () => {
+      controller.abort()
+      return true
+    }
+  })
+  await service.dispatch({
+    op: 'edit',
+    params: {
+      name: 'cancelled',
+      path: 'SKILL.md',
+      content: '---\nname: cancelled\ndescription: Cancellation test.\n---\nInstructions.'
+    }
+  })
+  await expect(
+    service.dispatch(
+      { op: 'publish', params: { name: 'cancelled' } },
+      { sessionId: 's', signal: controller.signal }
+    )
+  ).rejects.toThrow()
+  expect((await userSkills.list()).some((skill) => skill.name === 'cancelled')).toBe(false)
+  expect(await readFile(join(root, 'skills', 'drafts', 'cancelled', 'SKILL.md'), 'utf8')).toContain(
+    'Instructions.'
+  )
 })

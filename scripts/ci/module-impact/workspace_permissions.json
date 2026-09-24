@@ -11,13 +11,15 @@
     "src/renderer/src/pages/workspace/permission-request-presentation.test.ts",
     "src/renderer/src/pages/workspace/permission-request-presentation.ts",
     "src/renderer/src/pages/workspace/session-permissions.test.ts",
-    "src/renderer/src/pages/workspace/session-permissions.ts"
+    "src/renderer/src/pages/workspace/session-permissions.ts",
+    "src/renderer/src/pages/workspace/ConfigurationPlanDetail.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx",
     "src/renderer/src/pages/workspace/PermissionScopeConfirmationDialog.tsx",
     "src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx",
-    "src/renderer/src/pages/workspace/session-permissions.ts"
+    "src/renderer/src/pages/workspace/session-permissions.ts",
+    "src/renderer/src/pages/workspace/ConfigurationPlanDetail.tsx"
   ],
   "consumerModules": [],
   "testFiles": {

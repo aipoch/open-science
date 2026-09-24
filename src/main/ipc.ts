@@ -1,3 +1,4 @@
+import { createAutoPlanApproval } from './agents/configuration-plan-approval'
 import createDiagnosticsWorker from './session-diagnostics/worker-entry?nodeWorker'
 import { createSessionDiagnosticsDesktop } from './session-diagnostics/desktop'
 import { LiteratureSmartCollections } from './literature/smart-collections'
@@ -2081,6 +2082,30 @@ const createApplicationModules = async (
   }
   const notebookApplication = await modules.add(
     {
+      requiresInstallationPlan: (sessionId) => {
+        const profile =
+          runtimeRef.current?.getSnapshot().permissionProfiles[sessionId]?.selectedProfile
+        return profile !== 'ask' && profile !== 'full'
+      },
+      installationApproval: (target, signal) => {
+        const sessionId = target.request.sessionId
+        if (!sessionId) return undefined // Direct Settings action retains its existing consent.
+        const profile =
+          runtimeRef.current?.getSnapshot().permissionProfiles[sessionId]?.selectedProfile
+        if (profile === 'ask' || profile === 'full') return undefined
+        return async (plan) => {
+          const runtime = runtimeRef.current
+          if (!runtime || !profile) return false
+          return runtime.requestAppApproval({
+            sessionId,
+            signal,
+            permissionPrompts: target.request.permissionPrompts,
+            title: 'Review installation plan',
+            rawInput: {},
+            configurationPlan: { ...plan, target: target.receipt }
+          })
+        }
+      },
       admitSessionWork: (projectId: string, sessionId: string) =>
         archiveCoordinator.admitSessionWork(projectId, sessionId),
       configRoot: resolveConfigRoot(),
@@ -2813,7 +2838,24 @@ const createApplicationModules = async (
       }
     })
   })
+  const approveConcretePlan = createAutoPlanApproval<unknown>({
+    profile: (sessionId) =>
+      runtimeRef.current?.getSnapshot().permissionProfiles[sessionId]?.selectedProfile,
+    request: async (plan, session) => {
+      const runtime = runtimeRef.current
+      if (!session.sessionId || !runtime) return false
+      return runtime.requestAppApproval({
+        sessionId: session.sessionId,
+        title: 'Review configuration changes',
+        signal: session.signal,
+        permissionPrompts: session.permissionPrompts,
+        rawInput: {},
+        configurationPlan: plan
+      })
+    }
+  })
   const agentsService = new AgentsService({
+    approvePlan: approveConcretePlan,
     specialistService,
     catalog: {
       listSkillCatalog: () => settingsService.listSpecialistSkillCatalog(),
@@ -3112,14 +3154,15 @@ const createApplicationModules = async (
   const hostSkillsCatalog: HostSkillsCatalog = {
     list: () => settingsService.listHostSkills(),
     withSkillRead: (id, read) => settingsService.withHostSkillRead(id, read),
-    publishPersonalDirectory: (name, sourcePath, overwrite) =>
-      settingsService.publishHostSkill(name, sourcePath, overwrite),
+    publishPersonalDirectory: (name, sourcePath, overwrite, reviewStaged) =>
+      settingsService.publishHostSkill(name, sourcePath, overwrite, reviewStaged),
     deletePublished: async (id) => {
       await settingsService.deleteSkill({ id })
       await removeResourceTags([{ resourceType: 'catalog.skill', resourceId: id }])
     }
   }
   const hostSkillsService = new HostSkillsService({
+    approvePublish: approveConcretePlan,
     storageRoot: configRoot,
     catalog: hostSkillsCatalog,
     approveDelete: async (payload, session) => {

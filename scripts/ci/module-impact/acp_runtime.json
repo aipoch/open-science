@@ -217,7 +217,8 @@
     "src/main/acp/turn-skill-owner.test.ts",
     "src/main/acp/turn-skill-owner.ts",
     "src/main/acp/workspace-path.test.ts",
-    "src/main/acp/workspace-path.ts"
+    "src/main/acp/workspace-path.ts",
+    "src/main/acp/approval-plan-projection.test.ts"
   ],
   "interfacePaths": [
     "src/main/acp/runtime.ts",
@@ -380,7 +381,8 @@
       "src/main/acp/vision-evidence-repository.test.ts",
       "src/main/acp/workspace-path.test.ts",
       "src/main/delegation/process-ownership.test.ts",
-      "src/main/process-tree.windows.integration.test.ts"
+      "src/main/process-tree.windows.integration.test.ts",
+      "src/main/acp/approval-plan-projection.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",
@@ -775,6 +777,10 @@
       "src/main/literature/smart-collections.test.ts"
     ]
   },
-  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "capabilityOverlays": [
+    "windows_sensitive",
+    "e2e_regressions",
+    "e2e_delegation"
+  ],
   "fallbackCapability": "main_runtime"
 }

@@ -215,7 +215,8 @@ const INSPECT_PACKAGES_DOC = [
 ].join('\n')
 
 const MANAGE_PACKAGES_DOC = [
-  'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true only for PyPI-only packages, and pass channels only when needed.',
+  'In Auto mode, installation currently supports Python wheel-only plans with usePip=true (or an authorized external Python runtime). Collect all required packages into one call. The application resolves dependencies and asks the user to approve the exact runtime, versions and artifacts. Unsupported installers/source builds fail closed; do not create another environment or switch modes to bypass approval.',
+  'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true for PyPI packages, and pass channels only when needed.',
   'For managed R runtimes, installer="biocmanager" accepts Bioconductor package names and installer="github" accepts owner/repository or owner/repository@ref. Both are verified from the target R library inventory after installation.',
   'conda installs resolve conda-forge + bioconda by default. A CRAN R package is installed by its plain name (e.g. "dplyr" → r-dplyr); a Bioconductor R package must be named by its bioconda package id "bioconductor-<name>" in lowercase (e.g. DESeq2 → "bioconductor-deseq2"), which is left as-is (not r- prefixed).',
   'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',

@@ -123,7 +123,11 @@ gate('host.agents repl integration', () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-profile-'))
     runtimeStorage = await mkdtemp(join(tmpdir(), 'os-agents-runtime-'))
     const specialistService = createSpecialistService(profileStorage)
-    agentsService = new AgentsService({ specialistService, catalog: stubCatalog })
+    agentsService = new AgentsService({
+      approvePlan: async () => true,
+      specialistService,
+      catalog: stubCatalog
+    })
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,
@@ -390,6 +394,7 @@ gate('host.agents repl integration', () => {
   it('redacts dependency error details before they reach the Agent sandbox', async () => {
     const originalService = agentsService
     agentsService = new AgentsService({
+      approvePlan: async () => true,
       specialistService: {
         list: async () => {
           throw new Error(

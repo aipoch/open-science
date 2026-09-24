@@ -1,3 +1,4 @@
+import { createApprovalPlanPreview } from '../../shared/approval-plan-preview'
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -65,6 +66,7 @@ type AppPermissionRequest = Readonly<{
   sessionId: string
   title: string
   rawInput: unknown
+  configurationPlan?: unknown
   options: ReadonlyArray<AcpPermissionRequest['options'][number]>
   signal?: AbortSignal
   permissionPrompts?: 'none'
@@ -948,8 +950,9 @@ class AcpPermissionBroker {
     sessionId: string
     title: string
     rawInput: unknown
-    signal?: AbortSignal
+    configurationPlan?: unknown
     permissionPrompts?: 'none'
+    signal?: AbortSignal
   }): Promise<boolean> {
     const requestId = randomUUID()
     const approveOptionId = `${requestId}:approve`
@@ -975,6 +978,9 @@ class AcpPermissionBroker {
       appOwned: true,
       providerToolName: 'Open-Science',
       rawInput: input.rawInput,
+      ...(input.configurationPlan === undefined
+        ? {}
+        : { approvalPlan: createApprovalPlanPreview(input.configurationPlan) }),
       options: input.options.map((option) => ({ ...option }))
     }
 

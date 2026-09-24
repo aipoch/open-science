@@ -46,7 +46,9 @@
     "src/main/agents/specialist-privileged-ops.test.ts",
     "src/main/agents/specialist-privileged-ops.ts",
     "src/main/agents/switch-operation.test.ts",
-    "src/main/agents/switch-operation.ts"
+    "src/main/agents/switch-operation.ts",
+    "src/main/agents/configuration-plan-approval.test.ts",
+    "src/main/agents/configuration-plan-approval.ts"
   ],
   "interfacePaths": [
     "src/main/agents/agents-error.ts",
@@ -58,7 +60,8 @@
     "src/main/agents/completion-handoff-ipc.ts",
     "src/main/agents/completion-handoff-lifecycle.ts",
     "src/main/agents/pending-session-specialist-bindings.ts",
-    "src/main/agents/specialist-approval-gateway.ts"
+    "src/main/agents/specialist-approval-gateway.ts",
+    "src/main/agents/configuration-plan-approval.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -87,7 +90,8 @@
       "src/main/agents/specialist-approval-gateway.test.ts",
       "src/main/agents/specialist-approval-presentation.test.ts",
       "src/main/agents/specialist-privileged-ops.test.ts",
-      "src/main/agents/switch-operation.test.ts"
+      "src/main/agents/switch-operation.test.ts",
+      "src/main/agents/configuration-plan-approval.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -294,6 +298,10 @@
       "src/main/compute/cancellation-runtime.integration.test.ts"
     ]
   },
-  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
+  "capabilityOverlays": [
+    "e2e_regressions",
+    "e2e_delegation",
+    "windows_sensitive"
+  ],
   "fallbackCapability": "main_runtime"
 }

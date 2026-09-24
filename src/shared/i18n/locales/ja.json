@@ -6277,6 +6277,9 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "AI の判定をリアルタイムで表示します。コレクションへの追加は引き続き手動の判断を優先します。",
     "Start an update to see the screening process.": "更新を開始するとスクリーニングの進行状況が表示されます。",
     "Pending candidates": "未処理の候補",
-    "Pause analysis": "分析を一時停止"
+    "Pause analysis": "分析を一時停止",
+    "Review configuration changes": "設定変更を確認",
+    "Approval applies only to the target and content shown below.": "承認は以下に表示された対象と内容にのみ適用されます。",
+    "Review installation plan": "インストール計画を確認"
   }
 }

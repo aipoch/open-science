@@ -8,6 +8,8 @@ import type { ProjectIdScope } from '../../shared/project-scope'
 
 type NotebookApplicationDeps = Pick<
   NotebookRuntimeServiceOptions,
+  | 'requiresInstallationPlan'
+  | 'installationApproval'
   | 'configRoot'
   | 'admitSessionWork'
   | 'dataRoot'
