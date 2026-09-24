@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useEffect } from 'react'
+import { act, useEffect, useState } from 'react'
 import { useTagStore } from '@/stores/tag-store'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -118,6 +118,137 @@ it('does not publish a pending write into a different Session', async () => {
   })
   expect(port.annotations).toEqual([])
   expect(port.total).toBe(0)
+})
+it('keeps descendants mounted while resetting annotation state for a new Session', async () => {
+  const nextLoad = deferred<PdfAnnotationListResult>()
+  window.api = {
+    pdfAnnotations: {
+      list: vi.fn(({ sessionId }) =>
+        sessionId === 's1' ? Promise.resolve({ items: [], total: 0 }) : nextLoad.promise
+      ),
+      create: vi.fn().mockResolvedValue(annotation),
+      update: vi.fn(),
+      delete: vi.fn(),
+      onChanged: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  let mounts = 0
+  let unmounts = 0
+  const StableChild = (): React.JSX.Element => {
+    const [count, setCount] = useState(0)
+    useEffect(() => {
+      mounts += 1
+      return () => {
+        unmounts += 1
+      }
+    }, [])
+    return <button onClick={() => setCount((value) => value + 1)}>{count}</button>
+  }
+  const render = async (sessionId: string): Promise<void> => {
+    await act(async () =>
+      root.render(
+        <PdfAnnotationsProvider projectId="p1" sessionId={sessionId}>
+          <Probe />
+          <StableChild />
+        </PdfAnnotationsProvider>
+      )
+    )
+  }
+  await render('s1')
+  const button = container.querySelector('button')!
+  await act(async () => button.click())
+  await act(async () => {
+    await port.create('a1', annotation.target, 'document-note', undefined, [], 'Saved')
+  })
+  const previousPort = port
+  expect(port.annotations).toEqual([annotation])
+  expect(port.history(annotation.target.source).canUndo).toBe(true)
+
+  await render('s2')
+  expect(container.querySelector('button')).toBe(button)
+  expect(button.textContent).toBe('1')
+  expect({ mounts, unmounts }).toEqual({ mounts: 1, unmounts: 0 })
+  expect(port.sessionId).toBe('s2')
+  expect(port.annotations).toEqual([])
+  expect(port.loading).toBe(true)
+  expect(port.loadError).toBeUndefined()
+  expect(port.history(annotation.target.source)).toEqual({
+    canUndo: false,
+    canRedo: false,
+    busy: false
+  })
+  await act(async () => previousPort.retryLoad())
+  expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(2)
+  expect(port.loading).toBe(true)
+
+  await act(async () => nextLoad.resolve({ items: [], total: 0 }))
+  expect(port.loading).toBe(false)
+})
+it('ignores an old Session load after the new Session finishes loading', async () => {
+  const oldLoad = deferred<PdfAnnotationListResult>()
+  const nextAnnotation = { ...annotation, id: 'a2', sessionId: 's2', note: 'Next Session' }
+  window.api = {
+    pdfAnnotations: {
+      list: vi.fn(({ sessionId }) =>
+        sessionId === 's1'
+          ? oldLoad.promise
+          : Promise.resolve({ items: [nextAnnotation], total: 1 })
+      ),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      onChanged: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  await mount()
+  expect(port.loading).toBe(true)
+  await mount('s2')
+  expect(port.annotations).toEqual([nextAnnotation])
+  await act(async () => oldLoad.resolve({ items: [annotation], total: 1 }))
+  expect(port.annotations).toEqual([nextAnnotation])
+  expect(port.loading).toBe(false)
+})
+it('clears a previous Session load error without remounting its children', async () => {
+  window.api = {
+    pdfAnnotations: {
+      list: vi.fn(({ sessionId }) =>
+        sessionId === 's1'
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({ items: [], total: 0 })
+      ),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      onChanged: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  await mount()
+  expect(port.loadError).toBe('offline')
+  await mount('s2')
+  expect(port.loadError).toBeUndefined()
+  expect(port.loading).toBe(false)
+})
+it('preserves workspace children when unloaded annotation scope changes', async () => {
+  const list = vi.fn()
+  window.api = { pdfAnnotations: { list } } as unknown as Window['api']
+  const render = async (sessionId: string): Promise<void> => {
+    await act(async () =>
+      root.render(
+        <PdfAnnotationsProvider projectId="p1" sessionId={sessionId} loadAnnotations={false}>
+          <Probe />
+          <input defaultValue="unfinished rename" />
+        </PdfAnnotationsProvider>
+      )
+    )
+  }
+  await render('s1')
+  const input = container.querySelector('input')!
+  await render('s2')
+  expect(container.querySelector('input')).toBe(input)
+  expect(input.value).toBe('unfinished rename')
+  expect(port.sessionId).toBe('s2')
+  expect(port.annotations).toEqual([])
+  expect(list).not.toHaveBeenCalled()
 })
 it('preserves list failures for retry instead of treating them as an empty notebook', async () => {
   const list = vi
