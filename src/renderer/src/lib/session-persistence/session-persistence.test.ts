@@ -5168,6 +5168,32 @@ describe('renderer session persistence bridge', () => {
     expect(flushed).toBe(true)
   })
 
+  it('keeps a deferred conversation command unresolved until Main acknowledges it', async () => {
+    let acknowledged = false
+    const command = {
+      id: 'append-user-deferred',
+      kind: 'append-user' as const,
+      timestamp: 2,
+      branchId: 'branch-1',
+      message: { id: 'message-2', role: 'user' as const }
+    }
+    const saveSession = vi.fn(async (session: PersistedChatSession) => ({
+      ...session,
+      ...(acknowledged ? { runtimeConversationCommandIds: [command.id] } : {})
+    }))
+    const persistence = createOrderedSessionPersistence(createApi({ saveSession }))
+    const session = createPersistedSession({ runtimeTranscriptOwner: 'main' })
+
+    await persistence.saveSession(session, { conversationCommands: [command] })
+    await expect(persistence.flush()).rejects.toMatchObject({
+      code: 'session-conversation-deferred'
+    })
+
+    acknowledged = true
+    await persistence.saveSession(session, { conversationCommands: [command] })
+    await expect(persistence.flush()).resolves.toBeUndefined()
+  })
+
   it('keeps an explicit save revision conflict unresolved until that Session saves successfully', async () => {
     const session = createPersistedSession({ revision: 1 })
     const conflict = new SessionRevisionConflictError(1, 2)

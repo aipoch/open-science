@@ -217,9 +217,7 @@ export const applySessionConversationCommands = (
           }
           break
         }
-        if (result.activeRun) {
-          throw new Error('Cannot append a user Message while the Session run is active.')
-        }
+        if (result.activeRun) throw new SessionConversationCommandDeferredError()
         if (branch.id !== command.branchId || branch.headMessageId !== command.parentMessageId) {
           throw new Error('Conversation Branch changed before the user Message was admitted.')
         }

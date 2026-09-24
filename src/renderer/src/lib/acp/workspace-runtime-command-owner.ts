@@ -34,6 +34,7 @@ import { getActiveConversationContext } from '../../../../shared/conversation-gr
 import {
   confirmPendingDelegationPolicyAuthority,
   flushSessionPersistence,
+  isSessionPersistenceDeferredError,
   saveSessionInOrder,
   toPersistedSessionForAuthorityMaterialization
 } from '../session-persistence/session-persistence'
@@ -993,6 +994,7 @@ const sendWorkspaceMessage = async (
         await (lifecycle.flushPersistence ?? flushSessionPersistence)()
       } catch (error) {
         if (lifecycle.isCurrent?.() === false) return undefined
+        if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         useSessionStore.getState().failRun(sessionId, errorMessage(error))
         return undefined
@@ -1135,6 +1137,7 @@ const sendWorkspaceMessage = async (
       try {
         await saveSessionInOrder(toPersistedSession(durableSession))
       } catch (error) {
+        if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         useSessionStore.getState().failRun(sessionId, errorMessage(error))
         return undefined
@@ -1144,6 +1147,7 @@ const sendWorkspaceMessage = async (
       try {
         await (lifecycle.flushPersistence ?? flushSessionPersistence)()
       } catch (error) {
+        if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         useSessionStore.getState().failRun(sessionId, errorMessage(error))
         return undefined
