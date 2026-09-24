@@ -243,7 +243,7 @@ const AnnotationDraftCards = ({
                             </Button>
                           </PopoverTrigger>
                         </TooltipTrigger>
-                        <TooltipContent>{t('Edit annotation note')}</TooltipContent>
+                        <TooltipContent>{t('Edit')}</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
