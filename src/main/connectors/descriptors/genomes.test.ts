@@ -2,11 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { GENOMES_TOOLS } from './genomes'
 
 // Integration: the aggregate "Genomes" tool set. Per-tool behavior is covered in
-// genomes-blast.test.ts, genomes-ensembl.test.ts and genomes-ucsc.test.ts.
+// genomes-blast.test.ts, genomes-clustal.test.ts, genomes-ensembl.test.ts and genomes-ucsc.test.ts.
 const EXPECTED_IDS = [
   'blast_submit',
   'blast_status',
   'blast_results',
+  'clustalo_submit',
+  'clustalo_status',
+  'clustalo_results',
   'ensembl_lookup',
   'ensembl_xrefs',
   'ensembl_vep_variant',

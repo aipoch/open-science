@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
 import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 import { resolveExternalRLibrary } from './external-r-library'
 import { createInterface, type Interface } from 'node:readline'
@@ -144,6 +144,11 @@ const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
 
 const presentPaths = (values: readonly string[]): string[] =>
   values.filter((value) => value.length > 0)
+
+// Node resolves the CommonJS package type before loading a loop script. Grant the package
+// manifest beside the script explicitly; granting only the script path makes the sandbox reject
+// the startup read even though the loop itself is already an approved resource.
+const loopPackageConfigPath = (loopPath: string): string => join(dirname(loopPath), 'package.json')
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
@@ -1051,6 +1056,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
               request.inputRoot ?? '',
               kernelExecutableReadRoot(invocation.executable, kind, this.platform),
               loopPath,
+              ...(kind === 'repl' ? [loopPackageConfigPath(loopPath)] : []),
               ...(this.platform === 'win32' ? [] : environmentPathRoots(spawnEnv, this.platform))
             ]),
             ...(this.platform === 'win32'

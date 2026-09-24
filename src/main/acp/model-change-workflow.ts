@@ -218,13 +218,16 @@ class AcpModelChangeWorkflow {
     if (!connection) return false
     const backend = this.options.backendGeneration.current
     // ACP Sessions retain provider-side context that the host cannot inspect. Crossing the image
-    // capability boundary requires a fresh Session only when canonical history contains images;
-    // without replayable image history, the native and evidence projections are equivalent.
-    if (
-      backend.context.supportsImageInput !== target.supportsImageInput &&
-      (await this.hasReplayableImageHistory())
-    ) {
-      return false
+    // capability boundary requires a fresh Session when canonical history contains images. A Codex
+    // bridge also binds its provider Session to the upstream model even when the current history is
+    // text-only; keeping that Session across a text/vision target change makes the next resume use
+    // stale provider state and can invalidate the newly provisioned Notebook capability.
+    if (backend.context.supportsImageInput !== target.supportsImageInput) {
+      const codexBridgeTargetChanged =
+        backend.framework.id === 'codex' &&
+        backend.modelRoute === 'codex-bridge' &&
+        target.route === 'codex-bridge'
+      if (codexBridgeTargetChanged || (await this.hasReplayableImageHistory())) return false
     }
     if (
       backend.framework.id === 'codex' &&

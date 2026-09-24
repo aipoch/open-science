@@ -78,10 +78,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'genomes',
     displayName: 'Genomes',
     description:
-      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence, similarity search and browser tracks — NCBI Datasets/BLAST, Ensembl REST and the UCSC Genome Browser.',
+      'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence, similarity search, multiple sequence alignment and browser tracks — NCBI Datasets/BLAST, EMBL-EBI Clustal Omega, Ensembl REST and the UCSC Genome Browser.',
     useWhen:
-      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, identify an unknown nucleotide or protein sequence with an asynchronous NCBI BLAST search, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
-    sources: ['NCBI Datasets', 'NCBI BLAST', 'Ensembl', 'UCSC'],
+      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, identify an unknown nucleotide or protein sequence with an asynchronous NCBI BLAST search, align three or more uniquely named FASTA protein/DNA/RNA records with EMBL-EBI Clustal Omega and retrieve a downloadable alignment file, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
+    sources: ['NCBI Datasets', 'NCBI BLAST', 'EMBL-EBI Job Dispatcher', 'Ensembl', 'UCSC'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
   },
@@ -185,6 +185,17 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
       'Use for GTEx tissue expression and eQTL evidence — listing tissue sites or dataset releases, resolving gene symbols to versioned GENCODE ids, median or per-sample expression (TPM) by tissue, top-expressed genes per tissue, sample/donor metadata, and cis-eQTLs (eGenes, single-tissue, multi-tissue METASOFT, or on-the-fly calculation) for a gene or variant. Sourced from GTEx.',
     sources: ['GTEx'],
     termsUrl: 'https://gtexportal.org/home/license',
+    requiresNcbi: false
+  },
+  {
+    id: 'interproscan',
+    displayName: 'InterProScan',
+    aliases: ['InterProScan 5', 'iprscan5'],
+    description: 'InterProScan job status and TSV result retrieval via EMBL-EBI.',
+    useWhen:
+      'Use when you already have an EMBL-EBI InterProScan job_id and need to check its status or retrieve its finished TSV matches. This connector does not create or cancel jobs. For precomputed annotations of known UniProt accessions, use Protein Annotation instead.',
+    sources: ['InterProScan', 'EMBL-EBI'],
+    termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
     requiresNcbi: false
   },
   {

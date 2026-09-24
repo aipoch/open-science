@@ -563,7 +563,7 @@ describe('SpecialistEditor', () => {
     )
   })
 
-  it('focuses the open capability search with Cmd/Ctrl+K', async () => {
+  it('focuses the open capability search with Cmd/Ctrl+Alt+K', async () => {
     useSettingsStore.setState({
       skills: [
         {
@@ -600,13 +600,14 @@ describe('SpecialistEditor', () => {
     const shortcutEvent = new KeyboardEvent('keydown', {
       key: 'k',
       ctrlKey: true,
+      altKey: true,
       cancelable: true
     })
     await act(async () => window.dispatchEvent(shortcutEvent))
 
     expect(shortcutEvent.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(search)
-    expect(search?.getAttribute('aria-keyshortcuts')).toBe('Control+K')
+    expect(search?.getAttribute('aria-keyshortcuts')).toBe('Control+Alt+K')
   })
 
   it('shows a field-level error instead of submitting a duplicate name', async () => {

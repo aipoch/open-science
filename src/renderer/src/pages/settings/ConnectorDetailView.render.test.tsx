@@ -124,6 +124,43 @@ const blockSegment = (method: string): HTMLButtonElement | null => {
 }
 
 describe('ConnectorDetailView', () => {
+  it('shows localized InterProScan descriptions while preserving public tool identities', async () => {
+    const interproscan: ConnectorDetail = {
+      ...detail,
+      id: 'interproscan',
+      displayName: 'InterProScan',
+      description: 'API contract',
+      tools: ['status', 'results'].map((method) => ({
+        id: `interproscan/${method}`,
+        method,
+        description: 'API contract',
+        permission: 'allow'
+      }))
+    }
+    vi.mocked(window.api.settings.getConnectorDetail).mockResolvedValue(interproscan)
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+      root.render(<ConnectorDetailView id="interproscan" />)
+    })
+    try {
+      expect(container.textContent).toContain('查询 InterProScan 作业状态并获取 TSV 结果')
+      for (const method of ['status', 'results']) {
+        const button = Array.from(container.querySelectorAll('button')).find((item) =>
+          item.textContent?.includes(method)
+        )!
+        await act(async () => button.click())
+        expect(container.textContent).toContain(method)
+      }
+      expect(container.textContent).toContain('至少等待 10 秒')
+      expect(container.textContent).toContain('完整 TSV 报告')
+      expect(container.textContent).not.toContain('API contract')
+      expect(container.querySelectorAll('[role="radiogroup"]')).toHaveLength(2)
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
   it('labels the linked users as Connector availability', async () => {
     await act(async () => {
       root.render(<ConnectorDetailView id="ensembl" onOpenSpecialist={vi.fn()} />)

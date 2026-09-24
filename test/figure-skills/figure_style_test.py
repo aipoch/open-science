@@ -1,14 +1,20 @@
-"""Run: python -m unittest discover -s resources/skills/figure-style -v.
+"""Run: python test/figure-skills/figure_style_test.py.
 
 Requires NumPy, SciPy and Matplotlib; no GUI backend or scVI installation is needed.
 """
 import unittest
+from io import BytesIO
+from pathlib import Path
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "resources/skills/figure-style"))
 from kernel import bar_with_points, end_of_line_labels, focal_palette, panel_crops, panel_letter, strip_with_median
 
 
@@ -271,6 +277,57 @@ class LineLabelTests(unittest.TestCase):
 class PanelCropTests(unittest.TestCase):
     def tearDown(self):
         plt.close("all")
+
+    def test_saved_png_crops_decode_at_pixel_dimensions(self):
+        # Exercise the documented saved-image workflow, including a later QA
+        # cell whose figure no longer has its Agg canvas attached.
+        from matplotlib.backend_bases import FigureCanvasBase
+        for dpi, pad in ((100, 0.1), (300, 0.2)):
+            with self.subTest(dpi=dpi), matplotlib.rc_context({
+                "savefig.bbox": "tight", "savefig.dpi": dpi,
+                "savefig.pad_inches": pad,
+            }):
+                fig, axes = plt.subplots(1, 2, figsize=(4, 2), dpi=200)
+                for ax, letter, color in zip(axes, ["a", "b"], ["red", "blue"]):
+                    ax.set_facecolor(color)
+                    panel_letter(ax, letter)
+                source = BytesIO()
+                fig.savefig(source, format="png")
+                FigureCanvasBase(fig)
+                boxes = panel_crops(fig)
+                self.assertEqual(set(boxes), {"a", "b"})
+                with Image.open(source) as saved:
+                    for letter, box in boxes.items():
+                        left, top, right, bottom = box
+                        self.assertTrue(0 <= left < right <= saved.width)
+                        self.assertTrue(0 <= top < bottom <= saved.height)
+                        cropped = saved.crop(box)
+                        expected = (255, 0, 0) if letter == "a" else (0, 0, 255)
+                        self.assertEqual(cropped.convert("RGB").getpixel(
+                            (cropped.width // 2, cropped.height // 2)), expected)
+                        output = BytesIO()
+                        cropped.save(output, format="png")
+                        with Image.open(output) as decoded:
+                            decoded.load()
+                            self.assertEqual(decoded.size, (right - left, bottom - top))
+
+    def test_explicit_saved_bounds_omit_panels_outside_image(self):
+        from matplotlib.transforms import Bbox
+        fig, axes = plt.subplots(1, 2, figsize=(4, 2), dpi=100)
+        for ax, letter in zip(axes, ["a", "b"]):
+            panel_letter(ax, letter)
+        for bounds, visible in (((0, 0, 1, 2), "a"), ((3, 0, 1, 2), "b")):
+            with self.subTest(bounds=bounds):
+                bbox = Bbox.from_bounds(*bounds)
+                source = BytesIO()
+                fig.savefig(source, format="png", dpi=100, bbox_inches=bbox)
+                boxes = panel_crops(fig, dpi=100, bbox_inches=bbox)
+                self.assertEqual(set(boxes), {visible})
+                with Image.open(source) as saved:
+                    box = boxes[visible]
+                    self.assertTrue(0 <= box[0] < box[2] <= saved.width)
+                    self.assertTrue(0 <= box[1] < box[3] <= saved.height)
+                    saved.crop(box).load()
 
     def test_duplicate_letters_are_rejected(self):
         fig, axes = plt.subplots(1, 2)

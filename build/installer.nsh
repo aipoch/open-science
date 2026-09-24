@@ -12,6 +12,7 @@
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
+    DetailPrint `Open-Science Notebook cleanup failure code=$0 sandboxRoot="$INSTDIR\resources\notebook-network-sandbox\windows"`
     MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
     Abort
     notebookSandboxCleanupComplete:
@@ -66,6 +67,7 @@ FunctionEnd
     ClearErrors
     GetFullPathName $R2 "${DIR}\.."
     ${if} ${Errors}
+      DetailPrint `Open-Science data protection failure code=parent-path-unresolved path="${DIR}\${FOLDER}"`
       DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; its parent path could not be resolved.`
       MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
       StrCpy $dataProtectionFailed "1"
@@ -73,6 +75,7 @@ FunctionEnd
       StrCpy ${BACKUP} "$R2\.open-science-update-data-${SLOT}"
       ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
         ${if} ${FileExists} "${BACKUP}\*.*"
+          DetailPrint `Open-Science data protection failure code=backup-already-exists path="${DIR}\${FOLDER}" backup="${BACKUP}"`
           DetailPrint `Could not safely preserve "${DIR}\${FOLDER}" because the backup path already exists: ${BACKUP}`
           MessageBox MB_OK|MB_ICONSTOP "Open-Science found both the current data folder and an earlier update backup.$\r$\nNo data was changed. Please inspect:$\r$\n${BACKUP}"
           StrCpy ${BACKUP} ""
@@ -81,6 +84,7 @@ FunctionEnd
           ClearErrors
           Rename "${DIR}\${FOLDER}" "${BACKUP}"
           ${if} ${Errors}
+            DetailPrint `Open-Science data protection failure code=preserve-rename-failed path="${DIR}\${FOLDER}" backup="${BACKUP}"`
             DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
             MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
             StrCpy ${BACKUP} ""
@@ -105,6 +109,7 @@ FunctionEnd
   ${andIf} "${BACKUP}" != ""
     ${if} ${FileExists} "${BACKUP}\*.*"
       ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
+        DetailPrint `Open-Science data protection failure code=restore-destination-exists path="${DIR}\${FOLDER}" backup="${BACKUP}"`
         DetailPrint `The preserved data remains at: ${BACKUP}`
         MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder because the destination already exists.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
         StrCpy $dataRestoreFailed "1"
@@ -113,6 +118,7 @@ FunctionEnd
         ClearErrors
         Rename "${BACKUP}" "${DIR}\${FOLDER}"
         ${if} ${Errors}
+          DetailPrint `Open-Science data protection failure code=restore-rename-failed path="${DIR}\${FOLDER}" backup="${BACKUP}"`
           DetailPrint `The preserved data remains at: ${BACKUP}`
           MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
           StrCpy $dataRestoreFailed "1"

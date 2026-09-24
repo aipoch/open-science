@@ -1061,7 +1061,8 @@ class AcpRuntimeCoordinator {
   startContinuationWhenDispatchAdmitted(
     request: AcpPromptRequest,
     validate: () => Promise<void>,
-    delegatedMessageId?: string
+    delegatedMessageId?: string,
+    onAdmissionQueued?: () => void
   ): Promise<DelegateMessageAcceptanceEvidence> {
     // The caller owns final deletion admission for the whole validation/resume/acceptance lifecycle.
     // Bypass only the nested dispatch guard; root-session admission remains linearized below.
@@ -1069,7 +1070,8 @@ class AcpRuntimeCoordinator {
       request,
       validate,
       true,
-      delegatedMessageId
+      delegatedMessageId,
+      onAdmissionQueued
     )
   }
 
@@ -1077,7 +1079,8 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     validate: () => Promise<void>,
     dispatchAdmitted: boolean,
-    delegatedMessageId?: string
+    delegatedMessageId?: string,
+    onAdmissionQueued?: () => void
   ): Promise<DelegateMessageAcceptanceEvidence> {
     let resolve!: (evidence: DelegateMessageAcceptanceEvidence) => void
     let reject!: (error: unknown) => void
@@ -1103,7 +1106,7 @@ class AcpRuntimeCoordinator {
       reject(error)
     }
 
-    void this.linearizeRootAdmission(request.sessionId, async () => {
+    const admission = this.linearizeRootAdmission(request.sessionId, async () => {
       try {
         await validate()
       } catch (error) {
@@ -1132,7 +1135,9 @@ class AcpRuntimeCoordinator {
         acceptance.settled = true
         resolve('provider_prompt_completed')
       }
-    }).catch((error) => acceptance.reject(error))
+    })
+    onAdmissionQueued?.()
+    void admission.catch((error) => acceptance.reject(error))
     return accepted
   }
 

@@ -20,6 +20,7 @@ import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../../shar
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import { useSessionStore } from '@/stores/session-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
@@ -189,6 +190,10 @@ describe('PdfPreviewContent', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     useSessionStore.setState({ sessions: [], selectedSessionId: undefined } as never)
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: undefined,
+      pendingPdfContextByProject: {}
+    })
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
@@ -974,6 +979,175 @@ describe('PdfPreviewContent', () => {
         container.querySelector('[data-pdf-cursor-mode]')?.getAttribute('data-pdf-cursor-mode')
       ).toBe('select')
       expect(screen.getByRole('menuitem', { name: 'Select area to annotate' })).not.toBeNull()
+    }
+  )
+
+  it('adds a Library PDF region to a new conversation draft and disables selection after unlink', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+      drawImage: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
+    const source = {
+      kind: 'literature-attachment-version' as const,
+      sourceFileId: 'attachment-1',
+      versionId: 'version-1',
+      name: 'paper.pdf',
+      path: 'literature-attachment-version:version-1',
+      checksum: 'a'.repeat(64)
+    }
+    const onAddAnnotation = vi.fn()
+    const createSession = vi.fn()
+    window.api = {
+      ...window.api,
+      sessions: { create: createSession },
+      pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0, source }) },
+      tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
+    } as unknown as Window['api']
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-1',
+      pendingPdfContextByProject: {
+        'project-1': {
+          kind: 'version',
+          sourceKind: source.kind,
+          sourceVersionId: source.versionId,
+          previewItemId: 'library-pdf'
+        }
+      }
+    })
+    await act(async () => {
+      root.render(
+        <PdfPreviewRenderer
+          item={{
+            id: 'library-pdf',
+            projectId: 'project-1',
+            sessionId: '__literature__',
+            title: source.name,
+            name: source.name,
+            path: source.path,
+            type: 'file',
+            format: 'pdf',
+            source: 'literature',
+            managedFileId: source.sourceFileId
+          }}
+          onAddAnnotation={onAddAnnotation}
+        />
+      )
+      await flush()
+    })
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Select area for Agent"]')!.click()
+    )
+    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+    expect(overlay).not.toBeNull()
+    overlay.setPointerCapture = vi.fn()
+    overlay.hasPointerCapture = vi.fn(() => true)
+    overlay.releasePointerCapture = vi.fn()
+    overlay.getBoundingClientRect = () => new DOMRect(0, 0, 400, 560)
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerdown', { clientX: 40, clientY: 56, button: 0 })
+    )
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerup', { clientX: 200, clientY: 280, button: 0 })
+    )
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pdf',
+        target: 'agent',
+        source: { ...source, projectId: 'project-1' },
+        selector: expect.objectContaining({ kind: 'region', pageNumber: 1 })
+      })
+    )
+    expect(createSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toHaveLength(0)
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', undefined)
+    })
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[aria-label="Area selection actions"]')!, {
+        key: 'Enter'
+      })
+    )
+    expect(
+      screen.getByRole('menuitem', { name: 'Select area for Agent' }).getAttribute('aria-disabled')
+    ).toBe('true')
+  })
+
+  it.each(['artifact', 'upload'] as const)(
+    'resolves a draft %s PDF from its exact managed Version',
+    async (source) => {
+      const inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          sessionId: 'source-session',
+          selectedVersion: {
+            id: 'version-1',
+            fileId: 'file-1',
+            source,
+            displayName: 'paper.pdf',
+            checksum: 'b'.repeat(64),
+            sizeBytes: 10
+          }
+        }
+      })
+      window.api = {
+        ...window.api,
+        managedFileVersions: { inspect },
+        pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
+      } as unknown as Window['api']
+      usePreviewWorkbenchStore.setState({
+        activeProjectId: 'project-1',
+        pendingPdfContextByProject: {
+          'project-1': {
+            kind: 'version',
+            sourceKind: source === 'artifact' ? 'artifact-version' : 'upload-version',
+            sourceFileId: 'file-1',
+            sourceVersionId: 'version-1',
+            previewItemId: 'file-1'
+          }
+        }
+      })
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'file-1',
+              projectId: 'project-1',
+              sessionId: 'source-session',
+              title: 'paper.pdf',
+              name: 'paper.pdf',
+              path:
+                source === 'upload'
+                  ? 'upload-version:project-1/source-session/file-1/version-1'
+                  : 'unused-path',
+              type: 'file',
+              format: 'pdf',
+              source,
+              managedFileId: 'file-1',
+              selectedVersionId: 'version-1'
+            }}
+            onAddAnnotation={vi.fn()}
+          />
+        )
+        await flush()
+      })
+      expect(inspect).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        source,
+        fileId: 'file-1',
+        versionId: 'version-1'
+      })
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Select area for Agent"]')!.click()
+      )
+      expect(
+        container.querySelector('[data-pdf-cursor-mode]')?.getAttribute('data-pdf-cursor-mode')
+      ).toBe('area')
+      await act(async () => usePreviewWorkbenchStore.setState({ activeProjectId: 'other-project' }))
+      expect(
+        container.querySelector('[data-pdf-cursor-mode]')?.getAttribute('data-pdf-cursor-mode')
+      ).toBe('select')
     }
   )
 

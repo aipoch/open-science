@@ -4710,6 +4710,7 @@ describe('ACP runtime session management', () => {
       kind?: 'approved-plan' | 'rejected-plan' | 'review-feedback'
       claimRevisionConflicts?: number
       contextReset?: boolean
+      feedbackAfterResume?: boolean
     }> = {}
   ): Readonly<{
     runtime: AcpRuntime
@@ -4719,7 +4720,7 @@ describe('ACP runtime session management', () => {
     readSessionRuntimeContext: ReturnType<typeof vi.fn>
     patchSessionRuntimeContext: ReturnType<typeof vi.fn>
     runtimeContext: () => SessionRuntimeContext
-    scheduleDelivery: () => void
+    scheduleDelivery: (expectedCommandId?: string) => void
   }> => {
     const deliveryKind = options.kind ?? 'approved-plan'
     const approval =
@@ -4761,6 +4762,13 @@ describe('ACP runtime session management', () => {
         stepStatuses: {}
       }
     }
+    const queuedFeedbackPlan = structuredClone(runtimeContext.plan!)
+    if (options.feedbackAfterResume) {
+      runtimeContext = {
+        ...runtimeContext,
+        plan: { ...queuedFeedbackPlan, delivery: undefined, reviewFeedbackMessageId: undefined }
+      }
+    }
     const messages: PersistedChatSession['messages'] = [
       {
         id: 'plan-origin',
@@ -4771,7 +4779,7 @@ describe('ACP runtime session management', () => {
         createdAt: 1,
         updatedAt: 1
       },
-      ...(deliveryKind === 'review-feedback'
+      ...(deliveryKind === 'review-feedback' && !options.feedbackAfterResume
         ? [
             {
               id: deliveryOrigin,
@@ -4864,6 +4872,35 @@ describe('ACP runtime session management', () => {
       runtime,
       {
         getProjection: vi.fn(async () => restoredPlanProjection(approval, runtimeContext.revision)),
+        respond: vi.fn(async (input: { feedback: string }) => {
+          const message = {
+            id: deliveryOrigin,
+            role: 'user' as const,
+            content: input.feedback,
+            status: 'complete' as const,
+            eventIds: [],
+            responseToMessageId: 'plan-origin',
+            createdAt: 2,
+            updatedAt: 2
+          }
+          runtimeContext = {
+            ...runtimeContext,
+            revision: runtimeContext.revision + 1,
+            plan: structuredClone(queuedFeedbackPlan)
+          }
+          persistedSession = materializeSessionConversationGraph({
+            ...persistedSession,
+            messages: [...persistedSession.messages, message]
+          })
+          return {
+            kind: 'feedback' as const,
+            artifactVersionId: 'version-1',
+            routeToInteractionId: 'plan-origin',
+            text: input.feedback,
+            message,
+            deliveryCommandId: queuedFeedbackPlan.delivery!.commandId
+          }
+        }),
         getDeliveryContext: vi.fn(async () => ({
           delivery: runtimeContext.plan!.delivery!,
           projection: restoredPlanProjection(approval, runtimeContext.revision),
@@ -4883,12 +4920,16 @@ describe('ACP runtime session management', () => {
       readSessionRuntimeContext,
       patchSessionRuntimeContext,
       runtimeContext: () => runtimeContext,
-      scheduleDelivery: () =>
+      scheduleDelivery: (expectedCommandId) =>
         (
           runtime as unknown as {
-            scheduleQueuedPlanDelivery: (projectId: string, sessionId: string) => void
+            scheduleQueuedPlanDelivery: (
+              projectId: string,
+              sessionId: string,
+              expectedCommandId?: string
+            ) => void
           }
-        ).scheduleQueuedPlanDelivery('project-1', 'restored-plan-session')
+        ).scheduleQueuedPlanDelivery('project-1', 'restored-plan-session', expectedCommandId)
     }
   }
 
@@ -4989,6 +5030,46 @@ describe('ACP runtime session management', () => {
     expect(fixture.fakeAgent.prompts[0]?.text).toContain('approval=rejected')
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
   })
+
+  it.each(['empty', 'failed'] as const)(
+    'delivers fresh feedback when a previous %s resume inspection is still in flight',
+    async (inspectionResult) => {
+      const fixture = createDurablePlanDeliveryResumeHarness('queued', {
+        kind: 'review-feedback',
+        feedbackAfterResume: true
+      })
+      let finishInspection!: () => void
+      const inspection = new Promise<void>((resolve) => {
+        finishInspection = resolve
+      })
+      const beforeFeedback = structuredClone(fixture.runtimeContext())
+      fixture.readSessionRuntimeContext.mockImplementationOnce(async () => {
+        await inspection
+        if (inspectionResult === 'failed') throw new Error('old inspection failed')
+        return beforeFeedback
+      })
+      await fixture.runtime.resumeSession({
+        sessionId: 'restored-plan-session',
+        providerSessionId: 'restored-plan-session',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        previousFrameworkId: opencodeFramework.id
+      })
+      await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
+      await fixture.runtime.respondSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'restored-plan-session',
+        feedback: 'Split the analysis by cohort.'
+      })
+      fixture.scheduleDelivery()
+      fixture.scheduleDelivery('stale-retry-command')
+      finishInspection()
+      await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+      expect(fixture.fakeAgent.prompts[0]?.text).toContain('Split the analysis by cohort.')
+      await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
+      expect(fixture.promptAttempts).toEqual(['plan-delivery-resume-1'])
+    }
+  )
 
   it('dispatches persisted Plan review feedback once without duplicating its user Message', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('queued', { kind: 'review-feedback' })
@@ -26327,6 +26408,61 @@ describe('ACP runtime — model hot switch', () => {
 
     expect(setModelTarget).not.toHaveBeenCalled()
     expect(setProviderTarget).toHaveBeenCalledOnce()
+    expect(process.killed).toBe(true)
+  })
+
+  it('reconnects a Codex bridge before switching from text-only to vision capability', async () => {
+    const process = new FakeAgentProcess()
+    const setModelTarget = vi.fn()
+    const setProviderTarget = vi.fn(() => true)
+    const fakeAgent = startFakeAgent(process, ['s-vision-model'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent')
+    })
+    const spawn = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      hasReplayableImageHistory: async () => false,
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-bridge',
+        executablePath: '/bin/codex-acp',
+        env: {},
+        sessionModel: CODEX_BRIDGE_MODEL,
+        supportsImageInput: false,
+        contextUsageModel: 'model-a',
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          setModelTarget,
+          release: vi.fn(async () => undefined)
+        },
+        providerTransportLease: {
+          setTarget: setProviderTarget,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.applyModelChange({
+      frameworkId: 'codex',
+      backendId: 'codex:provider-a',
+      route: 'codex-bridge',
+      model: 'model-vision',
+      sessionModel: CODEX_BRIDGE_MODEL,
+      sessionModelRequired: false,
+      supportsImageInput: true,
+      reasoningEffort: 'default',
+      providerTransportTargetId: JSON.stringify(['codex', 'provider-a', 'model-vision']),
+      bridge: { model: 'model-vision' }
+    })
+
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(setModelTarget).not.toHaveBeenCalled()
+    expect(setProviderTarget).not.toHaveBeenCalled()
     expect(process.killed).toBe(true)
   })
 

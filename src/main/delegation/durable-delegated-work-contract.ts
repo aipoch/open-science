@@ -56,6 +56,7 @@ type ParentMessageDelivery = Readonly<{
   text: string
   kind: 'info' | 'question'
   startDispatch(): Promise<'started' | 'terminal' | 'blocked'>
+  onRootAdmissionQueued?(): void
 }>
 
 type SessionSubagentSummary = Readonly<{

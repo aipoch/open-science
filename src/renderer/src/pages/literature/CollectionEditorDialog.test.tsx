@@ -7,6 +7,40 @@ import { CollectionEditorDialog, type CollectionEditorDialogHandle } from './Col
 import { LITERATURE_COLLECTION_REVISION_CONFLICT } from '../../../../shared/literature'
 
 afterEach(cleanup)
+it('labels project and collection scopes in the menu and selected value', async () => {
+  const transact = vi.fn().mockResolvedValue({ kind: 'collection', id: 'created' })
+  Object.defineProperty(window, 'api', { configurable: true, value: { literature: { transact } } })
+  const ref = createRef<CollectionEditorDialogHandle>()
+  render(
+    <CollectionEditorDialog
+      ref={ref}
+      onSaved={vi.fn()}
+      scopes={[
+        { kind: 'project', id: 'project-1', name: 'Research' },
+        { kind: 'collection', id: 'collection-1', name: 'Research' }
+      ]}
+    />
+  )
+  act(() => ref.current!.openCreate())
+  fireEvent.click(screen.getByRole('switch', { name: 'Smart collection' }))
+  const trigger = screen.getByRole('combobox', { name: 'Scope' })
+  fireEvent.click(trigger)
+  expect(screen.getByRole('option', { name: 'Project Research' })).not.toBeNull()
+  expect(screen.getByRole('option', { name: 'Collection Research' })).not.toBeNull()
+  fireEvent.click(screen.getByRole('option', { name: 'Project Research' }))
+  expect(trigger.textContent).toContain('ProjectResearch')
+  fireEvent.click(trigger)
+  fireEvent.click(screen.getByRole('option', { name: 'Collection Research' }))
+  expect(trigger.textContent).toContain('CollectionResearch')
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Selected papers' } })
+  fireEvent.change(screen.getByLabelText(/Inclusion criteria/), {
+    target: { value: 'Research papers' }
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Create collection' }))
+  await waitFor(() => expect(transact).toHaveBeenCalledOnce())
+  expect(transact.mock.calls[0][0].scope).toEqual({ kind: 'collection', id: 'collection-1' })
+})
+
 it('retains a conflicting draft and only submits the loaded latest version after explicit confirmation', async () => {
   const original = {
     id: 'collection',

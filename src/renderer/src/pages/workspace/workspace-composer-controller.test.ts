@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { TextAnnotation } from '../../../../shared/annotations'
+import type { PdfAnnotation, TextAnnotation } from '../../../../shared/annotations'
 import {
   SessionSizeLimitError,
   type SessionPdfContext
@@ -201,6 +201,58 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('keeps first-message PDF evidence with its draft through undo, switching and failed-send recovery', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    hook.selectSession(undefined)
+    const evidence: PdfAnnotation = {
+      id: 'pdf-draft',
+      kind: 'pdf',
+      target: 'agent',
+      source: {
+        kind: 'literature-attachment-version',
+        projectId: 'project',
+        versionId: 'version-1',
+        path: 'literature-attachment-version:version-1',
+        name: 'paper.pdf',
+        checksum: 'a'.repeat(64)
+      },
+      selector: {
+        kind: 'region',
+        pageNumber: 1,
+        pageRotation: 0,
+        rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+        image: { data: 'AQID', mimeType: 'image/png', byteLength: 3 }
+      }
+    }
+    act(() => {
+      expect(hook.result.current.actions.addAnnotation(evidence)).toBeUndefined()
+    })
+    act(() => {
+      expect(hook.result.current.actions.undo()).toBe(true)
+    })
+    expect(hook.result.current.view.annotations).toEqual([])
+    act(() => {
+      expect(hook.result.current.actions.redo()).toBe(true)
+    })
+    hook.selectSession({ id: 'session-b', projectId: 'project' })
+    expect(hook.result.current.view.annotations).toEqual([])
+    hook.selectSession(undefined)
+    expect(hook.result.current.view.annotations).toEqual([evidence])
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    expect(snapshot.annotations).toEqual([evidence])
+    expect(snapshot.draftKey).toBe('new:project')
+    act(() => {
+      hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+    })
+    act(() => {
+      expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true)).toBe(true)
+    })
+    expect(hook.result.current.view.annotations).toEqual([evidence])
+    act(() => hook.result.current.actions.removeAnnotation(evidence.id))
+    expect(hook.result.current.lifecycle.captureSend().annotations).toEqual([])
+  })
+
   it('keeps setup authority outside the document and clears it with the draft', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)

@@ -59,6 +59,54 @@ test('creates a smart collection without a model and preserves the setup path', 
   await page.screenshot({ path: testInfo.outputPath('smart-collection-model-help.png') })
 })
 
+test('opens the Library table named by a smart collection scope', async ({ app }, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await page.evaluate(async () => {
+    const project = await window.api.projects.create({ name: 'Source project', description: '' })
+    const source = await window.api.literature.transact({
+      kind: 'create-collection',
+      name: 'Source collection'
+    })
+    const description = JSON.stringify({ description: '', inclusion: 'Research', exclusion: '' })
+    for (const [name, scope] of [
+      ['Library rule', { kind: 'library' }],
+      ['Project rule', { kind: 'project', id: project.id }],
+      ['Collection rule source', { kind: 'collection', id: source.id }]
+    ] as const) {
+      await window.api.literature.transact({
+        kind: 'create-smart-collection',
+        name,
+        description,
+        scope
+      })
+    }
+  })
+  await page.reload()
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await page.getByRole('button', { name: 'All references', exact: true }).click()
+
+  for (const [rule, scope, destination] of [
+    ['Library rule', 'All references', 'All references'],
+    ['Project rule', 'Project: Source project', 'Source project'],
+    ['Collection rule source', 'Collection: Source collection', 'Source collection']
+  ] as const) {
+    await page.getByRole('button', { name: rule, exact: true }).click()
+    const panel = page.getByRole('region', { name: 'Smart collection', exact: true })
+    await panel.getByRole('button', { name: 'Collection rule', exact: true }).click()
+    const scopeButton = panel.getByRole('button', { name: scope, exact: true })
+    await expect(scopeButton).toBeVisible()
+    if (rule === 'Project rule')
+      await page.screenshot({ path: testInfo.outputPath('smart-project-scope-link.png') })
+    if (rule === 'Collection rule source')
+      await page.screenshot({ path: testInfo.outputPath('smart-collection-scope-link.png') })
+    await scopeButton.click()
+    await expect(page.getByRole('heading', { name: destination, exact: true })).toBeVisible()
+    if (rule === 'Project rule')
+      await page.screenshot({ path: testInfo.outputPath('smart-project-scope-destination.png') })
+  }
+})
+
 test('reviews classified papers in the library table using a local fixture service', async ({
   app
 }, testInfo) => {

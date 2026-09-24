@@ -123,6 +123,56 @@ test('keeps import progress visible when a stage has no measurable total', async
   await expect(meter).toHaveCount(0)
 })
 
+test('shows redacted sensitive-content evidence after a failed export', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+  const failedExport = {
+    id: 'sensitive-evidence-fixture',
+    kind: 'export' as const,
+    state: 'failed' as const,
+    error: 'Sensitive content detected at objects/result.json @42.',
+    progress: { phase: 'validating' as const },
+    sensitiveContent: [
+      {
+        location: 'objects/result.json @42',
+        offset: 42,
+        rule: 'assignment' as const,
+        matchLength: 24,
+        label: 'apiKey',
+        leftBoundary: 'whitespace' as const,
+        rightBoundary: 'punctuation' as const,
+        context: 'apiKey=[redacted]',
+        valueLength: 24,
+        valueHash: 'a'.repeat(64),
+        sourceStorageKey: 'objects/result.json'
+      }
+    ]
+  }
+  await expect(async () => {
+    await app.emitSessionPackageProgress({
+      ...failedExport,
+      state: 'running',
+      error: undefined,
+      sensitiveContent: undefined
+    })
+    await expect(dialog).toBeVisible({ timeout: 1000 })
+  }).toPass({ timeout: 10000 })
+  await app.emitSessionPackageProgress(failedExport)
+  await expect(
+    dialog.getByText('Sensitive content detected at objects/result.json @42.')
+  ).toBeVisible()
+  await dialog.getByText('Details', { exact: true }).click()
+  await expect(dialog.getByText('Sensitive-content evidence', { exact: true })).toBeVisible()
+  await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
+  await expect(dialog.locator('pre')).toContainText('[redacted]')
+  await testInfo.attach('sensitive-content-evidence', {
+    body: await page.screenshot({ path: testInfo.outputPath('sensitive-content-evidence.png') }),
+    contentType: 'image/png'
+  })
+})
+
 test('presents waiting, measurable work and cleanup through native progress events', async ({
   app
 }, testInfo) => {

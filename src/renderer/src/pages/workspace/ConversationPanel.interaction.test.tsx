@@ -4627,7 +4627,7 @@ describe('ConversationPanel + menu', () => {
       '[data-testid="plan-composer-scroll"]'
     ) as HTMLDivElement
     const planResizeHandle = container.querySelector(
-      '[aria-label="Resize Plan panel"]'
+      '[aria-label="Collapse Plan"]'
     ) as HTMLButtonElement
     expect(planComposer).not.toBeNull()
     expect(planScrollSurface.classList.contains('overflow-y-auto')).toBe(true)
@@ -4663,6 +4663,33 @@ describe('ConversationPanel + menu', () => {
       planResizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
       planResizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
     })
+    expect(planComposer.style.height).toBe('260px')
+    act(() => {
+      planResizeHandle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    })
+    expect(container.querySelector('[aria-label="Collapse Plan"]')).not.toBeNull()
+
+    const feedbackInput = pendingPlanCard!.querySelector('textarea')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(feedbackInput, 'Keep this revision draft.')
+      feedbackInput.dispatchEvent(new Event('input', { bubbles: true }))
+      container.querySelector<HTMLButtonElement>('[aria-label="Collapse Plan"]')!.click()
+    })
+    expect(planComposer.style.height).toBe('')
+    expect(container.querySelector('[aria-label="Resize Plan panel"]')).toBeNull()
+    expect(feedbackInput.closest('[hidden]')).not.toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="composer-card-backdrop"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
+    expectComposerCoveredByBlockingOverlay()
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Expand Plan"]')!.click()
+    })
+    expect(feedbackInput.closest('[hidden]')).toBeNull()
+    expect(feedbackInput.value).toBe('Keep this revision draft.')
     expect(planComposer.style.height).toBe('260px')
 
     act(() => {
@@ -4747,6 +4774,264 @@ describe('ConversationPanel + menu', () => {
       { feedback: 'Split the analysis by cohort.' },
       { onSessionSizeLimit: expect.any(Function) }
     )
+  })
+
+  it('preserves the Plan draft and collapsed state when its active run finishes', () => {
+    const session: ChatSession = {
+      id: 'session-plan-draft',
+      projectId: 'project-a',
+      title: 'Plan draft',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        reviewRequestId: 'review-1',
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+    renderPanel({ view: { activeSession: session } })
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        textarea,
+        'Keep this unsent revision draft.'
+      )
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      container.querySelector<HTMLButtonElement>('[aria-label="Collapse Plan"]')!.click()
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...session,
+          activeRun: undefined,
+          runtimeTranscriptLastRun: session.activeRun
+        }
+      }
+    })
+    expect(container.querySelector('textarea')?.value).toBe('Keep this unsent revision draft.')
+    expect(container.querySelector('[aria-label="Expand Plan"]')).not.toBeNull()
+    expect(container.querySelector('textarea')?.closest('[hidden]')).not.toBeNull()
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Expand Plan"]')!.click())
+    expect(container.querySelector('textarea')?.value).toBe('Keep this unsent revision draft.')
+  })
+
+  it('keeps Plan feedback locked across run completion and closes the current review on success', async () => {
+    let finishResponse!: () => void
+    respondToSessionPlanMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishResponse = resolve
+      })
+    )
+    const session: ChatSession = {
+      id: 'session-plan-submitting',
+      projectId: 'project-a',
+      title: 'Plan submitting',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        reviewRequestId: 'review-1',
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+    renderPanel({ view: { activeSession: session } })
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        textarea,
+        'Split the analysis by cohort.'
+      )
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea
+        .closest('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    const finished = {
+      ...session,
+      activeRun: undefined,
+      runtimeTranscriptLastRun: session.activeRun
+    }
+    renderPanel({ view: { activeSession: finished } })
+    expect(container.querySelector('textarea')?.value).toBe('Split the analysis by cohort.')
+    expect(container.querySelector('textarea')?.closest('article')?.getAttribute('aria-busy')).toBe(
+      'true'
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Send Plan feedback"]')?.disabled
+    ).toBe(true)
+    act(() => {
+      container
+        .querySelector('textarea')!
+        .closest('form')!
+        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(respondToSessionPlanMock).toHaveBeenCalledTimes(1)
+    await act(async () => finishResponse())
+    expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+    expect(getComposerForm().hasAttribute('inert')).toBe(false)
+    renderPanel({ view: { activeSession: finished } })
+    expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+    // A subsequent completed attempt still allows another review of the unchanged Plan.
+    renderPanel({
+      view: {
+        activeSession: {
+          ...finished,
+          runtimeTranscriptLastRun: { promptMessageId: 'interaction-2', startedAt: 2 }
+        }
+      }
+    })
+    expectComposerCoveredByBlockingOverlay()
+  })
+
+  it.each([{ artifactVersionId: 'version-2' }, { reviewRequestId: 'review-2' }])(
+    'does not close a replacement Plan review %j when the previous submission finishes',
+    async (replacement) => {
+      let finishResponse!: () => void
+      respondToSessionPlanMock.mockReturnValue(
+        new Promise<void>((resolve) => {
+          finishResponse = resolve
+        })
+      )
+      const session: ChatSession = {
+        id: 'session-plan-replacement',
+        projectId: 'project-a',
+        title: 'Plan replacement',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+        messages: planOriginMessages(),
+        createdAt: 1,
+        updatedAt: 2,
+        activePlanProjection: {
+          ...completedPlanProjection,
+          reviewRequestId: 'review-1',
+          approval: 'pending',
+          lifecycle: 'awaiting_approval'
+        }
+      }
+      renderPanel({ view: { activeSession: session } })
+      await act(async () => {
+        ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+          .find((button) => button.textContent === 'Approve')!
+          .click()
+      })
+      expect(respondToSessionPlanMock).toHaveBeenCalledTimes(1)
+      renderPanel({
+        view: {
+          activeSession: {
+            ...session,
+            activePlanProjection: { ...session.activePlanProjection!, ...replacement }
+          }
+        }
+      })
+      await act(async () => finishResponse())
+      expectComposerCoveredByBlockingOverlay()
+      expect(container.textContent).toContain('Plan ready for review')
+    }
+  )
+
+  it('keeps the submitted Plan card closed across feedback receipt revisions', async () => {
+    let finishResponse!: () => void
+    respondToSessionPlanMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishResponse = resolve
+      })
+    )
+    const session: ChatSession = {
+      id: 'session-feedback-revisions',
+      projectId: 'project-a',
+      title: 'Plan feedback',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        reviewRequestId: 'review-1',
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      }
+    }
+    renderPanel({ view: { activeSession: session } })
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+        textarea,
+        'Split the analysis by cohort.'
+      )
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea
+        .closest('form')
+        ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    const refreshed = {
+      ...session,
+      activePlanProjection: { ...session.activePlanProjection!, revision: 20 }
+    }
+    renderPanel({ view: { activeSession: refreshed } })
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send Plan feedback"]')
+        ?.disabled
+    ).toBe(true)
+    await act(async () => finishResponse())
+    expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+    expect(getComposerForm().hasAttribute('inert')).toBe(false)
+    renderPanel({
+      view: {
+        activeSession: {
+          ...refreshed,
+          activePlanProjection: { ...refreshed.activePlanProjection, revision: 21 }
+        }
+      }
+    })
+    expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+    // The Agent may request another review without changing the document/version.
+    renderPanel({
+      view: {
+        activeSession: {
+          ...refreshed,
+          activePlanProjection: { ...refreshed.activePlanProjection, reviewRequestId: 'review-2' }
+        }
+      }
+    })
+    expectComposerCoveredByBlockingOverlay()
+    // Finishing without a replacement or decision reopens review of the same Plan.
+    renderPanel({
+      view: {
+        activeSession: {
+          ...refreshed,
+          activeRun: undefined,
+          runtimeTranscriptLastRun: session.activeRun
+        }
+      }
+    })
+    expectComposerCoveredByBlockingOverlay()
+    expect(container.textContent).toContain('Plan ready for review')
+    // A replacement Plan always owns a fresh review, including during the same turn.
+    renderPanel({
+      view: {
+        activeSession: {
+          ...refreshed,
+          activePlanProjection: {
+            ...refreshed.activePlanProjection,
+            artifactVersionId: 'version-2'
+          }
+        }
+      }
+    })
+    expectComposerCoveredByBlockingOverlay()
   })
 
   it('routes approval-like card text as a user Message instead of a UI decision', async () => {

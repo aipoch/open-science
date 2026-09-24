@@ -824,6 +824,44 @@ describe('ACP Session Plan approval causality', () => {
     await expect(continuation).rejects.toThrow('cancelled')
   })
 
+  it('projects a stable review identity until the Agent requests another review of the same version', async () => {
+    const harness = createHarness()
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate' as const,
+      input: {}
+    }
+    const first = harness.workflow.call(request)
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    const initial = await harness.workflow.projection('project-1', 'session-1')
+    expect(initial?.reviewRequestId).toBeTypeOf('string')
+    await harness.workflow.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Please explain the scope.'
+    })
+    await first
+    const refreshed = await harness.workflow.projection('project-1', 'session-1')
+    expect(refreshed?.revision).toBeGreaterThan(initial!.revision)
+    expect(refreshed?.reviewRequestId).toBe(initial?.reviewRequestId)
+    const second = harness.workflow.call(request)
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    const rereview = await harness.workflow.projection('project-1', 'session-1')
+    expect(rereview?.artifactVersionId).toBe(initial?.artifactVersionId)
+    expect(rereview?.reviewRequestId).not.toBe(initial?.reviewRequestId)
+    harness.interactions.resolveApproval(
+      'session-1',
+      {},
+      harness.interactions.approvalTokenFor('session-1')
+    )
+    await second
+  })
+
   it('rejects concurrent Agent self-approval, then accepts one decision after routed human feedback', async () => {
     const harness = createHarness()
     const generation = harness.workflow.call({

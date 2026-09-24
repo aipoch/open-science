@@ -2811,6 +2811,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => projects.filter((project) => project.archivedAt === undefined),
     [projects]
   )
+  const smartScopeCanOpen = (() => {
+    const scope = smartView?.scope
+    if (!scope) return false
+    if (scope.kind !== 'project') return true
+    return activeProjects.some((project) => project.id === scope.id)
+  })()
   const returnLabel = activeProjects.some((project) => project.id === activeProjectId)
     ? t('Back to Project')
     : t('Back to Home')
@@ -5386,6 +5392,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 singleReevaluation={singleReevaluation?.collectionId === selectedCollection.id}
                 onViewChange={receiveSmartView}
                 onEdit={() => openEditCollection(selectedCollection)}
+                onOpenScope={
+                  smartScopeCanOpen
+                    ? (scope) => {
+                        if (scope.kind === 'library') selectLibrary()
+                        else if (scope.kind === 'project') selectProject(scope.id)
+                        else selectLibrary(scope.id)
+                      }
+                    : undefined
+                }
                 onDelete={() => {
                   setCollectionDeleteError(undefined)
                   setCollectionPendingDelete(selectedCollection)

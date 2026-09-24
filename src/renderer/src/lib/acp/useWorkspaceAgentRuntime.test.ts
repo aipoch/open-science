@@ -5331,11 +5331,34 @@ describe('workspace agent message sending', () => {
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     }
     const onPdfContextLinked = vi.fn()
+    const evidence = {
+      id: 'first-pdf-evidence',
+      kind: 'pdf' as const,
+      target: 'agent' as const,
+      source: {
+        kind: 'artifact-version' as const,
+        projectId: 'project-1',
+        sessionId: 'source-session-2',
+        versionId: 'artifact-version-2',
+        name: 'library-paper.pdf',
+        path: 'artifact-version:project-1/source-session-2/artifact-2/artifact-version-2',
+        checksum: 'b'.repeat(64)
+      },
+      selector: {
+        kind: 'text' as const,
+        pageNumber: 1,
+        exact: 'Selected before the first message',
+        position: { start: 0, end: 33 },
+        quads: [{ x: 0.1, y: 0.1, width: 0.4, height: 0.02 }],
+        extractorVersion: 'pdfjs-5.4.624'
+      }
+    }
 
     const sent = await sendWorkspaceMessage(
       runtime,
       {
         text: 'Read this paper',
+        annotations: [evidence],
         attachments: [stagedPdf],
         pendingPdfContextAttachmentIds: [stagedPdf.id],
         pendingPdfContextVersions: [
@@ -5396,6 +5419,10 @@ describe('workspace agent message sending', () => {
     ])
     const session = useSessionStore.getState().sessions[0]
     expect(session.runtimeContext?.pdfContext).toEqual(pdfContext)
+    expect(session.messages.find((message) => message.id === sent?.messageId)?.annotations).toEqual(
+      [evidence]
+    )
+    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toContain(evidence.selector.exact)
     expect(session.messages.find((message) => message.id === sent?.messageId)?.pdfContext).toEqual({
       ...pdfContext,
       activeBindingId: 'binding-1',

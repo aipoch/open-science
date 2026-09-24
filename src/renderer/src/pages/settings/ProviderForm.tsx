@@ -1009,7 +1009,7 @@ const ProviderForm = ({
               </p>
               <p>
                 {t(
-                  'Open Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.'
+                  'Open-Science keeps legacy model names after refresh so existing sessions can continue using their original model IDs.'
                 )}
               </p>
               <ExternalTextLink href="https://api-docs.deepseek.com/quick_start/pricing/">

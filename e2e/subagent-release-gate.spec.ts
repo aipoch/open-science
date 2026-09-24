@@ -1011,6 +1011,23 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
   await composer.fill(`${RELIABLE_FAIRNESS_PROMPT}\nRelease file: ${JSON.stringify(releaseFile)}`)
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Two upward lanes are starting.')).toBeVisible({ timeout: 120_000 })
+  await expect
+    .poll(async () =>
+      page.evaluate(async (projectId) => {
+        const loaded = await window.api.sessions.loadAll()
+        const commands =
+          loaded.sessions.find((candidate) => candidate.projectId === projectId)?.runtimeContext
+            ?.delegatedWork?.messageCommands ?? []
+        return commands
+          .filter(({ requestId }) => requestId.startsWith('e2e-fairness-'))
+          .map(({ requestId, receipt }) => ({ requestId, status: receipt.status }))
+          .sort((left, right) => left.requestId.localeCompare(right.requestId))
+      }, projectId)
+    )
+    .toEqual([
+      { requestId: 'e2e-fairness-a', status: 'queued' },
+      { requestId: 'e2e-fairness-b', status: 'queued' }
+    ])
   await composer.fill(RELIABLE_FAIRNESS_USER_PROMPT)
   await page.getByTestId('composer-queue-submit').click()
   await expect(page.getByTestId('composer-queue-trigger')).toBeVisible()

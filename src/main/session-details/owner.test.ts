@@ -682,28 +682,173 @@ describe('SessionDetailsOwner', () => {
     await owner.shutdown()
   })
 
-  it('retains a failed one-shot claim after target recovery, another save, and restart', async () => {
+  it('bounds retries when admission remains unavailable', async () => {
     const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
     await first.owner.start()
     expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
-    first.resolveTarget.mockResolvedValue(admittedTarget)
+    first.owner.afterSessionSaved(first.store.current())
+    await waitFor(() => first.resolveTarget.mock.calls.length === 2)
+    first.owner.afterSessionSaved(first.store.current())
     first.owner.afterSessionSaved(first.store.current())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(first.generate).not.toHaveBeenCalled()
+    expect(first.resolveTarget).toHaveBeenCalledTimes(2)
     await first.owner.shutdown()
-    const restarted = harness([first.store.current()])
-    await restarted.owner.start()
-    expect(restarted.generate).not.toHaveBeenCalled()
-    expect(restarted.store.current().sessionDetailsGeneration?.status).toBe('failed')
-    await expect(
-      restarted.owner.edit({
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        title: 'Manual title',
-        description: 'Manual description'
+  })
+
+  it('retries a failed admission claim once when a later save finds an available target', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    await first.owner.start()
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+
+    first.resolveTarget.mockResolvedValue(admittedTarget)
+    first.owner.afterSessionSaved(first.store.current())
+
+    await waitFor(() => first.generate.mock.calls.length === 1)
+    await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
+
+    expect(first.store.current()).toMatchObject({
+      title: 'Generated',
+      description: 'Generated summary',
+      sessionDetailsSource: 'generated'
+    })
+    await first.owner.shutdown()
+  })
+
+  it('retries after failed admission requeue persistence', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    await first.owner.start()
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+
+    const mutate = first.store.mutateSession.bind(first.store)
+    vi.spyOn(first.store, 'mutateSession')
+      .mockImplementationOnce(async () => {
+        throw new Error('persist failed')
       })
-    ).resolves.toMatchObject({ title: 'Manual title', description: 'Manual description' })
-    await restarted.owner.shutdown()
+      .mockImplementation(mutate)
+    first.resolveTarget.mockResolvedValue(admittedTarget)
+
+    first.owner.afterSessionSaved(first.store.current())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(first.generate).not.toHaveBeenCalled()
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+
+    first.owner.afterSessionSaved(first.store.current())
+    await waitFor(() => first.generate.mock.calls.length === 1)
+    await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
+    await first.owner.shutdown()
+  })
+
+  it('replays a coalesced save after failed admission requeue persistence', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    await first.owner.start()
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    const mutate = first.store.mutateSession.bind(first.store)
+    vi.spyOn(first.store, 'mutateSession')
+      .mockImplementationOnce(async () => {
+        entered.resolve()
+        await release.promise
+        throw new Error('persist failed')
+      })
+      .mockImplementation(mutate)
+    first.resolveTarget.mockResolvedValue(admittedTarget)
+
+    first.owner.afterSessionSaved(first.store.current())
+    await entered.promise
+    first.owner.afterSessionSaved(first.store.current())
+    release.resolve()
+
+    await waitFor(() => first.generate.mock.calls.length === 1)
+    await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
+    await first.owner.shutdown()
+  })
+
+  it('does not requeue a failed admission after shutdown begins', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    await first.owner.start()
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+
+    const entered = deferred<void>()
+    const release = deferred<void>()
+    const mutate = first.store.mutateSession.bind(first.store)
+    vi.spyOn(first.store, 'mutateSession').mockImplementationOnce(async (...args) => {
+      entered.resolve()
+      await release.promise
+      return mutate(...args)
+    })
+    first.resolveTarget.mockResolvedValue(admittedTarget)
+
+    first.owner.afterSessionSaved(first.store.current())
+    await entered.promise
+    await first.owner.shutdown()
+    release.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+    expect(first.generate).not.toHaveBeenCalled()
+  })
+
+  it('drains a retry queued while the original admission slot is active', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    const mutate = first.store.mutateSession.bind(first.store)
+    let retried = false
+    vi.spyOn(first.store, 'mutateSession').mockImplementation(async (...args) => {
+      const saved = await mutate(...args)
+      if (!retried && saved?.sessionDetailsGeneration?.status === 'failed') {
+        retried = true
+        first.resolveTarget.mockResolvedValue(admittedTarget)
+        first.owner.afterSessionSaved(saved)
+      }
+      return saved
+    })
+
+    await first.owner.start()
+    await waitFor(() => first.generate.mock.calls.length === 1)
+    await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
+    await first.owner.shutdown()
+  })
+
+  it('drains a retry queued while the prior inference task is still active', async () => {
+    const firstInference = deferred<SessionDetailsInferenceResult>()
+    let calls = 0
+    const first = harness([queuedSession()], {
+      inference: async () => {
+        calls += 1
+        if (calls === 1) return firstInference.promise
+        return {
+          stopReason: 'end_turn',
+          output: '{"title":"Generated","description":"Generated summary"}'
+        }
+      }
+    })
+
+    await first.owner.start()
+    await waitFor(() => first.generate.mock.calls.length === 1)
+    const current = first.store.current()
+    const generation = current.sessionDetailsGeneration!
+    const failed = {
+      ...current,
+      sessionDetailsGeneration: {
+        status: 'failed' as const,
+        sourceMessageId: generation.sourceMessageId,
+        requestId: generation.requestId,
+        queuedAt: generation.queuedAt,
+        completedAt: 20,
+        usageUnavailable: true as const
+      }
+    }
+    first.store.records.set('project-1:session-1', failed)
+    first.owner.afterSessionSaved(failed)
+    firstInference.resolve({
+      stopReason: 'end_turn',
+      output: '{"title":"Stale","description":"Stale"}'
+    })
+    await waitFor(() => first.generate.mock.calls.length === 2)
+    await waitFor(() => first.store.current().sessionDetailsGeneration?.status === 'succeeded')
+    await first.owner.shutdown()
   })
 
   it('frames a delimiter-injection attempt only as JSON message data', () => {
@@ -1024,7 +1169,7 @@ describe('SessionDetailsOwner', () => {
       data: { errorKind: 'authentication_failed' },
       name: 'RequestError'
     })
-    const { owner, store, warn } = harness([queuedSession()], {
+    const { owner, store, generate, warn } = harness([queuedSession()], {
       inference: async () => Promise.reject(authenticationFailure),
       inferenceTimeoutMs: 30_000
     })
@@ -1037,6 +1182,10 @@ describe('SessionDetailsOwner', () => {
       usageUnavailable: true
     })
     expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: false })
+    owner.afterSessionSaved(store.current())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(generate).toHaveBeenCalledTimes(1)
+    await owner.shutdown()
   })
 
   it('normalizes usage and drops an inconsistent cache breakdown', async () => {

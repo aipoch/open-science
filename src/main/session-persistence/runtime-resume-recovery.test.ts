@@ -123,6 +123,57 @@ describe('durable restart recovery before runtime attachment', () => {
     expect(await h.raw()).toEqual(before)
   })
 
+  it.each([false, true])(
+    'persists parked Plan recovery only without a live runtime; live=%s',
+    async (live) => {
+      const h = await harness(live)
+      const pending = await h.repository.saveSession({
+        ...h.initial,
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            originatingPromptMessageId: 'prompt-1',
+            stepStatuses: {}
+          }
+        }
+      })
+      const before = await h.raw()
+      if (live) {
+        await h.owner.prepareRuntimeResume(scope)
+        expect(await h.raw()).toEqual(before)
+        return
+      }
+      const restored = await h.restored()
+      expect(restored.status === 'found' && restored.session.activeRun).toBeUndefined()
+      expect(restored.status === 'found' && restored.session.resumeRecovery).toBeUndefined()
+
+      vi.spyOn(h.repository, 'saveSession').mockRejectedValueOnce(new Error('disk full'))
+      await expect(h.owner.prepareRuntimeResume(scope)).rejects.toThrow('disk full')
+      expect(await h.raw()).toEqual(before)
+      await h.owner.prepareRuntimeResume(scope)
+
+      const committed = await h.raw()
+      expect(committed).toMatchObject({
+        status: 'found',
+        session: {
+          status: 'waiting-plan-approval',
+          runtimeContext: pending.runtimeContext,
+          runtimeTranscriptLastRun: pending.activeRun
+        }
+      })
+      expect(committed.status === 'found' && committed.session.activeRun).toBeUndefined()
+      expect(committed.status === 'found' && committed.session.resumeRecovery).toBeUndefined()
+      await h.owner.prepareRuntimeResume(scope)
+      expect(await h.raw()).toEqual(committed)
+    }
+  )
+
   it('recovers a stale active prompt when the provider session is no longer live', async () => {
     const h = await harness(false, true)
 

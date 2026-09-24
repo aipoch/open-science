@@ -1,6 +1,9 @@
 import '@/assets/main.css'
 import { useState } from 'react'
-import { PdfPreviewContent } from '@/pages/workspace/previews/renderers/PdfPreview'
+import {
+  PdfPreviewContent,
+  PdfPreviewRenderer
+} from '@/pages/workspace/previews/renderers/PdfPreview'
 import { createRoot } from 'react-dom/client'
 import { initI18n } from '@/i18n'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
@@ -8,6 +11,11 @@ import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { WorkspaceComposerDraftsProvider } from '@/pages/workspace/workspace-composer-drafts'
+import { useWorkspaceComposerController } from '@/pages/workspace/workspace-composer-controller'
+import { AnnotationDraftCards } from '@/pages/workspace/annotations/AnnotationCards'
+import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand
@@ -180,8 +188,128 @@ export const AreaSelectionPreview = (): React.JSX.Element => {
     </div>
   )
 }
+const draftPdf = {
+  id: 'draft-paper',
+  type: 'file' as const,
+  format: 'pdf' as const,
+  source: 'literature' as const,
+  projectId: 'draft-project',
+  sessionId: '__literature__',
+  managedFileId: 'attachment-1',
+  name: 'paper.pdf',
+  title: 'paper.pdf',
+  path: 'literature-attachment-version:version-2'
+}
+if (previewCase === 'new-conversation') {
+  usePreviewWorkbenchStore.setState({
+    activeProjectId: 'draft-project',
+    items: [{ ...draftPdf, createdAt: 1, updatedAt: 1 }],
+    activeItemId: draftPdf.id,
+    pendingPdfContextByProject: {
+      'draft-project': {
+        kind: 'version',
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
+        sourceVersionId: 'version-2',
+        previewItemId: draftPdf.id
+      }
+    }
+  })
+  window.api.pdfAnnotations = {
+    list: async () => ({
+      items: [],
+      total: 0,
+      source: {
+        kind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
+        versionId: 'version-2',
+        name: draftPdf.name,
+        path: draftPdf.path,
+        checksum: 'a'.repeat(64)
+      }
+    })
+  } as unknown as Window['api']['pdfAnnotations']
+}
+export const NewConversationPdfPreview = (): React.JSX.Element => {
+  const [snapshot, setSnapshot] = useState('')
+  const composer = useWorkspaceComposerController({
+    currentDraftKey: 'new:draft-project',
+    newConversationDraftKey: 'new:draft-project',
+    activeProjectId: 'draft-project',
+    activeSession: undefined,
+    pendingCustomizePrefill: undefined,
+    onCustomizePrefillApplied: () => {},
+    historyEntries: [],
+    historyPolicy: {
+      catalogSkillIds: new Set(),
+      allowedSkillIds: undefined,
+      skillCatalogReady: true,
+      refreshSkillCatalog: false,
+      specialistCatalogReady: true,
+      specialistId: undefined,
+      loadSkills: async () => {},
+      loadSpecialists: async () => {}
+    },
+    canStageAttachments: true,
+    supportsImageInput: true,
+    uploads: window.api.uploads
+  })
+  return (
+    <main className="flex h-screen bg-background text-foreground">
+      <section className="flex w-1/2 flex-col p-8" aria-label="New conversation">
+        <h1 className="font-semibold">New conversation</h1>
+        <div className="flex flex-1 items-center justify-center text-center">
+          <div>
+            <h2 className="text-2xl">What will you research in Open-Science?</h2>
+            <p className="mt-3 text-muted-foreground">
+              Discover, share, and collaborate on research that matters
+            </p>
+          </div>
+        </div>
+        <div className="rounded-2xl border p-4">
+          <p className="mb-3 text-sm text-primary">Reading · paper.pdf</p>
+          <AnnotationDraftCards
+            annotations={composer.view.annotations}
+            disabled={false}
+            onUpdateNote={composer.actions.updateAnnotationNote}
+            onRemove={composer.actions.removeAnnotation}
+          />
+          <ComposerEditor
+            doc={composer.view.doc}
+            onDocChange={composer.actions.changeDoc}
+            onSubmit={() => setSnapshot(JSON.stringify(composer.lifecycle.captureSend()))}
+            onPaste={() => {}}
+            placeholder="Ask anything"
+            ariaLabel="Message draft"
+          />
+          <button
+            className="mt-3 rounded-md bg-primary px-4 py-2 text-primary-foreground"
+            onClick={() => setSnapshot(JSON.stringify(composer.lifecycle.captureSend()))}
+          >
+            Capture first send
+          </button>
+        </div>
+        <output hidden data-send-snapshot>
+          {snapshot}
+        </output>
+      </section>
+      <section className="w-1/2 border-l" aria-label="PDF preview">
+        <PdfPreviewRenderer
+          item={draftPdf}
+          onAddAnnotation={composer.actions.addAnnotation}
+          activeAnnotations={composer.view.annotations}
+          onRemoveAnnotation={composer.actions.removeAnnotation}
+        />
+      </section>
+    </main>
+  )
+}
 createRoot(document.getElementById('root')!).render(
-  previewCase === 'area-selection' ? (
+  previewCase === 'new-conversation' ? (
+    <WorkspaceComposerDraftsProvider>
+      <NewConversationPdfPreview />
+    </WorkspaceComposerDraftsProvider>
+  ) : previewCase === 'area-selection' ? (
     <AreaSelectionPreview />
   ) : previewCase === 'search' ? (
     <GlobalSearchDialog open onOpenChange={() => {}} isSessionPersistenceReady />

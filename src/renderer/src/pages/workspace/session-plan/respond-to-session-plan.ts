@@ -8,7 +8,7 @@ import { useSessionStore } from '@/stores/session-store'
 type SessionPlanResponseTarget = Readonly<{
   projectId: string
   sessionId: string
-  projection: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision'>
+  projection: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision' | 'reviewRequestId'>
 }>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -149,8 +149,24 @@ const refreshSessionPlanProjection = async ({
 }: Pick<SessionPlanResponseTarget, 'projectId' | 'sessionId'> & {
   authoritativeProjection?: ActivePlanProjection
 }): Promise<void> => {
+  const beforeRead = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.activePlanProjection
   const current = await window.api.acp.getPlanProjection(projectId, sessionId)
   if (!current) return
+  const displayed = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.activePlanProjection
+  // Context revisions are Session-wide, including replacement Plan versions. A read
+  // started before a newer event must not restore the old card after that event.
+  if (displayed && displayed.revision > current.revision) return
+  if (
+    displayed &&
+    displayed.revision === current.revision &&
+    displayed.reviewRequestId !== beforeRead?.reviewRequestId &&
+    displayed.reviewRequestId !== current.reviewRequestId
+  )
+    return
   if (
     authoritativeProjection &&
     current.artifactVersionId === authoritativeProjection.artifactVersionId &&
@@ -204,14 +220,19 @@ export const respondToSessionPlan = async (
     }
     throw error
   }
-  try {
-    await refreshSessionPlanProjection({ ...target, authoritativeProjection })
-  } catch (error) {
+  // A committed response releases the review UI; a derived read must not keep it blocked.
+  void refreshSessionPlanProjection({ ...target, authoritativeProjection }).catch((error) => {
     // A stale cached projection suppresses the existing recovery hook. Invalidate only
     // the submitted version/revision, preserving a newer projection delivered meanwhile.
     if ('feedback' in payload) {
-      useSessionStore.getState().invalidateActivePlanProjection(target.sessionId, target.projection)
+      const store = useSessionStore.getState()
+      const displayed = store.sessions.find(
+        (session) => session.id === target.sessionId
+      )?.activePlanProjection
+      if (displayed?.reviewRequestId === target.projection.reviewRequestId) {
+        store.invalidateActivePlanProjection(target.sessionId, target.projection)
+      }
     }
     console.warn('Plan response committed, but projection refresh failed.', error)
-  }
+  })
 }

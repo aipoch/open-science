@@ -1,5 +1,8 @@
 import { rebaseTaskSessionBinding, rebaseTaskTurnOntoLatestSession } from './task-admission'
-import { applySessionConversationCommands } from '../../shared/session-conversation-command'
+import {
+  applySessionConversationCommands,
+  SessionConversationCommandDeferredError
+} from '../../shared/session-conversation-command'
 import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -673,8 +676,8 @@ class SessionPersistenceStateOwner {
     }
   }
 
-  // Restore reads synthesize restart recovery until a runtime attaches. Commit that
-  // evidence before attachment makes subsequent reads preserve the old runtime state.
+  // Commit restore normalization before attachment makes reads preserve runtime state.
+  // Parked/approved Plans also lose their stale run, without a resumeRecovery error.
   async prepareRuntimeResume(scope: { projectId: string; sessionId: string }): Promise<void> {
     const preserveRuntimeState =
       this.options.repository.hasLiveRuntimeSession?.(scope.projectId, scope.sessionId) ?? false
@@ -684,7 +687,16 @@ class SessionPersistenceStateOwner {
       { preserveRuntimeState }
     )
     if (restored.status !== 'found') throw new Error('Session could not be loaded for Resume.')
-    if (restored.session.resumeRecovery?.cause !== 'app-restart') return
+    if (preserveRuntimeState) return
+    if (restored.session.resumeRecovery?.cause !== 'app-restart') {
+      if (restored.session.activeRun) return
+      const authority = await loadAuthority(
+        this.options.repository,
+        scope.projectId,
+        scope.sessionId
+      )
+      if (authority.status !== 'found' || !authority.session.activeRun) return
+    }
     await this.mutateRuntimeSession(scope, (latest) => {
       if (sessionRevision(latest) !== sessionRevision(restored.session)) {
         throw new Error('Session changed before restart recovery could be committed.')
@@ -1178,7 +1190,18 @@ class SessionPersistenceStateOwner {
       if (!isDeepStrictEqual(candidate, authority))
         candidate.updatedAt = Math.max(authority.updatedAt + 1, Date.now())
       if (options.conversationCommands?.length) {
-        candidate = applySessionConversationCommands(candidate, options.conversationCommands)
+        try {
+          candidate = applySessionConversationCommands(candidate, options.conversationCommands)
+        } catch (error) {
+          // A renderer edit can arrive after the UI becomes idle but before Main commits the
+          // terminal runtime projection. Keep the command pending; independent named preferences
+          // in this same save still belong to the current renderer intent and must be committed.
+          // The next terminal save retries the command against an authority with no active run.
+          // Real branch identity conflicts still reject.
+          if (error instanceof SessionConversationCommandDeferredError)
+            return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+          throw error
+        }
         if (this.options.uploads)
           candidate = await this.options.uploads.upgradeLegacySessionUploads(candidate, {
             mode: 'live-save'
