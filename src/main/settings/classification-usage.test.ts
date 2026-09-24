@@ -209,7 +209,7 @@ it('atomically limits concurrent automatic attempts and counts retries as reques
   expect(await db.classificationUsage.count()).toBe(200)
   expect(
     await db.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'automatic' } })
-  ).toMatchObject({ automaticPauseReason: 'run-limit' })
+  ).toMatchObject({ automaticPauseReason: 'run-limit', automaticPauseRunId: 'automatic-run' })
   await expect(observe({ ...started, eventId: 'blocked' })).rejects.toMatchObject({
     reason: 'run-limit'
   })
