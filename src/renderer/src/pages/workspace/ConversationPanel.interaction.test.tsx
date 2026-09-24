@@ -6761,6 +6761,29 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(errorBoxText()).toContain('Could not send message')
   })
 
+  it('keeps the same translated action error dismissed when the language changes', async () => {
+    const { i18next } = await import('../../i18n')
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: VISION_MODEL_NOT_CONFIGURED_MESSAGE
+      }
+    })
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
+    expect(errorBoxText()).toBe('')
+
+    try {
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hans')
+      })
+      expect(errorBoxText()).toBe('')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('renders the error box for a failed run even when it has no error text', () => {
     renderPanel({
       view: {

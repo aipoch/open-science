@@ -858,7 +858,7 @@ const ConversationPanel = ({
     activeSession?.id,
     activeSession?.status === 'error' ? activeSession.updatedAt : null,
     activeSession?.status === 'error' ? activeSession.error : null,
-    resolvedActionError
+    actionError
   ])
   const showVisionModelSettings =
     visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
