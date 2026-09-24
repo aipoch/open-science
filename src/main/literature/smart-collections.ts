@@ -1060,6 +1060,27 @@ export class LiteratureSmartCollections {
       })
       if (cancelled.count && this.active.get(id) === controller) this.active.delete(id)
       this.changed(id)
+    } else if (command.action === 'abandon') {
+      const run = await client.literatureSmartRun.findFirst({
+        where: { collectionId: id, state: 'interrupted' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { id: true }
+      })
+      if (run) {
+        await client.$transaction(async (tx) => {
+          const cancelled = await tx.literatureSmartRun.updateMany({
+            where: { id: run.id, state: 'interrupted' },
+            data: { state: 'cancelled' }
+          })
+          if (cancelled.count) {
+            await tx.literatureSmartCollection.updateMany({
+              where: { collectionId: id },
+              data: { automaticPauseReason: null }
+            })
+          }
+        })
+        this.changed(id)
+      }
     } else if (command.action === 'reset-overrides') {
       await client.literatureSmartOverride.deleteMany({ where: { collectionId: id } })
       this.changed(id)

@@ -28,6 +28,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ErrorNotice } from '@/components/error-notice'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 import { useSettingsStore } from '@/stores/settings-store'
 import type {
@@ -134,6 +135,7 @@ export function SmartCollectionPanel({
   const [confirmPreview, setConfirmPreview] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmRecompute, setConfirmRecompute] = useState(false)
+  const [confirmAbandon, setConfirmAbandon] = useState(false)
   const load = useCallback(
     async () =>
       (
@@ -175,7 +177,14 @@ export function SmartCollectionPanel({
     )
   }, [view, updatePending, onViewChange, state])
   const run = async (
-    action: 'refresh' | 'recompute' | 'preview' | 'cancel' | 'reset-overrides' | 'resume-automatic'
+    action:
+      | 'refresh'
+      | 'recompute'
+      | 'preview'
+      | 'cancel'
+      | 'abandon'
+      | 'reset-overrides'
+      | 'resume-automatic'
   ): Promise<void> => {
     if (decisionPending || busy || refreshFailed) return
     state.beginWrite()
@@ -209,6 +218,7 @@ export function SmartCollectionPanel({
       setConfirmRecompute(false)
       setConfirmPreview(false)
       setConfirmReset(false)
+      setConfirmAbandon(false)
     } catch {
       if (action === 'cancel') setStopping(false)
       if (updating) setUpdatePending(false)
@@ -340,15 +350,28 @@ export function SmartCollectionPanel({
             {paused ? t('Automatic updates paused') : t('Stopped')} · {view.run?.done}/
             {view.run?.total}
           </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={paused ? t('Resume automatic updates') : t('Update collection')}
-            disabled={disabled}
-            onClick={() => void run(paused ? 'resume-automatic' : 'refresh')}
-          >
-            <RotateCcw className="size-4" aria-hidden="true" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {view.run?.state === 'interrupted' && !paused && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Abandon run')}
+                disabled={busy || decisionPending || refreshFailed}
+                onClick={() => setConfirmAbandon(true)}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={paused ? t('Resume automatic updates') : t('Update collection')}
+              disabled={disabled}
+              onClick={() => void run(paused ? 'resume-automatic' : 'refresh')}
+            >
+              <RotateCcw className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
         </div>
       ) : (
         <Button className="w-full" disabled={disabled} onClick={() => void run('refresh')}>
@@ -525,6 +548,11 @@ export function SmartCollectionPanel({
             onClick: () => void run('resume-automatic'),
             disabled:
               busy || decisionPending || refreshFailed || !view.configured || !view.sourceAvailable
+          }}
+          secondaryButton={{
+            label: t('Abandon run'),
+            onClick: () => setConfirmAbandon(true),
+            disabled: busy || decisionPending || refreshFailed
           }}
         />
       )}
@@ -770,6 +798,19 @@ export function SmartCollectionPanel({
           </div>
         </div>
       )}
+      <ConfirmActionDialog
+        open={confirmAbandon}
+        title={t('Abandon run')}
+        description={t(
+          'Abandon this run? Completed results will be kept, and this run will not resume.'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Abandon run')}
+        destructive
+        loading={busy}
+        onCancel={() => setConfirmAbandon(false)}
+        onConfirm={() => void run('abandon')}
+      />
     </section>
   )
 }

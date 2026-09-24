@@ -6374,6 +6374,8 @@
     "Could not load evaluation history.": "Der Bewertungsverlauf konnte nicht geladen werden.",
     "No evaluation history yet.": "Noch kein Bewertungsverlauf.",
     "Automatic updates paused": "Automatische Aktualisierungen pausiert",
+    "Abandon run": "Lauf aufgeben",
+    "Abandon this run? Completed results will be kept, and this run will not resume.": "Diesen Lauf aufgeben? Abgeschlossene Ergebnisse bleiben erhalten, und dieser Lauf wird nicht fortgesetzt.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "Automatische Anfragen haben das gemeinsame Limit von {{limit}} in 24 Stunden erreicht. Warten Sie vor dem Fortsetzen.",
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "Der vorherige automatische Lauf wurde gestoppt oder konnte seinen Fortschritt nicht speichern. Prüfen Sie den Speicher vor dem Fortsetzen. Gespeicherte Ergebnisse bleiben erhalten.",
     "Resume automatic updates": "Automatische Aktualisierungen fortsetzen",

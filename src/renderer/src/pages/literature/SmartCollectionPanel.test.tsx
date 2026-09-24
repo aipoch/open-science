@@ -444,3 +444,61 @@ it('shows a persistent automatic pause with an explicit resume action', async ()
     expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume-automatic' }))
   )
 })
+
+it('confirms and abandons a paused automatic run', async () => {
+  view = {
+    ...view,
+    autoUpdate: true,
+    configured: true,
+    automaticPauseReason: 'run-limit',
+    run: {
+      id: 'paused-run',
+      kind: 'refresh',
+      state: 'interrupted',
+      done: 0,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  transact.mockImplementation(async (command) => {
+    if (command.action === 'abandon') {
+      view = {
+        ...view,
+        automaticPauseReason: undefined,
+        run: { ...view.run!, state: 'cancelled' }
+      }
+    }
+    return { kind: 'collection', id: 'smart', smart: view }
+  })
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  const abandonButtons = await screen.findAllByRole('button', { name: 'Abandon run' })
+  fireEvent.click(abandonButtons.at(-1)!)
+  await screen.findByRole('alertdialog')
+  fireEvent.click(screen.getAllByRole('button', { name: 'Abandon run' }).at(-1)!)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'abandon' }))
+  )
+})
+
+it('offers abandon for an interrupted manual run', async () => {
+  view = {
+    ...view,
+    configured: true,
+    run: {
+      id: 'interrupted-run',
+      kind: 'refresh',
+      state: 'interrupted',
+      done: 1,
+      total: 2,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  expect(await screen.findByRole('button', { name: 'Abandon run' })).toBeTruthy()
+})

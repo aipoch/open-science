@@ -6540,6 +6540,8 @@
     "Could not load evaluation history.": "No se pudo cargar el historial de evaluaciones.",
     "No evaluation history yet.": "Todavía no hay historial de evaluaciones.",
     "Automatic updates paused": "Actualizaciones automáticas en pausa",
+    "Abandon run": "Abandonar ejecución",
+    "Abandon this run? Completed results will be kept, and this run will not resume.": "¿Abandonar esta ejecución? Los resultados completados se conservarán y esta ejecución no se reanudará.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "Las solicitudes automáticas han alcanzado el límite compartido de {{limit}} en 24 horas. Espere antes de reanudar.",
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "La ejecución automática anterior se detuvo o no pudo guardar el progreso. Compruebe el almacenamiento antes de reanudar. Se conservan los resultados guardados.",
     "Resume automatic updates": "Reanudar actualizaciones automáticas",

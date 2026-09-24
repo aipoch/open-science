@@ -2475,6 +2475,34 @@ it.each(['run-limit', 'daily-limit', 'storage-error'] as const)(
   }
 )
 
+it('abandons a paused automatic run without resuming it', async () => {
+  const id = await create()
+  await refresh(id)
+  const run = await db.literatureSmartRun.findFirstOrThrow({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'desc' }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true, automaticPauseReason: 'run-limit' }
+  })
+  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'interrupted' } })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: undefined,
+    matches: 1,
+    run: { id: run.id, state: 'cancelled', done: 1 }
+  })
+  expect(classify).toHaveBeenCalledOnce()
+})
+
 it('drains paid requests and retains a durable pause when both result and failure writes fail', async () => {
   await db.literatureItem.createMany({
     data: Array.from({ length: 7 }, (_, i) => ({

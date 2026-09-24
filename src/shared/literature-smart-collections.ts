@@ -94,6 +94,7 @@ export const smartCollectionCommandSchemas = [
         'recompute',
         'preview',
         'cancel',
+        'abandon',
         'override',
         'reset-overrides'
       ]),
