@@ -1,6 +1,8 @@
-name: SignPath Windows (dry-run)
+name: Windows signing (dry-run)
 
-# Manual, no-publish Windows Authenticode integration check.
+# Manual, no-publish Windows Authenticode integration check. Azure mode signs the app and NSIS
+# installer during packaging, then smoke-tests the signed artifact. SignPath mode keeps the
+# existing test-certificate check for the unsigned installer.
 #
 # Reuses the release build workflow for Windows x64 only, extracts exactly one NSIS setup EXE from
 # its immutable build artifact, and submits that raw PE file to SignPath's test-signing policy. The
@@ -8,13 +10,22 @@ name: SignPath Windows (dry-run)
 # modifies a GitHub Release and does not change the release/nightly publishing path.
 on:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: Signing provider for this dry run
+        type: choice
+        default: signpath
+        options:
+          - signpath
+          - azure
 
 permissions:
   actions: read
   contents: read
+  id-token: write
 
 concurrency:
-  group: signpath-windows-dry-run-${{ github.ref }}
+  group: windows-signing-dry-run-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -23,9 +34,20 @@ jobs:
     with:
       platform_name: windows-x64
       skip_verify: true
+      sign_windows: ${{ inputs.provider == 'azure' }}
+
+  azure-package-smoke:
+    name: Smoke signed Windows installer
+    if: ${{ inputs.provider == 'azure' }}
+    needs: build
+    uses: ./.github/workflows/package-smoke.yml
+    with:
+      platform_name: windows-x64
+      require_windows_signing: true
 
   sign-installer:
     name: Sign Windows installer with SignPath test certificate
+    if: ${{ inputs.provider == 'signpath' }}
     needs: build
     runs-on: windows-latest
     timeout-minutes: 20

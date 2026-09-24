@@ -341,13 +341,31 @@ describe('post-merge Windows validation', () => {
     const uploadSigned = findStep(sign, 'Upload signed installer')
 
     expect(inputs?.platform_name).toMatchObject({ type: 'string', default: '' })
-    expect(workflow.on).toEqual({ workflow_dispatch: null })
-    expect(workflow).toMatchObject({ permissions: { actions: 'read', contents: 'read' } })
+    expect(workflow.on?.workflow_dispatch).toMatchObject({
+      inputs: { provider: { type: 'choice', default: 'signpath', options: ['signpath', 'azure'] } }
+    })
+    expect(workflow).toMatchObject({
+      permissions: { actions: 'read', contents: 'read', 'id-token': 'write' }
+    })
     expect(workflow.jobs.build).toMatchObject({
       uses: './.github/workflows/build.yml',
-      with: { platform_name: 'windows-x64', skip_verify: true }
+      with: {
+        platform_name: 'windows-x64',
+        skip_verify: true,
+        sign_windows: "${{ inputs.provider == 'azure' }}"
+      }
     })
-    expect(sign).toMatchObject({ needs: 'build', 'runs-on': 'windows-latest' })
+    expect(workflow.jobs['azure-package-smoke']).toMatchObject({
+      if: "${{ inputs.provider == 'azure' }}",
+      needs: 'build',
+      uses: './.github/workflows/package-smoke.yml',
+      with: { platform_name: 'windows-x64', require_windows_signing: true }
+    })
+    expect(sign).toMatchObject({
+      if: "${{ inputs.provider == 'signpath' }}",
+      needs: 'build',
+      'runs-on': 'windows-latest'
+    })
     expect(findStep(sign, 'Select unsigned NSIS installer').run).toContain('*-win-x64-setup.exe')
     expect(uploadUnsigned).toMatchObject({
       id: 'upload-unsigned-installer',

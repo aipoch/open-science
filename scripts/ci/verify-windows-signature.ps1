@@ -25,14 +25,14 @@ if ($CheckUnpacked) {
 foreach ($file in $files) {
   $signature = Get-AuthenticodeSignature -LiteralPath $file
   if ($signature.Status -ne 'Valid') {
-    throw "Invalid Authenticode signature for $file`: $($signature.Status) $($signature.StatusMessage)"
+    throw "Invalid Authenticode signature for ${file}: $($signature.Status) $($signature.StatusMessage)"
   }
   $publisher = $signature.SignerCertificate.GetNameInfo(
     [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
     $false
   )
   if ($publisher -ne $env:AZURE_SIGNING_PUBLISHER) {
-    throw "Unexpected Authenticode publisher for $file`: $publisher"
+    throw "Unexpected Authenticode publisher for ${file}: $publisher"
   }
   if ($null -eq $signature.TimeStamperCertificate) {
     throw "Missing Authenticode timestamp for $file"
