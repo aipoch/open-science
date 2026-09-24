@@ -90,10 +90,27 @@ jobs:
           fi
           echo "path=${archives[0]}" >> "$GITHUB_OUTPUT"
 
+      - name: Materialize packaged application for scanning
+        id: scan
+        shell: bash
+        env:
+          ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+          scan_dir="$RUNNER_TEMP/release-sbom-scan"
+          unzip -q "$ARTIFACT_PATH" -d "$scan_dir"
+          asar="$scan_dir/Open-Science.app/Contents/Resources/app.asar"
+          test -f "$asar"
+          node node_modules/@electron/asar/bin/asar.js extract "$asar" "$RUNNER_TEMP/app-asar-content"
+          mv "$asar" "$RUNNER_TEMP/app.asar"
+          mv "$RUNNER_TEMP/app-asar-content" "$asar"
+          echo "path=$scan_dir" >> "$GITHUB_OUTPUT"
+
       - name: Generate SPDX SBOM from final archive
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          file: ${{ steps.artifact.outputs.path }}
+          path: ${{ steps.scan.outputs.path }}
           format: spdx-json
           output-file: release-sbom.spdx.json
           dependency-snapshot: false
