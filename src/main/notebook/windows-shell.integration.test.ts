@@ -6,6 +6,7 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
+import * as processTree from '../process-tree'
 import { build } from 'esbuild'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -26,6 +27,11 @@ import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { createRootNotebookLane } from './lane-identity'
 
+vi.mock('node:child_process', async (original) => {
+  const actual = await original<typeof import('node:child_process')>()
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
+
 vi.mock('node:fs/promises', async (original) => ({
   ...(await original<typeof import('node:fs/promises')>())
 }))
@@ -35,7 +41,11 @@ const POWERSHELL_TEST_TIMEOUT_MS = POWERSHELL_PROCESS_TIMEOUT_MS + 5_000
 
 // Use the production native supervisor when requested, while keeping the workload harmless and
 // independent of machine PowerShell startup speed, network access, and AppContainer installation.
-const fixtureSandbox = (root: string, code: string): NotebookProcessSandbox => ({
+const fixtureSandbox = (
+  root: string,
+  code: string,
+  observe?: (event: Record<string, unknown>) => void
+): NotebookProcessSandbox => ({
   wrap: async (invocation) => {
     const launch = invocation.superviseProcessTree
       ? windowsSupervisedLaunch({
@@ -59,14 +69,28 @@ const fixtureSandbox = (root: string, code: string): NotebookProcessSandbox => (
       args: launch.argv.slice(1),
       env: launch.env,
       ...('confirmProcessTreeTermination' in launch
-        ? { confirmProcessTreeTermination: launch.confirmProcessTreeTermination }
+        ? {
+            confirmProcessTreeTermination: async () => {
+              const confirmed = await launch.confirmProcessTreeTermination()
+              observe?.({ phase: 'native-proof', confirmed })
+              return confirmed
+            }
+          }
         : {}),
       annotateStderr: (stderr) => stderr,
-      cleanup: async (_reason, outcome) => ({
-        processesTerminated: outcome.processesTerminated,
-        networkClosed: true,
-        temporaryResourcesRemoved: true
-      })
+      cleanup: async (reason, outcome) => {
+        observe?.({
+          phase: 'sandbox-cleanup',
+          reason,
+          processesTerminated: outcome.processesTerminated,
+          canReconcile: Boolean(outcome.confirmTermination)
+        })
+        return {
+          processesTerminated: outcome.processesTerminated,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        }
+      }
     }
   }
 })
@@ -504,8 +528,51 @@ require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
 child.unref();
 ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
 `
+      const events: Record<string, unknown>[] = []
+      const observe = (event: Record<string, unknown>): void => {
+        events.push(event)
+      }
+      const actual =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      // Observe the real taskkill without changing its arguments, result or invocation count.
+      vi.mocked(spawn).mockImplementation((...args) => {
+        const child = actual.spawn(...args)
+        if (args[0] === 'taskkill') {
+          const event = {
+            phase: 'taskkill',
+            stdout: '',
+            stderr: '',
+            exitCode: null as number | null,
+            signal: null as NodeJS.Signals | null
+          }
+          observe(event)
+          child.stdout?.on('data', (chunk: Buffer) => {
+            event.stdout = (event.stdout + chunk.toString()).slice(0, 4096)
+          })
+          child.stderr?.on('data', (chunk: Buffer) => {
+            event.stderr = (event.stderr + chunk.toString()).slice(0, 4096)
+          })
+          child.once('exit', (code, signal) => {
+            event.exitCode = code
+            event.signal = signal
+          })
+        }
+        return child
+      })
+      const terminate = processTree.terminateProcessTree
+      const termination = vi
+        .spyOn(processTree, 'terminateProcessTree')
+        .mockImplementation(async (...args) => {
+          const result = await terminate(...args)
+          observe({ phase: 'terminate-result', ...result })
+          return result
+        })
       const registry = new ShellProcessOwnershipRegistry(root)
-      const adapter = new NotebookShellProcessAdapter('win32', fixtureSandbox(root, code), registry)
+      const adapter = new NotebookShellProcessAdapter(
+        'win32',
+        fixtureSandbox(root, code, observe),
+        registry
+      )
       const controller = new AbortController()
       const execution = adapter.execute({
         ...shellRequest(root),
@@ -529,7 +596,18 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
             expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })),
           { timeout: 4000 }
         )
-        expect(result.errorCode).toBeUndefined()
+        const diagnostic = JSON.stringify({
+          ending,
+          events,
+          hasReceipts: registry.hasReceipts(),
+          result: {
+            errorCode: result.errorCode,
+            ownedTreeReaped: result.ownedTreeReaped,
+            cancelled: result.cancelled,
+            exitCode: result.exitCode
+          }
+        })
+        expect(result.errorCode, diagnostic).toBeUndefined()
         expect(result.ownedTreeReaped).not.toBe(false)
         if (ending === 'exit') expect(result.exitCode).toBe(0)
         if (ending === 'timeout')
@@ -540,6 +618,8 @@ ${ending === 'exit' ? '' : 'setInterval(() => {}, 1000);'}
       } finally {
         controller.abort()
         await execution
+        termination.mockRestore()
+        vi.mocked(spawn).mockImplementation(actual.spawn)
         await rm(root, { recursive: true, force: true })
       }
     },
