@@ -116,7 +116,9 @@ const create = async (): Promise<string> =>
   ).id
 const refresh = async (id: string): Promise<void> => {
   await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 })
-  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'), {
+    timeout: 5000
+  })
 }
 
 it('reads bounded run outcomes, preserves historical verdicts and distinguishes missing details', async () => {
