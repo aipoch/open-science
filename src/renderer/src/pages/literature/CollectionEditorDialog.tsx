@@ -566,61 +566,65 @@ export const CollectionEditorDialog = forwardRef<
               {mode && smart && (
                 <div className="px-5 pb-4">
                   <div className="space-y-3 border-t border-border pt-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-1">
-                        <label htmlFor="collection-full-text" className="text-sm font-medium">
-                          {t('Use available full text')}
-                        </label>
-                        <CollectionOptionHelp label={t('Use available full text')}>
-                          {t(
-                            'Send text from the primary PDF to the classification service. Long papers use relevant passages; unavailable PDFs fall back to title and abstract.'
-                          )}
-                        </CollectionOptionHelp>
-                      </div>
-                      <Switch
-                        id="collection-full-text"
-                        checked={evidenceMode === 'full-text'}
-                        onCheckedChange={(checked) =>
-                          setEvidenceMode(checked ? 'full-text' : 'abstract')
-                        }
-                        disabled={saving}
-                      />
-                    </div>
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      {t('Sends available PDF text to the classification service.')}
-                    </p>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-1">
-                        <label htmlFor="collection-auto-update" className="text-sm font-medium">
-                          {t('Update automatically')}
-                        </label>
-                        <CollectionOptionHelp label={t('Update automatically')}>
-                          {t(
-                            'Evaluate new or changed references while the app is open. Requests may incur costs. Manual decisions are kept.'
-                          )}
-                        </CollectionOptionHelp>
-                      </div>
-                      <Switch
-                        id="collection-auto-update"
-                        checked={autoUpdate}
-                        onCheckedChange={setAutoUpdate}
-                        disabled={saving}
-                      />
-                    </div>
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      {t('Updates new or changed references; may incur costs.')}
-                    </p>
-                    {autoUpdate && (
-                      <p className="text-xs leading-5 text-muted-foreground">
-                        {t(
-                          'Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.',
-                          {
-                            run: AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
-                            day: AUTOMATIC_CLASSIFICATION_DAY_LIMIT
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-1">
+                          <label htmlFor="collection-full-text" className="text-sm font-medium">
+                            {t('Use available full text')}
+                          </label>
+                          <CollectionOptionHelp label={t('Use available full text')}>
+                            {t(
+                              'Send text from the primary PDF to the classification service. Long papers use relevant passages; unavailable PDFs fall back to title and abstract.'
+                            )}
+                          </CollectionOptionHelp>
+                        </div>
+                        <Switch
+                          id="collection-full-text"
+                          checked={evidenceMode === 'full-text'}
+                          onCheckedChange={(checked) =>
+                            setEvidenceMode(checked ? 'full-text' : 'abstract')
                           }
-                        )}
+                          disabled={saving}
+                        />
+                      </div>
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        {t('Sends available PDF text to the classification service.')}
                       </p>
-                    )}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-1">
+                          <label htmlFor="collection-auto-update" className="text-sm font-medium">
+                            {t('Update automatically')}
+                          </label>
+                          <CollectionOptionHelp label={t('Update automatically')}>
+                            {t(
+                              'Evaluate new or changed references while the app is open. Requests may incur costs. Manual decisions are kept.'
+                            )}
+                          </CollectionOptionHelp>
+                        </div>
+                        <Switch
+                          id="collection-auto-update"
+                          checked={autoUpdate}
+                          onCheckedChange={setAutoUpdate}
+                          disabled={saving}
+                        />
+                      </div>
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        {t('Updates new or changed references; may incur costs.')}
+                      </p>
+                      {autoUpdate && (
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {t(
+                            'Automatic updates pause after {{run}} requests per run or {{day}} across all collections in 24 hours. Retries count toward these limits.',
+                            {
+                              run: AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
+                              day: AUTOMATIC_CLASSIFICATION_DAY_LIMIT
+                            }
+                          )}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <SmartCollectionDraftPreview
                     evidenceMode={evidenceMode}

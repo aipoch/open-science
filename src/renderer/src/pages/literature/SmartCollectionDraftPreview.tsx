@@ -72,30 +72,32 @@ export function SmartCollectionDraftPreview({
   }, [enabled, disabled, description, scopeKey, evidenceMode, key])
   return (
     <section className="space-y-2 border-t border-border pt-3" aria-label={t('Live rule preview')}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-1">
-          <label htmlFor="collection-rule-preview" className="text-sm font-medium">
-            {t('Live rule preview')}
-          </label>
-          <CollectionOptionHelp label={t('Live rule preview')}>
-            {t(
-              'Preview up to 4 references as you edit. Requests may incur costs; results are not saved.'
-            )}
-          </CollectionOptionHelp>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1">
+            <label htmlFor="collection-rule-preview" className="text-sm font-medium">
+              {t('Live rule preview')}
+            </label>
+            <CollectionOptionHelp label={t('Live rule preview')}>
+              {t(
+                'Preview up to 4 references as you edit. Requests may incur costs; results are not saved.'
+              )}
+            </CollectionOptionHelp>
+          </div>
+          <Switch
+            id="collection-rule-preview"
+            checked={enabled}
+            onCheckedChange={(value) => {
+              setResult(undefined)
+              setEnabled(value)
+            }}
+            disabled={disabled && !enabled}
+          />
         </div>
-        <Switch
-          id="collection-rule-preview"
-          checked={enabled}
-          onCheckedChange={(value) => {
-            setResult(undefined)
-            setEnabled(value)
-          }}
-          disabled={disabled && !enabled}
-        />
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t('May incur costs. Preview results are not saved.')}
+        </p>
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">
-        {t('May incur costs. Preview results are not saved.')}
-      </p>
       {enabled && (
         <div role="status" className="text-xs text-muted-foreground">
           {loading ? (
