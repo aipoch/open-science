@@ -3,7 +3,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
-import { screen } from '@testing-library/react'
 import { Cpu, Toolbox } from 'lucide-react'
 import {
   resolveActionMenuEntries,
@@ -350,56 +349,6 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
-  it.each(['ArrowDown', 'Enter', ' '])(
-    'opens the one shared Session menu with %s and returns focus to its button',
-    async (key) => {
-      const sidebar = await mountProjectSidebar([])
-      try {
-        const button = sidebar.container.querySelector<HTMLButtonElement>(
-          '[aria-label="Open actions for Analysis session"]'
-        )
-        if (!button) throw new Error('Session actions button did not render')
-        vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({
-          right: 90,
-          top: 25
-        } as DOMRect)
-        expect(button.getAttribute('aria-haspopup')).toBe('menu')
-        expect(button.getAttribute('aria-expanded')).toBe('false')
-        expect(button.closest('[data-slot="dropdown-menu-trigger"]')).toBeNull()
-
-        await act(async () => {
-          button.focus()
-          button.dispatchEvent(
-            new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
-          )
-        })
-
-        const menu = document.body.querySelector<HTMLElement>(
-          '[data-testid="session-context-menu"]'
-        )
-        const anchor = document.body.querySelector<HTMLElement>(
-          '[data-testid="session-context-menu-anchor"]'
-        )
-        expect(menu).not.toBeNull()
-        expect(menu?.getAttribute('aria-labelledby')).toBe(button.id)
-        expect(screen.getByRole('menu', { name: 'Open actions for Analysis session' })).toBe(menu)
-        expect(button.getAttribute('aria-expanded')).toBe('true')
-        expect(anchor?.style.left).toBe('96px')
-        expect(anchor?.style.top).toBe('25px')
-
-        await act(async () => {
-          menu?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-        })
-        expect(document.body.querySelector('[data-testid="session-context-menu"]')).toBeNull()
-        expect(document.activeElement).toBe(button)
-        expect(button.getAttribute('aria-expanded')).toBe('false')
-        expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
-      } finally {
-        sidebar.cleanup()
-      }
-    }
-  )
-
   it('renders only affected rows when fresh page callbacks accompany selection and Session updates', async () => {
     const rowComponent = SessionRow as unknown as {
       type: (props: Record<string, unknown>) => ReactElement
@@ -792,24 +741,29 @@ describe('WorkspaceSidebar accessible render', () => {
       await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
-      await act(async () => actionsTrigger.click())
+      await act(async () =>
+        actionsTrigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      )
 
-      expect(document.body.querySelector('[data-testid="session-context-menu"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).not.toBeNull()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
-      expect(actionsTrigger.getAttribute('aria-expanded')).toBe('true')
 
       const actionsMenu = document.body.querySelector<HTMLElement>(
-        '[data-testid="session-context-menu"]'
+        '[data-slot="dropdown-menu-content"]'
       )
       if (!actionsMenu) throw new Error('Session actions menu did not render')
       await act(async () =>
         actionsMenu.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       )
 
-      expect(document.body.querySelector('[data-testid="session-context-menu"]')).toBeNull()
+      expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
-      expect(actionsTrigger.getAttribute('aria-expanded')).toBe('false')
-      expect(document.activeElement).toBe(actionsTrigger)
+      await act(async () =>
+        actionsTrigger.dispatchEvent(
+          new FocusEvent('focusin', { bubbles: true, relatedTarget: actionsMenu })
+        )
+      )
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()
@@ -905,10 +859,8 @@ describe('WorkspaceSidebar accessible render', () => {
       const actionsButton = container.querySelector<HTMLButtonElement>(
         '[aria-label="Open actions for Context target"]'
       )
-      await act(async () => actionsButton?.click())
-      const dropdown = document.body.querySelector<HTMLElement>(
-        '[data-testid="session-context-menu"]'
-      )
+      await openRadixMenu(actionsButton)
+      const dropdown = document.body.querySelector<HTMLElement>('[aria-label="Session actions"]')
       expect(
         Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
@@ -918,103 +870,6 @@ describe('WorkspaceSidebar accessible render', () => {
         dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
       )
       expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
-    } finally {
-      act(() => root.unmount())
-      container.remove()
-    }
-  })
-
-  it('uses the latest archive callback from the shared mobile menu', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const session = createSession({ id: 'mobile-session', title: 'Mobile session', status: 'idle' })
-    const oldArchive = vi.fn()
-    const newArchive = vi.fn()
-    let finishFork: (() => void) | undefined
-    const onForkSession = vi.fn(() => new Promise<void>((resolve) => (finishFork = resolve)))
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
-    const render = (onArchiveSession: (target: ChatSession) => void): void => {
-      root.render(
-        <WorkspaceSidebar
-          projectName="Example project"
-          sessions={[session]}
-          activeSessionId={session.id}
-          canCreateConversation
-          canMutateConversations
-          canDeleteConversations
-          onGoHome={vi.fn()}
-          onNewConversation={vi.fn()}
-          isFilesOpen={false}
-          onOpenFiles={vi.fn()}
-          onOpenSession={vi.fn()}
-          onRenameSession={vi.fn()}
-          canDownloadArtifacts
-          onDownloadArtifacts={vi.fn()}
-          onViewNotebook={vi.fn()}
-          onForkSession={onForkSession}
-          onTogglePin={vi.fn()}
-          canArchiveSession={() => true}
-          onArchiveSession={onArchiveSession}
-          onDeleteSession={vi.fn()}
-          onOpenSettings={vi.fn()}
-          onOpenProjectSettings={vi.fn()}
-          onNewProject={vi.fn()}
-          mobileMode
-          isMobileOpen
-          onMobileClose={vi.fn()}
-        />
-      )
-    }
-
-    try {
-      await act(async () => render(oldArchive))
-      await act(async () => render(newArchive))
-      const button = container.querySelector<HTMLButtonElement>(
-        '[aria-label="Open actions for Mobile session"]'
-      )
-      if (!button) throw new Error('Mobile Session actions button did not render')
-      vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({
-        left: 90,
-        right: 108,
-        top: 25
-      } as DOMRect)
-      await act(async () => button?.click())
-      const menu = document.body.querySelector<HTMLElement>('[data-testid="session-context-menu"]')
-      const anchor = document.body.querySelector<HTMLElement>(
-        '[data-testid="session-context-menu-anchor"]'
-      )
-      expect(menu?.classList).toContain('z-[80]')
-      expect(menu?.getAttribute('data-align')).toBe('end')
-      expect(anchor?.style.left).toBe('90px')
-      expect(anchor?.style.top).toBe('25px')
-      expect(button?.getAttribute('aria-expanded')).toBe('true')
-      clickRadixMenuItem(menu?.querySelector<HTMLElement>('[data-action-id="fork"]'))
-      expect(onForkSession).toHaveBeenCalledTimes(1)
-      await act(async () => button?.click())
-      const pendingMenu = document.body.querySelector<HTMLElement>(
-        '[data-testid="session-context-menu"]'
-      )
-      const pendingFork = pendingMenu?.querySelector<HTMLElement>('[data-action-id="fork"]')
-      expect(pendingFork?.hasAttribute('data-disabled')).toBe(true)
-      clickRadixMenuItem(pendingFork)
-      expect(onForkSession).toHaveBeenCalledTimes(1)
-      if (!finishFork) throw new Error('Fork did not start')
-      await act(async () => finishFork?.())
-      expect(
-        document.body
-          .querySelector<HTMLElement>('[data-testid="session-context-menu"]')
-          ?.querySelector<HTMLElement>('[data-action-id="fork"]')
-          ?.hasAttribute('data-disabled')
-      ).toBe(false)
-      clickRadixMenuItem(
-        document.body
-          .querySelector<HTMLElement>('[data-testid="session-context-menu"]')
-          ?.querySelector<HTMLElement>('[data-action-id="archive"]')
-      )
-      expect(oldArchive).not.toHaveBeenCalled()
-      expect(newArchive).toHaveBeenCalledWith(session)
-      expect(document.body.querySelector('[data-testid="session-context-menu"]')).toBeNull()
     } finally {
       act(() => root.unmount())
       container.remove()

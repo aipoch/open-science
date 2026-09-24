@@ -31,7 +31,6 @@ export type OpenActionMenuOptions<Invocation = unknown> = {
   pointer: ActionMenuPointer
   align?: 'start' | 'end'
   focusTarget?: Element | null
-  labelledBy?: string
   invocation?: Invocation
 }
 

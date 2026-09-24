@@ -35,7 +35,12 @@ import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import { NotificationBell } from '@/components/NotificationBell'
-import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
+import {
+  ActionMenuItems,
+  ActionMenuProvider,
+  ActionMenuTarget,
+  useActionMenuTarget
+} from '@/components/action-menu'
 
 import { projectPresentedSessionActionability } from './session-wait-reason'
 import { HighlightedText } from './composer/HighlightedText'
@@ -151,6 +156,7 @@ type SessionRowCallbacks = Pick<
   | 'onTogglePin'
   | 'onArchiveSession'
   | 'onDeleteSession'
+  | 'onSessionActionsOpenChange'
 >
 
 const sessionRowCallbacks = ({
@@ -167,7 +173,8 @@ const sessionRowCallbacks = ({
   onExportDiagnostics,
   onTogglePin,
   onArchiveSession,
-  onDeleteSession
+  onDeleteSession,
+  onSessionActionsOpenChange
 }: WorkspaceSidebarViewProps): SessionRowCallbacks => ({
   onOpenSession,
   onPreviewSession,
@@ -182,7 +189,8 @@ const sessionRowCallbacks = ({
   onExportDiagnostics,
   onTogglePin,
   onArchiveSession,
-  onDeleteSession
+  onDeleteSession,
+  onSessionActionsOpenChange
 })
 
 // Maps each session status to the left-side indicator dot using emitted theme colors.
@@ -315,7 +323,6 @@ const sessionRowActionClassName =
   'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
-const SESSION_ACTION_BUTTON_PREFIX = 'session-action-button:'
 const sessionActionDangerClassName =
   'text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000'
 // Shared icon wrapper inside each project menu item row.
@@ -324,54 +331,44 @@ const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-cent
 const SessionActionDropdown = ({
   session,
   mobileMode,
-  menuOpen
+  onOpenChange
 }: {
   session: ChatSession
   mobileMode: boolean
-  menuOpen: boolean
+  onOpenChange?: (open: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { openMenu, closeMenu } = useActionMenu()
-  const toggleMenu = (button: HTMLButtonElement): void => {
-    if (menuOpen) {
-      closeMenu()
-      return
-    }
-    const rect = button.getBoundingClientRect()
-    openMenu({
-      targetId: `${SESSION_ACTION_TARGET_PREFIX}${session.id}`,
-      pointer: { x: mobileMode ? rect.left : rect.right + 6, y: rect.top },
-      align: mobileMode ? 'end' : 'start',
-      labelledBy: button.id,
-      focusTarget: button
-    })
-  }
+  const { entries, execute, renderLabel } = useActionMenuTarget<SessionActionId>()
 
   return (
-    <button
-      id={`${SESSION_ACTION_BUTTON_PREFIX}${session.id}`}
-      type="button"
-      className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
-      aria-label={t('Open actions for {{title}}', { title: session.title })}
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-      data-state={menuOpen ? 'open' : 'closed'}
-      onFocus={(event) => {
-        if (event.currentTarget.dataset.suppressPreviewFocus !== 'true') return
-        delete event.currentTarget.dataset.suppressPreviewFocus
-        event.stopPropagation()
-      }}
-      onClick={(event) => toggleMenu(event.currentTarget)}
-      onKeyDown={(event) => {
-        if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return
-        event.preventDefault()
-        toggleMenu(event.currentTarget)
-      }}
-    >
-      <span className="flex size-3.5 items-center justify-center" aria-hidden="true">
-        <MoreVertical className="size-3.5" strokeWidth={2} />
-      </span>
-    </button>
+    <DropdownMenu onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
+          aria-label={t('Open actions for {{title}}', { title: session.title })}
+        >
+          <span className="flex size-3.5 items-center justify-center" aria-hidden="true">
+            <MoreVertical className="size-3.5" strokeWidth={2} />
+          </span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        aria-label={t('Session actions')}
+        className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
+        side="right"
+        align="start"
+        sideOffset={6}
+      >
+        <ActionMenuItems
+          entries={entries}
+          onSelect={(actionId) => void execute(actionId)}
+          compact={false}
+          dangerClassName={sessionActionDangerClassName}
+          renderLabel={renderLabel}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -612,14 +609,6 @@ const SessionRow = memo(function SessionRow({
       renderLabel={(entry, translatedLabel) =>
         entry.action === 'archive' ? t('Archive', { context: 'verb' }) : translatedLabel
       }
-      onRestoreFocus={(restoreDefault) => {
-        const button = document.getElementById(`${SESSION_ACTION_BUTTON_PREFIX}${session.id}`)
-        if (button) button.dataset.suppressPreviewFocus = 'true'
-        restoreDefault()
-        queueMicrotask(() => {
-          if (button) delete button.dataset.suppressPreviewFocus
-        })
-      }}
       asChild
     >
       <div
@@ -639,7 +628,7 @@ const SessionRow = memo(function SessionRow({
           <SessionActionDropdown
             session={session}
             mobileMode={mobileMode}
-            menuOpen={previewSuppressed}
+            onOpenChange={(open) => actions.onSessionActionsOpenChange?.(session.id, open)}
           />
         </div>
       </div>
@@ -1335,7 +1324,9 @@ const WorkspaceSidebarConnectedView = (props: WorkspaceSidebarViewProps): React.
       onExportDiagnostics: (session) => latestCallbacks.current.onExportDiagnostics?.(session),
       onTogglePin: (session) => latestCallbacks.current.onTogglePin(session),
       onArchiveSession: (session) => latestCallbacks.current.onArchiveSession?.(session),
-      onDeleteSession: (session) => latestCallbacks.current.onDeleteSession(session)
+      onDeleteSession: (session) => latestCallbacks.current.onDeleteSession(session),
+      onSessionActionsOpenChange: (sessionId, open) =>
+        latestCallbacks.current.onSessionActionsOpenChange?.(sessionId, open)
     }),
     []
   )

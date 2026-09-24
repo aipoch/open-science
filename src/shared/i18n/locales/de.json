@@ -2336,6 +2336,7 @@
     "Session": "Sitzung",
     "Session Plan": "Sitzungsplan",
     "Session Reviewer": "Sitzungs-Reviewer",
+    "Session actions": "Sitzungsaktionen",
     "Session artifacts": "Sitzungsartefakte",
     "Session configuration changed to {{framework}} · {{model}} · {{effort}}": "Die Sitzungskonfiguration wurde geändert: {{framework}} · {{model}} · {{effort}}",
     "Session count unavailable": "Sitzungsanzahl nicht verfügbar",
