@@ -1370,10 +1370,15 @@ export class LiteratureSmartCollections {
               usage.some((entry) => entry.scenario === 'literature-automatic') ||
               (!usage.length &&
                 snapshot.action === 'refresh' &&
-                Boolean(definition.automaticPauseReason))
+                (definition.automaticPauseRunId === previous.id ||
+                  (resumeAutomatic &&
+                    Boolean(definition.automaticPauseReason) &&
+                    !definition.automaticPauseRunId)))
             if (
               automatic &&
-              (!definition.autoUpdate || definition.automaticPauseReason === 'run-limit')
+              (!definition.autoUpdate ||
+                definition.automaticPauseReason === 'run-limit' ||
+                (definition.automaticPauseRunId && definition.automaticPauseRunId !== previous.id))
             )
               throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
             controller.signal.throwIfAborted()
@@ -1383,7 +1388,8 @@ export class LiteratureSmartCollections {
                   where: {
                     collectionId: id,
                     autoUpdate: true,
-                    automaticPauseReason: definition.automaticPauseReason
+                    automaticPauseReason: definition.automaticPauseReason,
+                    automaticPauseRunId: definition.automaticPauseRunId
                   },
                   data: {
                     automaticPauseReason: 'interrupted',

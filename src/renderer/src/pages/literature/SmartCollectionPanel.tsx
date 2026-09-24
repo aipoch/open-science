@@ -271,10 +271,15 @@ export function SmartCollectionPanel({
     !view?.run?.abandoned &&
     (view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted')
   const automaticPauseVisible = view?.autoUpdate && Boolean(view.automaticPauseReason)
+  const continueAutomaticRun =
+    automaticPauseVisible &&
+    view?.automaticPauseReason === 'run-limit' &&
+    view?.run?.state === 'cancelled' &&
+    (!view.automaticPauseRunId || view.run.id === view.automaticPauseRunId)
   const paused =
     automaticPauseVisible &&
     (!view?.automaticPauseRunId || view.run?.id === view.automaticPauseRunId) &&
-    view?.run?.state === 'interrupted'
+    (view?.run?.state === 'interrupted' || continueAutomaticRun)
   const snapshot = view?.run?.snapshot
   const currentRule = parseSmartRule(description)
   const savedRule = snapshot && parseSmartRule(snapshot.description)
@@ -434,7 +439,11 @@ export function SmartCollectionPanel({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={t('Resume automatic updates')}
+                aria-label={
+                  view.automaticPauseReason === 'run-limit'
+                    ? t('Continue in a new run')
+                    : t('Resume automatic updates')
+                }
                 disabled={disabled}
                 onClick={() => void run('resume-automatic')}
               >

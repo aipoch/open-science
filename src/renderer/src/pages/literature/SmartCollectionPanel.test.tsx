@@ -471,7 +471,35 @@ it('shows a persistent automatic pause with an explicit resume action', async ()
   expect(screen.queryByText('Analysis failed')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Resume analysis' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'Continue in a new run' }))
+  fireEvent.click(screen.getAllByRole('button', { name: 'Continue in a new run' }).at(-1)!)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume-automatic' }))
+  )
+})
+
+it('continues a cancelled run-limit pause in a new automatic run', async () => {
+  view = {
+    ...view,
+    autoUpdate: true,
+    configured: true,
+    automaticPauseReason: 'run-limit',
+    automaticPauseRunId: 'paused-run',
+    run: {
+      id: 'paused-run',
+      kind: 'refresh',
+      state: 'cancelled',
+      done: 0,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  expect(await screen.findAllByRole('button', { name: 'Continue in a new run' })).toHaveLength(2)
+  expect(screen.queryByRole('button', { name: 'Resume analysis' })).toBeNull()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Continue in a new run' })[0])
   await waitFor(() =>
     expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume-automatic' }))
   )

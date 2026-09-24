@@ -401,7 +401,8 @@ it('rejects a late result after cancellation and releases the worker', async () 
 })
 
 const pauseAfterOneResult = async (
-  automatic = false
+  automatic = false,
+  manualAction: 'refresh' | 'recompute' = 'recompute'
 ): Promise<{ id: string; runId: string; doneId: string }> => {
   await db.literatureItem.createMany({
     data: Array.from({ length: 7 }, (_, i) => ({
@@ -436,7 +437,7 @@ const pauseAfterOneResult = async (
     {
       kind: 'smart-collection',
       collectionId: id,
-      action: automatic ? 'refresh' : 'recompute',
+      action: automatic ? 'refresh' : manualAction,
       offset: 0
     },
     automatic
@@ -475,6 +476,53 @@ it('resumes the same stopped run once and preserves completed outcomes', async (
       where: { runId_itemId: { runId, itemId: doneId } }
     })
   ).toEqual(before)
+})
+
+it('does not assign another automatic pause to a manual run resumed without usage', async () => {
+  const { id, runId } = await pauseAfterOneResult(false, 'refresh')
+  await db.classificationUsage.deleteMany({ where: { runId } })
+  await db.literatureSmartRun.create({
+    data: {
+      id: 'other-automatic-run',
+      collectionId: id,
+      kind: 'refresh',
+      state: 'interrupted',
+      ruleRevision: 1,
+      policyKey: 'fixture',
+      createdAt: new Date(0)
+    }
+  })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: {
+      autoUpdate: true,
+      automaticPauseReason: 'interrupted',
+      automaticPauseRunId: 'other-automatic-run'
+    }
+  })
+  classify.mockResolvedValue({
+    verdict: 'match',
+    model: 'jev-1.13.0',
+    confidence: 1,
+    probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+  })
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'resume',
+    runId,
+    offset: 0
+  })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+
+  expect(await owner.view(id)).toMatchObject({
+    automaticPauseReason: 'interrupted',
+    automaticPauseRunId: 'other-automatic-run'
+  })
+  expect(
+    await db.classificationUsage.findMany({ where: { runId }, select: { scenario: true } })
+  ).not.toEqual(expect.arrayContaining([{ scenario: 'literature-automatic' }]))
 })
 
 it('rejects resuming an automatic run after automatic updates are disabled', async () => {
