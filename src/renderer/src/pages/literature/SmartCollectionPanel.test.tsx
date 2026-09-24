@@ -543,25 +543,28 @@ it('keeps the automatic pause notice when a newer manual run is interrupted', as
   expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
 })
 
-it('offers abandon for an interrupted manual run', async () => {
-  view = {
-    ...view,
-    configured: true,
-    run: {
-      id: 'interrupted-run',
-      kind: 'refresh',
-      state: 'interrupted',
-      done: 1,
-      total: 2,
-      inputTokens: 0,
-      outputTokens: 0,
-      usageIncomplete: false,
-      updatedAt: 1
+it.each(['interrupted', 'cancelled'] as const)(
+  'offers abandon for a %s manual run',
+  async (state) => {
+    view = {
+      ...view,
+      configured: true,
+      run: {
+        id: 'interrupted-run',
+        kind: 'refresh',
+        state,
+        done: 1,
+        total: 2,
+        inputTokens: 0,
+        outputTokens: 0,
+        usageIncomplete: false,
+        updatedAt: 1
+      }
     }
+    render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+    expect(await screen.findByRole('button', { name: 'Abandon run' })).toBeTruthy()
   }
-  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
-  expect(await screen.findByRole('button', { name: 'Abandon run' })).toBeTruthy()
-})
+)
 
 it.each(['cancelled', 'interrupted'] as const)(
   'resumes %s analysis and offers re-analysis when its checkpoint is invalid',

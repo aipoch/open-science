@@ -405,7 +405,7 @@ export function SmartCollectionPanel({
             </span>
           </button>
           <div className="flex items-center gap-1">
-            {view.run?.state === 'interrupted' && !paused && (
+            {(view.run?.state === 'interrupted' || view.run?.state === 'cancelled') && !paused && (
               <Button
                 variant="ghost"
                 size="icon-sm"
