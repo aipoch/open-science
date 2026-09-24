@@ -1402,6 +1402,7 @@ class NotebookExecutionOwner {
       traceback: result.traceback,
       outputs: result.outputs,
       ...(result.truncated ? { truncated: true } : {}),
+      ...(result.recovery ? { recovery: result.recovery } : {}),
       workingFiles: result.workingFiles,
       fileEvidence: result.fileEvidence
     }

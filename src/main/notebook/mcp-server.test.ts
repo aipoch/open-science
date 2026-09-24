@@ -1507,6 +1507,75 @@ describe('repl_execute tool', () => {
     }
   })
 
+  it('delivers verified REPL exit recovery in the immediate MCP response and history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'repl-exit-mcp-'))
+    const recovery = {
+      execution: 'may-have-run' as const,
+      retryAfter: 'runtime-ready' as const,
+      kernel: {
+        kind: 'repl' as const,
+        signal: 'SIGKILL',
+        exitCode: null,
+        cause: 'unknown' as const,
+        cleanup: 'verified' as const
+      }
+    }
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => ({
+          status: 'failed',
+          stdout: '',
+          stderr: 'Kernel exited',
+          traceback: '',
+          cwdAfter: root,
+          outputs: [],
+          recovery
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const mcp = createNotebookMcpServer({
+      ...connection,
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    const client = new ModelContextProtocolClient({ name: 'exit-recovery-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await mcp.connect(serverTransport)
+    await client.connect(clientTransport)
+    try {
+      const response = await client.callTool({
+        name: 'repl_execute',
+        arguments: { code: 'process.kill(process.pid, "SIGKILL")' }
+      })
+      const text = (response.content as Array<{ type: string; text?: string }>).find(
+        (item) => item.type === 'text'
+      )!.text!
+      expect(JSON.parse(text).recovery).toMatchObject(recovery)
+      expect(JSON.parse(text).recovery.guidance).toContain('no extra restart')
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.recovery
+      ).toEqual(recovery)
+    } finally {
+      await client.close()
+      await mcp.close()
+      await rpc.close()
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('preserves durable admission, retry, and Stop through the real Agent-facing MCP tool', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-repl-mcp-durable-'))
     const repository = new NotebookRunRepository(root)

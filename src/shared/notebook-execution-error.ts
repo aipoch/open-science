@@ -33,3 +33,14 @@ export const notebookErrorRecovery = (error: unknown): NotebookExecutionRecovery
     return error.cause.recovery
   return undefined
 }
+
+// In-process owner evidence, separate from immutable historical recovery diagnostics. Only the
+// executor that owns the failed process may mark its exact exit object as cleaned up.
+const cleanedUpKernelExits = new WeakSet<NotebookKernelExitError>()
+
+export const markNotebookKernelExitCleanedUp = (error: unknown): void => {
+  if (error instanceof NotebookKernelExitError) cleanedUpKernelExits.add(error)
+}
+
+export const isNotebookKernelStopResolved = (error: NotebookExecutionStopError): boolean =>
+  error.cause instanceof NotebookKernelExitError && cleanedUpKernelExits.has(error.cause)

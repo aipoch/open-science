@@ -29,6 +29,7 @@ it
     'transient-proof',
     'escaped-child',
     'unknown-proof',
+    'unknown-proof-restart',
     'unknown-proof-with-history'
   ])(
   'keeps warm and new sessions executable after a real Python SIGKILL (%s)',
@@ -204,9 +205,7 @@ it
       )
       // Verify the actual agent-facing payload, not only a signal substring or service-side state.
       expect(crashContext.recovery).toMatchObject(failedRun.recovery!)
-      expect(crashContext.recovery.guidance).toContain(
-        'SIGKILL alone does not establish memory pressure'
-      )
+      expect(crashContext.recovery.guidance).toContain('Exit cause: unknown.')
       if (unknownProof) {
         expect(crashContext.recovery.guidance).toContain('notebook_restart')
         expect(crashContext.recovery.guidance).toContain('default-python')
@@ -303,15 +302,18 @@ it
         expect(existsSync(`${retiredRoot}.receipt`)).toBe(true)
       }
       retainProof = false
-      const restarted = await client.callTool({
-        name: 'notebook_restart',
-        arguments: {
-          language: 'python',
-          environment: ' python '
-        }
+      if (scenario === 'unknown-proof-restart') {
+        const restarted = await client.callTool({
+          name: 'notebook_restart',
+          arguments: { language: 'python', environment: ' python ' }
+        })
+        expect(restarted.isError).not.toBe(true)
+      }
+      const recovered = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { language: 'python', environment: 'python', code: 'after_recovery = 123' }
       })
-      expect(restarted.isError).not.toBe(true)
-      expect(JSON.stringify(restarted)).toContain('restarted')
+      expect(recovered.isError).not.toBe(true)
       // A verified recovery must discharge this turn's prior stop failure, without ending the task.
       await expect(
         rpc.clearArtifactTurnBinding('crashed-A', 'recovery-turn')
@@ -322,7 +324,12 @@ it
           code: 'console.log(globalThis.recoverySentinel)'
         })
       ).toMatchObject({ stdout: '73\n' })
-      expect(await service.execute({ ...scope('crashed-A'), code: 'print(123)' })).toMatchObject({
+      expect(
+        await service.execute({
+          ...scope('crashed-A'),
+          code: 'assert after_recovery == 123; print(123)'
+        })
+      ).toMatchObject({
         status: 'completed'
       })
       expect(
@@ -542,3 +549,97 @@ for (const runtime of ['bash', 'repl', 'python'] as const) {
     60_000
   )
 }
+
+it
+  .skipIf(process.platform !== 'darwin')
+  .each(
+    ['process.kill(process.pid, "SIGKILL")', 'process.exit(17)'].flatMap((code) =>
+      [false, true].map((warm) => ({ code, warm }))
+    )
+  )(
+  'delivers real foreground REPL exit recovery through MCP: $code (warm=$warm)',
+  async ({ code, warm }) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'repl-exit-mcp-live-')))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: join(process.cwd(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      temporaryRoot: join(root, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'repl-exit',
+      repository: new NotebookRunRepository(root),
+      processSandbox: owner
+    })
+    const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      'session',
+      'repl-exit',
+      'root-frame-session'
+    )
+    const mcp = createNotebookMcpServer({
+      ...connection,
+      projectId: 'repl-exit',
+      sessionId: 'session',
+      workspaceCwd: root
+    })
+    const client = new ModelContextProtocolClient({ name: 'real-repl-exit-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await mcp.connect(serverTransport)
+    await client.connect(clientTransport)
+    try {
+      if (warm) {
+        const ready = await client.callTool({
+          name: 'repl_execute',
+          arguments: { code: 'globalThis.beforeExit = 1' }
+        })
+        expect(ready.isError, JSON.stringify(ready)).not.toBe(true)
+      }
+      const response = await client.callTool({ name: 'repl_execute', arguments: { code } })
+      const context = JSON.parse(
+        (response.content as Array<{ type: string; text?: string }>).find(
+          (item) => item.type === 'text'
+        )!.text!
+      )
+      expect(context.recovery, JSON.stringify(context)).toMatchObject({
+        execution: 'may-have-run',
+        retryAfter: 'runtime-ready',
+        kernel: {
+          kind: 'repl',
+          signal: code.includes('kill') ? 'SIGKILL' : null,
+          exitCode: code.includes('kill') ? null : 17,
+          cause: 'unknown',
+          cleanup: 'verified'
+        }
+      })
+      expect(context.recovery.guidance).toContain('no extra restart')
+      expect(
+        (
+          await client.callTool({
+            name: 'repl_execute',
+            arguments: { code: 'globalThis.restored = 42; console.log(restored)' }
+          })
+        ).isError
+      ).not.toBe(true)
+      expect(
+        JSON.stringify(
+          await client.callTool({
+            name: 'repl_execute',
+            arguments: { code: 'console.log(restored)' }
+          })
+        )
+      ).toContain('42')
+    } finally {
+      await client.close()
+      await mcp.close()
+      await rpc.close()
+      await service.dispose()
+      await owner.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  60_000
+)

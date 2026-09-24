@@ -1,7 +1,7 @@
-import { resolveEnvName } from './runtime-paths'
 import { executionRecoveryContext } from './execution-recovery'
 import {
   NotebookExecutionStopError,
+  isNotebookKernelStopResolved,
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
 import { artifactSaveRequestSchema } from '../artifacts/save-request'
@@ -448,7 +448,8 @@ type DelegatedNotebookConnection = NotebookRpcConnection & {
 type BoundArtifactTurn = ActiveArtifactTurnBinding & {
   pendingRequests: Set<Promise<void>>
   stopFailure?: NotebookExecutionStopError
-  kernelStopFailures?: Map<string, NotebookExecutionStopError>
+  // Keep every failure identity: a newer epoch must not hide an older unresolved process.
+  kernelStopFailures?: Set<NotebookExecutionStopError>
 }
 
 type NotebookRpcRequestLifecycle = {
@@ -1594,7 +1595,9 @@ class NotebookLocalRpcServer {
       if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
     }
     if (binding.stopFailure) throw binding.stopFailure
-    const unresolvedKernel = binding.kernelStopFailures?.values().next().value
+    const unresolvedKernel = [...(binding.kernelStopFailures?.values() ?? [])].find(
+      (failure) => !isNotebookKernelStopResolved(failure)
+    )
     if (unresolvedKernel) throw unresolvedKernel
   }
 
@@ -1794,8 +1797,8 @@ class NotebookLocalRpcServer {
         const binding = activeRequest.foregroundTurn.binding
         const kernel = notebookErrorRecovery(error)?.kernel
         if (kernel) {
-          binding.kernelStopFailures ??= new Map()
-          binding.kernelStopFailures.set(`${kernel.kind}:${kernel.environment ?? ''}`, error)
+          binding.kernelStopFailures ??= new Set()
+          binding.kernelStopFailures.add(error)
         } else binding.stopFailure ??= error
       }
     }
@@ -2276,10 +2279,6 @@ class NotebookLocalRpcServer {
       ]
       const dispatchSignal =
         dispatchSignals.length === 1 ? dispatchSignals[0] : AbortSignal.any(dispatchSignals)
-      // Capture identities before awaiting restart. A later failure or replacement Turn must not
-      // be discharged by an earlier recovery that happened to target the same interpreter.
-      const recoveryTurn = method === 'restart' ? activeRequest.foregroundTurn?.binding : undefined
-      const recoveringFailures = new Map(recoveryTurn?.kernelStopFailures)
       const result =
         method === 'capabilitiesCall'
           ? hostCapabilities
@@ -2307,22 +2306,6 @@ class NotebookLocalRpcServer {
                 artifactAdmission?.addBytes
               )
 
-      if (recoveryTurn) {
-        const target =
-          resolvedParams.kernel === 'repl'
-            ? 'repl:'
-            : typeof resolvedParams.language === 'string' &&
-                typeof resolvedParams.environment === 'string'
-              ? `${resolvedParams.language}:${resolveEnvName(resolvedParams.language === 'r' ? 'r' : 'python', resolvedParams.environment)}`
-              : undefined
-        for (const [key, failure] of recoveringFailures) {
-          if (
-            (target === undefined || key === target) &&
-            recoveryTurn.kernelStopFailures?.get(key) === failure
-          )
-            recoveryTurn.kernelStopFailures.delete(key)
-        }
-      }
       writeJson(response, 200, { result })
     } catch (error) {
       recordStopFailure(error)

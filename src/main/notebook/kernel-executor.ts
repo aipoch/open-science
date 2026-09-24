@@ -1,6 +1,7 @@
 import { createLogger } from '../logger'
 import {
   NotebookExecutionStopError,
+  markNotebookKernelExitCleanedUp,
   NotebookKernelExitError,
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
@@ -986,9 +987,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           terminationError.message +=
             kernel.cause === 'os-memory-pressure'
               ? '\nThe operating system killed this process under memory pressure.'
-              : signal === 'SIGKILL'
-                ? '\nThe underlying cause is unconfirmed; SIGKILL alone does not prove memory exhaustion.'
-                : '\nThe underlying cause is unconfirmed.'
+              : '\nExit cause: unknown.'
           terminationError.message += "\nThe exited interpreter's in-memory state was lost."
           if (!result.reaped)
             terminationError.message += '\nProcess-tree cleanup could not be verified.'
@@ -1877,8 +1876,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
         .then((result) => {
           // Keep an unsuccessful teardown as a barrier: neither a replacement kernel nor shutdown
           // may claim that the old process tree is gone merely because the kill attempt settled.
-          if (result.reaped && this.pendingTeardowns.get(proc.key)?.owner === proc) {
-            this.pendingTeardowns.delete(proc.key)
+          if (result.reaped) {
+            markNotebookKernelExitCleanedUp(proc.terminationError)
+            if (this.pendingTeardowns.get(proc.key)?.owner === proc) {
+              this.pendingTeardowns.delete(proc.key)
+            }
           }
           return result
         })

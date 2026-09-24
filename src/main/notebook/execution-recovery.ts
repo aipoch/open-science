@@ -35,7 +35,7 @@ export const executionRecoveryContext = (
   const prerequisite =
     retryAfter === 'cleanup-verified'
       ? 'At failure, cleanup was unverified. The affected runtime can resume after Open-Science verifies cleanup.'
-      : 'The affected runtime must be available before retrying. This result does not establish its current availability.'
+      : 'Check that the affected runtime is available before retrying.'
   const effects =
     execution === 'not-started'
       ? 'This command was not started.'
@@ -48,12 +48,10 @@ export const executionRecoveryContext = (
     const cause =
       kernel.cause === 'os-memory-pressure'
         ? 'OS logs confirm memory pressure; consider reducing memory demand.'
-        : kernel.signal === 'SIGKILL'
-          ? 'The cause is unconfirmed; SIGKILL alone does not establish memory pressure.'
-          : 'The underlying cause of this exit is unconfirmed.'
+        : 'Exit cause: unknown.'
     const recovery =
       kernel.cleanup === 'unverified'
-        ? `At failure, cleanup was unverified. If still unresolved, notebook_restart with ${target} can recheck cleanup for this interpreter.`
+        ? `At failure, cleanup was unverified. If still unresolved, notebook_restart with ${target} can recheck cleanup for this interpreter. A subsequent execution also rechecks cleanup before starting; if it succeeds, preserve its rebuilt state without restarting.`
         : 'Cleanup was verified; no extra restart is needed for this exit.'
     return {
       execution,

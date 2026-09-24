@@ -9,7 +9,11 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import {
+  NotebookExecutionStopError,
+  NotebookKernelExitError,
+  markNotebookKernelExitCleanedUp
+} from '../../shared/notebook-execution-error'
 import {
   NotebookBackgroundRunError,
   type NotebookRunInputFile,
@@ -401,6 +405,124 @@ describe('notebook local RPC server', () => {
         await Promise.all(state.runs.map((run) => service.waitForBackgroundRun(run.runId)))
       }
       connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each([
+    'resolved',
+    'unresolved',
+    'other-interpreter',
+    'newer-epoch',
+    'older-epoch',
+    'other-turn'
+  ] as const)('discharges only owner-verified kernel failures (%s)', async (scenario) => {
+    const root = await createStorageRoot()
+    const exit = (kind: 'repl' | 'python' = 'repl') =>
+      new NotebookKernelExitError('exited', {
+        execution: 'may-have-run',
+        retryAfter: 'cleanup-verified',
+        kernel: {
+          kind,
+          ...(kind === 'python' ? { environment: 'python' } : {}),
+          signal: 'SIGKILL',
+          exitCode: null,
+          cause: 'unknown',
+          cleanup: 'unverified'
+        }
+      })
+    const original = exit()
+    const newer = exit(scenario === 'other-interpreter' ? 'python' : 'repl')
+    let failure: NotebookExecutionStopError | undefined = new NotebookExecutionStopError(
+      'stop failed',
+      { cause: original }
+    )
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => {
+          if (failure) throw failure
+          return {
+            status: 'completed',
+            stdout: '42',
+            stderr: '',
+            traceback: '',
+            outputs: [],
+            cwdAfter: root
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const bind = (id: string) =>
+      server.setArtifactTurnBinding('session-1', {
+        ownerExecutionId: id,
+        projectId: 'default-project',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'branch',
+          runtimeSegmentId: 'runtime',
+          promptMessageId: id
+        }
+      })
+    const call = async (method = 'executeControl') => {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method,
+            params: {
+              sessionId: 'session-1',
+              workspaceCwd: root,
+              ...(method === 'restart' ? { kernel: 'repl' } : { code: '42' })
+            }
+          })
+        },
+        'kernel recovery identity'
+      )
+      return { status: response.status, body: await response.json() }
+    }
+    try {
+      bind('turn-1')
+      expect((await call()).body).toMatchObject({
+        error: { recovery: { kernel: { cleanup: 'unverified' } } }
+      })
+      if (['other-interpreter', 'newer-epoch', 'older-epoch', 'other-turn'].includes(scenario)) {
+        if (scenario === 'other-turn') bind('turn-2')
+        failure = new NotebookExecutionStopError('new failure', { cause: newer })
+        expect((await call()).status).toBe(500)
+      }
+      if (scenario === 'older-epoch') markNotebookKernelExitCleanedUp(newer)
+      else if (scenario !== 'unresolved') markNotebookKernelExitCleanedUp(original)
+      // A successful RPC (even restart) is not proof about an independently owned fault.
+      if (scenario === 'unresolved') expect((await call('restart')).status).toBe(200)
+      failure = undefined
+      expect((await call()).status).toBe(200)
+      const clearing = server.clearArtifactTurnBinding('session-1', 'turn-1')
+      if (scenario === 'resolved' || scenario === 'other-turn')
+        await expect(clearing).resolves.toBeUndefined()
+      else await expect(clearing).rejects.toBeInstanceOf(NotebookExecutionStopError)
+      if (scenario === 'other-turn')
+        await expect(server.clearArtifactTurnBinding('session-1', 'turn-2')).rejects.toMatchObject({
+          cause: newer
+        })
+    } finally {
       await server.close()
       await service.dispose()
     }

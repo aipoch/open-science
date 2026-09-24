@@ -18,7 +18,7 @@ describe('execution recovery context', () => {
     expect(result.kernel).toMatchObject({ signal: 'SIGKILL', cause: 'unknown' })
     expect(result.guidance).not.toContain('notebook_restart')
     expect(result.guidance).toContain('no extra restart is needed for this exit')
-    expect(result.guidance).toContain('cause is unconfirmed')
+    expect(result.guidance).toContain('Exit cause: unknown.')
     expect(result.guidance).toContain('variables')
     expect(result.guidance).not.toContain('report this error to the user')
     expect(result.guidance).not.toContain('out of memory')
@@ -30,7 +30,9 @@ describe('execution recovery context', () => {
       retryAfter: 'runtime-ready'
     })!
     expect(rejected.guidance).toContain('not started')
-    expect(rejected.guidance).toContain('does not establish its current availability')
+    expect(rejected.guidance).toContain(
+      'Check that the affected runtime is available before retrying.'
+    )
     const uncertain = executionRecoveryContext({
       execution: 'may-have-run',
       retryAfter: 'cleanup-verified'
