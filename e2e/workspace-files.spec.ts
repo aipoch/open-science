@@ -399,7 +399,7 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
     await image
       .or(page.getByText(`Sanitized message figure ${index}`, { exact: true }))
       .first()
-      .scrollIntoViewIfNeeded()
+      .evaluate((node) => node.scrollIntoView({ block: 'center' }))
     await expect
       .poll(() =>
         image.evaluate((img: HTMLImageElement) => ({
