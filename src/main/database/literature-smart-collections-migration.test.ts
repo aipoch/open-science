@@ -167,9 +167,50 @@ it('adds empty smart storage while preserving ordinary collections, membership a
   }
 })
 
-it.each(['failed', 'cancelled'] as const)(
-  'backfills a %s automatic pause while adopting the current schema',
-  async (runState) => {
+it.each([
+  {
+    label: 'older failed automatic run',
+    runState: 'failed',
+    pauseReason: 'interrupted',
+    automaticDay: 1,
+    otherDay: 2,
+    expectedRunId: null
+  },
+  {
+    label: 'older cancelled automatic run at the daily limit',
+    runState: 'cancelled',
+    pauseReason: 'daily-limit',
+    automaticDay: 1,
+    otherDay: 2,
+    expectedRunId: null
+  },
+  {
+    label: 'latest failed automatic run',
+    runState: 'failed',
+    pauseReason: 'interrupted',
+    automaticDay: 2,
+    otherDay: 1,
+    expectedRunId: 'automatic-run'
+  },
+  {
+    label: 'latest cancelled automatic run',
+    runState: 'cancelled',
+    pauseReason: 'daily-limit',
+    automaticDay: 2,
+    otherDay: 1,
+    expectedRunId: 'automatic-run'
+  },
+  {
+    label: 'runs with identical creation times',
+    runState: 'cancelled',
+    pauseReason: 'daily-limit',
+    automaticDay: 1,
+    otherDay: 1,
+    expectedRunId: null
+  }
+] as const)(
+  'keeps pause ownership conservative for $label while adopting the current schema',
+  async ({ runState, pauseReason, automaticDay, otherDay, expectedRunId }) => {
     const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
     const client = createProjectDbClient(root)
     try {
@@ -183,7 +224,7 @@ it.each(['failed', 'cancelled'] as const)(
             create: {
               scopeKind: 'library',
               autoUpdate: true,
-              automaticPauseReason: 'interrupted'
+              automaticPauseReason: pauseReason
             }
           }
         }
@@ -207,15 +248,17 @@ it.each(['failed', 'cancelled'] as const)(
             kind: 'refresh',
             state: runState,
             ruleRevision: 1,
-            policyKey: 'fixture'
+            policyKey: 'fixture',
+            createdAt: new Date(`2025-01-0${automaticDay}T00:00:00.000Z`)
           },
           {
-            id: 'manual-run',
+            id: 'unattributed-run',
             collectionId: 'paused',
             kind: 'refresh',
             state: 'interrupted',
             ruleRevision: 1,
-            policyKey: 'fixture'
+            policyKey: 'fixture',
+            createdAt: new Date(`2025-01-0${otherDay}T00:00:00.000Z`)
           }
         ]
       })
@@ -242,7 +285,7 @@ it.each(['failed', 'cancelled'] as const)(
 
       await expect(
         client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
-      ).resolves.toMatchObject({ automaticPauseRunId: 'automatic-run' })
+      ).resolves.toMatchObject({ automaticPauseRunId: expectedRunId })
     } finally {
       await client.$disconnect()
       await rm(root, { recursive: true, force: true })

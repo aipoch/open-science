@@ -1,4 +1,4 @@
-/* Associate a durable automatic pause with the run that created it. */
+/* Backfill only a uniquely latest run; older usage cannot prove ownership of the current pause. */
 const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollection"
      SET "automaticPauseRunId" = (
        SELECT candidate.id
@@ -6,6 +6,13 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
        WHERE candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
          AND (candidate."state" IN ('cancelled', 'interrupted')
            OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND candidate."state" = 'failed'))
+         AND NOT EXISTS (
+           SELECT 1
+           FROM "LiteratureSmartRun" other
+           WHERE other."collectionId" = candidate."collectionId"
+             AND other.id != candidate.id
+             AND other."createdAt" >= candidate."createdAt"
+         )
          AND (
            (
              EXISTS (

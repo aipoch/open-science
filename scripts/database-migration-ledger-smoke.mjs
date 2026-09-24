@@ -183,7 +183,7 @@ const EXPECTED_MIGRATION_LEDGER = [
   },
   {
     id: '0045_literature_smart_pause_run',
-    checksum: '9e8e7241079497d2e713cdb383f9354295673f634a09e15fc9d31a9fb6146cbc'
+    checksum: 'f056cd5f73d8354866226f22112a74590cb465ab600e53ff2b4d5eeda4cd63b3'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'
