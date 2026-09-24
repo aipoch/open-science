@@ -167,82 +167,85 @@ it('adds empty smart storage while preserving ordinary collections, membership a
   }
 })
 
-it('backfills an automatic pause while adopting the current schema', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
-  const client = createProjectDbClient(root)
-  try {
-    await migrateApplicationDatabase(client)
-    await client.literatureCollection.create({
-      data: {
-        id: 'paused',
-        name: 'Paused',
-        nameKey: 'paused',
-        smart: {
-          create: {
-            scopeKind: 'library',
-            autoUpdate: true,
-            automaticPauseReason: 'interrupted'
+it.each(['failed', 'cancelled'] as const)(
+  'backfills a %s automatic pause while adopting the current schema',
+  async (runState) => {
+    const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      await client.literatureCollection.create({
+        data: {
+          id: 'paused',
+          name: 'Paused',
+          nameKey: 'paused',
+          smart: {
+            create: {
+              scopeKind: 'library',
+              autoUpdate: true,
+              automaticPauseReason: 'interrupted'
+            }
           }
         }
-      }
-    })
-    await client.literatureSmartRuleRevision.create({
-      data: {
-        collectionId: 'paused',
-        revision: 1,
-        description: '',
-        inclusionCriteria: 'Trials',
-        exclusionCriteria: '',
-        scopeKind: 'library',
-        evidenceMode: 'abstract'
-      }
-    })
-    await client.literatureSmartRun.createMany({
-      data: [
-        {
-          id: 'automatic-run',
+      })
+      await client.literatureSmartRuleRevision.create({
+        data: {
           collectionId: 'paused',
-          kind: 'refresh',
-          state: 'failed',
-          ruleRevision: 1,
-          policyKey: 'fixture'
-        },
-        {
-          id: 'manual-run',
-          collectionId: 'paused',
-          kind: 'refresh',
-          state: 'interrupted',
-          ruleRevision: 1,
-          policyKey: 'fixture'
+          revision: 1,
+          description: '',
+          inclusionCriteria: 'Trials',
+          exclusionCriteria: '',
+          scopeKind: 'library',
+          evidenceMode: 'abstract'
         }
-      ]
-    })
-    await client.classificationUsage.create({
-      data: {
-        eventId: 'automatic-usage',
-        collectionId: 'paused',
-        runId: 'automatic-run',
-        scenario: 'literature-automatic',
-        providerId: 'fixture',
-        model: 'fixture',
-        occurredAt: new Date(),
-        status: 'completed',
-        inputTokens: 1n,
-        outputTokens: 1n,
-        usageIncomplete: false
-      }
-    })
-    await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
-    )
+      })
+      await client.literatureSmartRun.createMany({
+        data: [
+          {
+            id: 'automatic-run',
+            collectionId: 'paused',
+            kind: 'refresh',
+            state: runState,
+            ruleRevision: 1,
+            policyKey: 'fixture'
+          },
+          {
+            id: 'manual-run',
+            collectionId: 'paused',
+            kind: 'refresh',
+            state: 'interrupted',
+            ruleRevision: 1,
+            policyKey: 'fixture'
+          }
+        ]
+      })
+      await client.classificationUsage.create({
+        data: {
+          eventId: 'automatic-usage',
+          collectionId: 'paused',
+          runId: 'automatic-run',
+          scenario: 'literature-automatic',
+          providerId: 'fixture',
+          model: 'fixture',
+          occurredAt: new Date(),
+          status: 'completed',
+          inputTokens: 1n,
+          outputTokens: 1n,
+          usageIncomplete: false
+        }
+      })
+      await client.$executeRawUnsafe(
+        `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
+      )
 
-    await migrateApplicationDatabase(client)
+      await migrateApplicationDatabase(client)
 
-    await expect(
-      client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
-    ).resolves.toMatchObject({ automaticPauseRunId: 'automatic-run' })
-  } finally {
-    await client.$disconnect()
-    await rm(root, { recursive: true, force: true })
+      await expect(
+        client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
+      ).resolves.toMatchObject({ automaticPauseRunId: 'automatic-run' })
+    } finally {
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
   }
-})
+)

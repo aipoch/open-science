@@ -705,8 +705,8 @@ export class LiteratureSmartCollections {
                 in:
                   definition.automaticPauseReason === 'storage-error' ||
                   definition.automaticPauseReason === 'interrupted'
-                    ? ['interrupted', 'failed']
-                    : ['interrupted']
+                    ? ['cancelled', 'interrupted', 'failed']
+                    : ['cancelled', 'interrupted']
               }
             },
             select: { id: true },

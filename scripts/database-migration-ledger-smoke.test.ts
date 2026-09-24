@@ -205,7 +205,7 @@ describe('packaged database migration ledger smoke', () => {
       },
       {
         id: '0045_literature_smart_pause_run',
-        checksum: 'd71c45fa4e7cb55d6786efa5fe9b0c7794054f4a9bec936b2135f0d63c10f67b'
+        checksum: '9e8e7241079497d2e713cdb383f9354295673f634a09e15fc9d31a9fb6146cbc'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()

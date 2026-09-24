@@ -4,7 +4,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
        SELECT candidate.id
        FROM "LiteratureSmartRun" candidate
        WHERE candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
-         AND (candidate."state" = 'interrupted'
+         AND (candidate."state" IN ('cancelled', 'interrupted')
            OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND candidate."state" = 'failed'))
          AND (
            (
@@ -18,7 +18,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
                SELECT COUNT(*)
                FROM "LiteratureSmartRun" automatic_candidate
                WHERE automatic_candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
-                 AND (automatic_candidate."state" = 'interrupted'
+                 AND (automatic_candidate."state" IN ('cancelled', 'interrupted')
                    OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND automatic_candidate."state" = 'failed'))
                  AND EXISTS (
                    SELECT 1
@@ -33,7 +33,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
                SELECT 1
                FROM "LiteratureSmartRun" automatic_candidate
                WHERE automatic_candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
-                 AND (automatic_candidate."state" = 'interrupted'
+                 AND (automatic_candidate."state" IN ('cancelled', 'interrupted')
                    OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND automatic_candidate."state" = 'failed'))
                  AND EXISTS (
                    SELECT 1
@@ -46,7 +46,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
                SELECT COUNT(*)
                FROM "LiteratureSmartRun" same_collection
                WHERE same_collection."collectionId" = "LiteratureSmartCollection"."collectionId"
-                 AND (same_collection."state" = 'interrupted'
+                 AND (same_collection."state" IN ('cancelled', 'interrupted')
                    OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND same_collection."state" = 'failed'))
              ) = 1
            )

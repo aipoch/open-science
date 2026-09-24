@@ -3043,7 +3043,7 @@ it('clears an ambiguous automatic pause before starting a fresh run', async () =
     where: { collectionId: id },
     data: { state: 'interrupted' }
   })
-  await db.literatureSmartRun.update({ where: { id: runs[0].id }, data: { state: 'failed' } })
+  await db.literatureSmartRun.update({ where: { id: runs[0].id }, data: { state: 'cancelled' } })
   await db.literatureSmartCollection.update({
     where: { collectionId: id },
     data: { autoUpdate: true, automaticPauseReason: 'interrupted', automaticPauseRunId: null }
