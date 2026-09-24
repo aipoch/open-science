@@ -594,7 +594,7 @@ export function SmartCollectionPanel({
             }}
           >
             <div className="flex items-center gap-2">
-              {view?.configured && updateControl}
+              {(view?.configured || stopped) && updateControl}
               <div inert={active || undefined} className="flex items-center gap-2">
                 {(!empty || view?.configured) && searchActions}
                 <MoreActions />

@@ -598,6 +598,36 @@ it.each(['interrupted', 'cancelled'] as const)(
   }
 )
 
+it('allows abandoning an interrupted manual run when the model is no longer configured', async () => {
+  view = {
+    ...view,
+    run: {
+      id: 'interrupted-run',
+      kind: 'refresh',
+      state: 'interrupted',
+      done: 1,
+      total: 2,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  expect(await screen.findByRole('button', { name: 'Configure classification model' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Resume analysis' }).hasAttribute('disabled')).toBe(
+    true
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Abandon run' }))
+  await screen.findByRole('alertdialog')
+  fireEvent.click(screen.getAllByRole('button', { name: 'Abandon run' }).at(-1)!)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'abandon', runId: 'interrupted-run' })
+    )
+  )
+})
+
 it.each(['cancelled', 'interrupted'] as const)(
   'resumes %s analysis and offers re-analysis when its checkpoint is invalid',
   async (state) => {
