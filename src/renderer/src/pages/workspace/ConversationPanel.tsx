@@ -447,6 +447,30 @@ type ConversationPanelProps = {
   subagents: ConversationPanelSubagents
 }
 
+const DismissibleConversationError = ({
+  children
+}: {
+  children: React.ReactNode
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const [dismissed, setDismissed] = useState(false)
+  if (dismissed) return null
+
+  return (
+    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label={t('Dismiss error')}
+        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-red-900/40"
+      >
+        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+      </button>
+      {children}
+    </div>
+  )
+}
+
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
   view,
@@ -672,7 +696,6 @@ const ConversationPanel = ({
     () => new Map<string, StopSubmissionState>()
   )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
-  const [dismissedErrorKey, setDismissedErrorKey] = useState<string | null>(null)
   const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -1378,17 +1401,8 @@ const ConversationPanel = ({
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : (resolvedActionError || activeSession?.status === 'error') &&
-                  dismissedErrorKey !== errorKey ? (
-                  <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-                    <button
-                      type="button"
-                      onClick={() => setDismissedErrorKey(errorKey)}
-                      aria-label={t('Dismiss error')}
-                      className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-red-900/40"
-                    >
-                      <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                    </button>
+                ) : resolvedActionError || activeSession?.status === 'error' ? (
+                  <DismissibleConversationError key={errorKey}>
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
                     {resolvedActionError ? (
@@ -1449,7 +1463,7 @@ const ConversationPanel = ({
                         </button>
                       </div>
                     ) : null}
-                  </div>
+                  </DismissibleConversationError>
                 ) : null}
 
                 {settingsLoaded ? (

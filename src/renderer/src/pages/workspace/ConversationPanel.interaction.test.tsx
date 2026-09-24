@@ -6742,16 +6742,23 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).not.toBeNull()
   })
 
-  it('dismisses a transient action error', () => {
+  it('shows a repeated transient action error after the dismissed one clears', () => {
+    const idleSession = { ...errorSession, status: 'idle' as const, error: undefined }
     renderPanel({
       view: {
-        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        activeSession: idleSession,
         actionError: 'Could not send message'
       }
     })
 
     act(() => container.querySelector<HTMLButtonElement>('[aria-label="Dismiss error"]')?.click())
     expect(errorBoxText()).toBe('')
+
+    renderPanel({ view: { activeSession: idleSession, actionError: null } })
+    renderPanel({
+      view: { activeSession: idleSession, actionError: 'Could not send message' }
+    })
+    expect(errorBoxText()).toContain('Could not send message')
   })
 
   it('renders the error box for a failed run even when it has no error text', () => {
