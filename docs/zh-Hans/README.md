@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，�
 
 AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.33.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.33.0 带来了筛选级的文献甄别：智能文献合集会依据你的纳入与排除标准评估参考文献，提供已纳入 / 待复核 / 已排除状态、PDF 证据，以及可选开启的自动更新。研究包现在会嵌入 RO-Crate 元数据（新导出的包需要支持 ro-crate 能力的读取器；现有包仍可读取），连接器家族也随 Zenodo 公共记录发现、GDC 项目与文件元数据以及 UniProt 批量标识符映射而壮大。按智能体的资源访问控制把主智能体与专家的技能和连接器权限集中到一处；会话新增本地诊断导出；模型服务商目录随 Xiaomi MiMo v2.6、Grok 4.7 以及 Zen 和 Go 的当前一代模型得到刷新。Notebook 的环境与恢复通知现在可以关闭，Windows 包重置会清除只读属性，Linux 包内置 Fedora 查询引擎，而设有上限的词元估算让流式输出保持响应。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.33.1 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.33.1 带来支持暂停与恢复的实时智能文献筛选、三个新的研究连接器——HMMER 序列搜索、InterProScan 结构域注释和 Clustal Omega 多序列比对——以及服务商目录中的 GPT-6 与 Claude Opus 5.5。PDF 证据现在可以随工作区对话的第一条消息一同发送；在你选择加入后，会话诊断还可以包含敏感的包证据。Windows 托管 Python 运行时已恢复，Notebook 与计算保存竞争可干净恢复，视觉能力变化时代理桥接会自动重连。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
