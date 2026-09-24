@@ -119,6 +119,8 @@ describe('ContextUsageTracker', () => {
     expect(tokenizerProfileFor('claude-code', undefined)).toBe('anthropic')
     expect(tokenizerProfileFor('claude-code', 'deepseek-v4-flash')).toBe('cl100k_base')
     expect(tokenizerProfileFor('claude-code', 'gpt-5.6-sol')).toBe('o200k_base')
+    expect(tokenizerProfileFor('claude-code', 'gpt-6-sol')).toBe('o200k_base')
+    expect(tokenizerProfileFor('claude-code', 'gpt-6-luna')).toBe('o200k_base')
     expect(tokenizerProfileFor('opencode', 'claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('opencode', 'anthropic/claude-sonnet-4-5')).toBe('anthropic')
     expect(tokenizerProfileFor('codex', 'gpt-5.6-sol')).toBe('o200k_base')

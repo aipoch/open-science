@@ -14,6 +14,7 @@ import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
 import { GDC_TOOLS } from './descriptors/gdc'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
+import { HMMER_TOOLS } from './descriptors/hmmer'
 import { INTERPROSCAN_TOOLS } from './descriptors/interproscan'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { MOLECULE_TOOLS } from './descriptors/molecule'
@@ -44,6 +45,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...GENOMES_TOOLS,
   ...GDC_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
+  ...HMMER_TOOLS,
   ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
   ...MOLECULE_TOOLS,

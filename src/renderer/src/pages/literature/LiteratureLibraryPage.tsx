@@ -16,6 +16,7 @@ import {
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 import type { SmartCollectionView } from '../../../../shared/literature-smart-collections'
 import { SmartCollectionPanel } from './SmartCollectionPanel'
+import { SmartCollectionProcess } from './SmartCollectionProcess'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import {
   createBookmarkPreviewItem,
@@ -1681,6 +1682,9 @@ const LiteratureItemRow = memo(function LiteratureItemRow({
   )
 })
 
+// Keep unrelated library updates outside the preview subtree.
+const LiteratureFilePreviewDialog = memo(FilePreviewDialog)
+
 const LiteratureLibraryPage = (): React.JSX.Element => {
   const { i18n, t } = useTranslation()
   const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
@@ -1721,13 +1725,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () => window.sessionStorage.getItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY) !== 'true'
   )
   const [collectionId, setCollectionId] = useState<string>()
+  const [screeningCollection, setScreeningCollection] = useState<string>()
+  const [screeningStartingCollection, setScreeningStartingCollection] = useState<string>()
+  const screeningOpen = Boolean(collectionId && screeningCollection === collectionId)
   const smartState = useMemo(() => createSmartCollectionState(collectionId), [collectionId])
   const smartView = useSyncExternalStore(smartState.subscribe, smartState.getSettledSnapshot)
+  const screeningBackButton = useRef<HTMLButtonElement>(null)
+  const screeningResults = useRef<HTMLDivElement>(null)
+  const restoreScreeningFocus = useRef(false)
+  useLayoutEffect(() => {
+    if (screeningOpen) screeningBackButton.current?.focus()
+    else if (restoreScreeningFocus.current) {
+      restoreScreeningFocus.current = false
+      screeningResults.current?.focus()
+    }
+  }, [screeningOpen])
   const pendingDecisionsRef = useRef(new Set<string>())
   const [pendingDecisions, setPendingDecisions] = useState<Set<string>>(new Set())
   const decisionQueue = useRef(Promise.resolve())
   const currentSmartState = useRef(smartState)
   useLayoutEffect(() => {
+    if (currentSmartState.current !== smartState) {
+      setScreeningCollection(undefined)
+      setScreeningStartingCollection(undefined)
+    }
     currentSmartState.current = smartState
   }, [smartState])
   const [decisionFailures, setDecisionFailures] = useState<
@@ -2565,15 +2586,35 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
-  const updateMetadataItem = (updated: LiteratureItemView): void => {
+  const updateMetadataItem = useCallback(
+    (updated: LiteratureItemView): void => {
+      const current = detailController.getSnapshot().item
+      const latest =
+        current?.id === updated.id && current.metadataRevision > updated.metadataRevision
+          ? current
+          : updated
+      void refreshItems([updated.id], [latest])
+      setDuplicatesRevision((value) => value + 1)
+    },
+    [detailController, refreshItems]
+  )
+
+  const focusPreviewFallback = useCallback(() => libraryEntryRef.current?.focus(), [])
+  const closeFilePreview = useCallback((): void => {
+    setPreviewItem(undefined)
+    setAnnotationToReveal(undefined)
     const current = detailController.getSnapshot().item
-    const latest =
-      current?.id === updated.id && current.metadataRevision > updated.metadataRevision
-        ? current
-        : updated
-    void refreshItems([updated.id], [latest])
-    setDuplicatesRevision((value) => value + 1)
-  }
+    if (current)
+      void window.api.literature
+        .get(current.id)
+        .then((updated) => {
+          if (!updated) return
+          if (detailController.getSnapshot().item?.id === updated.id)
+            detailController.replace(updated)
+          updateMetadataItem(updated)
+        })
+        .catch(() => undefined)
+  }, [detailController, updateMetadataItem])
   const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
   const { changeMode: changeDetailMode } = metadata
   const detailModeRef = useRef(metadata.mode)
@@ -2676,13 +2717,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
       if (view) {
         collectionsGenerationRef.current++
-        setCollections((current) =>
-          current.map((collection) =>
-            collection.id === collectionId && collection.itemCount !== view.counts.match
-              ? { ...collection, itemCount: view.counts.match }
-              : collection
-          )
-        )
+        setCollections((current) => {
+          const index = current.findIndex((collection) => collection.id === collectionId)
+          if (index < 0 || current[index].itemCount === view.counts.match) return current
+          const next = [...current]
+          next[index] = { ...current[index], itemCount: view.counts.match }
+          return next
+        })
       }
       if (smartResultSnapshot.current === collectionId) {
         smartResultSnapshot.current = undefined
@@ -4242,64 +4283,73 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }
 
-  const requestReadWithAgent = (item: PreviewFileItem): void => {
-    setReadingSelectionEntries(undefined)
-    const source = resolvePdfContextTarget(item)
-    if (!source) return
-    setPreviewItem(undefined)
-    setReadingProjectError(undefined)
-    const reading = [{ item, source }]
-    if (selectedProject) {
-      void startReadingInProject(selectedProject.id, reading)
-      return
-    }
-    setReadingProjectQuery('')
-    setPendingLiteratureReading(reading)
-  }
-
-  const startReadingInProject = async (
-    targetProjectId: string,
-    reading = pendingLiteratureReading
-  ): Promise<void> => {
-    if (!reading || startingReadingProjectId) return
-    setStartingReadingProjectId(targetProjectId)
-    setReadingProjectError(undefined)
-    try {
-      const result = await window.api.sessions.filterPdfContextCandidates({
-        projectId: targetProjectId,
-        sources: reading.map(({ source }) => source)
-      })
-      const eligible = reading.every(({ source: requested }) =>
-        result.sources.some(
-          (source) =>
-            source.sourceKind === requested.sourceKind &&
-            source.sourceVersionId === requested.sourceVersionId
+  const startReadingInProject = useCallback(
+    async (targetProjectId: string, reading = pendingLiteratureReading): Promise<void> => {
+      if (!reading || startingReadingProjectId) return
+      setStartingReadingProjectId(targetProjectId)
+      setReadingProjectError(undefined)
+      try {
+        const result = await window.api.sessions.filterPdfContextCandidates({
+          projectId: targetProjectId,
+          sources: reading.map(({ source }) => source)
+        })
+        const eligible = reading.every(({ source: requested }) =>
+          result.sources.some(
+            (source) =>
+              source.sourceKind === requested.sourceKind &&
+              source.sourceVersionId === requested.sourceVersionId
+          )
         )
-      )
-      if (!eligible) {
+        if (!eligible) {
+          setPendingLiteratureReading(reading)
+          setReadingProjectError(
+            reading.length > 1
+              ? t('Some selected PDFs cannot be read. Review your selection.')
+              : t('No multi-page PDFs available')
+          )
+          return
+        }
+        const opened =
+          reading.length === 1
+            ? startPdfReadingConversation(targetProjectId, reading[0].item, reading[0].source)
+            : startPdfReadingConversations(targetProjectId, reading)
+        if (opened) {
+          setPendingLiteratureReading(undefined)
+          setReadingSelectionEntries(undefined)
+        }
+      } catch {
         setPendingLiteratureReading(reading)
-        setReadingProjectError(
-          reading.length > 1
-            ? t('Some selected PDFs cannot be read. Review your selection.')
-            : t('No multi-page PDFs available')
-        )
+        setReadingProjectError(t('No multi-page PDFs available'))
+      } finally {
+        setStartingReadingProjectId(undefined)
+      }
+    },
+    [
+      pendingLiteratureReading,
+      startingReadingProjectId,
+      startPdfReadingConversation,
+      startPdfReadingConversations,
+      t
+    ]
+  )
+
+  const requestReadWithAgent = useCallback(
+    (item: PreviewFileItem): void => {
+      setReadingSelectionEntries(undefined)
+      const source = resolvePdfContextTarget(item)
+      if (!source) return
+      setPreviewItem(undefined)
+      setReadingProjectError(undefined)
+      const reading = [{ item, source }]
+      if (selectedProject?.id) {
+        void startReadingInProject(selectedProject.id, reading)
         return
       }
-      const opened =
-        reading.length === 1
-          ? startPdfReadingConversation(targetProjectId, reading[0].item, reading[0].source)
-          : startPdfReadingConversations(targetProjectId, reading)
-      if (opened) {
-        setPendingLiteratureReading(undefined)
-        setReadingSelectionEntries(undefined)
-      }
-    } catch {
+      setReadingProjectQuery('')
       setPendingLiteratureReading(reading)
-      setReadingProjectError(t('No multi-page PDFs available'))
-    } finally {
-      setStartingReadingProjectId(undefined)
-    }
-  }
+    },
+    [selectedProject?.id, startReadingInProject]
+  )
 
   const readingProjectFormDialog = useProjectFormDialog({
     onCreated: (project) => void startReadingInProject(project.id)
@@ -5377,16 +5427,29 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     : undefined
                 }
 
+                onRunPendingChange={(pending) => {
+                  if (currentSmartState.current !== smartState) return
+                  if (pending) {
+                    setScreeningStartingCollection(selectedCollection.id)
+                    setScreeningCollection(selectedCollection.id)
+                  } else {
+                    setScreeningStartingCollection((current) =>
+                      current === selectedCollection.id ? undefined : current
+                    )
+                  }
+                }}
+                onOpenProcess={() => setScreeningCollection(selectedCollection.id)}
+                processOpen={screeningOpen}
                 onExport={exportCurrentScope}
                 exportDisabled={entriesLoading || selectedCollection.itemCount === 0}
                 searchActions={
-                  <>
+                  <div className={screeningOpen ? 'hidden' : 'contents'}>
                     <LiteratureSearchInput
                       initialValue={query}
                       onCommit={setQuery}
                       onDraftChange={clearSelection}
                     />
-                  </>
+                  </div>
                 }
                 decisionPending={pendingDecisions.size > 0}
                 singleReevaluation={singleReevaluation?.collectionId === selectedCollection.id}
@@ -5411,7 +5474,41 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               />
             )}
 
-            <div className="flex min-h-0 flex-1 flex-col">
+            {selectedCollection?.smart && screeningOpen && (
+              <div data-slot="smart-screening-view" className="flex min-h-0 flex-1 flex-col">
+                <div className="mt-4 border-b border-border pb-2">
+                  <Button
+                    ref={screeningBackButton}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      restoreScreeningFocus.current = true
+                      setScreeningCollection(undefined)
+                    }}
+                  >
+                    <ArrowLeft className="size-4" aria-hidden="true" />
+                    {t('Back to results')}
+                  </Button>
+                </div>
+                <SmartCollectionProcess
+                  key={selectedCollection.id}
+                  collectionId={selectedCollection.id}
+                  starting={screeningStartingCollection === selectedCollection.id}
+                  state={smartState}
+                />
+              </div>
+            )}
+            <div
+              ref={screeningResults}
+              role={selectedCollection?.smart ? 'region' : undefined}
+              aria-label={selectedCollection?.smart ? t('Results') : undefined}
+              tabIndex={-1}
+              className={
+                selectedCollection?.smart && screeningOpen
+                  ? 'hidden'
+                  : 'flex min-h-0 flex-1 flex-col'
+              }
+            >
               <div className="flex min-h-0 flex-1 flex-col">
                 {decisionFailures.map((failure) => (
                   <LiteratureErrorNotice
@@ -8320,26 +8417,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           />
         ) : null}
         <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
-        <FilePreviewDialog
-          onFocusFallback={() => libraryEntryRef.current?.focus()}
+        <LiteratureFilePreviewDialog
+          onFocusFallback={focusPreviewFallback}
           item={previewItem}
           allowReadingContext={false}
           onReadWithAgent={requestReadWithAgent}
-          onClose={() => {
-            setPreviewItem(undefined)
-            setAnnotationToReveal(undefined)
-            const current = detailController.getSnapshot().item
-            if (current)
-              void window.api.literature
-                .get(current.id)
-                .then((updated) => {
-                  if (!updated) return
-                  if (detailController.getSnapshot().item?.id === updated.id)
-                    detailController.replace(updated)
-                  updateMetadataItem(updated)
-                })
-                .catch(() => undefined)
-          }}
+          onClose={closeFilePreview}
         />
       </main>
     </SmartDecisionPendingContext.Provider>

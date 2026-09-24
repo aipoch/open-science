@@ -31,6 +31,9 @@ export function connectorDescription(
       'Omics data archives — expression (ArrayExpress, GEO), sequencing reads (ENA), metabolomics (MetaboLights), metagenomics (MGnify) and proteomics (PRIDE).'
     )
   }
+  if (connector.id === 'hmmer') {
+    return t('HMMER protein-family scans and remote-homology searches via EMBL-EBI.')
+  }
   return connector.id === 'literature'
     ? t('Literature and research data via OpenAlex, arXiv, Crossref and DataCite.')
     : connector.description
@@ -43,6 +46,14 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
     case 'interproscan/results':
       return t(
         'Retrieve the complete TSV report for a finished InterProScan job. Results expire at the service.'
+      )
+    case 'hmmer/search':
+      return t('Submit an asynchronous HMMER3 search and retain the returned job ID.')
+    case 'hmmer/status':
+      return t('Check one HMMER job without polling or resubmitting.')
+    case 'hmmer/results':
+      return t(
+        'Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.'
       )
 
     case 'zenodo/search_records':

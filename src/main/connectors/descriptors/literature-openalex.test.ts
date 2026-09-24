@@ -15,10 +15,11 @@ const tool = (id: string): (typeof OPENALEX_LITERATURE_TOOLS)[number] => {
 const run = (
   id: string,
   args: Record<string, unknown>,
-  fetchImpl: ReturnType<typeof vi.fn>
+  fetchImpl: ReturnType<typeof vi.fn>,
+  openAlexApiKey: string | null = 'OPENALEX_KEY'
 ): Promise<unknown> =>
   new ParserEngine({ fetchImpl: fetchImpl as unknown as typeof fetch }).call(tool(id), args, {
-    openAlexApiKey: 'OPENALEX_KEY'
+    ...(openAlexApiKey ? { openAlexApiKey } : {})
   })
 
 // A representative full work object; helpers pick the fields they need.
@@ -66,9 +67,9 @@ const workW1 = {
 }
 
 describe('openalex_search_works', () => {
-  it('declares the credential requirement and attaches the key only at the OpenAlex fetch seam', async () => {
+  it('treats the credential as optional and attaches it only when configured', async () => {
     expect(
-      OPENALEX_LITERATURE_TOOLS.every((descriptor) => descriptor.requiredCredential === 'openalex')
+      OPENALEX_LITERATURE_TOOLS.every((descriptor) => descriptor.requiredCredential === undefined)
     ).toBe(true)
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
 
@@ -77,6 +78,14 @@ describe('openalex_search_works', () => {
     const url = new URL(String(fetchImpl.mock.calls[0][0]))
     expect(url.origin).toBe('https://api.openalex.org')
     expect(url.searchParams.get('api_key')).toBe('OPENALEX_KEY')
+  })
+
+  it('sends anonymous requests without opening a credential gate', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
+
+    await run('openalex_search_works', { query: 'anonymous test', max_records: 1 }, fetchImpl, null)
+
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.has('api_key')).toBe(false)
   })
 
   it('assembles year/type/oa filters, maps sort, paginates with cap and lean records', async () => {

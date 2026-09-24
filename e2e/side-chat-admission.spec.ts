@@ -68,6 +68,11 @@ test('keeps Side chat across renderer reload but discards it on application rest
   await page.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
   const sideReply = 'Deterministic reply: Discuss alternatives without approving main.'
   await expect(page.getByText(sideReply, { exact: false })).toBeVisible()
+  // The reply text can paint before the independent runtime clears its running state. Let the
+  // side-chat process finish before reloading and exercising the application restart path.
+  await expect(
+    page.getByRole('button', { name: 'Send Side chat follow up', exact: true })
+  ).toBeVisible({ timeout: 60_000 })
   await page.reload()
   await page.getByRole('button', { name: 'Ephemeral side chat regression', exact: true }).click()
   await expect(page.getByText(sideReply, { exact: false })).toBeVisible()

@@ -9,6 +9,61 @@ import {
 import { CONNECTOR_CATALOG } from './catalog'
 
 describe('registry + catalog', () => {
+  it('registers HMMER search, status and results with the Pfam hmmscan constraint', () => {
+    expect(getConnectorTools('hmmer').map((tool) => tool.id)).toEqual([
+      'search',
+      'status',
+      'results'
+    ])
+    expect(() =>
+      validateToolArguments(getDescriptor('hmmer', 'search')!, {
+        program: 'hmmscan',
+        database: 'pfam',
+        input: 'MKT'
+      })
+    ).not.toThrow()
+    expect(() =>
+      validateToolArguments(getDescriptor('hmmer', 'search')!, {
+        program: 'hmmscan',
+        database: 'uniprot',
+        input: 'MKT'
+      })
+    ).toThrow(/invalid_arguments/)
+    expect(() =>
+      validateToolArguments(getDescriptor('hmmer', 'search')!, {
+        program: 'hmmscan',
+        database: 'pfam',
+        input: 'MKT',
+        cut_ga: true
+      })
+    ).toThrow(/invalid_arguments/)
+    expect(() =>
+      validateToolArguments(getDescriptor('hmmer', 'search')!, {
+        program: 'phmmer',
+        database: 'pdb',
+        input: 'MKT',
+        nobias: true
+      })
+    ).toThrow(/invalid_arguments/)
+    expect(() =>
+      validateToolArguments(getDescriptor('hmmer', 'search')!, {
+        program: 'phmmer',
+        database: 'pdb',
+        input: 'MKT',
+        iterations: 2
+      })
+    ).toThrow(/invalid_arguments/)
+    expect(() =>
+      validateToolArguments(getDescriptor('hmmer', 'search')!, {
+        program: 'jackhmmer',
+        database: 'pdb',
+        input: 'MKT',
+        popen: 0.4999995,
+        pextend: 0.9999995
+      })
+    ).not.toThrow()
+  })
+
   it('registers InterProScan separately and validates its bounded input contract', () => {
     expect(getConnectorTools('interproscan').map((tool) => tool.id)).toEqual(['status', 'results'])
     expect(getDescriptor('protein-annotation', 'submit')).toBeUndefined()

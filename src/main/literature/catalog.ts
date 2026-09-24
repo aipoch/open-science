@@ -1720,6 +1720,7 @@ class LiteratureCatalog {
 
   async transact(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
     if (
+      command.kind === 'read-smart-run-progress' ||
       command.kind === 'read-smart-history' ||
       command.kind === 'read-smart-decisions' ||
       command.kind === 'create-smart-collection' ||
@@ -1861,6 +1862,7 @@ class LiteratureCatalog {
         return this.settleCandidates(command)
       case 'restore-candidates':
         return this.restoreCandidates(command.candidateIds)
+      case 'read-smart-run-progress':
       case 'read-smart-history':
       case 'read-smart-decisions':
       case 'preview-smart-collection':

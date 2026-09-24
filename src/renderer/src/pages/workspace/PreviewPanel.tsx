@@ -1,6 +1,6 @@
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
-import { BookOpen, File, FolderOpen, Globe2, X } from 'lucide-react'
+import { BookOpen, FolderOpen, Globe2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -22,6 +22,7 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { FileTypeIcon } from './file-type-icon'
 import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'
 import {
   createPreviewTabActionBindings,
@@ -98,7 +99,7 @@ const PreviewActiveContent = ({
 }
 
 const previewTabClassName =
-  'group flex h-8 max-w-[160px] shrink-0 items-center gap-1 rounded-md pl-2 pr-1 text-[12px] transition-colors'
+  'group flex h-8 max-w-[160px] shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1 text-[12px] transition-colors'
 
 const getPreviewTabId = (itemId: string): string => `preview-tab-${encodeURIComponent(itemId)}`
 const getPreviewPanelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
@@ -365,7 +366,7 @@ const PreviewTab = ({
           title={tabTitle}
         >
           {tab.type === 'file' ? (
-            <File className="size-3.5 shrink-0" aria-hidden="true" />
+            <FileTypeIcon name={tab.name} mimeType={tab.mimeType} />
           ) : tab.type === 'source' ? (
             <Globe2
               data-source-preview-tab-icon=""

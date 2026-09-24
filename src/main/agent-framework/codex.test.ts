@@ -476,7 +476,7 @@ describe('codexFramework', () => {
     })
   })
 
-  it.each(['gpt-5.4', 'gpt-6-astra'])(
+  it.each(['gpt-5.4', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])(
     'keeps bundled metadata for trusted official model %s',
     (model) => {
       const framework = createCodexFramework()

@@ -57,8 +57,11 @@ jobs:
         id: presentation
         continue-on-error: true
         run: |
-          npx playwright test --config playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=300000
-          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=300000
+          # Browser coverage reaches the tab-motion cases near five minutes on
+          # macOS; leave enough headroom for the complete suite and teardown.
+          presentation_timeout=600000
+          npx playwright test --config playwright.browser.config.ts --fail-on-flaky-tests --global-timeout="$presentation_timeout"
+          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout="$presentation_timeout"
       - name: Run complete Mac accessibility checks
         id: accessibility
         continue-on-error: true

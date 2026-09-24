@@ -198,7 +198,7 @@ const tokenizerProfileFor = (
     // unrelated model containing the same word does not silently select the wrong encoding.
     if (/(?:^|[.:])claude(?:[-_.]|$)/.test(normalized)) return 'anthropic'
     if (
-      /(?:^|[.:])(?:gpt-(?:4(?:[.o-]|$)|5(?:[.-]|$))|chatgpt-4o(?:-|$)|o[134](?:-|$)|codex(?:[-_.]|$))/.test(
+      /(?:^|[.:])(?:gpt-(?:4(?:[.o-]|$)|5(?:[.-]|$)|6(?:[.-]|$))|chatgpt-4o(?:-|$)|o[134](?:-|$)|codex(?:[-_.]|$))/.test(
         normalized
       )
     ) {

@@ -29,6 +29,16 @@ function redactUrl(url: string): string {
   }
 }
 
+export class ConnectorHttpError extends Error {
+  override readonly name = 'ConnectorHttpError'
+  readonly status: number
+
+  constructor(status: number, url: string, suffix = '') {
+    super(`HTTP ${status} for ${redactUrl(url)}.${suffix}`)
+    this.status = status
+  }
+}
+
 class ConnectorRequestTimeoutError extends Error {
   override readonly name = 'ConnectorRequestTimeoutError'
 
@@ -255,7 +265,7 @@ export class ParserEngine {
           retryable && retryAfter
             ? ` Retry after ${Math.ceil(delay / 1_000)}s.${insufficientBudget ? ' The remaining call budget cannot accommodate this wait.' : ''}`
             : ''
-        throw new Error(`HTTP ${res.status} for ${redactUrl(url)}.${retryHint}`)
+        throw new ConnectorHttpError(res.status, url, retryHint)
       }
     }
     return {
@@ -298,12 +308,17 @@ export class ParserEngine {
         )
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
-      postJson: async (url, body) => {
-        const { response, bodyText } = await doFetch(url, 'application/json', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body)
-        })
+      postJson: async (url, body, options) => {
+        const { response, bodyText } = await doFetch(
+          url,
+          'application/json',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          },
+          options?.retry === false ? 0 : this.retries
+        )
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       }
     }

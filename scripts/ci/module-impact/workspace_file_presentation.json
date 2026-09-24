@@ -34,7 +34,10 @@
     "src/renderer/src/pages/workspace/preview-tab-actions.ts",
     "src/renderer/src/pages/workspace/project-file-preview-queue.ts",
     "src/renderer/src/pages/workspace/project-files-granted-root-menu-row.tsx",
-    "src/renderer/src/pages/workspace/use-managed-file-download.ts"
+    "src/renderer/src/pages/workspace/use-managed-file-download.ts",
+    "src/renderer/src/pages/workspace/file-type-icon-kind.ts",
+    "src/renderer/src/pages/workspace/file-type-icon.tsx",
+    "src/renderer/src/pages/workspace/file-type-icon.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ExtensionPreservingFileName.tsx",
@@ -71,7 +74,8 @@
       "src/renderer/src/pages/workspace/preview-file-item.test.ts",
       "src/renderer/src/pages/workspace/preview-image-content.test.tsx",
       "src/renderer/src/pages/workspace/preview-support.test.ts",
-      "src/renderer/src/pages/workspace/preview-tab-actions.test.ts"
+      "src/renderer/src/pages/workspace/preview-tab-actions.test.ts",
+      "src/renderer/src/pages/workspace/file-type-icon.test.ts"
     ],
     "contract": [],
     "consumer": [

@@ -300,9 +300,14 @@ describe('Connector application composition', () => {
     await runtime.dispose()
   })
 
-  it('fails closed when no local credential owner is available', async () => {
+  it('runs anonymous OpenAlex calls when no local credential owner is available', async () => {
     const { deps } = createHarness()
     vi.mocked(deps.canRequestCredential).mockReturnValue(false)
+    vi.mocked(deps.fetchImpl).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ meta: { count: 0 }, results: [] })
+    } as Response)
     const module = await createConnectorApplicationModule(deps)
 
     await expect(
@@ -312,9 +317,9 @@ describe('Connector application composition', () => {
         { query: 'CRISPR', max_records: 1 },
         { origin: 'internal' }
       )
-    ).rejects.toThrow(/credential_required/)
+    ).resolves.toMatchObject({ n_records_returned: 0 })
     expect(deps.broadcastCredentialRequest).not.toHaveBeenCalled()
-    expect(deps.fetchImpl).not.toHaveBeenCalled()
+    expect(deps.fetchImpl).toHaveBeenCalledOnce()
 
     await module.dispose?.()
   })

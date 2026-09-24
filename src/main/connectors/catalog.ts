@@ -188,6 +188,17 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     requiresNcbi: false
   },
   {
+    id: 'hmmer',
+    displayName: 'HMMER',
+    aliases: ['HMMER3', 'phmmer', 'hmmscan', 'hmmsearch', 'jackhmmer', 'profile HMM'],
+    description: 'Protein family and remote-homology searches via the EMBL-EBI HMMER3 service.',
+    useWhen:
+      'Use when you need profile-HMM protein-family scans, sequence-versus-sequence homology searches, or iterative remote-homolog discovery through phmmer, hmmscan, hmmsearch, or jackhmmer. It complements BLAST for protein-family and distant-homology analysis and overlaps with InterProScan for domain-family discovery. Jobs run asynchronously on EMBL-EBI: submit a search, retain its job_id, then check status and retrieve results.',
+    sources: ['HMMER3', 'EMBL-EBI'],
+    termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
+    requiresNcbi: false
+  },
+  {
     id: 'interproscan',
     displayName: 'InterProScan',
     aliases: ['InterProScan 5', 'iprscan5'],

@@ -1,5 +1,5 @@
 import { isSensitiveDiagnosticKey, redactSensitiveText } from '../diagnostic-redaction'
-import { ParserEngine } from './engine'
+import { ConnectorHttpError, ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor, validateToolArguments } from './registry'
 import {
   classifyCustomMcpFailure,
@@ -471,9 +471,90 @@ export class ConnectorService {
         throw new ConnectorGateError('credential_required')
       }
     }
-    return signal
-      ? this.engine.call(descriptor, args, credentials, signal)
-      : this.engine.call(descriptor, args, credentials)
+    return this.callDescriptorWithOptionalOpenAlexCredential(
+      descriptor,
+      connector,
+      method,
+      args,
+      context,
+      access,
+      authorization,
+      credentials,
+      signal
+    )
+  }
+
+  private async callDescriptorWithOptionalOpenAlexCredential(
+    descriptor: ToolDescriptor,
+    connector: string,
+    method: string,
+    args: Record<string, unknown>,
+    context: ConnectorCallContext,
+    access: ConnectorAccess,
+    authorization: BundledAuthorization | undefined,
+    credentials: ConnectorCredentials,
+    signal?: AbortSignal
+  ): Promise<unknown> {
+    const invoke = (currentCredentials: ConnectorCredentials): Promise<unknown> =>
+      signal
+        ? this.engine.call(descriptor, args, currentCredentials, signal)
+        : this.engine.call(descriptor, args, currentCredentials)
+
+    try {
+      return await invoke(credentials)
+    } catch (error) {
+      const httpStatus =
+        error instanceof ConnectorHttpError
+          ? error.status
+          : typeof error === 'object' && error !== null && 'status' in error
+            ? (error as { status?: unknown }).status
+            : undefined
+      if (
+        descriptor.connector !== 'literature' ||
+        !descriptor.id.startsWith('openalex_') ||
+        credentials.openAlexApiKey ||
+        httpStatus !== 429 ||
+        !this.deps.requestCredential
+      ) {
+        throw error
+      }
+
+      const configured = await this.deps.requestCredential(
+        {
+          credentialId: 'openalex',
+          connector,
+          method,
+          ...(context.sessionId ? { sessionId: context.sessionId } : {})
+        },
+        signal
+      )
+      signal?.throwIfAborted()
+      if (!configured) throw error
+
+      // Credential collection can take minutes. Re-run the same access and policy gates before the
+      // retry so a concurrent Specialist/Main revocation wins, matching the preflight credential path.
+      if (access.specialistScoped) {
+        await this.resolveAccess(connector, method, context, [connector], signal)
+      }
+      let refreshedAuthorization = authorization
+      if (!access.bypassMainPolicy) {
+        refreshedAuthorization = await this.ensureAuthorized(
+          connector,
+          connector,
+          [connector],
+          method,
+          args,
+          context,
+          signal,
+          authorization
+        )
+      }
+      const refreshed = this.credentials(
+        refreshedAuthorization?.connectors ?? (await this.currentConnectors())
+      )
+      if (!refreshed.openAlexApiKey) throw error
+      return invoke(refreshed)
+    }
   }
 
   private async callCustom(

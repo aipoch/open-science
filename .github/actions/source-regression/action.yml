@@ -34,12 +34,16 @@ runs:
         PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
       run: |
         args=()
+        regression_timeout=1200000
         case "$INCLUDE_CAPACITY" in
-          true) ;;
+          # Nightly capacity cases exceed the standard PR budget on macOS; keep
+          # the suite together so the final tests are not cut off mid-run.
+          true) regression_timeout=1800000 ;;
           false) args+=(--grep-invert '@capacity') ;;
           *) echo "Invalid capacity selection" >&2; exit 1 ;;
         esac
-        npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/regressions_macos "${args[@]}"
+        : "${regression_timeout:=1200000}"
+        npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos "${args[@]}"
     - name: Run supplemental delegation
       if: inputs.group == 'delegation'
       shell: bash

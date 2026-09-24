@@ -9,12 +9,12 @@ import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useTagStore } from '@/stores/tag-store'
 import { SettingsIconAction } from './SettingsLayout'
+import { connectorDescription } from './connector-copy'
 import {
   getSettingsSearchKeyShortcuts,
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
 import { TagFilter } from './ResourceTagControls'
-import { connectorDescription } from './connector-copy'
 
 type ConnectorRow = {
   id: string
@@ -275,7 +275,7 @@ const SpecialistCapabilitiesSection = ({
       ...connectors.map((connector) => ({
         id: connector.id,
         name: connector.displayName,
-        description: connector.description,
+        description: connectorDescription(connector, t),
         mainEnabled: connector.enabled,
         available: true
       })),

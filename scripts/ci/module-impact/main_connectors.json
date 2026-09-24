@@ -179,6 +179,7 @@
       "src/main/connectors/descriptors/regulation.test.ts",
       "src/main/connectors/descriptors/research-resources.test.ts",
       "src/main/connectors/descriptors/interproscan.test.ts",
+      "src/main/connectors/descriptors/hmmer.test.ts",
       "src/main/connectors/descriptors/rna.test.ts",
       "src/main/connectors/descriptors/structures-alphafold.test.ts",
       "src/main/connectors/descriptors/structures-complexportal.test.ts",
