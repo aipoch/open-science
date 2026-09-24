@@ -8,7 +8,8 @@ import {
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
-  useMessageScroller
+  useMessageScroller,
+  useMessageScrollerScrollable
 } from '@/components/ui/message-scroller'
 import {
   usePreviewWorkbenchStore,
@@ -135,6 +136,7 @@ const TranscriptEndSync = ({
   following: boolean
 }): null => {
   const { scrollToEnd } = useMessageScroller()
+  const { end: readerAwayFromEnd } = useMessageScrollerScrollable()
   const previousRef = useRef<
     { scopeId: string | undefined; itemCount: number; mountedItemCount: number } | undefined
   >(undefined)
@@ -143,6 +145,7 @@ const TranscriptEndSync = ({
     previousRef.current = { scopeId, itemCount, mountedItemCount }
     if (
       following &&
+      !readerAwayFromEnd &&
       previous &&
       previous.scopeId === scopeId &&
       itemCount > previous.itemCount &&
@@ -159,12 +162,16 @@ const TranscriptEndSync = ({
       }
     }
     return undefined
-  }, [following, itemCount, mountedItemCount, scopeId, scrollToEnd])
+  }, [following, itemCount, mountedItemCount, readerAwayFromEnd, scopeId, scrollToEnd])
   return null
 }
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  autoScroll?: boolean
+  onScrollFollowingChange?: (following: boolean) => void
+  scrollIntentActive?: boolean
+  skipInitialAnimationMessageIds?: ReadonlySet<string>
   credentialPending?: boolean
   visiblePermissionPending?: boolean
   isResumingSession?: boolean
@@ -187,6 +194,20 @@ type WorkspaceMessageScrollerProps = {
   // Opt-in (main panel only): report smooth-streaming reveal activity so the workspace
   // message queue can hold queued sends until the transcript finishes presenting.
   reportPresentationRevealing?: boolean
+}
+
+const MessageScrollerFollowIntent = ({
+  active,
+  onChange
+}: {
+  active: boolean
+  onChange: (following: boolean) => void
+}): null => {
+  const { end } = useMessageScrollerScrollable()
+  useLayoutEffect(() => {
+    if (active) onChange(!end)
+  }, [active, end, onChange])
+  return null
 }
 
 type TerminalAnnouncement = {
@@ -550,6 +571,10 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
+  autoScroll = true,
+  onScrollFollowingChange,
+  scrollIntentActive = true,
+  skipInitialAnimationMessageIds,
   credentialPending = false,
   visiblePermissionPending = false,
   isResumingSession = false,
@@ -1539,10 +1564,16 @@ const WorkspaceMessageScrollerImpl = ({
     >
       <MessageScrollerProvider
         key={activeSession?.id ?? 'empty-conversation'}
-        autoScroll
+        autoScroll={autoScroll}
         defaultScrollPosition="last-anchor"
         scrollPreviousItemPeek={64}
       >
+        {onScrollFollowingChange ? (
+          <MessageScrollerFollowIntent
+            active={scrollIntentActive}
+            onChange={onScrollFollowingChange}
+          />
+        ) : null}
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
           <AnnotationMessageReveal
             target={
@@ -1773,7 +1804,8 @@ const WorkspaceMessageScrollerImpl = ({
                       itemIndex === conversationItems.length - 1
                     messageItemProps.presentationAnimateOnMount =
                       presentationScopeRemainedVisible &&
-                      !visibleMessageSnapshot.messageIds.has(item.message.id)
+                      !visibleMessageSnapshot.messageIds.has(item.message.id) &&
+                      !skipInitialAnimationMessageIds?.has(item.message.id)
                     messageItemProps.reserveLoadingRowHeight =
                       !hasFollowingActivityRow &&
                       !isResumingSession &&
@@ -2128,8 +2160,12 @@ const WorkspaceMessageScrollerImpl = ({
 
           <MessageScrollerButton
             onClick={() => {
-              // The primitive's click handler measures the end immediately after this callback.
-              flushSync(transcriptWindow.followEnd)
+              // The primitive chooses its follow mode after this callback. Restore auto-scroll
+              // before it measures the newly expanded tail, so later height corrections follow.
+              flushSync(() => {
+                onScrollFollowingChange?.(true)
+                transcriptWindow.followEnd()
+              })
             }}
             size="icon-lg"
             className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
@@ -2223,6 +2259,10 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous: WorkspaceMessageScrollerProps,
   next: WorkspaceMessageScrollerProps
 ): boolean =>
+  (previous.autoScroll ?? true) === (next.autoScroll ?? true) &&
+  previous.onScrollFollowingChange === next.onScrollFollowingChange &&
+  (previous.scrollIntentActive ?? true) === (next.scrollIntentActive ?? true) &&
+  previous.skipInitialAnimationMessageIds === next.skipInitialAnimationMessageIds &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
   (previous.credentialPending ?? false) === (next.credentialPending ?? false) &&
   (previous.visiblePermissionPending ?? false) === (next.visiblePermissionPending ?? false) &&

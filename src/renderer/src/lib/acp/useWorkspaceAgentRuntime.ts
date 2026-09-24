@@ -696,10 +696,16 @@ const useWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
 const useWorkspaceSubagentRuntimeSession = (
   session: ChatSession,
-  detail: Parameters<typeof useSubagentRuntimePresentation>[2]
+  detail: Parameters<typeof useSubagentRuntimePresentation>[2],
+  isActive = true
 ): ChatSession => {
   const runtime = useWorkspaceAgentRuntime()
-  return useSubagentRuntimePresentation(runtime.subscribeToSubagentRuntimeUpdates, session, detail)
+  return useSubagentRuntimePresentation(
+    runtime.subscribeToSubagentRuntimeUpdates,
+    session,
+    detail,
+    isActive
+  )
 }
 
 export {

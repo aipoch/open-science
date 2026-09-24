@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,7 +10,8 @@ import {
   MessageScrollerContent,
   MessageScrollerItem,
   MessageScrollerProvider,
-  MessageScrollerViewport
+  MessageScrollerViewport,
+  useMessageScrollerScrollable
 } from './message-scroller'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -26,6 +28,57 @@ afterEach(() => {
 })
 
 describe('MessageScrollerItem', () => {
+  it('reports provider follow intent across content growth and a reader scroll', async () => {
+    const FollowProbe = (): React.JSX.Element => {
+      const { end } = useMessageScrollerScrollable()
+      return <output data-following={!end} />
+    }
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider autoScroll>
+          <FollowProbe />
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="reply">Reply</MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]'
+    )!
+    const probe = container.querySelector<HTMLElement>('output')!
+    let scrollHeight = 200
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: { configurable: true, writable: true, value: 100 }
+    })
+    await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(probe.dataset.following).toBe('true')
+
+    scrollHeight = 300
+    await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(probe.dataset.following).toBe('true')
+
+    await act(async () => {
+      viewport.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -100 }))
+      viewport.scrollTop = 80
+      viewport.dispatchEvent(new Event('scroll', { bubbles: true }))
+    })
+    expect(probe.dataset.following).toBe('false')
+
+    viewport.scrollTop = 200
+    await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    expect(probe.dataset.following).toBe('true')
+  })
+
   it('contains stable rows while keeping mutable rows in normal paint flow', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -585,6 +638,98 @@ describe('MessageScrollerItem', () => {
       resizeCallbacks.get(content!)?.([], {} as ResizeObserver)
     })
 
+    expect(viewport?.scrollTop).toBe(140)
+  })
+
+  it('keeps following after a reader clicks Scroll to end and the measured tail grows', async () => {
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly callback: ResizeObserverCallback
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback
+        }
+
+        observe(target: Element): void {
+          resizeCallbacks.set(target, this.callback)
+        }
+
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+
+    const ReaderScroller = (): React.JSX.Element => {
+      const [autoScroll, setAutoScroll] = useState(false)
+      return (
+        <MessageScrollerProvider autoScroll={autoScroll}>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="long-reply">Long reply</MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton
+              onClick={() => {
+                // WorkspaceMessageScroller restores this before the primitive scrollToEnd runs.
+                flushSync(() => setAutoScroll(true))
+              }}
+            />
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    }
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => root?.render(<ReaderScroller />))
+
+    const viewport = container.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const content = container.querySelector<HTMLElement>('[data-slot="message-scroller-content"]')
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-slot="message-scroller-button"]'
+    )
+    const item = container.querySelector<HTMLElement>('[data-message-id="long-reply"]')
+    expect(viewport).not.toBeNull()
+    expect(content).not.toBeNull()
+    expect(button).not.toBeNull()
+    expect(item).not.toBeNull()
+
+    let contentHeight = 200
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => contentHeight },
+      scrollTop: { configurable: true, writable: true, value: 20 },
+      getBoundingClientRect: {
+        configurable: true,
+        value: () => ({ top: 0, bottom: 100, height: 100 })
+      },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: ScrollToOptions) => {
+          if (typeof top === 'number' && viewport) viewport.scrollTop = top
+        }
+      }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: -(viewport?.scrollTop ?? 0),
+        bottom: contentHeight - (viewport?.scrollTop ?? 0),
+        height: contentHeight
+      })
+    })
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    await act(async () => button?.click())
+    expect(viewport?.scrollTop).toBe(100)
+
+    // Rich content can replace its intrinsic-size estimate after the click.
+    contentHeight = 240
+    await act(async () => resizeCallbacks.get(content!)?.([], {} as ResizeObserver))
     expect(viewport?.scrollTop).toBe(140)
   })
 })

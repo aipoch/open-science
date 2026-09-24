@@ -31,6 +31,7 @@ export {
   getExternallyHydratedSessionAuthority,
   hydrateSession,
   isExternallyHydratedSession,
+  materializeStreamingMessageContent,
   toPersistedSession,
   type ElicitationEditDraft,
   type ActiveRun,
