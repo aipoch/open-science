@@ -341,6 +341,10 @@ describe('ConnectorAddForm copy', () => {
         'List sequence names and UCSC, RefSeq and GenBank aliases for an NCBI assembly.'
       ],
       ['genomes/ucsc_conservation', 'Summarize UCSC conservation scores for a genomic region.'],
+      [
+        'protein-annotation/get_string_ppi_enrichment',
+        'Test whether a protein set has more interactions than expected in STRING, with an optional background set.'
+      ],
       ['variants/get_variant', 'Retrieve a gnomAD variant with optional population frequencies.']
     ] as const
 

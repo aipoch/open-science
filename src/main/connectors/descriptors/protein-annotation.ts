@@ -589,6 +589,38 @@ function summarizeNetwork(
   }
 }
 
+const PPI_ENRICHMENT_FIELDS = [
+  'number_of_nodes',
+  'number_of_edges',
+  'average_node_degree',
+  'local_clustering_coefficient',
+  'expected_number_of_edges',
+  'p_value'
+] as const
+
+function parsePpiEnrichmentTsv(text: string): Record<string, number> {
+  const lines = text
+    .trim()
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!lines.length) throw new Error('STRING PPI enrichment returned an empty response')
+  const header = lines[0].split('\t')
+  const values = (lines[1] ?? '').split('\t')
+  if (values.length !== header.length)
+    throw new Error('STRING PPI enrichment returned malformed TSV')
+  const row: Record<string, number> = {}
+  for (const field of PPI_ENRICHMENT_FIELDS) {
+    const index = header.indexOf(field)
+    if (index < 0) throw new Error(`PPI enrichment TSV is missing expected column: ${field}`)
+    const value = Number(values[index])
+    if (!Number.isFinite(value))
+      throw new Error(`PPI enrichment returned invalid ${field}: ${values[index]}`)
+    row[field] = value
+  }
+  return row
+}
+
 // Canonicalize /homology rows: one record per unordered pair (id_a <= id_b), verify symmetric bitscore.
 function parseHomologyRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   const seen = new Map<string, Record<string, unknown>>()
@@ -1197,6 +1229,107 @@ export const PROTEIN_ANNOTATION_TOOLS: ToolDescriptor[] = [
           retrieved_at: new Date().toISOString(),
           n_http_requests: requests.length,
           bytes_downloaded: requests.reduce((s, r) => s + r.bytes, 0),
+          requests
+        }
+      }
+    }
+  },
+  {
+    id: 'get_string_ppi_enrichment',
+    connector: 'protein-annotation',
+    description:
+      'STRING protein-protein interaction enrichment for a gene list (v12.0). Tests whether the mapped proteins have more interactions than expected from the STRING background distribution, with an optional background set of STRING protein IDs.',
+    input: {
+      type: 'object',
+      properties: {
+        symbols: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Gene symbols or aliases, e.g. ["TP53", "BRCA1", "EGFR"].'
+        },
+        species: {
+          type: 'integer',
+          default: DEFAULT_SPECIES,
+          description: 'NCBI taxonomy ID (9606 = human).'
+        },
+        required_score: {
+          type: 'integer',
+          default: 400,
+          description: 'Minimum combined score 0-1000 used to count an interaction.'
+        },
+        background_string_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional background proteome as STRING IDs (for example 9606.ENSP00000269305); omit to use STRING’s default proteome-wide background.'
+        }
+      },
+      required: ['symbols']
+    },
+    required: ['symbols'],
+    returns:
+      '`{ "tool", "tool_version", "query", "string_version", "mapped": [...], "unmapped": [ str ], "result": { "number_of_nodes": int, "number_of_edges": int, "average_node_degree": float, "local_clustering_coefficient": float, "expected_number_of_edges": float, "p_value": float }, "provenance": {...} }` — p_value is the significance of observing more interactions than expected; result is null when no input symbol maps.',
+    example:
+      'const result = await host.mcp("protein-annotation", "get_string_ppi_enrichment", {"symbols": ["TP53", "BRCA1", "EGFR"], "required_score": 700})',
+    run: async (ctx, a) => {
+      const species = Number(a.species ?? DEFAULT_SPECIES)
+      const requiredScore = Number(a.required_score ?? 400)
+      const symbols = [
+        ...new Set((a.symbols as string[]).map((s) => String(s).trim()).filter(Boolean))
+      ]
+      if (!symbols.length) throw new Error('no input symbols provided')
+      if (!Number.isInteger(requiredScore) || requiredScore < 0 || requiredScore > 1000)
+        throw new Error('required_score must be an integer between 0 and 1000')
+      const background =
+        a.background_string_ids == null
+          ? []
+          : [
+              ...new Set(
+                (a.background_string_ids as string[]).map((s) => String(s).trim()).filter(Boolean)
+              )
+            ]
+      const requests: RequestLogEntry[] = []
+      const ver = await stringVersion(ctx)
+      requests.push(ver.log)
+      const m = await mapStringIds(ctx, symbols, species)
+      requests.push(m.log)
+      let result: Record<string, number> | null = null
+      if (m.mapped.length) {
+        const params: Array<[string, unknown]> = [
+          ['identifiers', m.mapped.map((x) => x.string_id).join('\r')],
+          ['species', species],
+          ['required_score', requiredScore]
+        ]
+        if (background.length) params.push(['background_string_identifiers', background.join('\r')])
+        const fetched = await stringGetJson(ctx, 'tsv', 'ppi_enrichment', params)
+        result = parsePpiEnrichmentTsv(fetched.data as string)
+        requests.push({ endpoint: fetched.endpoint, bytes: fetched.bytes })
+      }
+      return {
+        tool: 'string-ppi-enrichment',
+        tool_version: '0.1.0',
+        query: {
+          symbols,
+          species,
+          required_score: requiredScore,
+          background_string_ids: background
+        },
+        string_version: ver.version,
+        mapped: m.mapped,
+        unmapped: m.unmapped,
+        result,
+        provenance: {
+          api_base_url: STRING_BASE,
+          caller_identity: STRING_CALLER,
+          endpoints_used: requests.map((request) => request.endpoint),
+          parameters: {
+            species,
+            required_score: requiredScore,
+            background_string_identifiers: background
+          },
+          retrieved_at: new Date().toISOString(),
+          n_http_requests: requests.length,
+          bytes_downloaded: requests.reduce((sum, request) => sum + request.bytes, 0),
           requests
         }
       }

@@ -31,7 +31,7 @@ const calls = (fetchImpl: typeof fetch): unknown[][] =>
   (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls
 
 describe('protein-annotation / tool set', () => {
-  it('exposes exactly the 13 upstream tool ids and drops the old string_* ids', () => {
+  it('exposes the protein annotation tool ids and drops the old string_* ids', () => {
     expect(PROTEIN_ANNOTATION_TOOLS.map((t) => t.id).sort()).toEqual(
       [
         'get_domain_architecture',
@@ -42,6 +42,7 @@ describe('protein-annotation / tool set', () => {
         'get_protein_atlas_gene',
         'get_string_best_similarity_hits',
         'get_string_network',
+        'get_string_ppi_enrichment',
         'get_string_similarity_scores',
         'map_string_ids',
         'search_interpro_entries',
@@ -341,6 +342,75 @@ describe('protein-annotation / Human Protein Atlas', () => {
 })
 
 describe('protein-annotation / STRING', () => {
+  it('get_string_ppi_enrichment maps inputs and parses the interaction enrichment statistics', async () => {
+    const fetchImpl = mockFetch({
+      '/json/version': { json: [{ string_version: '12.0', stable_address: 'x' }] },
+      '/json/get_string_ids': {
+        json: [
+          {
+            queryIndex: 0,
+            stringId: '9606.p53',
+            preferredName: 'TP53',
+            ncbiTaxonId: 9606
+          },
+          {
+            queryIndex: 1,
+            stringId: '9606.mdm2',
+            preferredName: 'MDM2',
+            ncbiTaxonId: 9606
+          }
+        ]
+      },
+      '/tsv/ppi_enrichment': {
+        text: 'number_of_nodes\tnumber_of_edges\taverage_node_degree\tlocal_clustering_coefficient\texpected_number_of_edges\tp_value\n2\t1\t1\t0.5\t0.02\t0.001\n'
+      }
+    })
+    const out = (await engine(fetchImpl).call(
+      tool('get_string_ppi_enrichment'),
+      {
+        symbols: ['TP53', 'MDM2'],
+        required_score: 700,
+        background_string_ids: ['9606.bg']
+      },
+      {}
+    )) as {
+      result: Record<string, number>
+      unmapped: string[]
+      provenance: { endpoints_used: string[] }
+    }
+    expect(out.result).toEqual({
+      number_of_nodes: 2,
+      number_of_edges: 1,
+      average_node_degree: 1,
+      local_clustering_coefficient: 0.5,
+      expected_number_of_edges: 0.02,
+      p_value: 0.001
+    })
+    expect(out.unmapped).toEqual([])
+    expect(out.provenance.endpoints_used).toEqual([
+      'json/version',
+      'json/get_string_ids',
+      'tsv/ppi_enrichment'
+    ])
+    const ppiCall = calls(fetchImpl).find((call) => String(call[0]).includes('/tsv/ppi_enrichment'))
+    expect(ppiCall?.[0]).toContain('required_score=700')
+    expect(ppiCall?.[0]).toContain('background_string_identifiers=9606.bg')
+  })
+
+  it('get_string_ppi_enrichment returns a null result when no input maps', async () => {
+    const fetchImpl = mockFetch({
+      '/json/version': { json: [{ string_version: '12.0' }] },
+      '/json/get_string_ids': { text: '' }
+    })
+    const out = await engine(fetchImpl).call(
+      tool('get_string_ppi_enrichment'),
+      { symbols: ['NOTAGENE'] },
+      {}
+    )
+    expect(out).toMatchObject({ mapped: [], unmapped: ['NOTAGENE'], result: null })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('get_string_network rejects blank symbols before making an upstream request', async () => {
     const fetchImpl = mockFetch({})
     await expect(

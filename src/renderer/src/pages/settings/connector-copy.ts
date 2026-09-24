@@ -109,6 +109,10 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List sequence names and UCSC, RefSeq and GenBank aliases for an NCBI assembly.')
     case 'genomes/ucsc_conservation':
       return t('Summarize UCSC conservation scores for a genomic region.')
+    case 'protein-annotation/get_string_ppi_enrichment':
+      return t(
+        'Test whether a protein set has more interactions than expected in STRING, with an optional background set.'
+      )
     case 'variants/get_variant':
       return t('Retrieve a gnomAD variant with optional population frequencies.')
     default:
