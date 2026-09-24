@@ -3,6 +3,7 @@ const literatureSmartPauseRunMigration = {
   id: '0045_literature_smart_pause_run',
   statements: [
     'ALTER TABLE "LiteratureSmartCollection" ADD COLUMN "automaticPauseRunId" TEXT',
+    'ALTER TABLE "LiteratureSmartRun" ADD COLUMN "abandonedAt" DATETIME',
     `UPDATE "LiteratureSmartCollection"
      SET "automaticPauseRunId" = (
        SELECT candidate.id
@@ -29,6 +30,12 @@ const literatureSmartPauseRunMigration = {
       version: 1,
       table: 'LiteratureSmartCollection',
       column: 'automaticPauseRunId'
+    },
+    {
+      kind: 'column-exists',
+      version: 1,
+      table: 'LiteratureSmartRun',
+      column: 'abandonedAt'
     }
   ] as const
 }

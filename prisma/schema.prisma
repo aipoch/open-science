@@ -1310,6 +1310,7 @@ model LiteratureSmartOverride {
 }
 
 model LiteratureSmartRun {
+  abandonedAt  DateTime?
   snapshotJson String?
   id           String                    @id @default(cuid())
   collectionId String

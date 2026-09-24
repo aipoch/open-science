@@ -452,6 +452,7 @@ it('shows a persistent automatic pause with an explicit resume action', async ()
     autoUpdate: true,
     configured: true,
     automaticPauseReason: 'run-limit',
+    automaticPauseRunId: 'paused-run',
     run: {
       id: 'paused-run',
       kind: 'refresh',
@@ -482,6 +483,7 @@ it('confirms and abandons a paused automatic run', async () => {
     autoUpdate: true,
     configured: true,
     automaticPauseReason: 'run-limit',
+    automaticPauseRunId: 'paused-run',
     run: {
       id: 'paused-run',
       kind: 'refresh',
@@ -510,7 +512,9 @@ it('confirms and abandons a paused automatic run', async () => {
   await screen.findByRole('alertdialog')
   fireEvent.click(screen.getAllByRole('button', { name: 'Abandon run' }).at(-1)!)
   await waitFor(() =>
-    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'abandon' }))
+    expect(transact).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'abandon', runId: 'paused-run' })
+    )
   )
 })
 

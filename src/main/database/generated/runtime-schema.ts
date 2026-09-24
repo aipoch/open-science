@@ -1082,6 +1082,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureSmartOverride_decision_check" CHECK ("decision" IN ('include', 'exclude'))
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureSmartRun" (
+    "abandonedAt" DATETIME,
     "snapshotJson" TEXT,
     "id" TEXT NOT NULL PRIMARY KEY,
     "collectionId" TEXT NOT NULL,

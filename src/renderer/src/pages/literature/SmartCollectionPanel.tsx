@@ -264,7 +264,9 @@ export function SmartCollectionPanel({
     !view.sourceAvailable
   const empty = view && !view.run && !view.matches
   const failed = (!refreshFailed && error) || view?.run?.state === 'failed'
-  const stopped = view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted'
+  const stopped =
+    !view?.run?.abandoned &&
+    (view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted')
   const paused = view?.autoUpdate && view.automaticPauseReason && view.run?.state === 'interrupted'
   const snapshot = view?.run?.snapshot
   const currentRule = parseSmartRule(description)

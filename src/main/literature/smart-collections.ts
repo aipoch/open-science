@@ -827,6 +827,7 @@ export class LiteratureSmartCollections {
               })(),
               kind: run.kind as 'preview' | 'refresh',
               state: run.state as NonNullable<SmartCollectionView['run']>['state'],
+              abandoned: Boolean(run.abandonedAt),
               done: runCounts.reduce(
                 (sum, group) => sum + (group.state === 'pending' ? 0 : Number(group.count)),
                 0
@@ -1159,7 +1160,7 @@ export class LiteratureSmartCollections {
         await client.$transaction(async (tx) => {
           const cancelled = await tx.literatureSmartRun.updateMany({
             where: { id: run.id, state: { in: abandonableStates } },
-            data: { state: 'cancelled' }
+            data: { state: 'cancelled', abandonedAt: new Date() }
           })
           if (cancelled.count && clearsPause) {
             await tx.literatureSmartCollection.updateMany({
@@ -1302,6 +1303,7 @@ export class LiteratureSmartCollections {
               !previous ||
               !snapshot ||
               !['cancelled', 'interrupted'].includes(previous.state) ||
+              previous.abandonedAt !== null ||
               previous.ruleRevision !== definition.ruleRevision ||
               previous.policyKey !== policy.key ||
               snapshot.description !== definition.collection.description ||
