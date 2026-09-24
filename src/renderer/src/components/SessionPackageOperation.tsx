@@ -36,7 +36,7 @@ import type {
 import { PackageFileSelection } from './PackageFileSelection'
 import {
   formatPackageBytes as bytes,
-  PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+  PACKAGE_IO_RATE_OPTIONS
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -413,15 +413,17 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
               </TooltipProvider>
             </div>
             <Select
-              value={String(
-                operation.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
-              )}
+              value={
+                operation.transferBytesPerSecond === undefined
+                  ? 'auto'
+                  : String(operation.transferBytesPerSecond)
+              }
               disabled={operation.state === 'cancelling'}
               onValueChange={(value) =>
                 void respond({
                   action: 'set-speed',
                   operationId: operation.id,
-                  bytesPerSecond: Number(value)
+                  bytesPerSecond: value === 'auto' ? null : Number(value)
                 })
               }
             >
@@ -433,9 +435,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[4, 16, 64].map((rate) => (
-                  <SelectItem key={rate} value={String(rate * 1024 ** 2)}>
-                    {t('{{speed}}/s', { speed: bytes(rate * 1024 ** 2) })}
+                <SelectItem value="auto">{t('Auto')}</SelectItem>
+                {PACKAGE_IO_RATE_OPTIONS.map((rate) => (
+                  <SelectItem key={rate} value={String(rate)}>
+                    {t('{{speed}}/s', { speed: bytes(rate) })}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -207,12 +207,14 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   expect(activity).toBeDefined()
   const select = settings.querySelector<HTMLButtonElement>('[role="combobox"]')
   expect(select, 'speed selection uses the shared in-app control').not.toBeNull()
-  expect(select!.textContent).toContain('16.0 MiB/s')
+  expect(select!.textContent).toContain('Auto')
   Element.prototype.scrollIntoView ??= () => undefined
   await act(async () => {
     settings.open = true
     select!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   })
+  expect(document.body.textContent).toContain('128.0 MiB/s')
+  expect(document.body.textContent).toContain('256.0 MiB/s')
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
     (item) => item.textContent === '4.0 MiB/s'
   )!
