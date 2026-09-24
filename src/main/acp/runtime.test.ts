@@ -5719,6 +5719,54 @@ describe('ACP runtime session management', () => {
     promptGate.resolve()
   })
 
+  it('waits for shared runtime teardown for every timed-out cancellation caller', async () => {
+    const process = new FakeAgentProcess()
+    const promptGate = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['cancel-timeout-shared-session'], {
+      onPrompt: () => promptGate.promise
+    })
+    let fireCancelTimeout: (() => void) | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      cancelTimeoutMs: 1,
+      setTimer: (callback) => {
+        fireCancelTimeout = callback
+        return 1 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: vi.fn()
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
+    void prompt.catch(() => undefined)
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    const teardown = createDeferred<ReturnType<typeof runtime.getSnapshot>>()
+    const disconnect = vi.spyOn(runtime, 'disconnect').mockReturnValue(teardown.promise)
+    const first = runtime.cancelPrompt({ sessionId: session.sessionId })
+    const second = runtime.cancelPrompt({ sessionId: session.sessionId })
+    fireCancelTimeout?.()
+
+    let secondSettled = false
+    void second.then(
+      () => {
+        secondSettled = true
+      },
+      () => {
+        secondSettled = true
+      }
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(secondSettled).toBe(false)
+
+    teardown.resolve({ ...runtime.getSnapshot(), status: 'closed', sessionIds: [] })
+    await expect(first).rejects.toThrow('not confirmed')
+    await expect(second).rejects.toThrow('not confirmed')
+    promptGate.resolve()
+  })
+
   it('confirms Stop from the prompt finalizer when the cancellation write is still pending', async () => {
     const process = new FakeAgentProcess()
     const promptGate = createDeferred()

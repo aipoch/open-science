@@ -727,6 +727,7 @@ class AcpRuntime {
     string,
     { revision: number; tail: Promise<void> }
   >()
+  private readonly cancellationTeardowns = new Map<string, Promise<AcpStateSnapshot>>()
   private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
@@ -1933,13 +1934,29 @@ class AcpRuntime {
               text: 'Cancellation was not confirmed before the deadline. The agent connection is being closed; process termination is not yet confirmed.'
             })
             teardownAfterCancellationTimeout = this.disconnect()
+            this.cancellationTeardowns.set(request.sessionId, teardownAfterCancellationTimeout)
+            const clearCancellationTeardown = (): void => {
+              if (
+                this.cancellationTeardowns.get(request.sessionId) ===
+                teardownAfterCancellationTimeout
+              ) {
+                this.cancellationTeardowns.delete(request.sessionId)
+              }
+            }
+            void teardownAfterCancellationTimeout.then(
+              clearCancellationTeardown,
+              clearCancellationTeardown
+            )
             void teardownAfterCancellationTimeout.catch(() => undefined)
           }
         })
       } catch (error) {
-        await teardownAfterCancellationTimeout?.catch(() => undefined)
+        await (
+          teardownAfterCancellationTimeout ?? this.cancellationTeardowns.get(request.sessionId)
+        )?.catch(() => undefined)
         throw error
       }
+      await this.cancellationTeardowns.get(request.sessionId)?.catch(() => undefined)
     } else if (cancelPromptRequest) {
       onAccepted()
     }
