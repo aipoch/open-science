@@ -133,7 +133,11 @@ describe('Shell process ownership receipt lifecycle', () => {
         const restarted = new ShellProcessOwnershipRegistry(root)
         if (identity === 'owned') {
           await restarted.recover()
-          expect(() => process.kill(child.pid!, 0)).toThrow()
+          // Windows can retire the owned process object after tree recovery has completed.
+          // Wait only for this fixture's original child handle to report its exit.
+          await expect
+            .poll(() => child.exitCode !== null || child.signalCode !== null, { timeout: 4_000 })
+            .toBe(true)
           expect(restarted.hasReceipts()).toBe(false)
         } else {
           await expect(restarted.recover()).rejects.toMatchObject({

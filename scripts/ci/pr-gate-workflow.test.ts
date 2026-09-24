@@ -1517,6 +1517,21 @@ describe('PR Gate workflow', () => {
     ]) {
       expect(native?.run).toContain(testFile)
     }
+    const unfilteredNative = native?.run?.split(
+      'npx vitest run src/main/notebook/kernel-executor.test.ts'
+    )[0]
+    for (const testFile of [
+      'src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts',
+      'src/main/notebook/runtime-service.macos-isolation.integration.test.ts'
+    ])
+      expect(unfilteredNative).toContain(testFile)
+    expect(unfilteredNative).not.toContain('-t ')
+    expect(unfilteredNative).toContain('set -euo pipefail')
+    expect(unfilteredNative).toContain(
+      `OPEN_SCIENCE_TEST_PY_ENV="$(python3 -c 'import sys; print(sys.executable)')"`
+    )
+    expect(unfilteredNative).toContain('test -x "$OPEN_SCIENCE_TEST_PY_ENV"')
+    expect(unfilteredNative).toContain('export OPEN_SCIENCE_TEST_PY_ENV')
     expect(native?.run).toContain(
       "-t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'"
     )

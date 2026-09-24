@@ -42,6 +42,8 @@ export type NotebookSandboxCleanupResult = Readonly<{
   processesTerminated: boolean
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
+  /** Omitted means blocked; never substitutes for complete process cleanup. */
+  admission?: 'blocked' | 'independent-command-allowed'
 }>
 
 export type NotebookSandboxProcessOutcome = Readonly<{

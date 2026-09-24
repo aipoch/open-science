@@ -16,6 +16,8 @@ describe.runIf(process.platform === 'win32')('Windows package process sandbox', 
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-package-supervisor-'))
+    // Native status must inspect this fixture's ownership, not an installed user's protection.
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
     workspace = join(root, 'workspace')
     runtimeRoot = join(root, 'runtime')
     await Promise.all([workspace, runtimeRoot].map((path) => mkdir(path, { recursive: true })))
@@ -33,6 +35,7 @@ describe.runIf(process.platform === 'win32')('Windows package process sandbox', 
   afterAll(async () => {
     await sandbox?.dispose()
     if (root) await rm(root, { recursive: true, force: true })
+    vi.unstubAllEnvs()
   })
 
   it('runs consecutive native installers without carrying an incomplete cleanup forward', async () => {

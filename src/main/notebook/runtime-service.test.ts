@@ -8114,6 +8114,52 @@ describe('notebook runtime service', () => {
     expect(terminated).toEqual([['r', DEFAULT_R_ENV]])
   })
 
+  it('preserves Python and R state across a targeted REPL restart', async () => {
+    const root = await createStorageRoot()
+    const values = new Map<string, string>()
+    const terminate = vi.fn(async (kind: string) => {
+      values.delete(kind)
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          const kind = request.language ?? 'repl'
+          if (request.code !== 'read') values.set(kind, request.code)
+          return {
+            status: 'completed',
+            stdout: values.get(kind) ?? 'undefined',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        terminate,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    await service.execute({ ...request, language: 'python', code: 'python sentinel' })
+    await service.execute({ ...request, language: 'r', code: 'r sentinel' })
+    await service.executeControl({ ...request, code: 'repl sentinel' })
+    await service.restart({ ...request, kernel: 'repl' })
+    expect(terminate).toHaveBeenCalledExactlyOnceWith('repl', '')
+    expect(await service.execute({ ...request, language: 'python', code: 'read' })).toMatchObject({
+      text: { stdout: 'python sentinel' }
+    })
+    expect(await service.execute({ ...request, language: 'r', code: 'read' })).toMatchObject({
+      text: { stdout: 'r sentinel' }
+    })
+    expect(await service.executeControl({ ...request, code: 'read' })).toMatchObject({
+      stdout: 'undefined'
+    })
+    await service.shutdownAll()
+  })
+
   it('persists default Python idle after reload when a targeted restart recovers a coarse error', async () => {
     const root = await createStorageRoot()
     const request = { sessionId: 'session-1', workspaceCwd: root }
@@ -9258,19 +9304,31 @@ describe('notebook runtime service', () => {
     it('writes a running kernel status during a live run, then settles to idle (G4)', async () => {
       const root = await createStorageRoot()
       let release: (() => void) | undefined
+      let signalStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve
+      })
       const service = holdingService(root, (_request, resolve) => {
         release = resolve
+        signalStarted()
       })
 
       const run = service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
-      await vi.waitFor(() => expect(release).toBeDefined())
-
-      // The kernel reads 'running' while the run is in flight (G4: the union member is now written).
-      const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      expect(midFlight.kernelStatus).toBe('running')
-
-      release?.()
-      await run
+      try {
+        // Use the execution boundary, not a one-second polling budget under load.
+        await Promise.race([
+          started,
+          run.then(() => {
+            throw new Error('Run settled before the holding executor started')
+          })
+        ])
+        const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        expect(midFlight.kernelStatus).toBe('running')
+      } finally {
+        // Settle before fixture deletion, including if the mid-flight assertion fails.
+        release?.()
+        await run
+      }
       const settled = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(settled.kernelStatus).toBe('idle')
     })

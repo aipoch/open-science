@@ -201,6 +201,7 @@
       "src/main/notebook/mcp-server.test.ts",
       "src/main/notebook/no-legacy-bridge.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/notebook/runtime-service.test.ts",
       "src/main/office-preview/office-preview-ipc-lifecycle.test.ts",
       "src/main/office-preview/office-preview-navigation.test.ts",
@@ -291,7 +292,8 @@
       "src/main/storage/migration-target-race.test.ts",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/compute/cancellation-runtime.integration.test.ts"
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

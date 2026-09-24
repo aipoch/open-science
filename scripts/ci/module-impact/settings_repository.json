@@ -242,7 +242,9 @@
       "src/main/specialist/package/reported-regressions.test.ts",
       "src/main/specialist/package/transaction.test.ts",
       "src/main/settings/classification-settings.test.ts",
-      "src/main/compute/cancellation-runtime.integration.test.ts"
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

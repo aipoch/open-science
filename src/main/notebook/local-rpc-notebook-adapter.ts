@@ -143,6 +143,7 @@ const notebookLocalRpcRequestSchemas = {
   state: notebookSessionRequestSchema,
   restart: z.union([
     notebookSessionRequestSchema,
+    notebookSessionRequestSchema.extend({ kernel: z.literal('repl') }),
     notebookSessionRequestSchema.extend({
       language: notebookLanguageSchema,
       environment: z.string().min(1)

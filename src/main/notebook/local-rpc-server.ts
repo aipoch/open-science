@@ -1,4 +1,9 @@
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { resolveEnvName } from './runtime-paths'
+import { executionRecoveryContext } from './execution-recovery'
+import {
+  NotebookExecutionStopError,
+  notebookErrorRecovery
+} from '../../shared/notebook-execution-error'
 import { artifactSaveRequestSchema } from '../artifacts/save-request'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -443,6 +448,7 @@ type DelegatedNotebookConnection = NotebookRpcConnection & {
 type BoundArtifactTurn = ActiveArtifactTurnBinding & {
   pendingRequests: Set<Promise<void>>
   stopFailure?: NotebookExecutionStopError
+  kernelStopFailures?: Map<string, NotebookExecutionStopError>
 }
 
 type NotebookRpcRequestLifecycle = {
@@ -1451,6 +1457,7 @@ class NotebookLocalRpcServer {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
       completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
       discardControlInvocation(controlInvocationId: string): void
+      revoke: () => void
       release: () => void
     }
   > {
@@ -1509,6 +1516,9 @@ class NotebookLocalRpcServer {
         this.hostViewImage?.discard(controlInvocationId)
         ownedControlInvocationIds.delete(controlInvocationId)
       },
+      // Epoch retirement closes RPC admission immediately; already produced images remain owned
+      // by their invocation until its completion gate accepts or discards them.
+      revoke: () => this.revokeSessionCapability(token),
       release: () => {
         for (const controlInvocationId of ownedControlInvocationIds) {
           this.hostViewImage?.discard(controlInvocationId)
@@ -1584,6 +1594,8 @@ class NotebookLocalRpcServer {
       if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
     }
     if (binding.stopFailure) throw binding.stopFailure
+    const unresolvedKernel = binding.kernelStopFailures?.values().next().value
+    if (unresolvedKernel) throw unresolvedKernel
   }
 
   async prepareNotebookTurnInputs(
@@ -1779,7 +1791,12 @@ class NotebookLocalRpcServer {
     }
     const recordStopFailure = (error: unknown): void => {
       if (error instanceof NotebookExecutionStopError && activeRequest.foregroundTurn) {
-        activeRequest.foregroundTurn.binding.stopFailure ??= error
+        const binding = activeRequest.foregroundTurn.binding
+        const kernel = notebookErrorRecovery(error)?.kernel
+        if (kernel) {
+          binding.kernelStopFailures ??= new Map()
+          binding.kernelStopFailures.set(`${kernel.kind}:${kernel.environment ?? ''}`, error)
+        } else binding.stopFailure ??= error
       }
     }
     lifecycle.activeRequests.add(activeRequest)
@@ -1882,7 +1899,7 @@ class NotebookLocalRpcServer {
             !sessionBinding.delegatedNotebook &&
             sessionBinding.delegatedWorkRole !== 'delegate' &&
             params.background !== true &&
-            ['execute', 'runCell', 'executeControl', 'executeShell'].includes(method)
+            ['execute', 'runCell', 'executeControl', 'executeShell', 'restart'].includes(method)
           ) {
             const sessionId =
               this.sessionAliases.get(sessionBinding.sessionId) ?? sessionBinding.sessionId
@@ -2259,6 +2276,10 @@ class NotebookLocalRpcServer {
       ]
       const dispatchSignal =
         dispatchSignals.length === 1 ? dispatchSignals[0] : AbortSignal.any(dispatchSignals)
+      // Capture identities before awaiting restart. A later failure or replacement Turn must not
+      // be discharged by an earlier recovery that happened to target the same interpreter.
+      const recoveryTurn = method === 'restart' ? activeRequest.foregroundTurn?.binding : undefined
+      const recoveringFailures = new Map(recoveryTurn?.kernelStopFailures)
       const result =
         method === 'capabilitiesCall'
           ? hostCapabilities
@@ -2286,6 +2307,22 @@ class NotebookLocalRpcServer {
                 artifactAdmission?.addBytes
               )
 
+      if (recoveryTurn) {
+        const target =
+          resolvedParams.kernel === 'repl'
+            ? 'repl:'
+            : typeof resolvedParams.language === 'string' &&
+                typeof resolvedParams.environment === 'string'
+              ? `${resolvedParams.language}:${resolveEnvName(resolvedParams.language === 'r' ? 'r' : 'python', resolvedParams.environment)}`
+              : undefined
+        for (const [key, failure] of recoveringFailures) {
+          if (
+            (target === undefined || key === target) &&
+            recoveryTurn.kernelStopFailures?.get(key) === failure
+          )
+            recoveryTurn.kernelStopFailures.delete(key)
+        }
+      }
       writeJson(response, 200, { result })
     } catch (error) {
       recordStopFailure(error)
@@ -2298,8 +2335,10 @@ class NotebookLocalRpcServer {
       }
       if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
-      const serializedError =
-        error instanceof NotebookBackgroundRunError
+      const recovery = executionRecoveryContext(notebookErrorRecovery(error))
+      const serializedError = recovery
+        ? { code: 'notebook-kernel-exited', message, recovery }
+        : error instanceof NotebookBackgroundRunError
           ? { ...error.detail, message }
           : error instanceof BackgroundHostMethodUnsafeError
             ? error.detail

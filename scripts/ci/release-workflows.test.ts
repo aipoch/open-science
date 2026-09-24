@@ -716,6 +716,8 @@ describe('build verification throughput', () => {
       'packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts',
       'src/main/net/network-info.test.ts',
       'src/main/notebook/managed-runtime-guard.test.ts',
+      'src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts',
+      'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
       'src/main/notebook/package-cache-sandbox.integration.test.ts',
       'src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts',
       'src/main/compute/compute-remote-operation-owner.test.ts',
@@ -723,6 +725,13 @@ describe('build verification throughput', () => {
       'src/main/literature/catalog-capacity.test.ts'
     ])
       expect(native).toContain(path)
+    expect(native).not.toContain('-t ')
+    expect(native).toContain('set -euo pipefail')
+    expect(native).toContain(
+      `OPEN_SCIENCE_TEST_PY_ENV="$(python3 -c 'import sys; print(sys.executable)')"`
+    )
+    expect(native).toContain('test -x "$OPEN_SCIENCE_TEST_PY_ENV"')
+    expect(native).toContain('export OPEN_SCIENCE_TEST_PY_ENV')
     expect(step(macos, 'Test production macOS kernel sandbox').run).toContain(
       'executes the repl loop through the production network sandbox'
     )

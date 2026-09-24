@@ -1084,6 +1084,10 @@ jobs:
         if: ${{ matrix.group == 'journeys' && ((fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full') || (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded')) }}
         continue-on-error: true
         run: |
+          set -euo pipefail
+          OPEN_SCIENCE_TEST_PY_ENV="$(python3 -c 'import sys; print(sys.executable)')"
+          test -x "$OPEN_SCIENCE_TEST_PY_ENV"
+          export OPEN_SCIENCE_TEST_PY_ENV
           npx vitest run \
             packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts \
             packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts \
@@ -1094,7 +1098,9 @@ jobs:
             src/main/net/network-info.test.ts \
             src/main/notebook/managed-runtime-guard.test.ts \
             src/main/process-tree-darwin-recovery.test.ts \
-            src/main/process-tree-evidence.macos.integration.test.ts
+            src/main/process-tree-evidence.macos.integration.test.ts \
+            src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts \
+            src/main/notebook/runtime-service.macos-isolation.integration.test.ts
           npx vitest run src/main/notebook/kernel-executor.test.ts \
             -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
       - name: Test short macOS platform checks

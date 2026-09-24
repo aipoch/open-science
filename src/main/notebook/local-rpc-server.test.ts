@@ -160,8 +160,8 @@ describe('notebook local RPC server', () => {
   })
 
   it.each(
-    (['execute', 'runCell', 'executeControl', 'executeShell'] as const).flatMap((method) =>
-      (['ended', 'replaced', 'active'] as const).map((turn) => ({ method, turn }))
+    (['execute', 'runCell', 'executeControl', 'executeShell', 'restart'] as const).flatMap(
+      (method) => (['ended', 'replaced', 'active'] as const).map((turn) => ({ method, turn }))
     )
   )('scopes a slow $method body to its $turn turn', async ({ method, turn }) => {
     const root = await createStorageRoot()
@@ -201,11 +201,13 @@ describe('notebook local RPC server', () => {
       params: {
         sessionId: 'session-1',
         workspaceCwd: root,
-        ...(method === 'executeShell'
-          ? { command: 'echo hi' }
-          : method === 'runCell'
-            ? { cellId: 'cell-1' }
-            : { code: '1' })
+        ...(method === 'restart'
+          ? {}
+          : method === 'executeShell'
+            ? { command: 'echo hi' }
+            : method === 'runCell'
+              ? { cellId: 'cell-1' }
+              : { code: '1' })
       }
     })
     let request!: ClientRequest

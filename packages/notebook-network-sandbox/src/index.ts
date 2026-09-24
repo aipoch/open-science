@@ -29,11 +29,22 @@ import type {
 let activeOwnerToken: symbol | undefined
 
 class NotebookSandboxPreparationError extends Error {
+  // Certifies only this request: other commands may still own unresolved cleanup debt.
   readonly cleanupComplete = true
 
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
     this.name = 'NotebookSandboxPreparationError'
+  }
+}
+
+class NotebookSandboxPreparationCleanupError extends Error {
+  constructor(
+    cause: unknown,
+    readonly retryCleanup: () => Promise<NotebookSandboxCleanupResult>
+  ) {
+    super('SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.', { cause })
+    this.name = 'NotebookSandboxPreparationCleanupError'
   }
 }
 
@@ -167,9 +178,16 @@ class NotebookNetworkSandbox {
   }
 
   async wrap(command: NotebookSandboxCommand): Promise<NotebookSandboxedProcess> {
-    if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
-    const target = normalizedTarget(command.target)
-    await this.#reconcilePendingCommands(target)
+    let target: NotebookSandboxTarget
+    try {
+      if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
+      target = normalizedTarget(command.target)
+      await this.#reconcilePendingCommands(target)
+    } catch (error) {
+      // No command has been registered or passed to the runtime. The caller may release this
+      // request's unused resources, but the commands blocking admission retain their own debt.
+      throw new NotebookSandboxPreparationError(error)
+    }
     const commandId = randomUUID()
     const shell = command.shell as string | WindowsShell | undefined
     const controller = new AbortController()
@@ -222,9 +240,9 @@ class NotebookNetworkSandbox {
         'spawn-failed'
       ).catch(() => undefined)
       if (!cleanup || !cleanupComplete(cleanup)) {
-        throw new Error(
-          'SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.',
-          { cause: error }
+        // Retain the exact command's cleanup ownership even though no process was returned.
+        throw new NotebookSandboxPreparationCleanupError(error, () =>
+          this.#releaseCommand(commandId, { processesTerminated: true }, 'spawn-failed')
         )
       }
       throw new NotebookSandboxPreparationError(error)
@@ -232,15 +250,30 @@ class NotebookNetworkSandbox {
       finishPreparation()
     }
     let cleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    const assertOpen = (): void => {
+      if (activeCommand.cleanupRequest) {
+        throw new Error('Notebook sandbox process is already closed.')
+      }
+    }
     return {
       argv: wrapped.argv,
       env: wrapped.env,
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
-      ...(wrapped.beginSpawn ? { beginSpawn: wrapped.beginSpawn } : {}),
+      ...(wrapped.beginSpawn
+        ? {
+            beginSpawn: () => {
+              assertOpen()
+              return wrapped.beginSpawn!()
+            }
+          }
+        : {}),
       annotateStderr: (stderr) => this.#backend.annotateStderr(commandId, stderr),
-      setExecutionActive: (active) => this.#backend.setCommandExecutionActive(commandId, active),
+      setExecutionActive: (active) => {
+        if (active) assertOpen()
+        this.#backend.setCommandExecutionActive(commandId, active)
+      },
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
       cleanup: (reason, processOutcome) => {
         if (cleanupPromise) return cleanupPromise
@@ -440,7 +473,11 @@ class NotebookNetworkSandbox {
         )
       )
     )
-    if (results.some((result) => !cleanupComplete(result))) {
+    if (
+      results.some(
+        (result) => !cleanupComplete(result) && result.admission !== 'independent-command-allowed'
+      )
+    ) {
       throw new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
     }
   }

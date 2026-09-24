@@ -926,7 +926,22 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
       expect(result).toMatchObject({ status: 'failed', kernelDispatched: true })
       expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(result.stderr).not.toMatch(
+        /notebook_restart|automatically rerun|reduce memory demand/i
+      )
       expect(result.stderr).toContain('PowerShell FileSystem provider initialization failed.')
+      expect(result.recovery).toMatchObject({
+        execution: 'may-have-run',
+        retryAfter: 'runtime-ready',
+        kernel: {
+          kind: 'python',
+          environment: 'default-python',
+          exitCode: 23,
+          signal: null,
+          cause: 'unknown',
+          cleanup: 'verified'
+        }
+      })
     } finally {
       await executor.shutdown()
     }
@@ -1329,6 +1344,71 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await executor.shutdown()
     }
   })
+
+  it.each(['exit', 'idle', 'timeout'] as const)(
+    'reports the original process epoch on %s after reusing it for a later request',
+    async (termination) => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-event-epoch-')
+      const h = makeTimerHarness()
+      const onTerminated = vi.fn()
+      const onIdleShutdown = vi.fn()
+      const executor = new NotebookKernelExecutor({
+        pythonBin: python3,
+        pythonLoopPath: FIXTURE,
+        platform: 'linux',
+        idleTimeoutMs: 1_000,
+        scheduleIdleTimer: h.schedule,
+        cancelIdleTimer: h.cancel,
+        onTerminated,
+        onIdleShutdown
+      })
+      try {
+        await executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'warm',
+          kernelEpochId: 'original-epoch'
+        })
+        await executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'reuse',
+          kernelEpochId: 'later-request-epoch'
+        })
+        if (termination === 'timeout') {
+          await executor.execute({
+            ...baseRequest(cwdDir),
+            code: '__IGNORE_SIGINT__',
+            timeoutMs: 100,
+            kernelEpochId: 'timeout-request-epoch'
+          })
+        } else {
+          const child = procFor(executor, 'python')!.child
+          const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          if (termination === 'idle') h.fireOldest()
+          else child.kill('SIGKILL')
+          await exited
+        }
+        if (termination === 'idle') {
+          expect(onIdleShutdown).toHaveBeenCalledExactlyOnceWith(
+            'python',
+            DEFAULT_PY_ENV,
+            'original-epoch'
+          )
+          expect(onTerminated).not.toHaveBeenCalled()
+        } else {
+          expect(onTerminated).toHaveBeenCalledExactlyOnceWith(
+            'python',
+            DEFAULT_PY_ENV,
+            termination === 'exit' ? expect.objectContaining({ reason: 'exit' }) : undefined,
+            'original-epoch'
+          )
+          expect(onIdleShutdown).not.toHaveBeenCalled()
+        }
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
 
   it('durably binds the OS process to its lane and Kernel epoch until shutdown reaps it', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-durable-owner-')
@@ -4107,21 +4187,97 @@ const delayedSandboxCleanup = (
 }
 
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('retains original exit cleanup proof when recovery admits a successor during the retry delay', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-exit-retry-epoch-'))
+    let proofAvailable = false
+    let releaseDelay: (() => void) | undefined
+    const schedule = globalThis.setTimeout
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      callback: (...args: unknown[]) => void,
+      delay: number | undefined,
+      ...args: unknown[]
+    ) => {
+      if (delay === 100 && !releaseDelay) {
+        releaseDelay = () => callback(...args)
+        return schedule(() => {}, 0)
+      }
+      return schedule(callback, delay, ...args)
+    }) as typeof setTimeout)
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'win32',
+      terminateTree: async (child) => {
+        await terminateProcessTree(child)
+        return { reaped: false }
+      },
+      processSandbox: {
+        wrap: async (invocation) => ({
+          ...invocation,
+          confirmProcessTreeTermination: async () => proofAvailable,
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      }
+    })
+    const request = {
+      ...baseRequest(cwdDir),
+      kind: 'repl' as const,
+      sessionId: 'retry-session',
+      projectId: 'retry-project'
+    }
+    const original = executor.execute({ ...request, code: 'process.exit(23)' }).then(
+      (result) => result,
+      (error: unknown) => error
+    )
+    try {
+      // The gate is installed only after the real child starts and exits. Allow cold Windows
+      // process startup under concurrent suite load without changing the controlled retry delay.
+      await vi.waitFor(() => expect(releaseDelay).toBeDefined(), { timeout: 10_000 })
+      proofAvailable = true
+      await expect(executor.restart()).resolves.toBeUndefined()
+      await expect(
+        executor.execute({
+          ...request,
+          code: 'globalThis.successorNonce = 2919; console.log(successorNonce)'
+        })
+      ).resolves.toMatchObject({ status: 'completed', stdout: expect.stringContaining('2919') })
+      releaseDelay!()
+      await expect(original).resolves.toMatchObject({
+        status: 'failed',
+        recovery: { kernel: { exitCode: 23, cleanup: 'verified' }, retryAfter: 'runtime-ready' }
+      })
+      await expect(
+        executor.execute({ ...request, code: 'console.log(successorNonce)' })
+      ).resolves.toMatchObject({ status: 'completed', stdout: expect.stringContaining('2919') })
+    } finally {
+      proofAvailable = true
+      releaseDelay?.()
+      timer.mockRestore()
+      await original
+      await executor.shutdown()
+    }
+  })
+
   it.skipIf(process.platform === 'win32').each(['execute', 'restart', 'shutdown'] as const)(
     'retries an unconfirmed OS teardown through %s without a native helper',
     async (recovery) => {
       cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-os-proof-retry-'))
-      const terminateTree = vi
-        .fn()
-        .mockResolvedValueOnce({ reaped: false })
-        .mockResolvedValue({ reaped: true })
+      let proofAvailable = false
+      const terminateTree = vi.fn<typeof terminateProcessTree>(async () => ({
+        reaped: proofAvailable
+      }))
       const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, terminateTree })
       const request = { ...baseRequest(cwdDir), kind: 'repl' as const }
       try {
         await expect(executor.execute({ ...request, code: 'process.exit(7)' })).rejects.toThrow(
           'process tree could not be stopped'
         )
-        expect(terminateTree).toHaveBeenCalledOnce()
+        expect(terminateTree).toHaveBeenCalledTimes(3)
+        proofAvailable = true
         if (recovery === 'restart') await expect(executor.restart()).resolves.toBeUndefined()
         if (recovery === 'shutdown')
           await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
@@ -4130,7 +4286,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
             status: 'completed'
           })
         }
-        expect(terminateTree).toHaveBeenCalledTimes(2)
+        expect(terminateTree).toHaveBeenCalledTimes(4)
       } finally {
         terminateTree.mockImplementation(terminateProcessTree)
         await executor.shutdown()
@@ -4146,6 +4302,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       let release!: (result: { reaped: boolean }) => void
       const terminateTree = vi
         .fn()
+        .mockResolvedValueOnce({ reaped: false })
+        .mockResolvedValueOnce({ reaped: false })
         .mockResolvedValueOnce({ reaped: false })
         .mockImplementation(
           () =>
@@ -4184,17 +4342,17 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         expect(confirm).toBeTypeOf('function')
         const confirmations = [confirm!(), confirm!()]
         const shutdown = executor.shutdown()
-        await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledTimes(2))
+        await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledTimes(4))
         release({ reaped: false })
         await expect(Promise.all(confirmations)).resolves.toEqual([false, false])
         await expect(shutdown).resolves.toEqual({ reaped: false })
         const confirmed = confirm!()
-        await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledTimes(3))
+        await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledTimes(5))
         release({ reaped: true })
         await expect(confirmed).resolves.toBe(true)
         await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
         await expect(confirm!()).resolves.toBe(true)
-        expect(terminateTree).toHaveBeenCalledTimes(3)
+        expect(terminateTree).toHaveBeenCalledTimes(5)
       } finally {
         terminateTree.mockResolvedValue({ reaped: true })
         release?.({ reaped: true })
@@ -4236,37 +4394,59 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         projectId: 'project',
         code: 'return 42'
       }
+      const pythonRequest = {
+        ...baseRequest(cwdDir),
+        language: 'python' as const,
+        sessionId: 'session-a',
+        projectId: 'project',
+        resolvedInterpreter: {
+          command: python3!,
+          condaPrefix: dirname(dirname(realpathSync(python3!)))
+        },
+        code: 'import os; os._exit(7)'
+      }
       try {
-        await expect(
-          python.execute({
-            ...baseRequest(cwdDir),
-            language: 'python',
-            sessionId: 'session-a',
-            projectId: 'project',
-            resolvedInterpreter: {
-              command: python3!,
-              condaPrefix: dirname(dirname(realpathSync(python3!)))
-            },
-            code: 'import os; os._exit(7)'
-          })
-        ).rejects.toThrow('process tree could not be stopped')
+        await expect(python.execute(pythonRequest)).rejects.toThrow(
+          'process tree could not be stopped'
+        )
         const retainedTemporaryResources = await readdir(temporaryRoot)
         expect(retainedTemporaryResources.length).toBeGreaterThan(0)
-        await expect(repl.execute(replRequest)).resolves.toMatchObject({
-          status: 'failed',
-          kernelDispatched: false,
-          stderr: expect.stringContaining('SHELL_CLEANUP_INCOMPLETE')
-        })
-        expect(await readdir(temporaryRoot)).toEqual(retainedTemporaryResources)
-        expect(terminateTree).toHaveBeenCalledTimes(2)
-        proofAvailable = true
         await expect(repl.execute(replRequest)).resolves.toMatchObject({
           status: 'completed',
           kernelDispatched: true
         })
-        expect(terminateTree).toHaveBeenCalledTimes(3)
+        const activeResources = await readdir(temporaryRoot)
+        expect(activeResources).toEqual(expect.arrayContaining(retainedTemporaryResources))
+        const replResources = activeResources.filter(
+          (name) => !retainedTemporaryResources.includes(name)
+        )
+        expect(replResources.length).toBeGreaterThan(0)
+        const checksBeforeSameKeyRetry = terminateTree.mock.calls.length
+        expect(checksBeforeSameKeyRetry).toBeGreaterThan(1)
+
+        // Independent admission must not replace A's same-key quarantined kernel.
+        await expect(
+          python.execute({ ...pythonRequest, code: 'print("must not dispatch")' })
+        ).rejects.toThrow('process tree could not be stopped')
+        expect(await readdir(temporaryRoot)).toEqual(activeResources)
+        expect(terminateTree.mock.calls.length).toBeGreaterThan(checksBeforeSameKeyRetry)
+        const unknownOutcomes = await Promise.all(
+          terminateTree.mock.results.map((result) => result.value)
+        )
+        expect(unknownOutcomes.every((outcome) => outcome.reaped === false)).toBe(true)
+
+        proofAvailable = true
         await expect(python.shutdown()).resolves.toEqual({ reaped: true })
-        expect(terminateTree).toHaveBeenCalledTimes(3)
+        const completedProofChecks = terminateTree.mock.calls.length
+        expect(
+          terminateTree.mock.calls.every(([child]) => child === terminateTree.mock.calls[0]![0])
+        ).toBe(true)
+        expect(await readdir(temporaryRoot)).toEqual(replResources)
+        await expect(repl.execute(replRequest)).resolves.toMatchObject({
+          status: 'completed',
+          kernelDispatched: true
+        })
+        expect(terminateTree).toHaveBeenCalledTimes(completedProofChecks)
       } finally {
         proofAvailable = true
         await python.shutdown()
@@ -4295,6 +4475,9 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
 
       expect(result.status).toBe('failed')
       expect(result.stderr).toContain('Notebook kernel process exited with exit code 23.')
+      expect(result.stderr).not.toMatch(
+        /notebook_restart|automatically rerun|reduce memory demand/i
+      )
       expect(terminations).toHaveLength(1)
       expect(terminations[0]).toEqual([
         'repl',
@@ -4399,7 +4582,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         proofAvailable = true
         await expect(executor.shutdown()).resolves.toEqual({ reaped: nativeProof !== 'absent' })
         expect(terminateTree).toHaveBeenCalledOnce()
-        expect(confirm).toHaveBeenCalledTimes(nativeProof !== 'absent' ? 3 : 0)
+        expect(confirm).toHaveBeenCalledTimes(nativeProof !== 'absent' ? 5 : 0)
       } finally {
         await executor.shutdown()
       }
@@ -4689,10 +4872,13 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       sandbox.release()
       if (process.platform === 'win32') {
         await expect(execution).rejects.toThrow('process tree could not be stopped')
+        // This fixture has no native proof callback, so the initial attempt and both
+        // bounded automatic retries must remain unverified on Windows.
+        expect(sandbox.cleanup).toHaveBeenCalledTimes(3)
       } else {
         await expect(execution).resolves.toMatchObject({ status: 'failed' })
+        expect(sandbox.cleanup).toHaveBeenCalledOnce()
       }
-      expect(sandbox.cleanup).toHaveBeenCalledOnce()
     } finally {
       sandbox.release()
       await executor.shutdown()

@@ -219,23 +219,31 @@ jobs:
         run: node scripts/ci/npm-ci.mjs
       # Keep platform-gated cases that Ubuntu skips, plus regressions from the macOS release run.
       - name: Test macOS native behavior and release regressions
-        run: >-
-          npx vitest run
-          src/main/windows.test.ts
-          packages/notebook-network-sandbox/src/filesystem-policy.test.ts
-          packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
-          packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
-          src/main/net/network-info.test.ts
-          src/main/notebook/managed-runtime-guard.test.ts
-          src/main/notebook/package-cache-sandbox.integration.test.ts
-          src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts
-          src/main/compute/compute-remote-operation-owner.test.ts
-          scripts/ci/mirror-channel-publication.test.ts
-          src/main/literature/catalog-capacity.test.ts
+        run: |
+          set -euo pipefail
+          OPEN_SCIENCE_TEST_PY_ENV="$(python3 -c 'import sys; print(sys.executable)')"
+          test -x "$OPEN_SCIENCE_TEST_PY_ENV"
+          export OPEN_SCIENCE_TEST_PY_ENV
+          npx vitest run \
+            src/main/windows.test.ts \
+            packages/notebook-network-sandbox/src/filesystem-policy.test.ts \
+            packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts \
+            packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts \
+            src/main/net/network-info.test.ts \
+            src/main/notebook/managed-runtime-guard.test.ts \
+            src/main/process-tree-darwin-recovery.test.ts \
+            src/main/process-tree-evidence.macos.integration.test.ts \
+            src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts \
+            src/main/notebook/runtime-service.macos-isolation.integration.test.ts \
+            src/main/notebook/package-cache-sandbox.integration.test.ts \
+            src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts \
+            src/main/compute/compute-remote-operation-owner.test.ts \
+            scripts/ci/mirror-channel-publication.test.ts \
+            src/main/literature/catalog-capacity.test.ts
       - name: Test production macOS kernel sandbox
         run: >-
           npx vitest run src/main/notebook/kernel-executor.test.ts
-          -t 'executes the repl loop through the production network sandbox'
+          -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
 
   # Resolve the platform matrix. mac_only trims it to the two mac archs — used by the notarization
   # dry-run (notarize-dryrun.yml), which only needs a signed mac build. With mac_only false (the

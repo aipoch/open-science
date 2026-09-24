@@ -46,7 +46,9 @@ describe('Notebook network sandbox configuration', () => {
   })
 
   it('builds a fail-closed runtime config with platform resources', () => {
-    const config = createRuntimeConfig(createOptions(), 'arm64', {})
+    const root = mkdtempSync(join(tmpdir(), 'platform-sandbox-config-'))
+    temporaryRoots.push(root)
+    const config = createRuntimeConfig(createOptions(), 'arm64', { LOCALAPPDATA: root })
 
     expect(config).toMatchObject({
       allowedDomains: ['openalex.org', '*.npmjs.org:443'],

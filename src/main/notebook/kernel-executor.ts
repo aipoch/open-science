@@ -1,11 +1,16 @@
 import { createLogger } from '../logger'
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import {
+  NotebookExecutionStopError,
+  NotebookKernelExitError,
+  notebookErrorRecovery
+} from '../../shared/notebook-execution-error'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
 import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
+import { diagnoseKernelExit } from './kernel-exit-diagnostics'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 import { resolveExternalRLibrary } from './external-r-library'
 import { createInterface, type Interface } from 'node:readline'
@@ -234,8 +239,9 @@ export type NotebookKernelExecutorOptions = {
   cancelIdleTimer?: CancelIdleTimer
   // Invoked once a proc is dropped for being idle; the caller can use this to surface a 'terminated'
   // kernel status upward (see NotebookRuntimeService). Carries the resolved env so the caller marks
-  // the right per-(kind, env) kernel status ('' for the env-agnostic repl).
-  onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
+  // the right per-(kind, env) kernel status ('' for the env-agnostic repl). The optional epoch
+  // identifies the original spawn even when later requests have reused the process.
+  onIdleShutdown?: (kind: KernelProcessKind, env: string, kernelEpochId?: string) => void
   // Invoked once a proc is lost unexpectedly (a crash exit or a hard-timeout drop), or cancellation
   // must drop it because Windows cannot recoverably interrupt it or a POSIX grace period expires.
   // NOT invoked on an intentional shutdown()/restart(). Parallels onIdleShutdown so the caller can
@@ -243,7 +249,8 @@ export type NotebookKernelExecutorOptions = {
   onTerminated?: (
     kind: KernelProcessKind,
     env: string,
-    diagnostic?: NotebookKernelTerminationDiagnostic
+    diagnostic?: NotebookKernelTerminationDiagnostic,
+    kernelEpochId?: string
   ) => void
   // Injectable only to exercise the Windows conda activation contract on non-Windows test hosts.
   platform?: NodeJS.Platform
@@ -283,6 +290,8 @@ type ProcState = {
   // Routing key in `procs`; kept on the proc so map ops that only receive a ProcState (dropProc,
   // rearmIdleTimerIfLive, handleIdleTimeout) can re-key without recomputing from the request.
   key: ProcessKey
+  // Identity belongs to the spawn, never to a later request reusing this process.
+  kernelEpochId?: string
   child: ChildProcessWithoutNullStreams
   readline: Interface
   pending?: PendingRequest
@@ -340,9 +349,21 @@ const kernelExitError = (
     )
   }
   const stderr = proc.annotateStderr(proc.stderrTail).trim()
-  return new Error(
+  return new NotebookKernelExitError(
     `Notebook kernel process exited${kernelExitReason(code, signal)}.` +
-      (stderr ? `\n${stderr}` : '')
+      (stderr ? `\n${stderr}` : ''),
+    {
+      execution: 'may-have-run',
+      retryAfter: 'cleanup-verified',
+      kernel: {
+        kind: proc.kind,
+        ...(proc.kind !== 'repl' ? { environment: proc.env } : {}),
+        exitCode: code,
+        signal,
+        cause: 'unknown',
+        cleanup: 'unverified'
+      }
+    }
   )
 }
 
@@ -443,6 +464,7 @@ const errorToExecutionResult = (
 
   return {
     status: error instanceof NotebookExecutionTimeoutError ? 'timeout' : 'failed',
+    ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
     kernelDispatched,
     stdout: '',
     stderr: message,
@@ -509,6 +531,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     {
       completion: Promise<ProcessTreeKillResult>
       retry: () => Promise<ProcessTreeKillResult>
+      failure: () => Error | undefined
+      owner: ProcState
     }
   >()
   // One temp dir the loops write captured figures into; created lazily, reused, removed on shutdown.
@@ -520,7 +544,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly idleTimeoutMs: number
   private readonly scheduleIdleTimer: ScheduleIdleTimer
   private readonly cancelIdleTimer: CancelIdleTimer
-  private readonly onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
+  private readonly onIdleShutdown?: NotebookKernelExecutorOptions['onIdleShutdown']
   private readonly onTerminated?: NotebookKernelExecutorOptions['onTerminated']
   private readonly cancellationGraceMs: number
   private readonly namespaceInspectionTimeoutMs: number
@@ -838,7 +862,18 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // Wait out any in-flight teardown for this key (a prior hard-timeout/idle/identity-change drop) so
     // we never run two live process trees for the same (kind, env) at once.
     const pending = await this.reconcilePendingTeardown(key)
-    if (pending && !pending.reaped) throw new NotebookExecutionStopError()
+    if (pending && !pending.reaped) {
+      const cause = this.pendingTeardowns.get(key)?.failure()
+      throw new NotebookExecutionStopError(
+        cause ? `${cause.message}\nNotebook process tree could not be stopped.` : undefined,
+        {
+          cause,
+          ...(notebookErrorRecovery(cause)
+            ? { recovery: { ...notebookErrorRecovery(cause)!, execution: 'not-started' as const } }
+            : {})
+        }
+      )
+    }
 
     const spawned = await this.spawnLoop(kind, env, request)
     const child = spawned.child
@@ -847,7 +882,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       proc.terminationError = error
       this.dropProc(proc)
       this.killChildTracked(proc)
-      this.onTerminated?.(kind, env)
+      this.notifyTerminated(proc)
       this.rejectPending(proc, error)
     })
     const readline = createInterface({ input: boundedOutput })
@@ -855,6 +890,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       kind,
       env,
       key,
+      kernelEpochId: request.kernelEpochId,
       child,
       readline,
       beginSandboxExecution: spawned.beginSandboxExecution,
@@ -889,7 +925,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       proc.terminationError = error
       void this.killChildTracked(proc, 'spawn-failed').then((result) => {
         this.rejectPending(proc, result.reaped ? error : new NotebookExecutionStopError())
-        this.onTerminated?.(kind, env, {
+        this.notifyTerminated(proc, {
           reason: 'error',
           name: error.name,
           message: error.message,
@@ -910,11 +946,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       this.procs.delete(key)
       proc.readline.close()
       const terminationError = kernelExitError(proc, code, signal)
+      const diagnosis = diagnoseKernelExit({ pid: child.pid, signal, platform: this.platform })
       proc.terminationError = terminationError
       // Publish the crash as soon as the direct child exits. Process-tree and sandbox cleanup still
       // gate settlement of any in-flight execution, but status observers should not have to wait for
       // that asynchronous cleanup to learn that the live kernel is gone.
-      this.onTerminated?.(kind, env, {
+      this.notifyTerminated(proc, {
         reason: 'exit',
         exitCode: code,
         signal,
@@ -922,10 +959,48 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ? { stderr: boundedRuntimeDiagnostic(proc.annotateStderr(proc.stderrTail)).text }
           : {})
       })
-      void this.killChildTracked(proc, 'exit').then((result) => {
+      void this.killChildTracked(proc, 'exit').then(async (initial) => {
+        let result = initial
+        // A late native observation or resource close can settle after the direct child exit.
+        // Reconcile the same owned tree twice; never replay the cell or replace an unproven tree.
+        for (const delay of [100, 300]) {
+          if (result.reaped) break
+          await new Promise((resolve) => setTimeout(resolve, delay))
+          // Another caller may already have settled this epoch and admitted its successor.
+          // Reconcile the captured process, never the successor now occupying the same key.
+          result = await this.teardownProc(proc, 'exit')
+        }
+        if (terminationError instanceof NotebookKernelExitError) {
+          terminationError.recovery = {
+            ...terminationError.recovery,
+            retryAfter: result.reaped ? 'runtime-ready' : 'cleanup-verified',
+            kernel: {
+              ...terminationError.recovery.kernel!,
+              cause: await diagnosis,
+              cleanup: result.reaped ? 'verified' : 'unverified'
+            }
+          }
+        }
+        if (terminationError instanceof NotebookKernelExitError) {
+          const kernel = terminationError.recovery.kernel!
+          terminationError.message +=
+            kernel.cause === 'os-memory-pressure'
+              ? '\nThe operating system killed this process under memory pressure.'
+              : signal === 'SIGKILL'
+                ? '\nThe underlying cause is unconfirmed; SIGKILL alone does not prove memory exhaustion.'
+                : '\nThe underlying cause is unconfirmed.'
+          terminationError.message += "\nThe exited interpreter's in-memory state was lost."
+          if (!result.reaped)
+            terminationError.message += '\nProcess-tree cleanup could not be verified.'
+        }
         this.rejectPending(
           proc,
-          result.reaped ? terminationError : new NotebookExecutionStopError()
+          result.reaped
+            ? terminationError
+            : new NotebookExecutionStopError(
+                `${terminationError.message}\nNotebook process tree could not be stopped.`,
+                { cause: terminationError }
+              )
         )
       })
     })
@@ -1437,7 +1512,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
                   this.dropProc(proc)
                   void this.killChildTracked(proc, 'timeout').then((result) => {
                     this.clearPendingResources(pending)
-                    this.onTerminated?.(proc.kind, proc.env)
+                    this.notifyTerminated(proc)
                     reject(
                       result.reaped
                         ? new NotebookExecutionTimeoutError(
@@ -1460,7 +1535,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
                 this.clearPendingResources(proc.pending)
                 proc.pending = undefined
                 this.dropProc(proc)
-                this.onTerminated?.(proc.kind, proc.env)
+                this.notifyTerminated(proc)
                 reject(
                   new NotebookExecutionTimeoutError(
                     `Notebook execution timed out after ${timeoutMs}ms.`
@@ -1486,7 +1561,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
             this.dropProc(proc)
             void this.killChildTracked(proc).then(
               (result) => {
-                this.onTerminated?.(proc.kind, proc.env)
+                this.notifyTerminated(proc)
                 pending.reject(
                   result.reaped
                     ? new NotebookExecutionCancelledError()
@@ -1508,7 +1583,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
             this.dropProc(proc)
             void this.killChildTracked(proc).then(
               (result) => {
-                this.onTerminated?.(proc.kind, proc.env)
+                this.notifyTerminated(proc)
                 pending.reject(
                   result.reaped
                     ? new NotebookExecutionCancelledError()
@@ -1567,7 +1642,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         proc.pending = undefined
         this.dropProc(proc)
         this.killChildTracked(proc)
-        this.onTerminated?.(proc.kind, proc.env)
+        this.notifyTerminated(proc)
         reject(
           new Error(
             `Notebook namespace inspection timed out after ${this.namespaceInspectionTimeoutMs}ms.`
@@ -1733,6 +1808,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.armIdleTimer(proc)
   }
 
+  private notifyTerminated(
+    proc: ProcState,
+    diagnostic?: NotebookKernelTerminationDiagnostic
+  ): void {
+    if (proc.kernelEpochId !== undefined) {
+      this.onTerminated?.(proc.kind, proc.env, diagnostic, proc.kernelEpochId)
+    } else if (diagnostic !== undefined) {
+      this.onTerminated?.(proc.kind, proc.env, diagnostic)
+    } else {
+      this.onTerminated?.(proc.kind, proc.env)
+    }
+  }
+
   // Fires after the idle window with no new request on this proc: drops it (kill + remove from the
   // map) so the next execute() lazily respawns a fresh process with a clean namespace. A request that
   // started between the timer arming and firing always wins the race -- execute()/ensureProc() disarm
@@ -1743,7 +1831,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
     this.dropProc(proc)
     this.killChildTracked(proc)
-    this.onIdleShutdown?.(proc.kind, proc.env)
+    if (proc.kernelEpochId !== undefined) {
+      this.onIdleShutdown?.(proc.kind, proc.env, proc.kernelEpochId)
+    } else {
+      this.onIdleShutdown?.(proc.kind, proc.env)
+    }
   }
 
   // Fire-and-forget tree teardown for a DROPPED proc, tracked by its key so ensureProc can await it
@@ -1752,32 +1844,45 @@ class NotebookKernelExecutor implements NotebookExecutor {
     proc: ProcState,
     reason: NotebookSandboxCleanupReason = 'cancel'
   ): Promise<ProcessTreeKillResult> {
-    const done = proc
-      .teardownProcess()
-      .then(async (result) => {
-        const cleanup = await this.cleanupProc(proc, reason, { processesTerminated: result.reaped })
-        return {
-          reaped:
-            cleanup.processesTerminated &&
-            cleanup.networkClosed &&
-            cleanup.temporaryResourcesRemoved
-        }
-      })
-      // A rejected cleanup is still an unconfirmed teardown, not a permanently rejected barrier.
-      .catch(() => ({ reaped: false }))
-      .then((result) => {
-        // Keep an unsuccessful teardown as a barrier: neither a replacement kernel nor shutdown
-        // may claim that the old process tree is gone merely because the kill attempt settled.
-        if (result.reaped && this.pendingTeardowns.get(proc.key)?.completion === done) {
-          this.pendingTeardowns.delete(proc.key)
-        }
-        return result
-      })
+    const done = this.teardownProc(proc, reason)
     this.pendingTeardowns.set(proc.key, {
       completion: done,
-      retry: () => this.killChildTracked(proc, reason)
+      retry: () => this.killChildTracked(proc, reason),
+      failure: () => proc.terminationError,
+      owner: proc
     })
     return done
+  }
+
+  private teardownProc(
+    proc: ProcState,
+    reason: NotebookSandboxCleanupReason
+  ): Promise<ProcessTreeKillResult> {
+    return (
+      proc
+        .teardownProcess()
+        .then(async (result) => {
+          const cleanup = await this.cleanupProc(proc, reason, {
+            processesTerminated: result.reaped
+          })
+          return {
+            reaped:
+              cleanup.processesTerminated &&
+              cleanup.networkClosed &&
+              cleanup.temporaryResourcesRemoved
+          }
+        })
+        // A rejected cleanup is still an unconfirmed teardown, not a permanently rejected barrier.
+        .catch(() => ({ reaped: false }))
+        .then((result) => {
+          // Keep an unsuccessful teardown as a barrier: neither a replacement kernel nor shutdown
+          // may claim that the old process tree is gone merely because the kill attempt settled.
+          if (result.reaped && this.pendingTeardowns.get(proc.key)?.owner === proc) {
+            this.pendingTeardowns.delete(proc.key)
+          }
+          return result
+        })
+    )
   }
 
   private async reconcilePendingTeardown(

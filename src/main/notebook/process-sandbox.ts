@@ -15,6 +15,7 @@ export type NotebookSandboxCleanupResult = Readonly<{
   processesTerminated: boolean
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
+  admission?: 'blocked' | 'independent-command-allowed'
 }>
 
 export type NotebookSandboxProcessOutcome = Readonly<{

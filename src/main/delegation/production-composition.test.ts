@@ -2956,7 +2956,17 @@ describe('production delegated-work composition', () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-notebook-artifacts-'))
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
+    const migrationStartedAt = Date.now()
+    await migrateApplicationDatabase(client, {
+      onProgress: (progress) =>
+        console.info('Child Notebook artifact fixture migration', {
+          ...progress,
+          elapsedMs: Date.now() - migrationStartedAt
+        })
+    })
+    console.info('Child Notebook artifact fixture migration completed', {
+      elapsedMs: Date.now() - migrationStartedAt
+    })
     const artifactRepository = new ArtifactRepository(root)
     const artifactMcpRepository = new ArtifactRepository(root)
     const artifactRunRegistry = new ArtifactRunRegistry()
@@ -3143,7 +3153,9 @@ describe('production delegated-work composition', () => {
         }
       ]
     })
-  })
+    // This scenario migrates a real SQLite database. Match the existing provenance/database
+    // suites' budget on hosted Windows; a 30s test timeout can leave migration running during rm.
+  }, 120_000)
 
   it('keeps running and continued production Turns independently owned across a late reload', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-artifacts-'))

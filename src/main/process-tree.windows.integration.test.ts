@@ -91,7 +91,8 @@ windows('delegated Windows Job ownership (real processes)', () => {
     expect(alive(descendant)).toBe(true)
     const reopened = new DelegatedProcessOwnership(root)
     await reopened.recover(scope)
-    expect(alive(descendant)).toBe(false)
+    // Job accounting proves termination before Windows necessarily retires the process object.
+    await expect.poll(() => alive(descendant), { timeout: 4_000 }).toBe(false)
     expect(alive(unrelated.pid!)).toBe(true)
     expect(reopened.receipts()).toEqual([])
     await expect(reopened.recover(scope)).resolves.toBeUndefined()

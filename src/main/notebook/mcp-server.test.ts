@@ -299,13 +299,11 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
-  it('bounds recovery after repeated kernel-process failures', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel failures/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry at most once when safe/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('check possible side effects before replaying')
+  it('keeps retry decisions tied to side effects without a global kernel failure stop rule', () => {
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toMatch(/stop Notebook tools/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toMatch(/retry at most once/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('check possible side effects before retrying')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('absent means unknown')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/stop Notebook tools/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/report the failure/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('then revise/rerun')
   })
 
@@ -3287,7 +3285,8 @@ describe('compactRestartResult', () => {
     expect(compact.kernelStatus).toBe('idle')
     expect(compact.status).toBe('restarted')
     expect(compact.cells).toBe(2)
-    expect(String(compact.note)).toContain('restarted')
+    expect(String(compact.note)).toContain('fresh process starts on the next execution')
+    expect(String(compact.note)).toContain('interrupted writes may be partial')
     // The verbose run history is NOT carried into the agent-facing restart result.
     const serialized = JSON.stringify(compact)
     expect(serialized).not.toContain('runs')

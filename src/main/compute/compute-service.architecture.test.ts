@@ -1127,7 +1127,9 @@ describe('Compute service architecture', () => {
       'src/main/settings/claude-provider-configuration.integration.test.ts',
       'src/main/settings/provider-runtime-health-owner.test.ts',
       'src/main/settings/provider-transport-owner.test.ts',
-      'src/main/literature/smart-collections.test.ts'
+      'src/main/notebook/runtime-service.rpc-retirement.test.ts',
+      'src/main/literature/smart-collections.test.ts',
+      'src/main/notebook/runtime-service.macos-isolation.integration.test.ts'
     ])
   })
 

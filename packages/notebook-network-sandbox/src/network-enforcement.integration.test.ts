@@ -44,7 +44,7 @@ const runAndCleanup = async (
 ): Promise<Awaited<ReturnType<typeof run>> & { annotatedStderr: string }> => {
   const result = await run(wrapped, cwd)
   const annotatedStderr = wrapped.annotateStderr(result.stderr)
-  expect(await wrapped.cleanup('exit', { processesTerminated: true })).toEqual({
+  expect(await wrapped.cleanup('exit', { processesTerminated: true })).toMatchObject({
     processesTerminated: true,
     networkClosed: true,
     temporaryResourcesRemoved: true
@@ -113,7 +113,9 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       policy.mockRestore()
       try {
         if (wrapped) {
-          expect(await wrapped.cleanup('spawn-failed', { processesTerminated: true })).toEqual({
+          expect(
+            await wrapped.cleanup('spawn-failed', { processesTerminated: true })
+          ).toMatchObject({
             processesTerminated: true,
             networkClosed: true,
             temporaryResourcesRemoved: true
@@ -185,7 +187,9 @@ describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => 
       policy.mockRestore()
       try {
         if (wrapped) {
-          expect(await wrapped.cleanup('spawn-failed', { processesTerminated: true })).toEqual({
+          expect(
+            await wrapped.cleanup('spawn-failed', { processesTerminated: true })
+          ).toMatchObject({
             processesTerminated: true,
             networkClosed: true,
             temporaryResourcesRemoved: true

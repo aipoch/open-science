@@ -1,3 +1,4 @@
+import { notebookErrorRecovery } from '../../shared/notebook-execution-error'
 import type {
   NotebookEnvironmentManifest,
   NotebookHelperModuleEvidence,
@@ -224,6 +225,7 @@ class NotebookRunTerminalizationOwner {
           status: 'interrupted',
           stdout: '',
           stderr: errorMessage(error),
+          ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
           traceback: '',
           cwdAfter: runningRun.cwdBefore,
           outputs: [],
@@ -375,6 +377,7 @@ class NotebookRunTerminalizationOwner {
           status: 'interrupted',
           stdout: '',
           stderr: errorMessage(error),
+          ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
           traceback: '',
           cwdAfter: runningRun.cwdBefore,
           outputs: []
@@ -397,6 +400,7 @@ class NotebookRunTerminalizationOwner {
         status: 'interrupted',
         stdout: '',
         stderr: errorMessage(error),
+        ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
         traceback: '',
         cwdAfter: runningRun.cwdBefore,
         outputs: []

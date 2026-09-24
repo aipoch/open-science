@@ -424,7 +424,7 @@ describe('Notebook runtime configuration updates', () => {
       NotebookNetworkRuntime.cleanupAfterCommand('command-1', 'timeout', {
         processesTerminated: false
       })
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       processesTerminated: false,
       networkClosed: true,
       temporaryResourcesRemoved: true

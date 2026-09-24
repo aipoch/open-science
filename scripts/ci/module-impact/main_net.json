@@ -205,6 +205,7 @@
       "src/main/notebook/recovery-coordinator.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
       "src/main/notebook/runtime-repair.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/notebook/runtime-service.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notifications/notification-inbox-runtime.test.ts",
@@ -342,7 +343,8 @@
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/settings/application-commands.test.ts",
-      "src/main/literature/smart-collections.test.ts"
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

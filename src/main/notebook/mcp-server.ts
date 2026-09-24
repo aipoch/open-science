@@ -56,9 +56,9 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before replaying. Retry at most once when safe; repeated kernel failures mean stop Notebook tools and report the failure.',
+  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
   'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
-  'Follow recovery guidance; never bypass protection/TLS. Check settings for setup failures.',
+  'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
   'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
@@ -1222,7 +1222,7 @@ const registerNotebookRpcTool = (
 
 // Projects the full session state a restart returns down to a compact confirmation: the agent only
 // needs to know the kernel reset and that history is preserved — not the entire cell/run history.
-const compactRestartResult = (raw: unknown): unknown => {
+const compactRestartResult = (raw: unknown, input: unknown = {}): unknown => {
   if (typeof raw !== 'object' || raw === null) return raw
   const state = raw as Record<string, unknown>
   const cells = Array.isArray(state.cells) ? state.cells.length : 0
@@ -1230,7 +1230,8 @@ const compactRestartResult = (raw: unknown): unknown => {
     sessionId: state.sessionId,
     kernelStatus: state.kernelStatus,
     status: 'restarted',
-    note: 'Kernel restarted; in-memory variables cleared. Run history is preserved (use notebook_state to view it).',
+    ...pickDefined(asRecord(input) ?? {}, ['language', 'environment', 'kernel']),
+    note: 'Interpreter state reset; a fresh process starts on the next execution. Saved history and files are not deleted; interrupted writes may be partial.',
     cells
   }
 }
@@ -1648,9 +1649,19 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Restart the shared notebook interpreter, clearing in-memory variables (run history is preserved). Use when manage_packages reports needsRestart:true, to reload an updated package already imported in this session, or to deliberately clear the namespace / free memory. Installing a new Python package usually does not require a restart; follow the actual needsRestart result for the selected runtime.',
+      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Target Python/R with language/environment or REPL with kernel:"repl". Without selectors, resets all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
     method: 'restart',
-    inputSchema: {},
+    inputSchema: {
+      kernel: z
+        .literal('repl')
+        .optional()
+        .describe('Control interpreter; excludes language/environment.'),
+      language: z
+        .enum(['python', 'r'])
+        .optional()
+        .describe('Data-kernel language; requires environment.'),
+      environment: z.string().min(1).optional().describe('Environment paired with language.')
+    },
     mapResult: compactRestartResult,
     resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
   },

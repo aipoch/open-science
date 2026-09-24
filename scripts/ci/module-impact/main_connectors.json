@@ -311,7 +311,9 @@
       "src/main/connectors/descriptors/omics-ena.test.ts",
       "src/main/connectors/descriptors/genomes-blast.test.ts",
       "src/main/connectors/descriptors/genomes-clustal.test.ts",
-      "src/main/connectors/descriptors/gdc.test.ts"
+      "src/main/connectors/descriptors/gdc.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

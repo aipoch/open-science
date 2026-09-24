@@ -66,7 +66,14 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
-  'stdout' | 'stderr' | 'traceback' | 'outputs' | 'truncated' | 'workingFiles' | 'fileEvidence'
+  | 'stdout'
+  | 'stderr'
+  | 'traceback'
+  | 'outputs'
+  | 'truncated'
+  | 'workingFiles'
+  | 'fileEvidence'
+  | 'recovery'
 > & {
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
@@ -289,7 +296,8 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
     outputs: run.outputs,
     ...(run.truncated ? { truncated: true } : {}),
     workingFiles: run.workingFiles,
-    fileEvidence: run.fileEvidence
+    fileEvidence: run.fileEvidence,
+    ...(run.recovery ? { recovery: run.recovery } : {})
   }
 }
 
@@ -1114,9 +1122,7 @@ class NotebookExecutionOwner {
     onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     const admittedAt = Date.now()
-    const replWasTerminated =
-      session.kernelStatus('repl') === 'terminated' || session.hasDurableKernelTermination('repl')
-    const kernelEpochId = session.kernelEpoch('repl', replWasTerminated).id
+    const kernelEpochId = session.currentKernelEpochId('repl')
     const queuedRun: NotebookRunRecord = {
       runId: controlInvocationId,
       executionMode: request.background ? 'background' : 'foreground',
@@ -1149,10 +1155,6 @@ class NotebookExecutionOwner {
       processKey: 'repl'
     }
 
-    // Resolve and retain the Session-owned Host SDK capability before the durable admission point.
-    // The per-invocation scope is opened only when this FIFO entry actually dispatches.
-    signal?.throwIfAborted()
-    const mcpRpc = await session.resolveMcpRpcConnection(this.options.getMcpRpcConnectionResolver())
     signal?.throwIfAborted()
     const blockedMutation = detectManagedRuntimeMutation({
       source: request.code,
@@ -1179,8 +1181,6 @@ class NotebookExecutionOwner {
               request,
               durableAdmission.run,
               controlInvocationGeneration,
-              replWasTerminated,
-              mcpRpc,
               blockedMutation,
               signal
             ),
@@ -1260,14 +1260,20 @@ class NotebookExecutionOwner {
     request: ExecuteNotebookControlRequest,
     queuedRun: NotebookRunRecord,
     controlInvocationGeneration: number,
-    replWasTerminated: boolean,
-    mcpRpc: NotebookSessionMcpRpcConnection | undefined,
     blockedMutation: ReturnType<typeof detectManagedRuntimeMutation>,
     signal?: AbortSignal
   ): Promise<NotebookControlResult> {
+    // A lifecycle projection may have been appended after this entry already joined the FIFO.
+    await session.drainExecutorLifecycle()
     const replStatusBefore = session.kernelStatus('repl')
+    const replWasTerminated =
+      replStatusBefore === 'terminated' || session.hasDurableKernelTermination('repl')
+    const epoch = session.kernelEpoch('repl', replWasTerminated)
+    // The queued record describes admission. Persist the actual dispatch epoch in the existing
+    // queued -> running transition, before any process receives this invocation.
+    queuedRun = { ...queuedRun, kernelEpochId: epoch.id }
     const runId = queuedRun.runId
-    const kernelEpochId = queuedRun.kernelEpochId
+    const kernelEpochId = epoch.id
     const replEpochId = blockedMutation ? undefined : kernelEpochId
     let executedOnLiveKernel = !blockedMutation
     let reachedExecutor = false
@@ -1289,9 +1295,19 @@ class NotebookExecutionOwner {
               )
             )
           : (async () => {
+              const mcpRpc = await session.resolveMcpRpcConnection(
+                this.options.getMcpRpcConnectionResolver(),
+                epoch
+              )
+              signal?.throwIfAborted()
               const sourceFileAccessContext = await this.options
                 .sourceFileAccessContext?.(session, queuedRun)
                 .catch(() => undefined)
+              signal?.throwIfAborted()
+              if (session.currentKernelEpochId('repl') !== epoch.id) {
+                throw new Error('Notebook REPL epoch retired before dispatch.')
+              }
+              if (mcpRpc) session.retainControlInvocationConnection(runId, mcpRpc)
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
                 turnId: runId,
                 controlInvocationGeneration,

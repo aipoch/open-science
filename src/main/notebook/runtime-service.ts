@@ -198,9 +198,9 @@ type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
 const backgroundExecutionEnabledByDefault = (environmentValue: string | undefined): boolean =>
   environmentValue === undefined || environmentValue === '1'
 
-// The session-scoped connector RPC capability injected into the persistent control-plane REPL. The
-// service caches it for the RuntimeSession lifetime because the child captures it only when spawned;
-// release revokes that capability when the runtime session is shut down.
+// The process-epoch connector RPC capability injected into the persistent control-plane REPL. The
+// service retains it only while that REPL epoch owns the child, which captures it when spawned;
+// epoch retirement revokes authority; invocation completion retains ownership of pending output.
 type McpRpcConnection = NotebookSessionMcpRpcConnection
 type McpRpcConnectionBinding = {
   sessionId: string
@@ -1897,7 +1897,12 @@ class NotebookRuntimeService {
         throw new Error('Notebook restart language and environment must be provided together.')
       }
 
-      let target: { language: NotebookLanguage; environment: string } | undefined
+      let target: { language: NotebookLanguage | 'repl'; environment: string } | undefined
+      if (request.kernel !== undefined) {
+        if (request.kernel !== 'repl' || hasLanguage || hasEnvironment)
+          throw new Error('Notebook control-kernel restart cannot include a data-kernel target.')
+        target = { language: 'repl', environment: '' }
+      }
       if (request.language !== undefined && request.environment !== undefined) {
         const language = parseNotebookLanguage(request.language)
         if (!request.environment.trim()) {
@@ -1921,7 +1926,7 @@ class NotebookRuntimeService {
 
       if (target) {
         const { language, environment } = target
-        const processKey = dataProcessKey(language, environment)
+        const processKey = language === 'repl' ? 'repl' : dataProcessKey(language, environment)
         const isDefaultPython = processKey === dataProcessKey('python', DEFAULT_PY_ENV)
         const restoredKernelStatus = session.restoredKernelStatus()
         const statusBeforeRestart =

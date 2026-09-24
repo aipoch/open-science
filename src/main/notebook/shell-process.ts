@@ -705,22 +705,34 @@ const runShellCommand = (
             ? (await sandboxed.confirmProcessTreeTermination().catch(() => false)) ||
               processOutcome.processesTerminated
             : processOutcome.processesTerminated
+          // Retain the original native owner's one-time proof for late reconciliation. Once
+          // verified, receipt removal may retry without consuming that proof or signalling a PID.
+          let nativeTreeReaped = processesTerminated
+          const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
           complete = cleanupCompleted(
             await cleanupSandboxWithRetry(cleanupReason, {
               processesTerminated,
-              ...(!processesTerminated && runtimeBinding.kind === 'native-posix'
+              ...(!processesTerminated && confirmNativeTermination
                 ? {
                     confirmTermination: async () => {
-                      const { reaped } = await terminateShellOnTimeout(
-                        child,
-                        platform,
-                        options.terminateTree
-                      )
-                      if (reaped) releaseProcessOwnership?.()
-                      return reaped
+                      nativeTreeReaped ||= await confirmNativeTermination()
+                      if (nativeTreeReaped) releaseProcessOwnership?.()
+                      return nativeTreeReaped
                     }
                   }
-                : {})
+                : !processesTerminated && runtimeBinding.kind === 'native-posix'
+                  ? {
+                      confirmTermination: async () => {
+                        const { reaped } = await terminateShellOnTimeout(
+                          child,
+                          platform,
+                          options.terminateTree
+                        )
+                        if (reaped) releaseProcessOwnership?.()
+                        return reaped
+                      }
+                    }
+                  : {})
             })
           )
         } catch {

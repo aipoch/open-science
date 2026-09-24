@@ -76,6 +76,8 @@ type SandboxCleanupResult = Readonly<{
   processesTerminated: boolean
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
+  /** Omitted means blocked; never substitutes for complete process cleanup. */
+  admission?: 'blocked' | 'independent-command-allowed'
 }>
 
 type SandboxProcessOutcome = Readonly<{
@@ -112,6 +114,7 @@ type RuntimeContext = {
   gateway?: CommandGateway
   releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
   platformOwnsProcesses?: boolean
+  independentCommandAdmission?: boolean
   executionActive: boolean
   epoch: number
   certificateAuthority?: LocalCertificateAuthority
@@ -436,7 +439,7 @@ const wrap = async (
     context.filesystem = filesystem
     context.gateway = gateway
     if (process.platform === 'darwin') {
-      return macosLaunch({
+      const launch = macosLaunch({
         command: request.command,
         shell: typeof request.shell === 'string' ? request.shell : '/bin/bash',
         gatewayPort: gateway.port,
@@ -448,6 +451,8 @@ const wrap = async (
           : {}),
         filesystem
       })
+      context.independentCommandAdmission = true
+      return launch
     }
     if (process.platform === 'linux') {
       if (typeof request.shell === 'object') {
@@ -559,7 +564,14 @@ const closeContext = async (
       : platformCleanup.processesTerminated && processOutcome.processesTerminated,
     networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
     temporaryResourcesRemoved:
-      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled'
+      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled',
+    ...(context.independentCommandAdmission &&
+    network.status === 'fulfilled' &&
+    platformCleanup.networkClosed &&
+    platformCleanup.temporaryResourcesRemoved &&
+    trustBundle.status === 'fulfilled'
+      ? { admission: 'independent-command-allowed' as const }
+      : {})
   }
 }
 

@@ -215,6 +215,9 @@ it
     })
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
     const nativeLaunches: ReturnType<typeof windowsSupervisedLaunch>[] = []
+    // Automatic exit cleanup may retry before execute settles. Keep the injected fault active
+    // until the caller observes quarantine instead of making it depend on a probe count.
+    let recoveryAllowed = false
     backend.wrap.mockImplementation(async (request) => {
       const first = nativeLaunches.length === 0
       const launch = windowsSupervisedLaunch({
@@ -230,13 +233,12 @@ it
         gatewayCredentials: { username: 'unused', password: 'unused' }
       })
       nativeLaunches.push(launch)
-      let attempts = 0
       return {
         ...launch,
         confirmProcessTreeTermination: async () => {
           if (proof === 'missing') return false
           if (proof === 'error') throw new Error('Native proof unavailable')
-          if (proof === 'late' && attempts++ === 0) return false
+          if (proof === 'late' && !recoveryAllowed) return false
           return launch.confirmProcessTreeTermination()
         }
       }
@@ -267,10 +269,8 @@ it
     if (lifecycle) {
       await lifecycle.ensureReady()
       const complete = lifecycle.complete.bind(lifecycle)
-      let refused = false
       vi.spyOn(lifecycle, 'complete').mockImplementation((receipt, reaped) => {
-        if (reaped && !refused) {
-          refused = true
+        if (reaped && !recoveryAllowed) {
           throw new Error('Transient receipt removal failure')
         }
         complete(receipt, reaped)
@@ -307,6 +307,7 @@ it
       }
       const oldReceipts = lifecycle ? await readdir(join(root, 'runtime', 'kernel-processes')) : []
       if (lifecycle) expect(oldReceipts).toHaveLength(1)
+      recoveryAllowed = true
       const recoverable = proof !== 'missing' && proof !== 'error'
       if (recovery === 'shutdown') {
         await expect(executor.shutdown()).resolves.toEqual({ reaped: recoverable })

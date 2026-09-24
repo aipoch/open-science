@@ -280,7 +280,9 @@
       "src/renderer/src/stores/specialist-store.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

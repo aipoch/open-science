@@ -338,6 +338,7 @@
       "src/main/session-diagnostics/collector.test.ts",
       "src/main/session-diagnostics/database.test.ts",
       "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
       "src/main/literature/smart-collections.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -471,7 +472,8 @@
       "src/renderer/src/pages/literature/LiteratureFullTextLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/previews/preview-pagination-contract.test.tsx",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
