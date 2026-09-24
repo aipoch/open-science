@@ -380,6 +380,14 @@ for (const width of [1280, 414]) {
     await expect(speed).toBeFocused()
     await speed.press('Enter')
     await expect(options).toBeVisible()
+    await page.getByRole('option', { name: 'Auto', exact: true }).click()
+    await expect(speed).toHaveText('Auto')
+    await expect(speed).toBeFocused()
+    await speed.press('Enter')
+    await expect(page.getByRole('option', { name: 'Auto', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     await page.keyboard.press('Escape')
     await expect(options).toHaveCount(0)
     await expect(dialog).toBeVisible()

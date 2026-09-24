@@ -185,10 +185,10 @@ if (mode) {
           action: string
           target?: { projectId?: string; projectName?: string }
           requestId?: string
-          bytesPerSecond?: number
+          bytesPerSecond?: number | null
         }) => {
           if (request.action === 'set-speed')
-            operation.transferBytesPerSecond = request.bytesPerSecond
+            operation.transferBytesPerSecond = request.bytesPerSecond ?? undefined
           if (request.action === 'discard-import')
             operation.pendingImports = operation.pendingImports?.filter(
               (file) => file.id !== request.requestId
