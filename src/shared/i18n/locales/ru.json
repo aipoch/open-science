@@ -6714,6 +6714,10 @@
     "Sensitive-content evidence": "Свидетельство о конфиденциальном содержимом",
     "Redacted scanner evidence for the failed Session package export.": "Обезличенное свидетельство сканирования неудачного экспорта Session package.",
     "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "Исходный файл, вызвавший проверку Session package. Он может содержать учётные данные или исследовательскую информацию; проверьте его перед экспортом.",
-    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "Файлы с конфиденциальным содержимым по умолчанию не выбраны. При выборе их исходные байты будут включены в локальный диагностический архив."
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "Файлы с конфиденциальным содержимым по умолчанию не выбраны. При выборе их исходные байты будут включены в локальный диагностический архив.",
+    "HMMER protein-family scans and remote-homology searches via EMBL-EBI.": "Поиск семейств белков и удалённых гомологов с помощью HMMER через EMBL-EBI.",
+    "Submit an asynchronous HMMER3 search and retain the returned job ID.": "Отправьте асинхронный поиск HMMER3 и сохраните полученный идентификатор задания.",
+    "Check one HMMER job without polling or resubmitting.": "Проверьте одно задание HMMER без опроса и повторной отправки.",
+    "Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.": "Получите результаты HMMER после успешного выполнения задания; результаты могут быть разбиты на страницы или содержать итерации jackhmmer."
   }
 }

@@ -65,6 +65,7 @@ import { SettingsPanelHeader } from './SettingsPanelHeader'
 import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
 import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
+import { connectorDescription } from './connector-copy'
 
 type TagResourceRow = TagResourceRef & {
   title: string
@@ -528,7 +529,7 @@ const TagsList = ({
         resourceType: 'catalog.connector' as const,
         resourceId: connector.id,
         title: connector.displayName,
-        subtitle: connector.description.trim() || undefined
+        subtitle: connectorDescription(connector, t).trim() || undefined
       })),
       ...customServers.map((connector) => ({
         resourceType: 'catalog.connector' as const,

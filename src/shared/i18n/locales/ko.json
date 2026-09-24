@@ -6251,6 +6251,10 @@
     "Sensitive-content evidence": "민감한 콘텐츠 증거",
     "Redacted scanner evidence for the failed Session package export.": "실패한 세션 패키지 내보내기의 비식별화된 스캔 증거입니다.",
     "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "세션 패키지 검사를 유발한 원본 파일입니다. 자격 증명이나 연구 내용이 포함될 수 있으므로 내보내기 전에 검토하세요.",
-    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "민감한 콘텐츠 파일은 기본적으로 선택되지 않습니다. 선택하면 원본 바이트가 로컬 진단 아카이브에 포함됩니다."
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "민감한 콘텐츠 파일은 기본적으로 선택되지 않습니다. 선택하면 원본 바이트가 로컬 진단 아카이브에 포함됩니다.",
+    "HMMER protein-family scans and remote-homology searches via EMBL-EBI.": "EMBL-EBI를 통한 HMMER 단백질 패밀리 스캔 및 원거리 상동 서열 검색.",
+    "Submit an asynchronous HMMER3 search and retain the returned job ID.": "비동기 HMMER3 검색을 제출하고 반환된 작업 ID를 보관합니다.",
+    "Check one HMMER job without polling or resubmitting.": "폴링하거나 다시 제출하지 않고 HMMER 작업 하나를 확인합니다.",
+    "Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.": "작업이 성공한 후 HMMER 결과를 가져옵니다. 결과는 페이지로 나뉘거나 jackhmmer 반복을 포함할 수 있습니다."
   }
 }

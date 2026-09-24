@@ -6411,6 +6411,10 @@
     "Sensitive-content evidence": "Nachweis sensibler Inhalte",
     "Redacted scanner evidence for the failed Session package export.": "Redigierter Scan-Nachweis für den fehlgeschlagenen Export des Session-Pakets.",
     "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "Originaldatei, die die Prüfung des Session-Pakets ausgelöst hat. Sie kann Zugangsdaten oder Forschungsinhalte enthalten; prüfen Sie sie vor dem Export.",
-    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "Dateien mit sensiblen Inhalten sind standardmäßig nicht ausgewählt. Wenn Sie eine auswählen, werden ihre Originalbytes in das lokale Diagnosearchiv aufgenommen."
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "Dateien mit sensiblen Inhalten sind standardmäßig nicht ausgewählt. Wenn Sie eine auswählen, werden ihre Originalbytes in das lokale Diagnosearchiv aufgenommen.",
+    "HMMER protein-family scans and remote-homology searches via EMBL-EBI.": "HMMER-Scans für Proteinfamilien und Suchen nach entfernten Homologen über EMBL-EBI.",
+    "Submit an asynchronous HMMER3 search and retain the returned job ID.": "Eine asynchrone HMMER3-Suche einreichen und die zurückgegebene Job-ID aufbewahren.",
+    "Check one HMMER job without polling or resubmitting.": "Einen HMMER-Auftrag prüfen, ohne abzufragen oder erneut einzureichen.",
+    "Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.": "HMMER-Ergebnisse nach erfolgreichem Abschluss abrufen; Ergebnisse können paginiert sein oder jackhmmer-Iterationen enthalten."
   }
 }

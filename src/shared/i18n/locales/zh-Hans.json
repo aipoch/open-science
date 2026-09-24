@@ -6253,6 +6253,10 @@
     "Sensitive-content evidence": "敏感内容证据",
     "Redacted scanner evidence for the failed Session package export.": "Session package 导出失败时生成的脱敏扫描证据。",
     "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "触发 Session package 检查的原始文件，可能包含凭据或研究内容；导出前请先检查。",
-    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "敏感内容文件默认不勾选。选择文件后，其原始字节会包含在本地诊断压缩包中。"
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "敏感内容文件默认不勾选。选择文件后，其原始字节会包含在本地诊断压缩包中。",
+    "HMMER protein-family scans and remote-homology searches via EMBL-EBI.": "通过 EMBL-EBI 使用 HMMER 扫描蛋白质家族并搜索远缘同源序列。",
+    "Submit an asynchronous HMMER3 search and retain the returned job ID.": "提交异步 HMMER3 搜索并保留返回的任务 ID。",
+    "Check one HMMER job without polling or resubmitting.": "检查一个 HMMER 任务，不进行轮询或重新提交。",
+    "Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.": "任务成功后获取 HMMER 结果；结果可能分页，或包含 jackhmmer 迭代记录。"
   }
 }

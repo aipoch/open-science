@@ -6253,6 +6253,10 @@
     "Sensitive-content evidence": "機密コンテンツの証拠",
     "Redacted scanner evidence for the failed Session package export.": "失敗した Session package エクスポートの伏せ字化されたスキャン証拠。",
     "Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.": "Session package の検査を引き起こした元ファイルです。認証情報や研究内容が含まれる可能性があるため、エクスポート前に確認してください。",
-    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "機密コンテンツのファイルはデフォルトで未選択です。選択すると元のバイト列がローカル診断アーカイブに含まれます。"
+    "Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.": "機密コンテンツのファイルはデフォルトで未選択です。選択すると元のバイト列がローカル診断アーカイブに含まれます。",
+    "HMMER protein-family scans and remote-homology searches via EMBL-EBI.": "EMBL-EBI を利用した HMMER によるタンパク質ファミリー検索と遠縁相同性検索。",
+    "Submit an asynchronous HMMER3 search and retain the returned job ID.": "非同期 HMMER3 検索を送信し、返されたジョブ ID を保存します。",
+    "Check one HMMER job without polling or resubmitting.": "ポーリングや再送信を行わずに HMMER ジョブを 1 件確認します。",
+    "Retrieve HMMER results after the job succeeds; results may be paginated or contain jackhmmer iterations.": "ジョブの成功後に HMMER 結果を取得します。結果はページ分割されるか、jackhmmer の反復を含む場合があります。"
   }
 }
