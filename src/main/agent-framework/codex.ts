@@ -185,6 +185,16 @@ const normalizeResponsesBaseUrl = (
   return normalized
 }
 
+const resolveResponsesBaseUrl = (provider: {
+  responsesBaseUrl?: string
+  openaiBaseUrl?: string
+  baseUrl?: string
+}): string | undefined => {
+  const exactBase = provider.responsesBaseUrl?.trim()
+  const base = exactBase || provider.openaiBaseUrl || provider.baseUrl
+  return normalizeResponsesBaseUrl(base, { appendVersionPath: !exactBase })
+}
+
 const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
   if (!value) return false
   try {
@@ -557,7 +567,7 @@ export const createCodexFramework = ({
     // Responses URL.
     const responsesBaseUrl = useLocalResponsesEndpoint
       ? bridge.baseUrl
-      : (provider.responsesBaseUrl ?? provider.openaiBaseUrl ?? provider.baseUrl)
+      : resolveResponsesBaseUrl(provider)
     const authentication: AgentAuthentication | undefined =
       provider.key && !useLocalResponsesEndpoint
         ? {
@@ -595,7 +605,7 @@ export const createCodexFramework = ({
         model: codexModel,
         contextWindow: provider.contextWindow,
         baseUrl: responsesBaseUrl,
-        preserveBaseUrl: provider.responsesBaseUrl !== undefined && !useLocalResponsesEndpoint,
+        preserveBaseUrl: Boolean(provider.responsesBaseUrl?.trim()) && !useLocalResponsesEndpoint,
         key: useLocalResponsesEndpoint ? undefined : provider.key,
         reasoningEffort: ctx.reasoningEffort
       }),
@@ -694,5 +704,6 @@ export {
   codexSubscriptionStorageDir,
   isOfficialOpenAiResponsesBase,
   mapCodexPermissionProfile,
-  normalizeResponsesBaseUrl
+  normalizeResponsesBaseUrl,
+  resolveResponsesBaseUrl
 }

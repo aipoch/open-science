@@ -13,7 +13,7 @@ import {
   type AgentProviderConfiguration,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
+import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import {
   normalizeAnthropicBaseUrl,
@@ -66,7 +66,7 @@ const codeBuddyCompatibilityEndpoint = (
   wire: ChatProviderCompatibilityTarget['wire']
 ): string => {
   if (wire === 'responses') {
-    const baseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
+    const baseUrl = resolveResponsesBaseUrl(provider)
     if (!baseUrl) throw new Error('The CodeBuddy Responses provider target is incomplete.')
     return `${baseUrl}/responses`
   }
@@ -362,9 +362,7 @@ class ProviderTransportOwner {
     const targets = transport.targets.map((planned): OpenAiProviderBridgeTarget => {
       const candidate = planned.target
       const model = candidate.effectiveModel ?? candidate.provider.model
-      const baseUrl = normalizeResponsesBaseUrl(
-        candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-      )
+      const baseUrl = resolveResponsesBaseUrl(candidate.provider)
       if (!model || !baseUrl) throw new Error('The native Responses provider target is incomplete.')
       return Object.freeze({
         ...this.healthObservation(candidate),
@@ -593,9 +591,7 @@ class ProviderTransportOwner {
       throw new Error('Native Responses compatibility transport is unavailable.')
     }
     const createTarget = (candidate: ProviderRuntimeTarget): NativeResponsesProxyTarget => {
-      const targetBaseUrl = normalizeResponsesBaseUrl(
-        candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-      )
+      const targetBaseUrl = resolveResponsesBaseUrl(candidate.provider)
       if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
       return {
         ...this.healthObservation(candidate),

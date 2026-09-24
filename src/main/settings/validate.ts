@@ -16,7 +16,7 @@ import {
 import type { ResolvedProvider } from './provider-env'
 import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
+import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { toErrorMessage } from '../error-message'
@@ -203,19 +203,15 @@ const buildOpenAiValidationRequest = (
 }
 
 // A minimal OpenAI Responses request. Responses is a separate wire protocol from Chat Completions;
-// normalize the base to exactly one endpoint suffix: a versioned OpenAI base (an official vendor's
-// `/v1`, or Volcengine Ark's `/api/v3`) takes `/responses` directly, while a bare root (the official
-// OpenAI entry, custom gateways) gains the `/v1` segment first.
+// use an explicitly published native Responses base when a vendor has one, otherwise normalize the
+// OpenAI base to exactly one endpoint suffix.
 const buildResponsesValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   let url: string
 
   try {
-    const base = (provider.openaiBaseUrl ?? provider.baseUrl ?? '')
-      .trim()
-      .replace(/\/+$/, '')
-      .replace(/\/responses$/i, '')
-    const root = /\/v\d+[\w.]*$/i.test(base) ? base : `${base}/v1`
-    url = new URL(`${root}/responses`).toString()
+    const base = resolveResponsesBaseUrl(provider)
+    if (!base) throw new Error('Missing base URL.')
+    url = new URL(`${base}/responses`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }
@@ -631,7 +627,7 @@ const validateProviderThroughNativeResponsesCompatibility = async (
   provider: ResolvedProvider,
   { fetchImpl = fetch, timeoutMs = DEFAULT_VALIDATE_TIMEOUT_MS }: ValidateProviderDeps
 ): Promise<ValidateProviderResult> => {
-  const targetBaseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
+  const targetBaseUrl = resolveResponsesBaseUrl(provider)
   if (!targetBaseUrl) return toResult('bad-url', { message: 'Missing base URL.' })
 
   try {

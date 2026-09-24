@@ -397,6 +397,38 @@ describe('ProviderTransportOwner generations', () => {
     expect(proxies[1]?.close).toHaveBeenCalledOnce()
   })
 
+  it('uses the native Responses base for compatibility targets', async () => {
+    const proxy = makeNativeProxy()
+    let targetBaseUrl: string | undefined
+    const owner = new ProviderTransportOwner({
+      createNativeResponsesProxy: (target) => {
+        targetBaseUrl = target.baseUrl
+        return proxy
+      }
+    })
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      needsChatResponsesBridge: false,
+      needsNativeResponsesCompatibility: true,
+      apiEndpoints: ['responses'],
+      provider: {
+        ...makeTarget().provider,
+        apiEndpoints: ['responses'],
+        vendorId: 'deepseek',
+        openaiBaseUrl: 'https://api.deepseek.com/v1',
+        responsesBaseUrl: 'https://api.deepseek.com'
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: makePlan({ kind: 'codex-responses-compatibility', targets: [] })
+    })
+
+    expect(targetBaseUrl).toBe('https://api.deepseek.com')
+    await generation.release()
+  })
+
   it('closes a half-started native compatibility generation and preserves its start error', async () => {
     const startError = new Error('native compatibility start failed')
     const closeError = new Error('native compatibility close failed')

@@ -26,7 +26,7 @@ import {
   type AgentModelChangeTarget,
   type AgentModelRoute
 } from '../agent-framework'
-import { CODEX_BRIDGE_MODEL, normalizeResponsesBaseUrl } from '../agent-framework/codex'
+import { CODEX_BRIDGE_MODEL, resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
@@ -405,9 +405,7 @@ class BackendRoutePlanner {
               ? openAiChatCompletionsUrl(candidate.provider)
               : route === 'codex-bridge'
                 ? openAiCompletionsBase(candidate.provider)
-                : normalizeResponsesBaseUrl(
-                    candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-                  )
+                : resolveResponsesBaseUrl(candidate.provider)
       const id = model
         ? frameworkId === 'claude-code'
           ? claudeTargetId(candidate.providerId, model)
