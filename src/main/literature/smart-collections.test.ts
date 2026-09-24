@@ -2893,7 +2893,7 @@ it('abandons a paused automatic run without resuming it', async () => {
       automaticPauseRunId: run.id
     }
   })
-  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'interrupted' } })
+  await db.literatureSmartRun.update({ where: { id: run.id }, data: { state: 'cancelled' } })
 
   await owner.execute({
     kind: 'smart-collection',

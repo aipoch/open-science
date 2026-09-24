@@ -1152,8 +1152,8 @@ export class LiteratureSmartCollections {
       if (!command.runId) return { kind: 'collection', id }
       const abandonableStates =
         definition.automaticPauseReason === 'storage-error'
-          ? ['interrupted', 'failed']
-          : ['interrupted']
+          ? ['cancelled', 'interrupted', 'failed']
+          : ['cancelled', 'interrupted']
       const pauseRunCandidates = definition.automaticPauseRunId
         ? []
         : await client.literatureSmartRun.findMany({
