@@ -540,6 +540,7 @@ it('keeps the automatic pause notice when a newer manual run is interrupted', as
   render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
   expect(await screen.findByText('Automatic updates paused')).toBeTruthy()
   expect(screen.getAllByRole('button', { name: 'Abandon run' })).toHaveLength(2)
+  expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
 })
 
 it('offers abandon for an interrupted manual run', async () => {

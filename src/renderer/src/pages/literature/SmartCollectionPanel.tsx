@@ -426,7 +426,7 @@ export function SmartCollectionPanel({
               >
                 <RotateCcw className="size-4" aria-hidden="true" />
               </Button>
-            ) : view.automaticPauseReason !== 'run-limit' ? (
+            ) : (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -436,7 +436,7 @@ export function SmartCollectionPanel({
               >
                 <Play className="size-4" aria-hidden="true" />
               </Button>
-            ) : null}
+            )}
           </div>
         </div>
       ) : (
