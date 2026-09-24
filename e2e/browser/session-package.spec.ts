@@ -88,7 +88,7 @@ test('New conversation keeps background export accessible in the workspace heade
 })
 
 for (const width of [1280, 414, 320]) {
-  test(`Project index shows background export beside the brand at ${width}px`, async ({
+  test(`Project index shows background export beside the message center at ${width}px`, async ({
     page
   }, testInfo) => {
     await page.setViewportSize({ width, height: 800 })
@@ -97,8 +97,10 @@ for (const width of [1280, 414, 320]) {
     const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
     await expect(progressButton).toBeVisible()
     expect(
-      await progressButton.evaluate((element) => element.previousElementSibling?.textContent)
-    ).toBe('Open-Science')
+      await progressButton.evaluate((element) =>
+        Boolean(element.nextElementSibling?.querySelector('[data-notification-bell-trigger]'))
+      )
+    ).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('project-index-progress.png') })
     await progressButton.click()

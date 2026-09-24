@@ -16,6 +16,7 @@ import {
   X
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -173,7 +174,11 @@ const PackageProgressMeter = ({
   )
 }
 
-export const PackageExportProgressButton = (): React.JSX.Element | null => {
+export const PackageExportProgressButton = ({
+  iconOnly = false
+}: {
+  iconOnly?: boolean
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { operation, open, dismissedId, setOpen } = usePackageOperationStore()
   if (
@@ -200,16 +205,19 @@ export const PackageExportProgressButton = (): React.JSX.Element | null => {
     <Button
       variant="ghost"
       size="sm"
-      className="h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
-      aria-label={`${status} · ${t('View progress')}`}
-      title={status}
+      className={cn(
+        'h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground',
+        iconOnly && 'size-9 max-w-none p-0'
+      )}
+      aria-label={`${iconOnly ? `${t('Export Session package')} · ` : ''}${status} · ${t('View progress')}`}
+      title={iconOnly ? `${t('Export Session package')} · ${status}` : status}
       onClick={() => setOpen(true)}
     >
       <Icon
         className={`size-4 shrink-0 ${needsAttention ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : operation.state === 'failed' ? 'text-status-failure-foreground' : operation.state === 'succeeded' ? 'text-status-success-foreground' : 'text-primary'} ${busy && !needsAttention ? 'animate-spin motion-reduce:animate-none' : ''}`}
         aria-hidden="true"
       />
-      <span className="hidden truncate lg:inline">{status}</span>
+      {!iconOnly ? <span className="hidden truncate lg:inline">{status}</span> : null}
     </Button>
   )
 }

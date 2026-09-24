@@ -653,7 +653,6 @@ const HomePage = ({
                 >
                   Open-Science
                 </a>
-                <PackageExportProgressButton />
                 {hasCompleteSessionCatalog &&
                 (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
                   <div className="flex items-center gap-1.5 text-xs font-medium">
@@ -722,6 +721,7 @@ const HomePage = ({
               >
                 <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
               </Button>
+              <PackageExportProgressButton iconOnly />
               <NotificationBell />
               <button
                 type="button"

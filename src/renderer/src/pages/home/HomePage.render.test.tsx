@@ -388,7 +388,7 @@ afterEach(() => {
 })
 
 describe('HomePage package export progress', () => {
-  it('shows background progress beside the brand and reopens its detail', () => {
+  it('shows background progress beside the message center and reopens its detail', () => {
     usePackageOperationStore.setState({
       operation: {
         id: 'export-1',
@@ -406,11 +406,13 @@ describe('HomePage package export progress', () => {
     })
 
     const button = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Copying files… · View progress"]'
+      'button[aria-label*="Copying files…"]'
     )
     expect(button).not.toBeNull()
     expect(button?.closest('header')).not.toBeNull()
-    expect(button?.previousElementSibling?.textContent).toBe('Open-Science')
+    expect(
+      button?.nextElementSibling?.querySelector('[data-notification-bell-trigger]')
+    ).not.toBeNull()
     act(() => button?.click())
     expect(usePackageOperationStore.getState().open).toBe(true)
   })
