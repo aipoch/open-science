@@ -314,7 +314,7 @@ export const PreviewToolContent = ({
   }
 
   if (item.toolKind === 'compute') {
-    return <ProjectComputeInbox key={activeProjectId ?? 'no-active-project'} />
+    return <ProjectComputeInbox key={activeProjectId ?? 'no-active-project'} isActive={isActive} />
   }
 
   if (item.toolKind === 'reviewer') {

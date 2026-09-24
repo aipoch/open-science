@@ -170,6 +170,28 @@ type WorkspaceAgentRuntime = {
 }
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
+const createRestoredPermissionProjectionSelector = (): ((state: {
+  sessions: ChatSession[]
+}) => string) => {
+  let cachedSessions: ChatSession[] | undefined
+  let cachedKey = ''
+  return (state): string => {
+    if (state.sessions === cachedSessions) return cachedKey
+    cachedSessions = state.sessions
+    cachedKey = JSON.stringify(
+      state.sessions.map((session) => {
+        const permission = session.runtimeContext?.permission
+        return [
+          session.id,
+          permission?.state === 'pending'
+            ? [session.runtimeContext?.revision, permission.request.requestId, session.status]
+            : null
+        ]
+      })
+    )
+    return cachedKey
+  }
+}
 const useOwnedWorkspaceAgentRuntime = (
   onSessionSizeLimit?: (sessionId: string) => void
 ): WorkspaceAgentRuntime => {
@@ -182,19 +204,10 @@ const useOwnedWorkspaceAgentRuntime = (
     },
     []
   )
-  const restoredPermissionProjectionKey = useSessionStore((state) =>
-    JSON.stringify(
-      state.sessions.map((session) => {
-        const permission = session.runtimeContext?.permission
-        return [
-          session.id,
-          permission?.state === 'pending'
-            ? [session.runtimeContext?.revision, permission.request.requestId, session.status]
-            : null
-        ]
-      })
-    )
+  const [selectRestoredPermissionProjectionKey] = useState(
+    createRestoredPermissionProjectionSelector
   )
+  const restoredPermissionProjectionKey = useSessionStore(selectRestoredPermissionProjectionKey)
   const restoredPermissionSessions = useMemo(() => {
     void restoredPermissionProjectionKey
     return useSessionStore.getState().sessions

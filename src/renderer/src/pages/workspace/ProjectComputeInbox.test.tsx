@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import type { JobSummary } from '../../../../shared/compute'
+import type { NotebookProjectActivity } from '../../../../shared/notebook'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { ProjectComputeInbox } from './ProjectComputeInbox'
@@ -248,6 +249,41 @@ describe('Project Compute inbox', () => {
     expect(container.textContent).not.toContain('Fit remote model')
   })
 
+  it('pauses the completed-job expiry timer while inactive', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const now = Date.parse('2026-09-07T08:00:00.000Z')
+    vi.setSystemTime(now)
+    const expiringJob = computeJob({ finished_at: now - 48 * 60 * 60 * 1_000 + 1_000 })
+    const jobsList = vi.fn().mockResolvedValueOnce([expiringJob]).mockResolvedValue([])
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          notebook: {
+            getProjectActivity: vi.fn().mockResolvedValue({ kernels: [], backgroundRuns: [] }),
+            onChanged: vi.fn(() => () => undefined)
+          },
+          compute: { jobsList, onJobUpdated: vi.fn(() => () => undefined) }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    expect(container.textContent).toContain('Fit remote model')
+
+    await act(async () => root?.render(<ProjectComputeInbox isActive={false} />))
+    await act(async () => vi.advanceTimersByTimeAsync(1_001))
+    expect(jobsList).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('Fit remote model')
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    expect(jobsList.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(container.textContent).not.toContain('Fit remote model')
+  })
+
   it('refreshes Kernel and Compute Job queries only from their matching Project events', async () => {
     const calls: string[] = []
     let notebookChanged: ((event: { projectId: string }) => void) | undefined
@@ -300,5 +336,309 @@ describe('Project Compute inbox', () => {
     act(() => jobUpdated?.({ project_id: 'project-1' }))
     await vi.waitFor(() => expect(jobsList).toHaveBeenCalledTimes(2))
     expect(getProjectActivity).toHaveBeenCalledTimes(2)
+  })
+
+  it('pauses queries while hidden and refreshes both snapshots when reopened', async () => {
+    let notebookChanged: ((event: { projectId: string }) => void) | undefined
+    let jobUpdated: ((job: { project_id?: string }) => void) | undefined
+    const getProjectActivity = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kernels: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-current',
+            processKey: 'python:research',
+            kind: 'python',
+            status: 'running',
+            lastActivityAt: Date.now()
+          }
+        ],
+        backgroundRuns: []
+      })
+      .mockResolvedValue({ kernels: [], backgroundRuns: [] })
+    const jobsList = vi.fn().mockResolvedValueOnce([computeJob()]).mockResolvedValue([])
+    const stopNotebook = vi.fn()
+    const stopJobs = vi.fn()
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          notebook: {
+            getProjectActivity,
+            onChanged: vi.fn((listener: typeof notebookChanged) => {
+              notebookChanged = listener
+              return stopNotebook
+            })
+          },
+          compute: {
+            jobsList,
+            onJobUpdated: vi.fn((listener: typeof jobUpdated) => {
+              jobUpdated = listener
+              return stopJobs
+            })
+          }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox isActive={false} />))
+    expect(getProjectActivity).not.toHaveBeenCalled()
+    expect(jobsList).not.toHaveBeenCalled()
+
+    await act(async () => root?.render(<ProjectComputeInbox isActive />))
+    expect(getProjectActivity).toHaveBeenCalledTimes(1)
+    expect(jobsList).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('Python')
+    expect(container.textContent).toContain('Fit remote model')
+
+    await act(async () => root?.render(<ProjectComputeInbox isActive={false} />))
+    expect(stopNotebook).toHaveBeenCalledOnce()
+    expect(stopJobs).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Python')
+    expect(container.textContent).toContain('Fit remote model')
+
+    await act(async () => {
+      for (let index = 0; index < 100; index += 1) {
+        notebookChanged?.({ projectId: 'project-1' })
+        jobUpdated?.({ project_id: 'project-1' })
+      }
+    })
+    expect(getProjectActivity).toHaveBeenCalledTimes(1)
+    expect(jobsList).toHaveBeenCalledTimes(1)
+
+    await act(async () => root?.render(<ProjectComputeInbox isActive />))
+    expect(getProjectActivity).toHaveBeenCalledTimes(2)
+    expect(jobsList).toHaveBeenCalledTimes(2)
+    expect(container.textContent).not.toContain('Fit remote model')
+  })
+
+  it('ignores responses superseded by later Project events', async () => {
+    let notebookChanged: ((event: { projectId: string }) => void) | undefined
+    let jobUpdated: ((job: { project_id?: string }) => void) | undefined
+    const notebookResolvers: Array<(activity: NotebookProjectActivity) => void> = []
+    const jobsResolvers: Array<(jobs: JobSummary[]) => void> = []
+    const getProjectActivity = vi.fn(
+      () =>
+        new Promise<NotebookProjectActivity>((resolve) => {
+          notebookResolvers.push(resolve)
+        })
+    )
+    const jobsList = vi.fn(
+      () =>
+        new Promise<JobSummary[]>((resolve) => {
+          jobsResolvers.push(resolve)
+        })
+    )
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          notebook: {
+            getProjectActivity,
+            onChanged: vi.fn((listener: typeof notebookChanged) => {
+              notebookChanged = listener
+              return () => undefined
+            })
+          },
+          compute: {
+            jobsList,
+            onJobUpdated: vi.fn((listener: typeof jobUpdated) => {
+              jobUpdated = listener
+              return () => undefined
+            })
+          }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    await act(async () => {
+      notebookChanged?.({ projectId: 'project-1' })
+      jobUpdated?.({ project_id: 'project-1' })
+    })
+    expect(getProjectActivity).toHaveBeenCalledTimes(2)
+    expect(jobsList).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      notebookResolvers[1]({
+        kernels: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-current',
+            processKey: 'python:fresh',
+            kind: 'python',
+            environment: 'fresh',
+            status: 'running',
+            lastActivityAt: Date.now()
+          }
+        ],
+        backgroundRuns: []
+      })
+      jobsResolvers[1]([computeJob({ intent: 'Fresh job' })])
+    })
+    expect(container.textContent).toContain('Python · fresh')
+    expect(container.textContent).toContain('Fresh job')
+
+    await act(async () => {
+      notebookResolvers[0]({
+        kernels: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-current',
+            processKey: 'python:stale',
+            kind: 'python',
+            environment: 'stale',
+            status: 'running',
+            lastActivityAt: Date.now()
+          }
+        ],
+        backgroundRuns: []
+      })
+      jobsResolvers[0]([computeJob({ intent: 'Stale job' })])
+    })
+    expect(container.textContent).toContain('Python · fresh')
+    expect(container.textContent).toContain('Fresh job')
+    expect(container.textContent).not.toContain('Python · stale')
+    expect(container.textContent).not.toContain('Stale job')
+  })
+
+  it('ignores responses from requests started before the Compute tab was hidden', async () => {
+    let resolveNotebook!: (activity: NotebookProjectActivity) => void
+    let resolveJobs!: (jobs: JobSummary[]) => void
+    const getProjectActivity = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<NotebookProjectActivity>((resolve) => {
+            resolveNotebook = resolve
+          })
+      )
+      .mockResolvedValue({ kernels: [], backgroundRuns: [] })
+    const jobsList = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<JobSummary[]>((resolve) => {
+            resolveJobs = resolve
+          })
+      )
+      .mockResolvedValue([])
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          notebook: { getProjectActivity, onChanged: vi.fn(() => () => undefined) },
+          compute: { jobsList, onJobUpdated: vi.fn(() => () => undefined) }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    await act(async () => root?.render(<ProjectComputeInbox isActive={false} />))
+    await act(async () => {
+      resolveNotebook({
+        kernels: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-current',
+            processKey: 'python:stale',
+            kind: 'python',
+            status: 'running',
+            lastActivityAt: Date.now()
+          }
+        ],
+        backgroundRuns: []
+      })
+      resolveJobs([computeJob()])
+    })
+    expect(container.textContent).not.toContain('Python')
+    expect(container.textContent).not.toContain('Fit remote model')
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    expect(getProjectActivity).toHaveBeenCalledTimes(2)
+    expect(jobsList).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps Project B visible when Project A requests finish after switching', async () => {
+    let resolveProjectANotebook!: (activity: NotebookProjectActivity) => void
+    let resolveProjectAJobs!: (jobs: JobSummary[]) => void
+    const getProjectActivity = vi.fn(({ projectId }: { projectId: string }) => {
+      if (projectId === 'project-1') {
+        return new Promise<NotebookProjectActivity>((resolve) => {
+          resolveProjectANotebook = resolve
+        })
+      }
+      return Promise.resolve<NotebookProjectActivity>({
+        kernels: [
+          {
+            projectId: 'project-2',
+            sessionId: 'session-current',
+            processKey: 'python:project-b',
+            kind: 'python',
+            environment: 'project-b',
+            status: 'running',
+            lastActivityAt: Date.now()
+          }
+        ],
+        backgroundRuns: []
+      })
+    })
+    const jobsList = vi.fn(({ projectId }: { projectId: string }) => {
+      if (projectId === 'project-1') {
+        return new Promise<JobSummary[]>((resolve) => {
+          resolveProjectAJobs = resolve
+        })
+      }
+      return Promise.resolve([computeJob({ project_id: 'project-2', intent: 'Project B task' })])
+    })
+    vi.stubGlobal(
+      'window',
+      Object.assign(window, {
+        api: {
+          notebook: { getProjectActivity, onChanged: vi.fn(() => () => undefined) },
+          compute: { jobsList, onJobUpdated: vi.fn(() => () => undefined) }
+        }
+      })
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    await act(async () => useNavigationStore.setState({ activeProjectId: 'project-2' }))
+    expect(container.textContent).toContain('Python · project-b')
+    expect(container.textContent).toContain('Project B task')
+
+    await act(async () => {
+      resolveProjectANotebook({
+        kernels: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-current',
+            processKey: 'python:project-a',
+            kind: 'python',
+            environment: 'project-a',
+            status: 'running',
+            lastActivityAt: Date.now()
+          }
+        ],
+        backgroundRuns: []
+      })
+      resolveProjectAJobs([computeJob({ intent: 'Project A task' })])
+    })
+    expect(container.textContent).toContain('Python · project-b')
+    expect(container.textContent).toContain('Project B task')
+    expect(container.textContent).not.toContain('Project A task')
+    expect(container.textContent).not.toContain('Python · project-a')
   })
 })

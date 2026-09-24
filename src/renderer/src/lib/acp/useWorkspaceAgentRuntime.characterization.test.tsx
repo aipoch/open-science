@@ -201,6 +201,127 @@ describe('workspace Agent Runtime hook contract', () => {
     container.remove()
   })
 
+  it('skips restored-permission scans for streaming updates and invalidates on session changes', async () => {
+    const { request } = arrangeRestoredPermission()
+    const session = useSessionStore.getState().sessions[0]
+    const permissionReads = vi.fn(() => session.runtimeContext?.permission)
+    const runtimeContext = Object.defineProperty({ ...session.runtimeContext }, 'permission', {
+      configurable: true,
+      enumerable: true,
+      get: permissionReads
+    }) as NonNullable<typeof session.runtimeContext>
+    useSessionStore.setState({ sessions: [{ ...session, runtimeContext }] })
+    await render()
+
+    const initialPending = latest.pendingPermissions
+    const initialReads = permissionReads.mock.calls.length
+    act(() => useSessionStore.setState({ streamingMessages: {} }))
+    expect(permissionReads).toHaveBeenCalledTimes(initialReads)
+    expect(latest.pendingPermissions).toBe(initialPending)
+
+    act(() => useSessionStore.setState((state) => ({ sessions: [...state.sessions] })))
+    expect(permissionReads.mock.calls.length).toBeGreaterThan(initialReads)
+    expect(latest.pendingPermissions).toBe(initialPending)
+
+    act(() =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((current) => ({
+          ...current,
+          runtimeContext: {
+            ...current.runtimeContext!,
+            revision: current.runtimeContext!.revision + 1
+          }
+        }))
+      }))
+    )
+    const revisedPending = latest.pendingPermissions
+    expect(revisedPending).toEqual([request])
+    expect(revisedPending).not.toBe(initialPending)
+
+    const nextRequest = { ...request, requestId: 'permission-revised' }
+    act(() =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((current) => ({
+          ...current,
+          runtimeContext: {
+            ...current.runtimeContext!,
+            permission: { ...current.runtimeContext!.permission!, request: nextRequest }
+          }
+        }))
+      }))
+    )
+    expect(latest.pendingPermissions).toEqual([nextRequest])
+
+    const requestedPending = latest.pendingPermissions
+    act(() =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((current) => ({ ...current, status: 'error' as const }))
+      }))
+    )
+    expect(latest.pendingPermissions).toEqual([nextRequest])
+    expect(latest.pendingPermissions).not.toBe(requestedPending)
+  })
+
+  it('avoids one million permission reads across 1000 streaming emissions', async () => {
+    arrangeRestoredPermission()
+    const template = useSessionStore.getState().sessions[0]
+    let permissionReads = 0
+    let oldSelectorReads = 0
+    let readingOldSelector = false
+    const runtimeContext = Object.defineProperty({ ...template.runtimeContext }, 'permission', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        if (readingOldSelector) oldSelectorReads += 1
+        else permissionReads += 1
+        return template.runtimeContext?.permission
+      }
+    }) as NonNullable<typeof template.runtimeContext>
+    const sessionCount = 1000
+    const emissionCount = 1000
+    useSessionStore.setState({
+      sessions: Array.from({ length: sessionCount }, (_, index) => ({
+        ...template,
+        id: `session-${index}`,
+        status: 'idle' as const,
+        runtimeContext
+      }))
+    })
+    await render()
+
+    const initialReads = permissionReads
+    const unsubscribeOldSelector = useSessionStore.subscribe((state) => {
+      readingOldSelector = true
+      try {
+        JSON.stringify(
+          state.sessions.map((session) => {
+            const permission = session.runtimeContext?.permission
+            return [
+              session.id,
+              permission?.state === 'pending'
+                ? [session.runtimeContext?.revision, permission.request.requestId, session.status]
+                : null
+            ]
+          })
+        )
+      } finally {
+        readingOldSelector = false
+      }
+    })
+    try {
+      act(() => {
+        for (let index = 0; index < emissionCount; index += 1) {
+          useSessionStore.setState({ streamingMessages: {} })
+        }
+      })
+    } finally {
+      unsubscribeOldSelector()
+    }
+
+    expect(oldSelectorReads).toBe(sessionCount * emissionCount)
+    expect(permissionReads - initialReads).toBe(0)
+  })
+
   it('publishes the exact state and command surface consumed by WorkspacePage', async () => {
     const snapshot = createSnapshot({
       sessionIds: ['session-1'],
