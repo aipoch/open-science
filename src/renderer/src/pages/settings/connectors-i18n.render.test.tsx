@@ -228,7 +228,7 @@ describe('ConnectorAddForm copy', () => {
       ['zenodo', 'Public research records, versions and file metadata from Zenodo.'],
       [
         'genes',
-        'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways and g:Profiler.'
+        'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.'
       ],
       [
         'genomes',
@@ -311,6 +311,11 @@ describe('ConnectorAddForm copy', () => {
         'genes/enrich_gene_set',
         'Run g:Profiler gene-set enrichment with multiple-testing correction.'
       ],
+      [
+        'genes/list_enrichr_libraries',
+        'List Enrichr gene-set libraries and their coverage statistics for an organism.'
+      ],
+      ['genes/enrich_gene_set_enrichr', 'Run Enrichr enrichment for gene symbols or identifiers.'],
       ['omics-archives/ena_query_runs', 'Discover ENA sequencing runs with metadata filters.'],
       [
         'omics-archives/ena_get_submitted_files',

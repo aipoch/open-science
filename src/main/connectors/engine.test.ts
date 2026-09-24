@@ -475,6 +475,52 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
+  it('postFormText exposes non-standard JSON responses without parsing them', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('{"score":Infinity}', {
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    const descriptor: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      run: async (ctx) => ctx.postFormText?.('https://batch.test/submit', new FormData())
+    }
+    await expect(new ParserEngine({ fetchImpl }).call(descriptor, {}, {})).resolves.toBe(
+      '{"score":Infinity}'
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('postUrlEncodedText sends a single URL-encoded submission', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(url, init)
+      expect(request.method).toBe('POST')
+      expect(request.headers.get('content-type')).toBe('application/x-www-form-urlencoded')
+      expect(await request.text()).toBe('background=TP53%0AEGFR')
+      return new Response('{"backgroundid":"bg-1"}', {
+        headers: { 'content-type': 'application/json' }
+      })
+    })
+    const descriptor: ToolDescriptor = {
+      id: 't',
+      connector: 'c',
+      description: '',
+      input: {},
+      run: async (ctx) =>
+        ctx.postUrlEncodedText?.(
+          'https://batch.test/background',
+          new URLSearchParams({ background: 'TP53\nEGFR' })
+        )
+    }
+    await expect(new ParserEngine({ fetchImpl }).call(descriptor, {}, {})).resolves.toBe(
+      '{"backgroundid":"bg-1"}'
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['http', 'network'])(
     'does not retry a multipart job submission after a %s failure',
     async (failure) => {

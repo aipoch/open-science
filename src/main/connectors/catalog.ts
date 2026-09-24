@@ -67,10 +67,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     displayName: 'Genes & Ontologies',
     aliases: ['MyGene', 'mygene.info', 'UniProt', 'gene information', 'gene annotation'],
     description:
-      'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways and g:Profiler.',
+      'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.',
     useWhen:
-      'Use when you need to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, submit batch UniProt ID mapping jobs and check status or page through mapping pairs and unmatched IDs, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, or run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction.',
-    sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler'],
+      'Use when you need to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, submit batch UniProt ID mapping jobs and check status or page through mapping pairs and unmatched IDs, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction, or query Enrichr libraries for transcription-factor, perturbation, drug, disease, tissue and cell-type enrichment.',
+    sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler', 'Enrichr'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
   },
