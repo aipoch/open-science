@@ -67,11 +67,13 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock } = vi.hoisted(() => ({
-  agentMarkdownRenderMock: vi.fn(),
-  endScrollTargetMock: vi.fn(),
-  scrollToEndMock: vi.fn()
-}))
+const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock, scrollableEndState } =
+  vi.hoisted(() => ({
+    agentMarkdownRenderMock: vi.fn(),
+    endScrollTargetMock: vi.fn(),
+    scrollToEndMock: vi.fn(),
+    scrollableEndState: { end: false }
+  }))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -219,7 +221,8 @@ vi.mock('@/components/ui/message-scroller', () => {
       scrollToEnd: scrollToEndMock,
       scrollToMessage: vi.fn(),
       scrollToStart: vi.fn()
-    })
+    }),
+    useMessageScrollerScrollable: () => ({ start: false, end: scrollableEndState.end })
   }
 })
 
@@ -408,6 +411,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   let root: Root
 
   beforeEach(() => {
+    scrollableEndState.end = false
     upsertAndActivateItem.mockClear()
     openFileDialog.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
@@ -4584,7 +4588,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(scrollToEndMock).not.toHaveBeenCalled()
   })
 
-  it('mounts the latest window before the end button measures its scroll target', async () => {
+  it('mounts the latest window before end measurement without pulling a reader back', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = Array.from({ length: 240 }, (_, index) =>
       createMessage({
@@ -4634,6 +4638,32 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
     expect(container.querySelector('[data-message-id="new-end-79"]')).not.toBeNull()
     expect(scrollToEndMock).toHaveBeenCalledWith({ behavior: 'auto' })
+
+    // The transcript still follows its window, but the scroller reports a reader away from end.
+    // Another same-size window replacement must not override that reader position.
+    scrollableEndState.end = true
+    scrollToEndMock.mockClear()
+    const whileReading = [
+      ...appended,
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage({
+          id: `reader-end-${index}`,
+          content: `Reader end ${index}`,
+          createdAt: 1710000002000 + index,
+          updatedAt: 1710000002000 + index
+        })
+      )
+    ]
+    await act(async () =>
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages: whileReading })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[data-message-id="reader-end-79"]')).not.toBeNull()
+    expect(scrollToEndMock).not.toHaveBeenCalled()
   })
 
   it('retains the run selected during find after closing find', async () => {

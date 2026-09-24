@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
 import { AlertCircle, Bot, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { AcpPermissionRequest, DelegatedWorkUnavailableReason } from '../../../../shared/acp'
@@ -311,17 +311,119 @@ type SubagentFrameDetail = NonNullable<ReturnType<typeof selectSubagentFrame>>
 
 const SubagentTranscript = ({
   session,
-  detail
+  detail,
+  isActive
 }: {
   session: ChatSession
   detail: SubagentFrameDetail
+  isActive: boolean
 }): React.JSX.Element => {
-  const projectedSession = useWorkspaceSubagentRuntimeSession(session, detail)
+  const projectedSession = useWorkspaceSubagentRuntimeSession(session, detail, isActive)
+  const [activation, setActivation] = useState<{
+    isActive: boolean
+    visibleMessageIds: ReadonlySet<string>
+    hiddenMessageIds: ReadonlySet<string>
+  }>(() => ({
+    isActive,
+    visibleMessageIds: new Set(
+      isActive ? projectedSession.messages.map((message) => message.id) : []
+    ),
+    hiddenMessageIds: new Set()
+  }))
+  if (activation.isActive !== isActive) {
+    // The isolated store kept receiving events while hidden. Durable-only updates can be in
+    // detail before its reconciliation effect has copied them into the isolated projection.
+    const currentMessageIds = new Set([
+      ...projectedSession.messages.map((message) => message.id),
+      ...detail.messages.map((message) => message.id)
+    ])
+    setActivation({
+      isActive,
+      visibleMessageIds: isActive ? currentMessageIds : activation.visibleMessageIds,
+      hiddenMessageIds: isActive
+        ? new Set(
+            [...currentMessageIds].filter(
+              (messageId) => !activation.visibleMessageIds.has(messageId)
+            )
+          )
+        : new Set()
+    })
+  } else if (
+    isActive &&
+    (projectedSession.messages.length !== activation.visibleMessageIds.size ||
+      projectedSession.messages.some((message) => !activation.visibleMessageIds.has(message.id)))
+  ) {
+    // Replace rather than accumulate IDs when a branch changes or history is pruned.
+    setActivation({
+      ...activation,
+      visibleMessageIds: new Set(projectedSession.messages.map((message) => message.id))
+    })
+  }
+  const containerRef = useRef<HTMLDivElement>(null)
+  const scrollPositionRef = useRef<number | undefined>(undefined)
+  const restoringScrollRef = useRef(false)
+  const followIntentRef = useRef(true)
+  const hiddenFollowIntentRef = useRef(true)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const rememberFollowIntent = useCallback((following: boolean): void => {
+    if (restoringScrollRef.current) return
+    followIntentRef.current = following
+    setAutoScroll(following)
+  }, [])
+  const rememberScroll = (): void => {
+    if (!isActive || restoringScrollRef.current) return
+    const viewport = containerRef.current?.querySelector<HTMLElement>(
+      '[data-slot="message-scroller-viewport"]'
+    )
+    if (!viewport) return
+    scrollPositionRef.current = viewport.scrollTop
+  }
+  useEffect(() => {
+    if (!isActive) {
+      hiddenFollowIntentRef.current = followIntentRef.current
+      restoringScrollRef.current = true
+      return
+    }
+    if (scrollPositionRef.current === undefined) {
+      restoringScrollRef.current = false
+      return
+    }
+    let cancelled = false
+    // The scroller's auto-scroll effect can run as Activity reactivates. Restore the prior
+    // viewport after those effects, while preserving follow-to-end for users already at end.
+    queueMicrotask(() => {
+      if (cancelled) return
+      const viewport = containerRef.current?.querySelector<HTMLElement>(
+        '[data-slot="message-scroller-viewport"]'
+      )
+      const position = scrollPositionRef.current
+      if (viewport && position !== undefined)
+        viewport.scrollTop = hiddenFollowIntentRef.current ? viewport.scrollHeight : position
+      restoringScrollRef.current = false
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [isActive])
+
   return (
-    <WorkspaceMessageScroller
-      activeSession={projectedSession}
-      onSendEditedMessage={() => ({ ok: false })}
-    />
+    <div
+      ref={containerRef}
+      className="min-h-0 flex-1"
+      data-slot="subagent-transcript"
+      onScrollCapture={rememberScroll}
+    >
+      <Activity mode={isActive ? 'visible' : 'hidden'}>
+        <WorkspaceMessageScroller
+          activeSession={projectedSession}
+          autoScroll={autoScroll}
+          onScrollFollowingChange={rememberFollowIntent}
+          scrollIntentActive={isActive}
+          skipInitialAnimationMessageIds={activation.hiddenMessageIds}
+          onSendEditedMessage={() => ({ ok: false })}
+        />
+      </Activity>
+    </div>
   )
 }
 
@@ -335,8 +437,17 @@ const SubagentPreview = ({
   returnFocus?: HTMLElement
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  // Capture the latest catalog snapshot when the tab becomes hidden. The live runtime event
+  // subscription below remains mounted, but catalog churn must not re-project the hidden panel.
+  const hiddenSession = useMemo(
+    () =>
+      isActive
+        ? undefined
+        : useSessionStore.getState().sessions.find((candidate) => candidate.id === item.sessionId),
+    [isActive, item.sessionId]
+  )
   const session = useSessionStore((state) =>
-    state.sessions.find((candidate) => candidate.id === item.sessionId)
+    isActive ? state.sessions.find((candidate) => candidate.id === item.sessionId) : hiddenSession
   )
   const summary = useMemo(() => projectSessionSubagents(session, []), [session])
   const effectiveFrameId = item.selectedAgentFrameId ?? summary.children[0]?.frameId ?? ''
@@ -486,6 +597,7 @@ const SubagentPreview = ({
               key={`${session.id}:${detail.frameId}:${detail.attempt?.id ?? 'no-attempt'}:${detail.attempt?.runtimeSegmentIds.at(-1) ?? 'no-runtime'}`}
               session={session}
               detail={detail}
+              isActive={isActive}
             />
           </WorkspaceMessageEditStateProvider>
         </div>

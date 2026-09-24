@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 
 import type { AcpAgentRuntimeUpdate, AcpRuntimeEvent } from '../../../../shared/acp'
@@ -7,6 +7,7 @@ import type {
   PersistedChatMessage
 } from '../../../../shared/session-persistence'
 import { createSessionStore, type ChatSession } from '../../stores/session-store'
+import { materializeStreamingMessageContent } from '../../stores/session-store-persistence-owner'
 import {
   applyRuntimePresentationEvent,
   createRuntimePresentationContext
@@ -85,28 +86,49 @@ const isSelectedRuntimeUpdate = (
 const useSubagentRuntimePresentation = (
   subscribe: SubscribeToSubagentRuntimeUpdates,
   session: ChatSession,
-  detail: WorkspaceSubagentFrameProjection
+  detail: WorkspaceSubagentFrameProjection,
+  isActive = true
 ): ChatSession => {
   const [store] = useState(() => {
     const isolatedPresentationStore = createSessionStore()
-    isolatedPresentationStore.setState({
-      sessions: [childConversationSession(session, detail)],
-      selectedSessionId: session.id
-    })
+    isolatedPresentationStore
+      .getState()
+      .upsertPersistedSession(childConversationSession(session, detail))
+    isolatedPresentationStore.setState({ selectedSessionId: session.id })
     return isolatedPresentationStore
   })
+  const reconciledProjection = useRef({ session, detail })
   const [presentationContext] = useState(createRuntimePresentationContext)
   const processedEventIds = useRef(new Set<string>())
   const runtimeSegmentId = detail.attempt?.runtimeSegmentIds.at(-1)
   const promptMessageId = detail.messages.findLast((message) => message.role === 'user')?.id
-  const liveSession = useStore(store, (state) => state.sessions[0])
+  // Keep applying ephemeral updates while hidden, but do not notify the transcript or
+  // materialize its growing Markdown content until the tab is selected again.
+  const liveSession = useStore(store, (state) => (isActive ? state.sessions[0] : undefined))
+  const streamingMessages = useStore(store, (state) =>
+    isActive ? state.streamingMessages : undefined
+  )
+  const presentedSession = useMemo(
+    () =>
+      liveSession && streamingMessages
+        ? materializeStreamingMessageContent(liveSession, streamingMessages)
+        : store.getState().sessions[0],
+    [liveSession, store, streamingMessages]
+  )
 
   // Runtime updates are ephemeral, so a subscription can miss an event while the selected detail
   // is mounting or being replaced. Reconcile every newer durable projection into the isolated
   // store; the store's identity merge preserves already-applied live events until durability
   // catches up, while a terminal projection advances status and the transcript authoritatively.
   useEffect(() => {
+    if (
+      reconciledProjection.current.session === session &&
+      reconciledProjection.current.detail === detail
+    ) {
+      return
+    }
     store.getState().upsertPersistedSession(childConversationSession(session, detail))
+    reconciledProjection.current = { session, detail }
   }, [detail, session, store])
 
   useEffect(() => {
@@ -149,7 +171,7 @@ const useSubagentRuntimePresentation = (
     })
   }, [detail, presentationContext, promptMessageId, runtimeSegmentId, session, store, subscribe])
 
-  return liveSession
+  return presentedSession
 }
 
 export { useSubagentRuntimePresentation }

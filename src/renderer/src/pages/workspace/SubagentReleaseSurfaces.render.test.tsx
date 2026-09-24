@@ -19,6 +19,9 @@ const runtimeUpdateHarness = vi.hoisted(() => {
     subscribe(listener: (update: AcpAgentRuntimeUpdate) => void) {
       listeners.add(listener)
       return () => listeners.delete(listener)
+    },
+    listenerCount() {
+      return listeners.size
     }
   }
 })
@@ -29,8 +32,9 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async () => {
   return {
     useWorkspaceSubagentRuntimeSession: (
       session: ChatSession,
-      detail: Parameters<typeof useSubagentRuntimePresentation>[2]
-    ) => useSubagentRuntimePresentation(runtimeUpdateHarness.subscribe, session, detail)
+      detail: Parameters<typeof useSubagentRuntimePresentation>[2],
+      isActive: boolean
+    ) => useSubagentRuntimePresentation(runtimeUpdateHarness.subscribe, session, detail, isActive)
   }
 })
 
@@ -227,6 +231,42 @@ const createSession = (): ChatSession => {
             ]
           }
         ]
+      }
+    }
+  }
+}
+
+const withChildStatus = (
+  session: ChatSession,
+  frameId: string,
+  status: 'running' | 'completed'
+): ChatSession => {
+  const graph = session.conversationGraph!
+  const context = session.runtimeContext!
+  const delegatedWork = context.delegatedWork!
+  return {
+    ...session,
+    conversationGraph: {
+      ...graph,
+      frames: graph.frames.map((frame) => (frame.id === frameId ? { ...frame, status } : frame))
+    },
+    runtimeContext: {
+      ...context,
+      delegatedWork: {
+        ...delegatedWork,
+        records: delegatedWork.records.map((record) =>
+          record.agentFrameId === frameId
+            ? {
+                ...record,
+                attempts: record.attempts.map((attempt) => ({
+                  ...attempt,
+                  status,
+                  error: undefined,
+                  endedAt: status === 'running' ? undefined : session.updatedAt + 1
+                }))
+              }
+            : record
+        )
       }
     }
   }
@@ -656,7 +696,7 @@ describe('release-gate Subagent surfaces', () => {
       })
     })
 
-    expect(await screen.findByText('Live child evidence')).toBeTruthy()
+    expect(await screen.findByText('Live child evidence', {}, { timeout: 5_000 })).toBeTruthy()
     expect(screen.queryByText('Stale child output')).toBeNull()
     expect(useSessionStore.getState().sessions[0]).toEqual(rootBefore)
 
@@ -787,6 +827,391 @@ describe('release-gate Subagent surfaces', () => {
     ).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
   })
+
+  it('retains live child updates without rendering hidden Markdown, then shows the latest on activation', async () => {
+    const session = createSession()
+    const graph = session.conversationGraph!
+    graph.messages = graph.messages.filter((message) => message.id !== 'child-a-answer')
+    graph.branches.find((branch) => branch.id === 'child-a-branch')!.headMessageId =
+      'child-a-prompt'
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: session.id,
+      projectId: session.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+
+    const view = renderSurface(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+    expect(runtimeUpdateHarness.listenerCount()).toBe(1)
+
+    await act(async () => {
+      for (let index = 0; index < 10; index += 1) {
+        runtimeUpdateHarness.publish({
+          scope: {
+            projectId: session.projectId,
+            sessionId: session.id,
+            agentFrameId: 'child-a',
+            attemptId: 'attempt-a',
+            runtimeSegmentId: 'runtime-a',
+            promptMessageId: 'child-a-prompt'
+          },
+          event: {
+            id: `hidden-child-event-${index}`,
+            timestamp: session.createdAt + 10 + index,
+            kind: 'message',
+            level: 'info',
+            role: 'assistant',
+            messageId: `hidden-child-message-${index}`,
+            text: `Hidden child output ${index}`
+          }
+        })
+      }
+      runtimeUpdateHarness.publish({
+        scope: {
+          projectId: session.projectId,
+          sessionId: session.id,
+          agentFrameId: 'child-a',
+          attemptId: 'attempt-a',
+          runtimeSegmentId: 'runtime-a',
+          promptMessageId: 'child-a-prompt'
+        },
+        event: {
+          id: 'hidden-child-stop',
+          timestamp: session.createdAt + 30,
+          kind: 'stop',
+          level: 'info'
+        }
+      })
+    })
+
+    expect(view.container.textContent).not.toContain('Hidden child output 0')
+    expect(view.container.textContent).toContain('Map the evidence')
+    expect(view.container.textContent).not.toContain('Compare the evidence')
+    view.rerender(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    await act(async () => {})
+    expect(view.container.textContent).toContain('Hidden child output 0')
+    expect(view.container.textContent).toContain('Hidden child output 9')
+    expect(screen.queryByText('Thinking')).toBeNull()
+    expect(runtimeUpdateHarness.listenerCount()).toBe(1)
+    view.unmount()
+    expect(runtimeUpdateHarness.listenerCount()).toBe(0)
+  })
+
+  it('shows a first-mounted hidden streaming message immediately, then paces visible updates', async () => {
+    const session = createSession()
+    const graph = session.conversationGraph!
+    graph.messages = graph.messages.filter((message) => message.id !== 'child-a-answer')
+    graph.branches.find((branch) => branch.id === 'child-a-branch')!.headMessageId =
+      'child-a-prompt'
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: session.id,
+      projectId: session.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+    const scope = {
+      projectId: session.projectId,
+      sessionId: session.id,
+      agentFrameId: 'child-a',
+      attemptId: 'attempt-a',
+      runtimeSegmentId: 'runtime-a',
+      promptMessageId: 'child-a-prompt'
+    }
+    const publish = (id: string, messageId: string, text: string): void => {
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id,
+          timestamp: session.createdAt + 20,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId,
+          text
+        }
+      })
+    }
+    const hiddenBody = `Hidden first-mounted output ${'x'.repeat(8_000)}`
+    const view = renderSurface(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    view.rerender(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+    await act(async () => publish('hidden-new-1', 'hidden-new-message', hiddenBody))
+    expect(view.container.textContent).not.toContain(hiddenBody)
+
+    view.rerender(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    await act(async () => {})
+    expect(view.container.textContent).toContain(hiddenBody)
+
+    await act(async () =>
+      publish('visible-append-1', 'hidden-new-message', ' visible continuation')
+    )
+    expect(view.container.textContent).not.toContain('visible continuation')
+    await screen.findByText(/visible continuation/, {}, { timeout: 3_000 })
+
+    await act(async () => publish('visible-new-1', 'visible-new-message', 'Visible new output'))
+    expect(view.container.textContent).not.toContain('Visible new output')
+    await screen.findByText(/Visible new output/, {}, { timeout: 3_000 })
+
+    const hiddenExistingTail = ` Existing row catch-up ${'y'.repeat(8_000)}`
+    view.rerender(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+    await act(async () => publish('hidden-existing-1', 'visible-new-message', hiddenExistingTail))
+    expect(view.container.textContent).not.toContain(hiddenExistingTail)
+    view.rerender(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    await act(async () => {})
+    expect(view.container.textContent).toContain(hiddenExistingTail)
+  })
+
+  it('shows a durable-only hidden message after the isolated store reconciles on activation', async () => {
+    const session = createSession()
+    const graph = session.conversationGraph!
+    graph.messages = graph.messages.filter((message) => message.id !== 'child-a-answer')
+    graph.branches.find((branch) => branch.id === 'child-a-branch')!.headMessageId =
+      'child-a-prompt'
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: session.id,
+      projectId: session.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+    const view = renderSurface(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    view.rerender(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+
+    const hiddenBody = `Durable-only hidden output ${'d'.repeat(8_000)}`
+    const durable = structuredClone(session)
+    durable.updatedAt += 100
+    durable.conversationGraph!.branches.find(
+      (branch) => branch.id === 'child-a-branch'
+    )!.headMessageId = 'durable-hidden-message'
+    durable.conversationGraph!.messages.push({
+      id: 'durable-hidden-message',
+      role: 'agent',
+      content: hiddenBody,
+      status: 'streaming',
+      eventIds: [],
+      responseToMessageId: 'child-a-prompt',
+      createdAt: durable.updatedAt,
+      updatedAt: durable.updatedAt,
+      agentFrameId: 'child-a',
+      introducedOnBranchId: 'child-a-branch',
+      parentMessageId: 'child-a-prompt',
+      runtimeSegmentId: 'runtime-a'
+    })
+    await act(async () => useSessionStore.setState({ sessions: [durable] }))
+    expect(view.container.textContent).not.toContain(hiddenBody)
+
+    view.rerender(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    await act(async () => {})
+    expect(view.container.textContent).toContain(hiddenBody)
+  })
+
+  it('switches the hidden selected child without leaking the previous child stream', async () => {
+    const session = withChildStatus(createSession(), 'child-b', 'running')
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: session.id,
+      projectId: session.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+    const view = renderSurface(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+    view.rerender(
+      <section hidden>
+        <SubagentPreview item={{ ...item, selectedAgentFrameId: 'child-b' }} isActive={false} />
+      </section>
+    )
+    expect(runtimeUpdateHarness.listenerCount()).toBe(1)
+
+    await act(async () => {
+      for (const [frameId, attemptId, runtimeSegmentId, promptMessageId, text] of [
+        ['child-a', 'attempt-a', 'runtime-a', 'child-a-prompt', 'Previous child output'],
+        ['child-b', 'attempt-b', 'runtime-b', 'child-b-prompt', 'Selected child output']
+      ]) {
+        runtimeUpdateHarness.publish({
+          scope: {
+            projectId: session.projectId,
+            sessionId: session.id,
+            agentFrameId: frameId,
+            attemptId,
+            runtimeSegmentId,
+            promptMessageId
+          },
+          event: {
+            id: `hidden-${frameId}-event`,
+            timestamp: session.createdAt + 10,
+            kind: 'message',
+            level: 'info',
+            role: 'assistant',
+            messageId: `hidden-${frameId}-message`,
+            text
+          }
+        })
+      }
+    })
+    expect(view.container.textContent).not.toContain('Selected child output')
+
+    view.rerender(
+      <section>
+        <SubagentPreview item={{ ...item, selectedAgentFrameId: 'child-b' }} isActive />
+      </section>
+    )
+    expect(view.container.textContent).toContain('Selected child output')
+    expect(view.container.textContent).not.toContain('Previous child output')
+  })
+
+  it('shows a durable terminal projection when a hidden tab reopens', () => {
+    const session = createSession()
+    const item = {
+      id: 'tool:session-1:subagents',
+      type: 'tool' as const,
+      toolKind: 'subagents' as const,
+      title: 'Subagents',
+      sessionId: session.id,
+      projectId: session.projectId,
+      selectedAgentFrameId: 'child-a'
+    }
+    const view = renderSurface(
+      <section hidden>
+        <SubagentPreview item={item} isActive={false} />
+      </section>
+    )
+    expect(view.container.querySelector('[data-subagent-status="running"]')).toBeTruthy()
+
+    const terminal = withChildStatus(createSession(), 'child-a', 'completed')
+    act(() => useSessionStore.setState({ sessions: [terminal] }))
+    expect(view.container.querySelector('[data-subagent-status="running"]')).toBeTruthy()
+
+    view.rerender(
+      <section>
+        <SubagentPreview item={item} isActive />
+      </section>
+    )
+    expect(view.container.querySelector('[data-subagent-status="completed"]')).toBeTruthy()
+    expect(view.container.textContent).toContain('Execution completed.')
+  })
+
+  it.each([320, 899])(
+    'restores the reader at scrollTop %i after a hidden tab resumes',
+    async (readingTop) => {
+      const originalScrollTo = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo')
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        value: function (this: HTMLElement, options: ScrollToOptions) {
+          this.scrollTop = options.top ?? this.scrollTop
+        }
+      })
+      try {
+        const session = createSession()
+        useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+        const item = {
+          id: 'tool:session-1:subagents',
+          type: 'tool' as const,
+          toolKind: 'subagents' as const,
+          title: 'Subagents',
+          sessionId: session.id,
+          projectId: session.projectId,
+          selectedAgentFrameId: 'child-a'
+        }
+        const view = renderSurface(
+          <section>
+            <SubagentPreview item={item} isActive />
+          </section>
+        )
+        const viewport = view.container.querySelector<HTMLElement>(
+          '[data-slot="message-scroller-viewport"]'
+        )!
+        Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 1000 })
+        Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 100 })
+        viewport.scrollTop = 900
+        fireEvent.scroll(viewport)
+        fireEvent.wheel(viewport, { deltaY: -1 })
+        viewport.scrollTop = readingTop
+        fireEvent.scroll(viewport)
+
+        view.rerender(
+          <section hidden>
+            <SubagentPreview item={item} isActive={false} />
+          </section>
+        )
+        expect(view.container.querySelector('[data-slot="message-scroller-viewport"]')).toBe(
+          viewport
+        )
+        view.rerender(
+          <section>
+            <SubagentPreview item={item} isActive />
+          </section>
+        )
+        await act(async () => {})
+        expect(view.container.querySelector('[data-slot="message-scroller-viewport"]')).toBe(
+          viewport
+        )
+        expect(viewport.scrollTop).toBe(readingTop)
+      } finally {
+        if (originalScrollTo) {
+          Object.defineProperty(HTMLElement.prototype, 'scrollTo', originalScrollTo)
+        } else {
+          Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo')
+        }
+      }
+    }
+  )
 
   it('does not read hidden restored tabs, then hydrates only the activated Session once', async () => {
     const durable = createSession()

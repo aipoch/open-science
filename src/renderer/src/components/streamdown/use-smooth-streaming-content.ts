@@ -7,12 +7,16 @@ const SPEED_UP_TO_TWO_GRAPHEMES = 120
 const SPEED_UP_TO_THREE_GRAPHEMES = 240
 const SPEED_DOWN_TO_TWO_GRAPHEMES = 180
 const SPEED_DOWN_TO_ONE_GRAPHEMES = 60
-// Real models outpace the 1/2/3-grapheme playback quickly; beyond this backlog the reveal
-// rate scales to drain within CATCH_UP_FRAMES frames instead of trailing seconds behind.
+// Keep ordinary playback for small backlogs. Large provider bursts need a higher throughput:
+// 48 graphemes per frame can leave a multi-megabyte response animating for minutes.
 const CATCH_UP_GRAPHEMES = 600
 const CATCH_UP_FRAMES = 30
-// Bound a single frame's reveal so draining a large backlog never flashes a huge block.
 const CATCH_UP_MAX_GRAPHEMES_PER_FRAME = 48
+const HIGH_BACKLOG_GRAPHEMES = 4096
+// At a 64ms commit cadence this permits up to 128k graphemes/s, enough to keep up with
+// common provider bursts, without sending an unbounded block through Markdown in one commit.
+const HIGH_BACKLOG_MAX_GRAPHEMES_PER_COMMIT = 8192
+const HIGH_BACKLOG_DRAIN_TARGET_MS = 500
 // Each commit re-renders the whole Markdown subtree at O(visible length), so per-frame commits
 // make a long message cost O(n²) total. Past this target length, commit at a lengthening
 // interval (32/48/64ms) with proportionally larger batches: the reveal rate in graphemes per
@@ -74,7 +78,10 @@ const useSmoothStreamingContent = (
   animateOnMount = sourceOpen
 ): SmoothStreamingContent => {
   const [visibleContent, setVisibleContent] = useState(() => (animateOnMount ? '' : content))
-  const [isPresenting, setIsPresenting] = useState(animateOnMount)
+  // A restored, already-visible message may still have an open source. Keep its presentation
+  // gate active from the first render instead of committing the full Markdown once as closed
+  // and immediately re-rendering it as streaming in the effect below.
+  const [isPresenting, setIsPresenting] = useState(animateOnMount || sourceOpen)
   const visibleContentRef = useRef(visibleContent)
   const targetContentRef = useRef(content)
   // useRef arguments are evaluated on every render. Segment the initial body once, then
@@ -87,12 +94,33 @@ const useSmoothStreamingContent = (
   const pendingGraphemesRef = initialPendingRef as RefObject<string[]>
   const pendingIndexRef = useRef(0)
   const playbackStartedRef = useRef(false)
+  const highBacklogRef = useRef(false)
   const presentationSpeedRef = useRef<PresentationSpeed>(1)
   const bufferingStartedAtRef = useRef<number | undefined>(undefined)
   const lastTargetUpdateAtRef = useRef(0)
   const sourceOpenRef = useRef(sourceOpen)
-  const isPresentingRef = useRef(animateOnMount)
+  const isPresentingRef = useRef(animateOnMount || sourceOpen)
   const lastCommitAtRef = useRef(0)
+  const completedFirstEffectSetupRef = useRef(false)
+  const resumeFromHiddenActivityRef = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    if (completedFirstEffectSetupRef.current) {
+      // Activity re-creates Effects on reveal without remounting the hook. The hidden tab's
+      // durable/live snapshot should appear immediately; later chunks still use normal pacing.
+      resumeFromHiddenActivityRef.current = true
+    } else {
+      // StrictMode's initial setup/cleanup replay happens before this microtask. Only a settled
+      // first setup may turn a later cleanup/setup cycle into an Activity resume.
+      queueMicrotask(() => {
+        if (!cancelled) completedFirstEffectSetupRef.current = true
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const now = Date.now()
@@ -114,8 +142,17 @@ const useSmoothStreamingContent = (
       pendingGraphemesRef.current = []
       pendingIndexRef.current = 0
       playbackStartedRef.current = false
+      highBacklogRef.current = false
       presentationSpeedRef.current = 1
       bufferingStartedAtRef.current = undefined
+    }
+
+    if (resumeFromHiddenActivityRef.current) {
+      resumeFromHiddenActivityRef.current = false
+      resetPending()
+      commit(content)
+      setPresentationActive(sourceOpen)
+      return
     }
 
     if (!shouldAnimateStreamingContent()) {
@@ -201,6 +238,7 @@ const useSmoothStreamingContent = (
       pendingGraphemesRef.current = []
       pendingIndexRef.current = 0
       playbackStartedRef.current = false
+      highBacklogRef.current = false
       presentationSpeedRef.current = 1
       bufferingStartedAtRef.current = undefined
       lastCommitAtRef.current = 0
@@ -241,34 +279,44 @@ const useSmoothStreamingContent = (
           : 0
 
         if (releasable > 0) {
+          if (remaining > HIGH_BACKLOG_GRAPHEMES) highBacklogRef.current = true
           presentationSpeedRef.current = nextPresentationSpeed(
             presentationSpeedRef.current,
             remaining
           )
-          // Larger batches at the lengthened interval keep the per-millisecond reveal rate
-          // (and the CATCH_UP_FRAMES drain bound) identical to per-frame pacing.
           const intervalMs = commitIntervalFor(target.length)
           const revealScale = intervalMs / FRAME_MS
-          const frameReveal =
-            remaining > CATCH_UP_GRAPHEMES
+          const revealCount = Math.min(
+            releasable,
+            highBacklogRef.current
               ? Math.min(
-                  CATCH_UP_MAX_GRAPHEMES_PER_FRAME * revealScale,
-                  Math.max(presentationSpeedRef.current, Math.ceil(remaining / CATCH_UP_FRAMES)) *
-                    revealScale
+                  HIGH_BACKLOG_MAX_GRAPHEMES_PER_COMMIT,
+                  Math.max(
+                    CATCH_UP_MAX_GRAPHEMES_PER_FRAME * revealScale,
+                    Math.ceil((remaining * intervalMs) / HIGH_BACKLOG_DRAIN_TARGET_MS)
+                  )
                 )
-              : presentationSpeedRef.current * revealScale
-          const revealCount = Math.min(releasable, frameReveal)
+              : remaining > CATCH_UP_GRAPHEMES
+                ? Math.min(
+                    CATCH_UP_MAX_GRAPHEMES_PER_FRAME * revealScale,
+                    Math.max(presentationSpeedRef.current, Math.ceil(remaining / CATCH_UP_FRAMES)) *
+                      revealScale
+                  )
+                : presentationSpeedRef.current * revealScale
+          )
           const nextIndex = pendingIndexRef.current + revealCount
-          const nextContent = `${current}${pending.slice(pendingIndexRef.current, nextIndex).join('')}`
-          if (nextIndex === pending.length) {
-            // Urgent: pairs with setIsPresenting(false) so the gate releases with final content.
-            commit(nextContent)
-            pendingIndexRef.current = nextIndex
-            resetPending()
-            finishPresentation()
-          } else if (now - lastCommitAtRef.current >= intervalMs) {
-            commitFrame(nextContent)
-            pendingIndexRef.current = nextIndex
+          if (nextIndex === pending.length || now - lastCommitAtRef.current >= intervalMs) {
+            const nextContent = `${current}${pending.slice(pendingIndexRef.current, nextIndex).join('')}`
+            if (nextIndex === pending.length) {
+              // Urgent: pairs with setIsPresenting(false) so the gate releases with final content.
+              commit(nextContent)
+              pendingIndexRef.current = nextIndex
+              resetPending()
+              finishPresentation()
+            } else {
+              commitFrame(nextContent)
+              pendingIndexRef.current = nextIndex
+            }
           }
         }
       } else {
