@@ -148,6 +148,7 @@ export function SmartCollectionPanel({
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmRecompute, setConfirmRecompute] = useState(false)
   const [confirmAbandon, setConfirmAbandon] = useState<string>()
+  const [confirmClearPause, setConfirmClearPause] = useState(false)
   const load = useCallback(
     async () =>
       (
@@ -239,6 +240,7 @@ export function SmartCollectionPanel({
       setConfirmPreview(false)
       setConfirmReset(false)
       setConfirmAbandon(undefined)
+      setConfirmClearPause(false)
     } catch (failure) {
       const unavailable = String(failure).includes(SMART_COLLECTION_RESUME_UNAVAILABLE)
       setResumeUnavailable(unavailable)
@@ -645,9 +647,12 @@ export function SmartCollectionPanel({
               busy || decisionPending || refreshFailed || !view.configured || !view.sourceAvailable
           }}
           secondaryButton={{
-            label: t('Abandon run'),
-            onClick: () => setConfirmAbandon(view.automaticPauseRunId),
-            disabled: busy || decisionPending || refreshFailed || !view.automaticPauseRunId
+            label: view.automaticPauseRunId ? t('Abandon run') : t('Start a fresh automatic run'),
+            onClick: () => {
+              if (view.automaticPauseRunId) setConfirmAbandon(view.automaticPauseRunId)
+              else setConfirmClearPause(true)
+            },
+            disabled: busy || decisionPending || refreshFailed
           }}
         />
       )}
@@ -905,6 +910,19 @@ export function SmartCollectionPanel({
         loading={busy}
         onCancel={() => setConfirmAbandon(undefined)}
         onConfirm={() => void run('abandon', confirmAbandon)}
+      />
+      <ConfirmActionDialog
+        open={confirmClearPause}
+        title={t('Start a fresh automatic run')}
+        description={t(
+          'Clear this ambiguous pause and start a fresh automatic run? Existing results and interrupted runs will be kept.'
+        )}
+        cancelLabel={t('Cancel')}
+        confirmLabel={t('Start a fresh automatic run')}
+        destructive
+        loading={busy}
+        onCancel={() => setConfirmClearPause(false)}
+        onConfirm={() => void run('abandon')}
       />
     </section>
   )

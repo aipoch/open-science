@@ -518,6 +518,38 @@ it('confirms and abandons a paused automatic run', async () => {
   )
 })
 
+it('offers fresh-run recovery for an ambiguous automatic pause', async () => {
+  view = {
+    ...view,
+    autoUpdate: true,
+    configured: true,
+    automaticPauseReason: 'daily-limit',
+    run: {
+      id: 'latest-run',
+      kind: 'refresh',
+      state: 'interrupted',
+      done: 0,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  transact.mockImplementation(async (command) => {
+    if (command.action === 'abandon') view = { ...view, automaticPauseReason: undefined }
+    return { kind: 'collection', id: 'smart', smart: view }
+  })
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Start a fresh automatic run' }))
+  await screen.findByRole('alertdialog')
+  fireEvent.click(screen.getAllByRole('button', { name: 'Start a fresh automatic run' }).at(-1)!)
+  await waitFor(() =>
+    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'abandon' }))
+  )
+  expect(transact.mock.calls.at(-1)?.[0].runId).toBeUndefined()
+})
+
 it('keeps the automatic pause notice when a newer manual run is interrupted', async () => {
   view = {
     ...view,

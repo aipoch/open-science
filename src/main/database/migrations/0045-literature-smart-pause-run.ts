@@ -5,7 +5,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
        FROM "LiteratureSmartRun" candidate
        WHERE candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
          AND (candidate."state" = 'interrupted'
-           OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND candidate."state" = 'failed'))
+           OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND candidate."state" = 'failed'))
          AND (
            (
              EXISTS (
@@ -19,7 +19,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
                FROM "LiteratureSmartRun" automatic_candidate
                WHERE automatic_candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
                  AND (automatic_candidate."state" = 'interrupted'
-                   OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND automatic_candidate."state" = 'failed'))
+                   OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND automatic_candidate."state" = 'failed'))
                  AND EXISTS (
                    SELECT 1
                    FROM "ClassificationUsage" automatic_usage
@@ -34,7 +34,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
                FROM "LiteratureSmartRun" automatic_candidate
                WHERE automatic_candidate."collectionId" = "LiteratureSmartCollection"."collectionId"
                  AND (automatic_candidate."state" = 'interrupted'
-                   OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND automatic_candidate."state" = 'failed'))
+                   OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND automatic_candidate."state" = 'failed'))
                  AND EXISTS (
                    SELECT 1
                    FROM "ClassificationUsage" automatic_usage
@@ -47,7 +47,7 @@ const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollect
                FROM "LiteratureSmartRun" same_collection
                WHERE same_collection."collectionId" = "LiteratureSmartCollection"."collectionId"
                  AND (same_collection."state" = 'interrupted'
-                   OR ("LiteratureSmartCollection"."automaticPauseReason" = 'storage-error' AND same_collection."state" = 'failed'))
+                   OR ("LiteratureSmartCollection"."automaticPauseReason" IN ('storage-error', 'interrupted') AND same_collection."state" = 'failed'))
              ) = 1
            )
          )

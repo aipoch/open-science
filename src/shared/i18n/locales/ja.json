@@ -6216,6 +6216,8 @@
     "No evaluation history yet.": "評価履歴はまだありません。",
     "Automatic updates paused": "自動更新は一時停止中です",
     "Abandon run": "実行を放棄",
+    "Start a fresh automatic run": "新しい自動実行を開始",
+    "Clear this ambiguous pause and start a fresh automatic run? Existing results and interrupted runs will be kept.": "この曖昧な一時停止を解除して新しい自動実行を開始しますか？既存の結果と中断された実行は保持されます。",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "この実行を放棄しますか？完了した結果は保持され、この実行は再開されません。",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "この実行を放棄します。完了した結果は保持され、この実行は再開されません。",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "24 時間の自動リクエストが共通上限の {{limit}} 回に達しました。時間をおいてから再開してください。",

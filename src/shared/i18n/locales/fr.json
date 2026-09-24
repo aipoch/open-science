@@ -6540,6 +6540,8 @@
     "No evaluation history yet.": "Aucun historique d’évaluation pour le moment.",
     "Automatic updates paused": "Mises à jour automatiques suspendues",
     "Abandon run": "Abandonner l’exécution",
+    "Start a fresh automatic run": "Démarrer une nouvelle exécution automatique",
+    "Clear this ambiguous pause and start a fresh automatic run? Existing results and interrupted runs will be kept.": "Effacer cette pause ambiguë et démarrer une nouvelle exécution automatique ? Les résultats existants et les exécutions interrompues seront conservés.",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "Abandonner cette exécution ? Les résultats terminés seront conservés et cette exécution ne sera pas reprise.",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "Abandonner cette exécution. Les résultats terminés seront conservés et cette exécution ne sera pas reprise.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "Les requêtes automatiques ont atteint la limite commune de {{limit}} sur 24 heures. Patientez avant de reprendre.",

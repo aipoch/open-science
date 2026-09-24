@@ -6214,6 +6214,8 @@
     "No evaluation history yet.": "아직 평가 기록이 없습니다.",
     "Automatic updates paused": "자동 업데이트 일시 중지됨",
     "Abandon run": "실행 포기",
+    "Start a fresh automatic run": "새 자동 실행 시작",
+    "Clear this ambiguous pause and start a fresh automatic run? Existing results and interrupted runs will be kept.": "이 모호한 일시 중지를 해제하고 새 자동 실행을 시작하시겠습니까? 기존 결과와 중단된 실행은 유지됩니다.",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "이 실행을 포기하시겠습니까? 완료된 결과는 유지되며 이 실행은 재개되지 않습니다.",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "이 실행을 포기합니다. 완료된 결과는 유지되며 이 실행은 재개되지 않습니다.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "24시간 동안 자동 요청이 공유 한도인 {{limit}}회에 도달했습니다. 잠시 기다린 후 재개하세요.",

@@ -181,7 +181,7 @@ it('backfills an automatic pause while adopting the current schema', async () =>
           create: {
             scopeKind: 'library',
             autoUpdate: true,
-            automaticPauseReason: 'run-limit'
+            automaticPauseReason: 'interrupted'
           }
         }
       }
@@ -203,7 +203,7 @@ it('backfills an automatic pause while adopting the current schema', async () =>
           id: 'automatic-run',
           collectionId: 'paused',
           kind: 'refresh',
-          state: 'interrupted',
+          state: 'failed',
           ruleRevision: 1,
           policyKey: 'fixture'
         },

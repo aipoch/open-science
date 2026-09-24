@@ -3025,6 +3025,41 @@ it('does not clear an automatic pause when abandoning a newer manual run', async
   ).toMatchObject({ state: 'interrupted' })
 })
 
+it('clears an ambiguous automatic pause before starting a fresh run', async () => {
+  const id = await create()
+  await refresh(id)
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'recompute',
+    offset: 0
+  })
+  const runs = await db.literatureSmartRun.findMany({
+    where: { collectionId: id },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true }
+  })
+  await db.literatureSmartRun.updateMany({
+    where: { collectionId: id },
+    data: { state: 'interrupted' }
+  })
+  await db.literatureSmartRun.update({ where: { id: runs[0].id }, data: { state: 'failed' } })
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true, automaticPauseReason: 'interrupted', automaticPauseRunId: null }
+  })
+
+  expect((await owner.view(id)).automaticPauseRunId).toBeUndefined()
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    offset: 0
+  })
+
+  expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined })
+})
+
 it('drains paid requests and retains a durable pause when both result and failure writes fail', async () => {
   await db.literatureItem.createMany({
     data: Array.from({ length: 7 }, (_, i) => ({

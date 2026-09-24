@@ -6216,6 +6216,8 @@
     "No evaluation history yet.": "暂无评估历史。",
     "Automatic updates paused": "自动更新已暂停",
     "Abandon run": "放弃运行",
+    "Start a fresh automatic run": "开始新的自动运行",
+    "Clear this ambiguous pause and start a fresh automatic run? Existing results and interrupted runs will be kept.": "要清除这次不明确的暂停并开始新的自动运行吗？现有结果和中断的运行都会保留。",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "要放弃这次运行吗？已完成的结果会保留，并且不会恢复此运行。",
     "Abandon this run. Completed results will be kept, and this run will not resume.": "放弃这次运行。已完成的结果会保留，并且不会恢复此运行。",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "24 小时内的自动请求已达到共享上限 {{limit}} 次。请等待后再恢复。",

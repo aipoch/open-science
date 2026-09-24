@@ -703,7 +703,8 @@ export class LiteratureSmartCollections {
               collectionId: id,
               state: {
                 in:
-                  definition.automaticPauseReason === 'storage-error'
+                  definition.automaticPauseReason === 'storage-error' ||
+                  definition.automaticPauseReason === 'interrupted'
                     ? ['interrupted', 'failed']
                     : ['interrupted']
               }
@@ -1107,7 +1108,8 @@ export class LiteratureSmartCollections {
     const { definition } = await this.definition(client, id)
     if (command.action === 'resume-automatic') {
       const resumableStates =
-        definition.automaticPauseReason === 'storage-error'
+        definition.automaticPauseReason === 'storage-error' ||
+        definition.automaticPauseReason === 'interrupted'
           ? ['cancelled', 'interrupted', 'failed']
           : ['cancelled', 'interrupted']
       const candidates = await client.literatureSmartRun.findMany({
@@ -1149,11 +1151,29 @@ export class LiteratureSmartCollections {
       if (cancelled.count && this.active.get(id) === controller) this.active.delete(id)
       this.changed(id)
     } else if (command.action === 'abandon') {
-      if (!command.runId) return { kind: 'collection', id }
       const abandonableStates =
-        definition.automaticPauseReason === 'storage-error'
+        definition.automaticPauseReason === 'storage-error' ||
+        definition.automaticPauseReason === 'interrupted'
           ? ['cancelled', 'interrupted', 'failed']
           : ['cancelled', 'interrupted']
+      if (!command.runId) {
+        if (definition.automaticPauseReason && !definition.automaticPauseRunId) {
+          const cleared = await client.literatureSmartCollection.updateMany({
+            where: {
+              collectionId: id,
+              autoUpdate: true,
+              automaticPauseRunId: null,
+              automaticPauseReason: definition.automaticPauseReason
+            },
+            data: { automaticPauseReason: null, automaticPauseRunId: null }
+          })
+          if (cleared.count) {
+            this.changed(id)
+            this.schedule()
+          }
+        }
+        return { kind: 'collection', id }
+      }
       const pauseRunCandidates = definition.automaticPauseRunId
         ? []
         : await client.literatureSmartRun.findMany({
