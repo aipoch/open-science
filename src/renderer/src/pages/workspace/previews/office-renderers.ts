@@ -196,6 +196,7 @@ type PptxSlideHandle = {
 
 type PptxThumbnailHandle = PptxSlideHandle & {
   element?: HTMLElement
+  ready: Promise<void>
 }
 
 const createPptxReviewSurface = (container: HTMLDivElement): PptxReviewSurface => {
@@ -315,17 +316,28 @@ const PPTX_ZOOM_STEP = 25
 // so a single gesture produces one smooth zoom update instead of re-rendering for every event.
 const PPTX_WHEEL_ZOOM_SENSITIVITY = 0.25
 const PPTX_WHEEL_ZOOM_STEP = 5
+const PPTX_PAN_THRESHOLD = 4
 
 const installPptxReviewControls = (
   surface: PptxReviewSurface,
   viewer: PptxViewer,
   onSlideSettled?: () => void,
   notesPromise?: Promise<PptxNotesBySlide>,
-  zoomController?: { get: () => number; set: (percent: number) => void }
+  zoomController?: { get: () => number; set: (percent: number) => void },
+  onThumbnailDisposed?: () => void
 ): OfficeRenderCleanup => {
   const document = surface.root.ownerDocument
   let disposed = false
-  let panStart: { x: number; y: number; scrollLeft: number; scrollTop: number } | undefined
+  let panStart:
+    | {
+        pointerId: number
+        x: number
+        y: number
+        scrollLeft: number
+        scrollTop: number
+        dragging: boolean
+      }
+    | undefined
   let pendingPan: { scrollLeft: number; scrollTop: number } | undefined
   let panFrame: number | undefined
   let pendingWheelDelta = 0
@@ -335,21 +347,55 @@ const installPptxReviewControls = (
   let activeThumbnail: HTMLButtonElement | undefined
   let thumbnailFrame: number | undefined
   let notesBySlide: PptxNotesBySlide = new Map()
-  const thumbnailHandles = new Map<number, PptxSlideHandle>()
+  const thumbnailHandles = new Map<number, PptxThumbnailHandle>()
   const thumbnailItems = new Map<number, HTMLButtonElement>()
   const thumbnailQueue = new Set<number>()
+  const updateThumbnailLayout = (index: number): void => {
+    const handle = thumbnailHandles.get(index)
+    const item = thumbnailItems.get(index)
+    const host = item?.querySelector<HTMLElement>('.pptx-review-thumbnail-host')
+    if (!handle || !host) return
+    const width = Math.max(1, Math.floor(host.clientWidth || 142))
+    const thumbnail = handle.element ?? host.firstElementChild
+    const slide = thumbnail?.firstElementChild
+    if (thumbnail instanceof HTMLElement) {
+      thumbnail.style.width = `${width}px`
+      thumbnail.style.height = `${width * (viewer.slideHeight / viewer.slideWidth)}px`
+      thumbnail.style.flex = '0 0 auto'
+    }
+    if (slide instanceof HTMLElement && viewer.slideWidth > 0) {
+      slide.style.transform = `scale(${width / viewer.slideWidth})`
+      slide.style.transformOrigin = 'top left'
+    }
+  }
+  const disposeThumbnail = (index: number): void => {
+    thumbnailQueue.delete(index)
+    const handle = thumbnailHandles.get(index)
+    if (!handle) return
+    handle.dispose()
+    thumbnailHandles.delete(index)
+    onThumbnailDisposed?.()
+  }
   const thumbnailObserver =
     typeof IntersectionObserver === 'function'
       ? new IntersectionObserver(
           (entries) => {
             for (const entry of entries) {
-              if (entry.isIntersecting)
-                scheduleThumbnail(Number(entry.target.getAttribute('data-slide')))
+              const index = Number(entry.target.getAttribute('data-slide'))
+              if (entry.isIntersecting) scheduleThumbnail(index)
+              else if (index !== viewer.currentSlideIndex) disposeThumbnail(index)
             }
           },
           { root: surface.thumbnails, rootMargin: '320px 0px' }
         )
       : undefined
+  const thumbnailResizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          for (const index of thumbnailHandles.keys()) updateThumbnailLayout(index)
+        })
+      : undefined
+  thumbnailResizeObserver?.observe(surface.thumbnails)
 
   const updateActiveSlide = (index: number): void => {
     const count = viewer.slideCount
@@ -367,6 +413,7 @@ const installPptxReviewControls = (
         activeItem.scrollIntoView({ block: 'nearest' })
       }
     }
+    scheduleThumbnail(index)
     const note = notesBySlide.get(index) ?? ''
     surface.notesBody.textContent = note
     surface.notes.hidden = false
@@ -385,21 +432,17 @@ const installPptxReviewControls = (
     }) as PptxThumbnailHandle | null
     if (!handle) return
 
+    thumbnailHandles.set(index, handle)
+    void handle.ready.catch(() => {
+      // A retired thumbnail may finish after this page has acquired a replacement handle.
+      if (disposed || thumbnailHandles.get(index) !== handle) return
+      disposeThumbnail(index)
+      host.replaceChildren()
+    })
     // The vendor thumbnail API owns the DOM shape, but older renderer builds can leave the
     // returned slide at intrinsic size. Reapply the same scale to the returned slide so a
     // narrow rail cannot expose only the left edge of the slide.
-    const thumbnail = handle.element ?? host.firstElementChild
-    const slide = thumbnail?.firstElementChild
-    if (thumbnail instanceof HTMLElement) {
-      thumbnail.style.width = `${width}px`
-      thumbnail.style.height = `${width * (viewer.slideHeight / viewer.slideWidth)}px`
-      thumbnail.style.flex = '0 0 auto'
-    }
-    if (slide instanceof HTMLElement && viewer.slideWidth > 0) {
-      slide.style.transform = `scale(${width / viewer.slideWidth})`
-      slide.style.transformOrigin = 'top left'
-    }
-    thumbnailHandles.set(index, handle)
+    updateThumbnailLayout(index)
   }
 
   const flushThumbnailQueue = (): void => {
@@ -435,7 +478,9 @@ const installPptxReviewControls = (
     // Keep keyboard navigation on the review surface after a toolbar or thumbnail click. Without
     // this, the clicked button retains focus and the stage intentionally ignores arrow keys.
     focusStage()
-    void Promise.resolve(viewer.goToSlide(index)).then(() => onSlideSettled?.())
+    void Promise.resolve(viewer.goToSlide(index)).then(() => {
+      if (!disposed) onSlideSettled?.()
+    })
   }
 
   const updateZoomControls = (): void => {
@@ -459,6 +504,7 @@ const installPptxReviewControls = (
     wheelZoomPercent = undefined
     const update = zoomController ? zoomController.set(percent) : viewer.setZoom(percent)
     void Promise.resolve(update).then(() => {
+      if (disposed) return
       updateZoomControls()
       onSlideSettled?.()
     })
@@ -502,7 +548,7 @@ const installPptxReviewControls = (
     wheelZoomPercent = next
     const update = zoomController ? zoomController.set(next) : viewer.setZoom(next)
     void Promise.resolve(update).then(() => {
-      if (wheelZoomPercent !== next) return
+      if (disposed || wheelZoomPercent !== next) return
       wheelZoomPercent = undefined
       updateZoomControls()
       onSlideSettled?.()
@@ -518,23 +564,38 @@ const installPptxReviewControls = (
 
   const onPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0) return
+    if (
+      event.target instanceof Element &&
+      event.target.closest(
+        'a, button, input, textarea, select, [contenteditable="true"], [role="button"], [role="link"]'
+      )
+    ) {
+      return
+    }
     focusStage()
     panStart = {
+      pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       scrollLeft: surface.stage.scrollLeft,
-      scrollTop: surface.stage.scrollTop
+      scrollTop: surface.stage.scrollTop,
+      dragging: false
     }
-    surface.stage.setPointerCapture?.(event.pointerId)
-    surface.stage.classList.add('pptx-review-stage--panning')
-    event.preventDefault()
   }
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (!panStart) return
+    if (!panStart || event.pointerId !== panStart.pointerId) return
+    const deltaX = event.clientX - panStart.x
+    const deltaY = event.clientY - panStart.y
+    if (!panStart.dragging) {
+      if (Math.hypot(deltaX, deltaY) < PPTX_PAN_THRESHOLD) return
+      panStart.dragging = true
+      surface.stage.setPointerCapture?.(event.pointerId)
+      surface.stage.classList.add('pptx-review-stage--panning')
+    }
     pendingPan = {
-      scrollLeft: panStart.scrollLeft - (event.clientX - panStart.x),
-      scrollTop: panStart.scrollTop - (event.clientY - panStart.y)
+      scrollLeft: panStart.scrollLeft - deltaX,
+      scrollTop: panStart.scrollTop - deltaY
     }
     if (panFrame === undefined) {
       const view = document.defaultView
@@ -552,8 +613,8 @@ const installPptxReviewControls = (
   }
 
   const stopPanning = (event?: PointerEvent): void => {
-    if (!panStart) return
-    if (event) surface.stage.releasePointerCapture?.(event.pointerId)
+    if (!panStart || (event && event.pointerId !== panStart.pointerId)) return
+    if (event && panStart.dragging) surface.stage.releasePointerCapture?.(event.pointerId)
     if (panFrame !== undefined) {
       document.defaultView?.cancelAnimationFrame(panFrame)
       panFrame = undefined
@@ -671,6 +732,7 @@ const installPptxReviewControls = (
     thumbnailFrame = undefined
     thumbnailQueue.clear()
     thumbnailObserver?.disconnect()
+    thumbnailResizeObserver?.disconnect()
     thumbnailHandles.forEach((handle) => handle.dispose())
     thumbnailHandles.clear()
     activeThumbnail = undefined
@@ -1509,7 +1571,8 @@ export const renderOfficeFile = async ({
           pptxZoomPercent = percent
           refitPptx()
         }
-      }
+      },
+      trimPptxMediaCache
     )
     trimPptxMediaCache()
   } catch (error) {

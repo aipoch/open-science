@@ -127,7 +127,7 @@ describe('renderOfficeFile', () => {
     mocks.exposePptxMediaResolver = true
     mocks.renderPptxThumbnail.mockImplementation((_index: number, target: HTMLElement) => {
       target.appendChild(document.createElement('div'))
-      return { dispose: vi.fn() }
+      return { ready: Promise.resolve(), dispose: vi.fn() }
     })
     ReadyWorker.instances = []
     vi.stubGlobal('Worker', ReadyWorker)
@@ -989,9 +989,20 @@ describe('renderOfficeFile', () => {
       return event
     }
     stage.dispatchEvent(pointer('pointerdown', 100, 100))
-    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(true)
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(false)
     stage.dispatchEvent(pointer('pointermove', 80, 75))
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(true)
     stage.dispatchEvent(pointer('pointerup', 80, 75))
+    expect(stage.classList.contains('pptx-review-stage--panning')).toBe(false)
+
+    const link = document.createElement('a')
+    link.href = '#slide-link'
+    stage.appendChild(link)
+    const linkDown = pointer('pointerdown', 100, 100)
+    link.dispatchEvent(linkDown)
+    link.dispatchEvent(pointer('pointermove', 80, 75))
+    link.dispatchEvent(pointer('pointerup', 80, 75))
+    expect(linkDown.defaultPrevented).toBe(false)
     expect(stage.classList.contains('pptx-review-stage--panning')).toBe(false)
 
     const focusCallsBeforePageThree = focusStage.mock.calls.length
@@ -1010,7 +1021,7 @@ describe('renderOfficeFile', () => {
       const slide = document.createElement('div')
       thumbnail.appendChild(slide)
       target.appendChild(thumbnail)
-      return { element: thumbnail, dispose: vi.fn() }
+      return { element: thumbnail, ready: Promise.resolve(), dispose: vi.fn() }
     })
 
     const cleanup = await renderOfficeFile({
@@ -1029,6 +1040,47 @@ describe('renderOfficeFile', () => {
     expect(slide?.style.transform).toBe('scale(0.14791666666666667)')
     await cleanup()
   })
+
+  it.each([false, true])(
+    'handles thumbnail readiness rejection without breaking navigation (preview replaced: %s)',
+    async (replacePreview) => {
+      let rejectReady!: (error: Error) => void
+      const dispose = vi.fn()
+      mocks.renderPptxThumbnail.mockImplementationOnce((_index: number, target: HTMLElement) => {
+        target.appendChild(document.createElement('div'))
+        return {
+          ready: new Promise<void>((_resolve, reject) => {
+            rejectReady = reject
+          }),
+          dispose
+        }
+      })
+      const options = {
+        bytes,
+        extension: 'pptx' as const,
+        name: 'thumbnail-error.pptx',
+        container,
+        signal
+      }
+      let cleanup = await renderOfficeFile(options)
+      if (replacePreview) {
+        await cleanup()
+        cleanup = await renderOfficeFile(options)
+      }
+      const host = container.querySelector('.pptx-review-thumbnail-host')!
+      const currentThumbnail = host.firstChild
+      rejectReady(new Error('Embedded media failed to render'))
+      await Promise.resolve()
+
+      expect(dispose).toHaveBeenCalledOnce()
+      if (replacePreview) expect(host.firstChild).toBe(currentThumbnail)
+      else expect(host.childNodes).toHaveLength(0)
+      container.querySelector<HTMLButtonElement>('[aria-label="Page 3"]')!.click()
+      expect(container.querySelector('.pptx-review-counter')?.textContent).toBe('3 / 5')
+      await cleanup()
+      expect(dispose).toHaveBeenCalledOnce()
+    }
+  )
 
   it('shows presenter notes for the active slide when the optional notes part is available', async () => {
     mocks.openPptx.mockResolvedValue(undefined)
@@ -1215,7 +1267,7 @@ describe('renderOfficeFile', () => {
 
     await cleanup()
 
-    expect(disconnect).toHaveBeenCalledOnce()
+    expect(disconnect).toHaveBeenCalledTimes(2)
     expect(cancelAnimationFrame).toHaveBeenCalledWith(2)
     expect(scheduledFrames.size).toBe(0)
     expect(mocks.destroyPptx).toHaveBeenCalledOnce()
