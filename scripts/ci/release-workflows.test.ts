@@ -579,6 +579,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(materialize.run).toContain('mv "$RUNNER_TEMP/app-asar-content" "$asar"')
     expect(step(job, 'Generate SPDX SBOM from final archive')).toMatchObject({
       uses: 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610',
+      env: { SYFT_SELECT_CATALOGERS: '+javascript-package-cataloger' },
       with: {
         path: '${{ steps.scan.outputs.path }}',
         format: 'spdx-json',
@@ -591,6 +592,9 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     })
     expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
       'node scripts/ci/validate-release-sbom.mjs'
+    )
+    expect(step(job, 'Validate representative packaged-component coverage').run).toContain(
+      'exit "${status:-0}"'
     )
     expect(step(job, 'Upload PoC evidence')).toMatchObject({
       if: '${{ always() }}',

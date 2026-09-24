@@ -109,6 +109,8 @@ jobs:
 
       - name: Generate SPDX SBOM from final archive
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        env:
+          SYFT_SELECT_CATALOGERS: +javascript-package-cataloger
         with:
           path: ${{ steps.scan.outputs.path }}
           format: spdx-json
@@ -130,8 +132,9 @@ jobs:
             --artifact "$ARTIFACT_PATH" \
             --tag "$RELEASE_TAG" \
             --output release-sbom-coverage.json \
-            | tee release-sbom-coverage.md
+            | tee release-sbom-coverage.md || status=$?
           cat release-sbom-coverage.md >> "$GITHUB_STEP_SUMMARY"
+          exit "${status:-0}"
 
       - name: Upload PoC evidence
         if: ${{ always() }}
