@@ -1,7 +1,7 @@
 ## ✨ Lo más destacado
 
 - **Cribado inteligente de Literature en vivo.** Las colecciones inteligentes criban ahora las referencias en vivo, con controles de pausa y reanudación que mantienen los cribados de gran tamaño bajo tu control de principio a fin. (#2968)
-- **Tres conectores nuevos.** HMMER ejecuta búsquedas de homología de secuencias contra bases de datos de perfiles (#2957); InterProScan anota secuencias de proteínas con clasificaciones de dominios y familias (#2935); Clustal Omega realiza alineamiento múltiple de secuencias sobre tus conjuntos de datos (#2944).
+- **Conectores y herramientas de alineamiento nuevos.** HMMER se incorpora a la familia de conectores para búsquedas de homología de secuencias contra bases de datos de perfiles (#2957); InterProScan se incorpora como conector que comprueba el estado y recupera resultados de trabajos de anotación existentes (#2935); y el conector Genomes incorpora el alineamiento múltiple de secuencias con Clustal Omega (#2944).
 - **Actualización de los catálogos de proveedores.** GPT-6 y Claude Opus 5.5 se incorporan a los catálogos de proveedores, listos para elegir en configuraciones nuevas y existentes. (#2967)
 - **La evidencia en PDF viaja con la conversación.** Las conversaciones del espacio de trabajo pueden incluir ahora evidencia en PDF junto al primer mensaje, de modo que el contexto llega antes de que el agente empiece a trabajar. (#2941)
 
@@ -9,8 +9,8 @@
 
 - Cribado inteligente de Literature en vivo: las ejecuciones de cribado evalúan las referencias a medida que llegan y se pueden pausar y reanudar en cualquier punto. (#2968)
 - Conector HMMER: busca secuencias de proteínas o nucleótidos contra bases de datos de perfiles HMM para identificar familias homólogas. (#2957)
-- Conector InterProScan: anota secuencias de proteínas con clasificaciones de dominios, familias y sitios funcionales de múltiples bases de datos de análisis en una sola ejecución. (#2935)
-- Conector Clustal Omega: ejecuta alineamiento múltiple de secuencias sobre conjuntos de datos genómicos y de proteínas e inspecciona los resultados alineados. (#2944)
+- Conector InterProScan: comprueba el estado y recupera los resultados de trabajos de anotación de InterProScan existentes por ID de trabajo. (#2935)
+- El alineamiento múltiple de secuencias con Clustal Omega llega al conector Genomes: alinea tres o más registros FASTA de proteínas, ADN o ARN con Clustal Omega de EMBL-EBI y recupera un archivo de alineamiento descargable. (#2944)
 - Los modelos GPT-6 y Claude Opus 5.5 se incorporan a los catálogos de proveedores. (#2967)
 - Las conversaciones del espacio de trabajo pueden incluir evidencia en PDF con el primer mensaje, de modo que el agente ve el material de origen antes de empezar. (#2941)
 - Los diagnósticos de sesión pueden incluir evidencia de paquetes sensible cuando lo autorizas explícitamente, aportando un contexto más profundo para la resolución de problemas. (#2947)

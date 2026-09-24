@@ -49,7 +49,7 @@ AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，�
 
 AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[AIPOCH Open-Science v0.33.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.33.1 帶來支援暫停與恢復的即時智慧文獻篩選、三個新的研究連接器——HMMER 序列搜尋、InterProScan 結構域註釋和 Clustal Omega 多序列比對——以及服務商目錄中的 GPT-6 與 Claude Opus 5.5。PDF 證據現在可以隨工作區對話的第一則訊息一同傳送；在你選擇加入後，工作階段診斷還可以包含敏感的套件證據。Windows 託管 Python 執行階段已恢復，Notebook 與計算儲存競爭可乾淨恢復，視覺能力變化時代理橋接會自動重連。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.33.1 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.33.1 帶來支援暫停與恢復的即時智慧文獻篩選、兩個新的研究連接器——HMMER 序列搜尋與 InterProScan 工作結果——以及 Genomes 連接器中的 Clustal Omega 多序列比對，還有服務商目錄中的 GPT-6 與 Claude Opus 5.5。PDF 證據現在可以隨工作區對話的第一則訊息一同傳送；在你選擇加入後，工作階段診斷還可以包含敏感的套件證據。Windows 託管 Python 執行階段已恢復，Notebook 與計算儲存競爭可乾淨恢復，視覺能力變化時代理橋接會自動重連。詳情請查看[最新發行說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

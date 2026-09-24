@@ -49,7 +49,7 @@ AIPOCH Open-Science は科学者と研究者のための AI 研究ワークベ�
 
 AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
-> 💡 **[AIPOCH Open-Science v0.33.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年9月更新)_。AIPOCH Open-Science v0.33.1 では、一時停止と再開ができるライブな Literature スマートスクリーニング、HMMER シーケンス検索・InterProScan ドメイン注釈・Clustal Omega 多重シーケンスアライメントという 3 つの新しいリサーチコネクタ、そしてプロバイダーカタログへの GPT-6 と Claude Opus 5.5 が追加されました。PDF 証拠をワークスペース会話の最初のメッセージに添付できるようになり、セッション診断ではオプトインで機密性の高いパッケージ証拠を含められるようになりました。Windows のマネージド Python ランタイムが復旧し、ノートブックとコンピュートの保存競合が適切に回復され、ビジョン機能が変化したときにエージェントブリッジが再接続されるようになりました。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
+> 💡 **[AIPOCH Open-Science v0.33.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年9月更新)_。AIPOCH Open-Science v0.33.1 では、一時停止と再開ができるライブな Literature スマートスクリーニング、HMMER シーケンス検索と InterProScan ジョブ結果という 2 つの新しいリサーチコネクタと、Genomes コネクタでの Clustal Omega 多重シーケンスアライメント、そしてプロバイダーカタログへの GPT-6 と Claude Opus 5.5 が追加されました。PDF 証拠をワークスペース会話の最初のメッセージに添付できるようになり、セッション診断ではオプトインで機密性の高いパッケージ証拠を含められるようになりました。Windows のマネージド Python ランタイムが復旧し、ノートブックとコンピュートの保存競合が適切に回復され、ビジョン機能が変化したときにエージェントブリッジが再接続されるようになりました。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

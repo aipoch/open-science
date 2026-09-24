@@ -1,7 +1,7 @@
 ## ✨ Highlights
 
 - **Live-Sichtung intelligenter Literatursammlungen.** Intelligente Sammlungen sichten Referenzen jetzt live, mit Steuerung zum Unterbrechen und Fortsetzen, sodass große Sichtungsläufe von Anfang bis Ende unter Ihrer Kontrolle bleiben. (#2968)
-- **Drei neue Forschungskonnektoren.** HMMER führt Sequenz-Homologiesuchen gegen Profildatenbanken aus (#2957); InterProScan annotiert Proteinsequenzen mit Domänen- und Familienklassifikationen (#2935); Clustal Omega führt multiple Sequenzalignments auf Ihren Datensätzen aus (#2944).
+- **Neue Konnektoren und Alignment-Werkzeuge.** HMMER kommt als Konnektor für Sequenz-Homologiesuchen gegen Profildatenbanken hinzu (#2957); InterProScan kommt als Konnektor hinzu, der den Status vorhandener Annotationsjobs prüft und deren Ergebnisse abruft (#2935); und der Genomes-Konnektor erhält Clustal-Omega-Multiple-Sequence-Alignment (#2944).
 - **Aktualisierung der Anbieterkataloge.** GPT-6 und Claude Opus 5.5 kommen in die Anbieterkataloge und lassen sich in neuen und bestehenden Konfigurationen direkt auswählen. (#2967)
 - **PDF-Evidenz reist mit der Unterhaltung mit.** Unterhaltungen im Arbeitsbereich können jetzt zusammen mit der ersten Nachricht PDF-Evidenz mitführen, sodass der Kontext ankommt, bevor der Agent mit der Arbeit beginnt. (#2941)
 
@@ -9,8 +9,8 @@
 
 - Live-Sichtung intelligenter Literatursammlungen: Sichtungsläufe bewerten Referenzen bei Eintreffen und können jederzeit unterbrochen und fortgesetzt werden. (#2968)
 - HMMER-Konnektor: Durchsuchen Sie Protein- oder Nukleotidsequenzen gegen HMM-Profildatenbanken, um homologe Familien zu identifizieren. (#2957)
-- InterProScan-Konnektor: Annotieren Sie Proteinsequenzen in einem einzigen Lauf mit Klassifikationen zu Domänen, Familien und funktionalen Stellen aus mehreren Analysedatenbanken. (#2935)
-- Clustal-Omega-Konnektor: Führen Sie multiple Sequenzalignments auf Genom- und Proteindatensätzen aus und prüfen Sie die alignierten Ergebnisse. (#2944)
+- InterProScan-Konnektor: Prüfen Sie den Status vorhandener InterProScan-Annotationsjobs anhand der Job-ID und rufen Sie deren Ergebnisse ab. (#2935)
+- Clustal-Omega-Multiple-Sequence-Alignment kommt in den Genomes-Konnektor: Richten Sie drei oder mehr FASTA-Protein-, DNA- oder RNA-Einträge mit EMBL-EBI Clustal Omega aus und rufen Sie eine herunterladbare Alignmentsdatei ab. (#2944)
 - Die Modelle GPT-6 und Claude Opus 5.5 kommen in die Anbieterkataloge. (#2967)
 - Unterhaltungen im Arbeitsbereich können mit der ersten Nachricht PDF-Evidenz enthalten, sodass der Agent das Quellmaterial sieht, bevor er beginnt. (#2941)
 - Sitzungsdiagnosen können bei explizitem Opt-in sensible Paket-Evidenz enthalten und liefern so tieferen Kontext für die Fehlersuche. (#2947)

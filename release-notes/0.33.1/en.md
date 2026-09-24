@@ -1,7 +1,7 @@
 ## ✨ Highlights
 
 - **Live smart Literature screening.** Smart collections now screen references live, with pause and resume controls so large screening runs stay under your control from start to finish. (#2968)
-- **Three new research connectors.** HMMER runs sequence homology searches against profile databases (#2957); InterProScan annotates protein sequences with domain and family classifications (#2935); Clustal Omega performs multiple sequence alignment on your datasets (#2944).
+- **New connectors and alignment tools.** HMMER joins the connector family for sequence homology searches against profile databases (#2957); InterProScan joins as a connector that checks status and retrieves results for existing annotation jobs (#2935); and the Genomes connector gains Clustal Omega multiple sequence alignment (#2944).
 - **Provider catalogs refresh.** GPT-6 and Claude Opus 5.5 join the provider catalogs, ready to pick from new and existing configurations. (#2967)
 - **PDF evidence travels with the conversation.** Workspace conversations can now carry PDF evidence alongside the first message, so context arrives before the agent starts working. (#2941)
 
@@ -9,8 +9,8 @@
 
 - Live smart Literature screening: screening runs evaluate references as they arrive, and can be paused and resumed at any point. (#2968)
 - HMMER connector: search protein or nucleotide sequences against HMM profile databases to identify homologous families. (#2957)
-- InterProScan connector: annotate protein sequences with domain, family, and functional site classifications from multiple analysis databases in one run. (#2935)
-- Clustal Omega connector: run multiple sequence alignment on genome and protein datasets and inspect the aligned results. (#2944)
+- InterProScan connector: check the status of, and retrieve results for, existing InterProScan annotation jobs by job ID. (#2935)
+- Clustal Omega multiple sequence alignment arrives in the Genomes connector: align three or more FASTA protein, DNA, or RNA records with EMBL-EBI Clustal Omega and retrieve a downloadable alignment file. (#2944)
 - GPT-6 and Claude Opus 5.5 models join the provider catalogs. (#2967)
 - Workspace conversations can include PDF evidence with the first message, so the agent sees the source material before it starts. (#2941)
 - Session diagnostics can include sensitive package evidence when you explicitly opt in, giving deeper context for troubleshooting. (#2947)
