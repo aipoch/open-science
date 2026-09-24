@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
@@ -290,7 +291,7 @@ export function SmartCollectionPanel({
   const updateControl = (
     <div
       data-slot="smart-update-control"
-      className={`relative flex h-9 shrink-0 items-center ${active && !singleReevaluation ? 'w-52' : 'w-36'}`}
+      className={`relative flex h-9 shrink-0 items-center ${active && !singleReevaluation ? 'w-52' : stopped && !singleReevaluation ? 'w-fit min-w-36 max-w-[min(24rem,calc(100vw-2rem))]' : 'w-36'}`}
     >
       {active && !singleReevaluation ? (
         <div data-slot="smart-run-progress" className="flex w-full items-center gap-1">
@@ -399,22 +400,33 @@ export function SmartCollectionPanel({
             onClick={onOpenProcess}
             className="min-w-0 flex-1 rounded-md px-1.5 py-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
           >
-            <span id={progressStatusId} role="status" className="block truncate">
+            <span id={progressStatusId} role="status" className="block truncate whitespace-nowrap">
               {paused ? t('Automatic updates paused') : t('Paused')} · {view.run?.done}/
               {view.run?.total}
             </span>
           </button>
           <div className="flex items-center gap-1">
             {(view.run?.state === 'interrupted' || view.run?.state === 'cancelled') && !paused && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t('Abandon run')}
-                disabled={busy || decisionPending || refreshFailed || !view.run?.id}
-                onClick={() => setConfirmAbandon(view.run?.id)}
-              >
-                <Trash2 className="size-4" aria-hidden="true" />
-              </Button>
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Abandon run')}
+                      disabled={busy || decisionPending || refreshFailed || !view.run?.id}
+                      onClick={() => setConfirmAbandon(view.run?.id)}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-black text-white">
+                    {t(
+                      'Abandon this run. Completed results will be kept, and this run will not resume.'
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
             {paused ? (
               <Button

@@ -6215,6 +6215,7 @@
     "Automatic updates paused": "자동 업데이트 일시 중지됨",
     "Abandon run": "실행 포기",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "이 실행을 포기하시겠습니까? 완료된 결과는 유지되며 이 실행은 재개되지 않습니다.",
+    "Abandon this run. Completed results will be kept, and this run will not resume.": "이 실행을 포기합니다. 완료된 결과는 유지되며 이 실행은 재개되지 않습니다.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "24시간 동안 자동 요청이 공유 한도인 {{limit}}회에 도달했습니다. 잠시 기다린 후 재개하세요.",
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "이전 자동 실행이 중지되었거나 진행 상황을 저장하지 못했습니다. 재개하기 전에 저장소를 확인하세요. 저장된 결과는 유지됩니다.",
     "Resume automatic updates": "자동 업데이트 재개",

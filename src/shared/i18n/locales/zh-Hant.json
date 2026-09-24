@@ -6217,6 +6217,7 @@
     "Automatic updates paused": "自動更新已暫停",
     "Abandon run": "放棄執行",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "要放棄這次執行嗎？已完成的結果會保留，且不會恢復此執行。",
+    "Abandon this run. Completed results will be kept, and this run will not resume.": "放棄這次執行。已完成的結果會保留，且不會恢復此執行。",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "24 小時內的自動請求已達到共用上限 {{limit}} 次。請等待後再恢復。",
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "上次自動執行已停止或無法儲存進度。恢復前請檢查儲存空間。已儲存的結果仍會保留。",
     "Resume automatic updates": "恢復自動更新",

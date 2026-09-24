@@ -6678,6 +6678,7 @@
     "Automatic updates paused": "Автоматические обновления приостановлены",
     "Abandon run": "Отказаться от запуска",
     "Abandon this run? Completed results will be kept, and this run will not resume.": "Отказаться от этого запуска? Завершённые результаты будут сохранены, а этот запуск не возобновится.",
+    "Abandon this run. Completed results will be kept, and this run will not resume.": "Отказаться от этого запуска. Завершённые результаты будут сохранены, а этот запуск не возобновится.",
     "Automatic requests reached the shared limit of {{limit}} in 24 hours. Wait before resuming.": "Достигнут общий лимит {{limit}} автоматических запросов за 24 часа. Подождите перед возобновлением.",
     "The previous automatic run stopped or could not save its progress. Check storage before resuming. Saved results are preserved.": "Предыдущий автоматический запуск остановлен или его ход не удалось сохранить. Перед возобновлением проверьте хранилище. Сохранённые результаты сохранены.",
     "Resume automatic updates": "Возобновить автоматические обновления",
