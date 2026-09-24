@@ -1102,10 +1102,14 @@ export class LiteratureSmartCollections {
     const id = command.collectionId
     const { definition } = await this.definition(client, id)
     if (command.action === 'resume-automatic') {
+      const resumableStates =
+        definition.automaticPauseReason === 'storage-error'
+          ? ['cancelled', 'interrupted', 'failed']
+          : ['cancelled', 'interrupted']
       const candidates = await client.literatureSmartRun.findMany({
         where: {
           collectionId: id,
-          state: { in: ['cancelled', 'interrupted'] },
+          state: { in: resumableStates },
           ...(definition.automaticPauseRunId ? { id: definition.automaticPauseRunId } : {})
         },
         orderBy: { createdAt: 'desc' },
@@ -1121,7 +1125,7 @@ export class LiteratureSmartCollections {
           ...command,
           action:
             latest &&
-            ['cancelled', 'interrupted'].includes(latest.state) &&
+            resumableStates.includes(latest.state) &&
             definition.automaticPauseReason !== 'run-limit'
               ? 'resume'
               : 'refresh',
@@ -1308,7 +1312,7 @@ export class LiteratureSmartCollections {
             if (
               !previous ||
               !snapshot ||
-              !['cancelled', 'interrupted'].includes(previous.state) ||
+              !['cancelled', 'interrupted', 'failed'].includes(previous.state) ||
               previous.abandonedAt !== null ||
               previous.ruleRevision !== definition.ruleRevision ||
               previous.policyKey !== policy.key ||
