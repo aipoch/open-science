@@ -314,7 +314,7 @@ export function CredentialsPanel({
           <p className="mt-1 text-sm text-muted-foreground">
             {isOpenAlex
               ? t(
-                  'Used by OpenAlex tools in the Literature Connector. Every OpenAlex request requires this key.'
+                  'Used by OpenAlex tools in the Literature Connector. Basic queries work without a key; adding one raises your daily limit.'
                 )
               : t(
                   'Contact information and an optional NCBI API key used by research-service Connector calls.'
@@ -452,7 +452,7 @@ export function CredentialsPanel({
     {
       id: 'openalex' as const,
       label: t('OpenAlex'),
-      description: t('API key required by OpenAlex tools in the Literature Connector.'),
+      description: t('Optional API key for OpenAlex tools in the Literature Connector.'),
       configured: openAlex.hasApiKey,
       desktopOnly: true,
       Icon: BookOpen
