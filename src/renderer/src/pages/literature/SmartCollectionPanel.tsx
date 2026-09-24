@@ -267,7 +267,11 @@ export function SmartCollectionPanel({
   const stopped =
     !view?.run?.abandoned &&
     (view?.run?.state === 'cancelled' || view?.run?.state === 'interrupted')
-  const paused = view?.autoUpdate && view.automaticPauseReason && view.run?.state === 'interrupted'
+  const automaticPauseVisible =
+    view?.autoUpdate &&
+    view.automaticPauseReason &&
+    (!view.automaticPauseRunId || view.run?.id === view.automaticPauseRunId)
+  const paused = automaticPauseVisible && view.run?.state === 'interrupted'
   const snapshot = view?.run?.snapshot
   const currentRule = parseSmartRule(description)
   const savedRule = snapshot && parseSmartRule(snapshot.description)
@@ -599,7 +603,7 @@ export function SmartCollectionPanel({
           }}
         />
       )}
-      {view?.autoUpdate && view.automaticPauseReason && !active && (
+      {automaticPauseVisible && !active && (
         <ErrorNotice
           inline
           tone="amber"
