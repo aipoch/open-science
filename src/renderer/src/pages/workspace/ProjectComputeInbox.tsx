@@ -68,7 +68,7 @@ const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t
     t
   )
 
-const ProjectComputeInbox = (): React.JSX.Element => {
+const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React.JSX.Element => {
   const { t } = useTranslation()
   const formatRelativeTime = useRelativeTimeFormat()
   const projectId = useNavigationStore((state) => state.activeProjectId)
@@ -88,50 +88,55 @@ const ProjectComputeInbox = (): React.JSX.Element => {
   const jobs = projectId && jobsSnapshot?.projectId === projectId ? jobsSnapshot.jobs : EMPTY_JOBS
 
   useEffect(() => {
-    if (!projectId) return
+    if (!projectId || !isActive) return
     let alive = true
     let requestVersion = 0
     const load = async (): Promise<void> => {
+      if (!alive) return
       const version = ++requestVersion
       const activity = await window.api.notebook
         .getProjectActivity({ projectId })
         .catch(() => undefined)
-      if (alive && version === requestVersion && activity) {
+      if (alive && version === requestVersion && activity)
         setNotebookSnapshot({ projectId, activity })
-      }
     }
     const stop = window.api.notebook.onChanged((event) => {
-      if (event.projectId === projectId) void load()
+      if (alive && event.projectId === projectId) void load()
     })
     void load()
     return () => {
       alive = false
       stop()
     }
-  }, [projectId])
+  }, [isActive, projectId])
 
   useEffect(() => {
-    if (!projectId) return
+    if (!projectId || !isActive) return
     let alive = true
     let requestVersion = 0
     const load = async (): Promise<void> => {
+      if (!alive) return
       const version = ++requestVersion
       const next = await window.api.compute
-        .jobsList({ projectId, since: recentSince })
+        .jobsList({
+          projectId,
+          since: Math.max(recentSince, Date.now() - RECENT_COMPUTE_WINDOW_MS)
+        })
         .catch(() => [])
       if (alive && version === requestVersion) setJobsSnapshot({ projectId, jobs: next })
     }
     const stop = window.api.compute.onJobUpdated((job) => {
-      if (job.project_id === projectId) void load()
+      if (alive && job.project_id === projectId) void load()
     })
     void load()
     return () => {
       alive = false
       stop()
     }
-  }, [projectId, recentSince])
+  }, [isActive, projectId, recentSince])
 
   useEffect(() => {
+    if (!isActive) return
     const nextExpiry = Math.min(
       ...jobs
         .filter(
@@ -146,7 +151,7 @@ const ProjectComputeInbox = (): React.JSX.Element => {
       Math.max(0, nextExpiry - Date.now() + 1)
     )
     return () => window.clearTimeout(timer)
-  }, [jobs])
+  }, [isActive, jobs])
 
   const sessionById = useMemo(
     () => new Map(sessions.map((session) => [session.id, session] as const)),

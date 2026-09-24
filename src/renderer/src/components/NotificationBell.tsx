@@ -10,6 +10,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState
 } from 'react'
@@ -215,15 +216,30 @@ const NotificationRow = ({
   )
 }
 
-// One shared entry point for Home, desktop Workspace, and the always-visible mobile conversation
-// header. The backend owns read state, so multiple rendered bells always converge after one action.
-const NotificationBellContent = ({
-  className,
-  side = 'bottom',
-  align = 'end',
-  onOpen
-}: NotificationBellProps): React.JSX.Element => {
+const NotificationBellInbox = ({
+  isMobile,
+  panelId,
+  refresh,
+  openItem,
+  close
+}: {
+  isMobile: boolean
+  panelId: string
+  refresh: () => Promise<void>
+  openItem: (item: NotificationInboxItem) => Promise<void>
+  close: () => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
+  const items = useNotificationInboxStore((state) => state.items)
+  const unreadCount = useNotificationInboxStore((state) => state.unreadCount)
+  const status = useNotificationInboxStore((state) => state.status)
+  const markAllRead = useNotificationInboxStore((state) => state.markAllRead)
+  const sessions = useSessionStore((state) => state.sessions)
+  const projects = useProjectStore((state) => state.projects)
+  const groups = useMemo(
+    () => presentNotificationInbox(items, sessions, projects),
+    [items, sessions, projects]
+  )
   const relativeTime = (timestamp: number): string => {
     const { unit, count } = relativeTimeParts(timestamp)
     if (unit === 'now') return t('just now')
@@ -237,6 +253,116 @@ const NotificationBellContent = ({
     }
     return labels[unit]
   }
+
+  return (
+    <>
+      <div
+        className={cn(
+          'relative flex shrink-0 items-center justify-between border-b border-border-200/60',
+          isMobile ? 'min-h-16 gap-2 px-2 pt-2' : 'h-12 px-3'
+        )}
+      >
+        {isMobile ? (
+          <div
+            className="absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-border-300"
+            aria-hidden="true"
+          />
+        ) : null}
+        <div className="flex min-w-0 items-center gap-1">
+          {isMobile ? (
+            <button
+              type="button"
+              aria-label={t('Close messages')}
+              onClick={close}
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000"
+            >
+              <X className="size-5" strokeWidth={2} aria-hidden="true" />
+            </button>
+          ) : null}
+          <div className="min-w-0">
+            <div className={cn('font-semibold', isMobile ? 'text-base' : 'text-sm')}>
+              {t('Messages')}
+            </div>
+            <div className={cn('text-text-100', isMobile ? 'text-xs' : 'text-[11px]')}>
+              {unreadCount > 0 ? t('{{count}} unread', { count: unreadCount }) : t('All caught up')}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={unreadCount === 0}
+          onClick={() => runNotificationTask(markAllRead)}
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 disabled:cursor-default disabled:opacity-40',
+            isMobile ? 'h-11 text-sm' : 'h-8 text-xs'
+          )}
+        >
+          <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
+          {t('Mark all read')}
+        </button>
+      </div>
+
+      <div
+        className={cn(
+          'overflow-y-auto p-1.5',
+          isMobile ? 'min-h-0 flex-1 px-2 py-2' : 'max-h-[min(28rem,70vh)]'
+        )}
+      >
+        {status === 'error' ? (
+          <ErrorNotice
+            role="alert"
+            title={t('Messages could not be loaded.')}
+            description={items.length > 0 ? t('Showing previously loaded messages.') : undefined}
+            primaryButton={{ label: t('Retry'), onClick: () => runNotificationTask(refresh) }}
+          />
+        ) : null}
+        {items.length === 0 ? (
+          <div className="px-3 py-10 text-center text-sm text-text-100">
+            {status === 'error'
+              ? null
+              : status === 'idle' || status === 'loading'
+                ? t('Loading messages…')
+                : t('No messages yet.')}
+          </div>
+        ) : (
+          groups.map((group) => (
+            <section key={group.key} aria-labelledby={`${panelId}-${group.key}`}>
+              <div
+                id={`${panelId}-${group.key}`}
+                className={cn(
+                  'sticky z-10 bg-bg-000 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-100',
+                  isMobile ? '-mx-2 -top-2 px-[18px]' : '-mx-1.5 -top-1.5 px-4'
+                )}
+              >
+                {t(group.label)}
+              </div>
+              {group.items.map((presented) => (
+                <NotificationErrorBoundary key={presented.notification.id} surface="row">
+                  <NotificationRow
+                    presented={presented}
+                    isMobile={isMobile}
+                    relativeTime={relativeTime}
+                    openItem={openItem}
+                  />
+                </NotificationErrorBoundary>
+              ))}
+            </section>
+          ))
+        )}
+      </div>
+    </>
+  )
+}
+
+// One shared entry point for Home, desktop Workspace, and the always-visible mobile conversation
+// header. The backend owns read state, so multiple rendered bells always converge after one action.
+const NotificationBellContent = ({
+  className,
+  side = 'bottom',
+  align = 'end',
+  onOpen
+}: NotificationBellProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const isMobile = useMediaQuery(MOBILE_MESSAGE_CENTER_QUERY)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -249,15 +375,8 @@ const NotificationBellContent = ({
     top: VIEWPORT_MARGIN
   })
   const panelId = useId()
-  const items = useNotificationInboxStore((state) => state.items)
   const unreadCount = useNotificationInboxStore((state) => state.unreadCount)
-  const status = useNotificationInboxStore((state) => state.status)
   const refresh = useNotificationInboxStore((state) => state.refresh)
-  const markRead = useNotificationInboxStore((state) => state.markRead)
-  const markAllRead = useNotificationInboxStore((state) => state.markAllRead)
-  const sessions = useSessionStore((state) => state.sessions)
-  const projects = useProjectStore((state) => state.projects)
-  const groups = presentNotificationInbox(items, sessions, projects)
 
   const updatePanelPosition = useCallback((): void => {
     if (isMobile) return
@@ -442,7 +561,8 @@ const NotificationBellContent = ({
       if (completed) return
       completed = true
       setOpen(false)
-      if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
+      if (item.readAt === undefined)
+        runNotificationTask(() => useNotificationInboxStore.getState().markRead([item.id]))
     }
 
     try {
@@ -459,7 +579,8 @@ const NotificationBellContent = ({
       } else if (replayedApproval) {
         completeOpen()
       } else {
-        if (item.readAt === undefined) runNotificationTask(() => markRead([item.id]))
+        if (item.readAt === undefined)
+          runNotificationTask(() => useNotificationInboxStore.getState().markRead([item.id]))
         return
       }
     } catch {
@@ -535,112 +656,13 @@ const NotificationBellContent = ({
                   if (wasOpenRef.current) restoreFocus()
                 }}
               >
-                <div
-                  className={cn(
-                    'relative flex shrink-0 items-center justify-between border-b border-border-200/60',
-                    isMobile ? 'min-h-16 gap-2 px-2 pt-2' : 'h-12 px-3'
-                  )}
-                >
-                  {isMobile ? (
-                    <div
-                      className="absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-border-300"
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <div className="flex min-w-0 items-center gap-1">
-                    {isMobile ? (
-                      <button
-                        type="button"
-                        aria-label={t('Close messages')}
-                        onClick={() => setOpen(false)}
-                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000"
-                      >
-                        <X className="size-5" strokeWidth={2} aria-hidden="true" />
-                      </button>
-                    ) : null}
-                    <div className="min-w-0">
-                      <div className={cn('font-semibold', isMobile ? 'text-base' : 'text-sm')}>
-                        {t('Messages')}
-                      </div>
-                      <div className={cn('text-text-100', isMobile ? 'text-xs' : 'text-[11px]')}>
-                        {unreadCount > 0
-                          ? t('{{count}} unread', { count: unreadCount })
-                          : t('All caught up')}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={unreadCount === 0}
-                    onClick={() => runNotificationTask(markAllRead)}
-                    className={cn(
-                      'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 disabled:cursor-default disabled:opacity-40',
-                      isMobile ? 'h-11 text-sm' : 'h-8 text-xs'
-                    )}
-                  >
-                    <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    {t('Mark all read')}
-                  </button>
-                </div>
-
-                <div
-                  className={cn(
-                    'overflow-y-auto p-1.5',
-                    isMobile ? 'min-h-0 flex-1 px-2 py-2' : 'max-h-[min(28rem,70vh)]'
-                  )}
-                >
-                  {status === 'error' ? (
-                    <ErrorNotice
-                      role="alert"
-                      title={t('Messages could not be loaded.')}
-                      description={
-                        items.length > 0 ? t('Showing previously loaded messages.') : undefined
-                      }
-                      primaryButton={{
-                        label: t('Retry'),
-                        onClick: () => runNotificationTask(refresh)
-                      }}
-                    />
-                  ) : null}
-                  {items.length === 0 ? (
-                    <div className="px-3 py-10 text-center text-sm text-text-100">
-                      {status === 'error'
-                        ? null
-                        : status === 'idle' || status === 'loading'
-                          ? t('Loading messages…')
-                          : t('No messages yet.')}
-                    </div>
-                  ) : (
-                    groups.map((group) => (
-                      <section key={group.key} aria-labelledby={`${panelId}-${group.key}`}>
-                        <div
-                          id={`${panelId}-${group.key}`}
-                          className={cn(
-                            'sticky z-10 bg-bg-000 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-100',
-                            isMobile ? '-mx-2 -top-2 px-[18px]' : '-mx-1.5 -top-1.5 px-4'
-                          )}
-                        >
-                          {t(group.label)}
-                        </div>
-                        {group.items.map((presented) => {
-                          return (
-                            <NotificationErrorBoundary
-                              key={presented.notification.id}
-                              surface="row"
-                            >
-                              <NotificationRow
-                                presented={presented}
-                                isMobile={isMobile}
-                                relativeTime={relativeTime}
-                                openItem={openItem}
-                              />
-                            </NotificationErrorBoundary>
-                          )
-                        })}
-                      </section>
-                    ))
-                  )}
-                </div>
+                <NotificationBellInbox
+                  isMobile={isMobile}
+                  panelId={panelId}
+                  refresh={refresh}
+                  openItem={openItem}
+                  close={() => setOpen(false)}
+                />
               </FocusScope>
             </>,
             document.body

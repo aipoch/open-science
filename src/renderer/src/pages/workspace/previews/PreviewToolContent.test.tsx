@@ -58,7 +58,11 @@ vi.mock('../ProjectFilesView', () => ({
   ProjectFilesView: (): React.JSX.Element => <div data-testid="project-files">files</div>
 }))
 vi.mock('../ProjectComputeInbox', () => ({
-  ProjectComputeInbox: (): React.JSX.Element => <div data-testid="project-compute">compute</div>
+  ProjectComputeInbox: ({ isActive }: { isActive: boolean }): React.JSX.Element => (
+    <div data-testid="project-compute" data-active={isActive}>
+      compute
+    </div>
+  )
 }))
 vi.mock('../SessionReviewerPanel', () => ({
   SessionReviewerPanel: ({
@@ -110,7 +114,13 @@ describe('PreviewToolContent', () => {
   })
 
   it('routes Project Compute through a project-scoped remount boundary', () => {
-    expect(render(createItem({ toolKind: 'compute' }))).toContain('data-testid="project-compute"')
+    const item = createItem({ toolKind: 'compute' })
+    expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive={false} />)).toContain(
+      'data-testid="project-compute" data-active="false"'
+    )
+    expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive />)).toContain(
+      'data-testid="project-compute" data-active="true"'
+    )
   })
 
   it('shows the reviewer empty state when the requested session has no reviews', () => {

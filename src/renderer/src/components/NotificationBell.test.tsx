@@ -10,8 +10,10 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { NotificationBell } from './NotificationBell'
+import * as inboxPresentation from './notification-inbox-presentation'
 
 let container: HTMLDivElement
 let root: Root
@@ -99,6 +101,96 @@ const stubMutableViewport = (): { setMobile: (mobile: boolean) => void } => {
 }
 
 describe('NotificationBell', () => {
+  it('defers inbox presentation while closed and uses current data whenever opened', async () => {
+    const previousSessions = useSessionStore.getState().sessions
+    const previousProjects = useProjectStore.getState().projects
+    const present = vi.spyOn(inboxPresentation, 'presentNotificationInbox')
+    const trigger = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('[data-notification-bell-trigger="true"]')
+    const session = (title: string, content: string): ChatSession =>
+      ({
+        id: 'session-preview',
+        projectId: 'project-preview',
+        title,
+        cwd: '/workspace/project-preview',
+        status: 'idle',
+        messages: [
+          {
+            id: 'prompt-preview',
+            role: 'user',
+            content,
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        activities: [],
+        createdAt: 1,
+        updatedAt: 1
+      }) satisfies ChatSession
+
+    try {
+      await act(async () => root.render(<NotificationBell />))
+      expect(present).not.toHaveBeenCalled()
+
+      await act(async () => {
+        useProjectStore.setState({
+          projects: [
+            {
+              id: 'project-preview',
+              name: 'Current project',
+              description: '',
+              isExample: false,
+              createdAt: 1,
+              updatedAt: 1
+            } satisfies Project
+          ]
+        })
+        useSessionStore.setState({ sessions: [session('First session', 'First prompt')] })
+        const item = useNotificationInboxStore.getState().items[0]!
+        useNotificationInboxStore.setState({
+          items: [{ ...item, projectId: 'project-preview', sessionId: 'session-preview' }]
+        })
+      })
+      expect(present).not.toHaveBeenCalled()
+
+      await act(async () => trigger()?.click())
+      expect(present).toHaveBeenCalled()
+      expect(document.body.textContent).toContain('First session')
+      expect(document.body.textContent).toContain('First prompt')
+      expect(document.body.textContent).toContain('Current project')
+
+      const openCalls = present.mock.calls.length
+      await act(async () => useNotificationInboxStore.setState({ unreadCount: 2 }))
+      expect(present).toHaveBeenCalledTimes(openCalls)
+
+      await act(async () =>
+        useSessionStore.setState({ sessions: [session('Updated session', 'Updated prompt')] })
+      )
+      expect(present.mock.calls.length).toBeGreaterThan(openCalls)
+      expect(document.body.textContent).toContain('Updated session')
+      expect(document.body.textContent).toContain('Updated prompt')
+
+      await act(async () => trigger()?.click())
+      const closedCalls = present.mock.calls.length
+      await act(async () =>
+        useSessionStore.setState({ sessions: [session('Latest session', 'Latest prompt')] })
+      )
+      expect(present).toHaveBeenCalledTimes(closedCalls)
+
+      await act(async () => trigger()?.click())
+      expect(document.body.textContent).toContain('Latest session')
+      expect(document.body.textContent).toContain('Latest prompt')
+    } finally {
+      await act(async () => {
+        useSessionStore.setState({ sessions: previousSessions })
+        useProjectStore.setState({ projects: previousProjects })
+      })
+      present.mockRestore()
+    }
+  })
+
   it.each([
     ['minute', 60_000],
     ['hour', 3_600_000],
