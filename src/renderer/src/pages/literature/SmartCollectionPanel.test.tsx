@@ -518,6 +518,30 @@ it('confirms and abandons a paused automatic run', async () => {
   )
 })
 
+it('keeps the automatic pause notice when a newer manual run is interrupted', async () => {
+  view = {
+    ...view,
+    autoUpdate: true,
+    configured: true,
+    automaticPauseReason: 'run-limit',
+    automaticPauseRunId: 'paused-run',
+    run: {
+      id: 'manual-run',
+      kind: 'refresh',
+      state: 'interrupted',
+      done: 0,
+      total: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      usageIncomplete: false,
+      updatedAt: 1
+    }
+  }
+  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  expect(await screen.findByText('Automatic updates paused')).toBeTruthy()
+  expect(screen.getAllByRole('button', { name: 'Abandon run' })).toHaveLength(2)
+})
+
 it('offers abandon for an interrupted manual run', async () => {
   view = {
     ...view,
