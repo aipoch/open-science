@@ -5722,9 +5722,13 @@ describe('ACP runtime session management', () => {
   it('waits for shared runtime teardown for every timed-out cancellation caller', async () => {
     const process = new FakeAgentProcess()
     const promptGate = createDeferred()
-    const fakeAgent = startFakeAgent(process, ['cancel-timeout-shared-session'], {
-      onPrompt: () => promptGate.promise
-    })
+    const fakeAgent = startFakeAgent(
+      process,
+      ['cancel-timeout-shared-session', 'cancel-timeout-peer-session'],
+      {
+        onPrompt: () => promptGate.promise
+      }
+    )
     let fireCancelTimeout: (() => void) | undefined
     const runtime = new AcpRuntime({
       appVersion: '0.2.0',
@@ -5738,6 +5742,7 @@ describe('ACP runtime session management', () => {
       clearTimer: vi.fn()
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
+    const peer = await runtime.createSession({ cwd: '/workspace' })
     const prompt = runtime.sendPrompt({ sessionId: session.sessionId, text: 'stay pending' })
     void prompt.catch(() => undefined)
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
@@ -5751,7 +5756,7 @@ describe('ACP runtime session management', () => {
       'connection',
       'get'
     ).mockReturnValue(undefined)
-    const second = runtime.cancelPrompt({ sessionId: session.sessionId })
+    const second = runtime.cancelPrompt({ sessionId: peer.sessionId })
 
     let secondSettled = false
     void second.then(
