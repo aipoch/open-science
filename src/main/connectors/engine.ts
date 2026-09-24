@@ -29,6 +29,18 @@ function redactUrl(url: string): string {
   }
 }
 
+export class ConnectorHttpError extends Error {
+  override readonly name = 'ConnectorHttpError'
+  readonly status: number
+  readonly url: string
+
+  constructor(status: number, url: string, suffix = '') {
+    super(`HTTP ${status} for ${redactUrl(url)}.${suffix}`)
+    this.status = status
+    this.url = url
+  }
+}
+
 class ConnectorRequestTimeoutError extends Error {
   override readonly name = 'ConnectorRequestTimeoutError'
 
@@ -255,7 +267,7 @@ export class ParserEngine {
           retryable && retryAfter
             ? ` Retry after ${Math.ceil(delay / 1_000)}s.${insufficientBudget ? ' The remaining call budget cannot accommodate this wait.' : ''}`
             : ''
-        throw new Error(`HTTP ${res.status} for ${redactUrl(url)}.${retryHint}`)
+        throw new ConnectorHttpError(res.status, url, retryHint)
       }
     }
     return {
