@@ -298,12 +298,17 @@ export class ParserEngine {
         )
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       },
-      postJson: async (url, body) => {
-        const { response, bodyText } = await doFetch(url, 'application/json', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body)
-        })
+      postJson: async (url, body, options) => {
+        const { response, bodyText } = await doFetch(
+          url,
+          'application/json',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          },
+          options?.retry === false ? 0 : this.retries
+        )
         return bodyText === undefined ? response.json() : JSON.parse(bodyText)
       }
     }

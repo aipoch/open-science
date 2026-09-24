@@ -122,7 +122,15 @@ it('does not link an unavailable source', async () => {
 
 it('requires the explicit cost confirmation before recomputing', async () => {
   view = { ...view, configured: true }
-  render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+  const onRunPendingChange = vi.fn()
+  render(
+    <SmartCollectionPanel
+      collectionId="smart"
+      name="Trials"
+      description="Adult trials"
+      onRunPendingChange={onRunPendingChange}
+    />
+  )
   await screen.findByRole('button', { name: 'Update collection' })
   fireEvent.click(screen.getByRole('button', { name: 'Collection actions' }))
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Re-evaluate all' }))
@@ -130,10 +138,13 @@ it('requires the explicit cost confirmation before recomputing', async () => {
     'Re-evaluating all papers repeats classification requests and may incur additional costs.'
   )
   expect(transact.mock.calls.every(([command]) => command.action === 'read')).toBe(true)
+  expect(onRunPendingChange).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Re-evaluate all' }))
+  expect(onRunPendingChange).toHaveBeenNthCalledWith(1, true)
   await waitFor(() =>
     expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'recompute' }))
   )
+  await waitFor(() => expect(onRunPendingChange).toHaveBeenLastCalledWith(false))
 })
 
 it.each(['completed', 'failed', 'cancelled'] as const)(
@@ -182,7 +193,12 @@ it.each(['completed', 'failed', 'cancelled'] as const)(
       )
     } else {
       await screen.findByRole('button', {
-        name: state === 'failed' ? 'Retry' : 'Update collection'
+        name:
+          state === 'failed'
+            ? 'Retry'
+            : state === 'cancelled'
+              ? 'Resume analysis'
+              : 'Update collection'
       })
       expect(screen.queryByRole('button', { name: 'Updated' })).toBeNull()
     }
@@ -223,21 +239,35 @@ it('keeps inline progress visible while cancellation waits for active requests',
       updatedAt: 1
     }
   }
+  const onOpenProcess = vi.fn()
   const { unmount } = render(
-    <SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />
+    <SmartCollectionPanel
+      collectionId="smart"
+      name="Trials"
+      description="Adult trials"
+      onOpenProcess={onOpenProcess}
+    />
   )
   try {
-    const stop = await screen.findByRole('button', { name: 'Stop analysis' })
+    const stop = await screen.findByRole('button', { name: 'Pause analysis' })
     expect(stop.closest('[data-slot="smart-update-control"]')).toBeTruthy()
+    const entry = screen.getByRole('button', { name: 'Screening process' })
+    expect(entry.contains(screen.getByRole('progressbar'))).toBe(true)
+    expect(entry.contains(stop)).toBe(false)
+    fireEvent.click(entry)
+    expect(onOpenProcess).toHaveBeenCalledOnce()
+    expect(transact.mock.calls.every(([command]) => command.action === 'read')).toBe(true)
     fireEvent.click(stop)
+    expect(onOpenProcess).toHaveBeenCalledOnce()
     await waitFor(() =>
       expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'cancel' }))
     )
-    expect(screen.getByRole('button', { name: 'Stop analysis' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Pause analysis' })).toHaveProperty('disabled', true)
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('2')
     view = { ...view, run: { ...view.run!, state: 'cancelled' } }
     notifyChange()
     await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull())
+    expect(screen.getByRole('button', { name: 'Screening process' })).toBeTruthy()
   } finally {
     unmount()
   }
@@ -439,7 +469,8 @@ it('shows a persistent automatic pause with an explicit resume action', async ()
   expect(transact.mock.calls.every(([command]) => command.action === 'read')).toBe(true)
   expect(screen.queryByText('Analysis failed')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
-  fireEvent.click(screen.getAllByRole('button', { name: 'Resume automatic updates' })[0])
+  expect(screen.queryByRole('button', { name: 'Resume analysis' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue in a new run' }))
   await waitFor(() =>
     expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume-automatic' }))
   )
@@ -502,3 +533,70 @@ it('offers abandon for an interrupted manual run', async () => {
   render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
   expect(await screen.findByRole('button', { name: 'Abandon run' })).toBeTruthy()
 })
+
+it.each(['cancelled', 'interrupted'] as const)(
+  'resumes %s analysis and offers re-analysis when its checkpoint is invalid',
+  async (state) => {
+    view = {
+      ...view,
+      configured: true,
+      run: {
+        id: 'same-run',
+        kind: 'refresh',
+        state,
+        done: 1,
+        total: 2,
+        inputTokens: 0,
+        outputTokens: 0,
+        usageIncomplete: false,
+        updatedAt: 1
+      }
+    }
+    transact.mockImplementation(async (command) => {
+      if (command.action === 'resume') throw new Error('SMART_COLLECTION_RESUME_UNAVAILABLE')
+      return { kind: 'collection', id: 'smart', smart: view }
+    })
+    render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Resume analysis' }))
+    await screen.findByText(
+      'This run cannot be resumed because its settings, papers, or saved progress have changed.'
+    )
+    expect(transact).toHaveBeenCalledWith(expect.objectContaining({ action: 'resume' }))
+    expect(transact.mock.calls.some(([command]) => command.action === 'refresh')).toBe(false)
+    expect(screen.getByRole('button', { name: 'Re-evaluate all' })).toBeTruthy()
+  }
+)
+
+it.each(['cancelled', 'interrupted'] as const)(
+  'opens the process from %s progress without resuming analysis',
+  async (state) => {
+    view = {
+      ...view,
+      configured: true,
+      run: {
+        id: 'paused-run',
+        kind: 'refresh',
+        state,
+        done: 1,
+        total: 2,
+        inputTokens: 0,
+        outputTokens: 0,
+        usageIncomplete: false,
+        updatedAt: 1
+      }
+    }
+    const openProcess = vi.fn()
+    render(
+      <SmartCollectionPanel
+        collectionId="smart"
+        name="Trials"
+        description="Adult trials"
+        onOpenProcess={openProcess}
+      />
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Screening process' }))
+    expect(openProcess).toHaveBeenCalledOnce()
+    expect(transact.mock.calls.every(([command]) => command.action === 'read')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
+  }
+)

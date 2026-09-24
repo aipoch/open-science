@@ -3,6 +3,7 @@ import { Notice } from '@/components/notice'
 import type { TFunction } from 'i18next'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
+import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -528,7 +529,17 @@ const ProvidersPanel = ({
       {/* Subagent / Reviewer / Vision routing collapsed into a single accordion card. */}
       <ScenarioModelList />
 
-      <SettingsSection title={t('Providers')} aria-label={t('Providers')}>
+      <SettingsSection
+        title={t('Providers')}
+        aria-label={t('Providers')}
+        actionClassName="ml-auto"
+        action={
+          <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
+            <Plus aria-hidden="true" />
+            {t('Add provider')}
+          </Button>
+        }
+      >
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}

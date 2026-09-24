@@ -3,6 +3,7 @@ import {
   type AutomaticClassificationPauseReason
 } from '../../shared/classification'
 import { saveSmartRuleVersion } from './smart-rule-history'
+import { readSmartRunProgress } from './smart-run-progress'
 import type { ClassificationUsageContext } from '../../shared/classification'
 import {
   smartRulePrompt,
@@ -33,7 +34,8 @@ import {
   type SmartEvidenceMode,
   type SmartEvidence,
   smartScopeSchema,
-  smartRunSnapshotSchema
+  smartRunSnapshotSchema,
+  SMART_COLLECTION_RESUME_UNAVAILABLE
 } from '../../shared/literature-smart-collections'
 import { acquireDataRootWriter } from '../storage/migration-state'
 
@@ -46,6 +48,13 @@ const checkpointSchema = z.array(
     deferred: z.boolean().optional()
   })
 )
+const savedResultSchema = z.object({
+  answer: z.object({
+    verdict: z.enum(['match', 'no-match', 'uncertain']),
+    model: z.string(),
+    probabilities: z.record(z.string(), z.number())
+  })
+})
 type Checkpoint = z.infer<typeof checkpointSchema>
 type Client = PrismaClient | Prisma.TransactionClient
 
@@ -200,9 +209,9 @@ export class LiteratureSmartCollections {
     if (outdated) this.active.get(collectionId)?.abort()
     if (current.autoUpdate) this.schedule()
   }
-  private async checkpoint(client: Client, runId: string): Promise<Checkpoint> {
+  private async checkpoint(client: Client, runId: string, unfinished = false): Promise<Checkpoint> {
     const rows = await client.literatureSmartRunItem.findMany({
-      where: { runId },
+      where: { runId, ...(unfinished ? { state: { not: 'done' } } : {}) },
       select: { itemId: true, digest: true, state: true, failure: true, deferred: true },
       orderBy: { itemId: 'asc' }
     })
@@ -408,9 +417,7 @@ export class LiteratureSmartCollections {
     })
     const failures = new Map(
       lastRun?.ruleRevision === definition.ruleRevision && lastRun.policyKey === policy.key
-        ? (await this.checkpoint(client, lastRun.id))
-            .filter((row) => row.state !== 'done')
-            .map((row) => [row.id, row])
+        ? (await this.checkpoint(client, lastRun.id, true)).map((row) => [row.id, row])
         : []
     )
     const evidenceMode = smartEvidenceModeSchema.parse(definition.evidenceMode)
@@ -703,7 +710,21 @@ export class LiteratureSmartCollections {
           where: { runId: run.id, usageIncomplete: true }
         })) > 0
       : false
-    const checkpoint = run ? await this.checkpoint(client, run.id) : []
+    // Summary refreshes need bounded counts, not every checkpoint/digest in a long run.
+    // Full checkpoint validation remains in the execution and resume paths.
+    const runCounts = run
+      ? await client.$queryRaw<Array<{ state: string; count: bigint }>>`
+          SELECT state, COUNT(*) AS count FROM LiteratureSmartRunItem
+          WHERE runId = ${run.id} AND deferred = 0 GROUP BY state
+        `
+      : []
+    const runFailure = runCounts.some((group) => group.state === 'error')
+      ? await client.literatureSmartRunItem.findFirst({
+          where: { runId: run!.id, deferred: false, state: 'error' },
+          orderBy: { itemId: 'asc' },
+          select: { failure: true }
+        })
+      : undefined
     const inView = (row: (typeof rows)[number], decision: typeof filter): boolean =>
       decision === 'all' ||
       (decision === 'review'
@@ -712,23 +733,25 @@ export class LiteratureSmartCollections {
           ? ['pending', 'error'].includes(row.verdict)
           : row.verdict === decision)
     const filtered = rows.filter((row) => (!itemId || row.id === itemId) && inView(row, filter))
-    const counts = {
-      match: rows.filter((row) => inView(row, 'match')).length,
-      review: rows.filter((row) => inView(row, 'review')).length,
-      'no-match': rows.filter((row) => inView(row, 'no-match')).length,
-      pending: rows.filter((row) => inView(row, 'pending')).length
+    const counts = { match: 0, review: 0, 'no-match': 0, pending: 0 }
+    const countsBySource = {
+      ai: { ...counts },
+      manual: { ...counts }
     }
-    const sourceCounts = (source: 'ai' | 'manual'): typeof counts => ({
-      match: rows.filter((row) => matchesDecisionSource(row, source) && inView(row, 'match'))
-        .length,
-      review: rows.filter((row) => matchesDecisionSource(row, source) && inView(row, 'review'))
-        .length,
-      'no-match': rows.filter(
-        (row) => matchesDecisionSource(row, source) && inView(row, 'no-match')
-      ).length,
-      pending: rows.filter((row) => matchesDecisionSource(row, source) && inView(row, 'pending'))
-        .length
-    })
+    let overrides = 0
+    let pending = 0
+    for (const row of rows) {
+      const bucket =
+        row.verdict === 'uncertain' || row.verdict === 'stale'
+          ? 'review'
+          : row.verdict === 'pending' || row.verdict === 'error'
+            ? 'pending'
+            : row.verdict
+      counts[bucket]++
+      if (row.decisionSource) countsBySource[row.decisionSource][bucket]++
+      if (row.override) overrides++
+      if (row.verdict === 'pending' || row.verdict === 'stale' || row.verdict === 'error') pending++
+    }
     const snapshot = await this.classifier.snapshot()
     const sourceName =
       scope.kind === 'library'
@@ -753,14 +776,14 @@ export class LiteratureSmartCollections {
           : undefined,
       sourceName,
       model: snapshot.smartCollections?.modelId,
-      overrides: rows.filter((row) => row.override).length,
+      overrides,
       sourceAvailable: Boolean(where),
       configured: policy.configured,
       total: rows.length,
       counts,
-      countsBySource: { ai: sourceCounts('ai'), manual: sourceCounts('manual') },
-      matches: rows.filter((row) => row.verdict === 'match').length,
-      pending: rows.filter((row) => ['pending', 'stale', 'error'].includes(row.verdict)).length,
+      countsBySource,
+      matches: counts.match,
+      pending,
       rows: summaryOnly
         ? []
         : await this.decisions(
@@ -783,12 +806,17 @@ export class LiteratureSmartCollections {
               })(),
               kind: run.kind as 'preview' | 'refresh',
               state: run.state as NonNullable<SmartCollectionView['run']>['state'],
-              done: checkpoint.filter((row) => !row.deferred && row.state !== 'pending').length,
-              total: checkpoint.filter((row) => !row.deferred).length,
+              done: runCounts.reduce(
+                (sum, group) => sum + (group.state === 'pending' ? 0 : Number(group.count)),
+                0
+              ),
+              total: runCounts.reduce((sum, group) => sum + Number(group.count), 0),
               inputTokens: Number(runUsage?._sum.inputTokens ?? 0n),
               outputTokens: Number(runUsage?._sum.outputTokens ?? 0n),
               usageIncomplete,
-              failure: checkpoint.find((row) => !row.deferred && row.state === 'error')?.failure,
+              failure: runFailure?.failure
+                ? z.enum(classificationFailureCategories).parse(runFailure.failure)
+                : undefined,
               updatedAt: run.updatedAt.getTime()
             }
           }
@@ -921,6 +949,17 @@ export class LiteratureSmartCollections {
     automatic = false,
     resumeAutomatic = false
   ): Promise<LiteratureCatalogReceipt> {
+    if (command.kind === 'read-smart-run-progress') {
+      return {
+        kind: 'collection',
+        id: command.collectionId,
+        smartRunProgress: await readSmartRunProgress(
+          await this.getClient(),
+          command.collectionId,
+          command.runId
+        )
+      }
+    }
     if (command.kind === 'read-smart-history') {
       const client = await this.getClient()
       const definition = await client.literatureSmartCollection.findUniqueOrThrow({
@@ -945,15 +984,7 @@ export class LiteratureSmartCollections {
         smartHistory: {
           currentRevision: definition.ruleRevision,
           entries: items.slice(0, 20).map((item) => {
-            const result = z
-              .object({
-                answer: z.object({
-                  verdict: z.enum(['match', 'no-match', 'uncertain']),
-                  model: z.string(),
-                  probabilities: z.record(z.string(), z.number())
-                })
-              })
-              .parse(JSON.parse(item.resultJson!))
+            const result = savedResultSchema.parse(JSON.parse(item.resultJson!))
             const version = item.run.rule
             return {
               runId: item.runId,
@@ -1049,7 +1080,25 @@ export class LiteratureSmartCollections {
     const id = command.collectionId
     await this.definition(client, id)
     if (command.action === 'resume-automatic') {
-      return this.execute({ ...command, action: 'refresh' }, true, true)
+      const { definition } = await this.definition(client, id)
+      const latest = await client.literatureSmartRun.findFirst({
+        where: { collectionId: id },
+        orderBy: { createdAt: 'desc' },
+        select: { state: true }
+      })
+      return this.execute(
+        {
+          ...command,
+          action:
+            latest &&
+            ['cancelled', 'interrupted'].includes(latest.state) &&
+            definition.automaticPauseReason !== 'run-limit'
+              ? 'resume'
+              : 'refresh'
+        },
+        true,
+        true
+      )
     }
     if (command.action === 'cancel') {
       const controller = this.active.get(id)
@@ -1145,6 +1194,7 @@ export class LiteratureSmartCollections {
         return { kind: 'collection', id, smartDecisionBatch: result, smartRefreshFailed: true }
       }
     } else if (
+      command.action === 'resume' ||
       command.action === 'refresh' ||
       command.action === 'recompute' ||
       command.action === 'preview'
@@ -1187,62 +1237,76 @@ export class LiteratureSmartCollections {
           if (!where) throw new Error('Collection source is unavailable.')
           if (command.itemIds && command.action !== 'recompute')
             throw new Error('Selected papers require re-evaluation.')
-          const selected = command.itemIds ? new Set(command.itemIds) : undefined
-          const scopeIds = new Set(rows.map((row) => row.id))
-          if (selected && [...selected].some((id) => !scopeIds.has(id)))
-            throw new Error('Paper is outside the collection scope.')
-          const eligible = rows.filter(
-            (row) =>
-              (command.action === 'recompute' || !row.override) &&
-              (!selected || selected.has(row.id)) &&
-              (command.action === 'recompute' ||
-                (['pending', 'stale', 'error'].includes(row.verdict) &&
-                  !(
-                    row.verdict === 'pending' &&
-                    ['missing-evidence', 'input-too-long'].includes(row.reason ?? '')
-                  )))
-          )
-          const chosen =
-            command.action === 'preview' && eligible.length > 20
-              ? Array.from(
-                  { length: 20 },
-                  (_, n) => eligible[Math.floor((n * eligible.length) / 20)]!
-                )
-              : eligible
-          // Keep unresolved failures visible even when a different selection is evaluated.
-          const chosenIds = new Set(chosen.map((row) => row.id))
-          const checkpoint: Checkpoint = []
-          const previousById = new Map(previousCheckpoint.map((row) => [row.id, row]))
-          for (const previous of previousCheckpoint) {
-            if (chosenIds.has(previous.id) || !scopeIds.has(previous.id)) continue
-            if (digests.get(previous.id) === previous.digest)
-              checkpoint.push({ ...previous, deferred: true })
-          }
-          for (const row of chosen) {
-            const inputDigest = digests.get(row.id)!
-            const previous = previousById.get(row.id)
-            if (automatic && !resumeAutomatic && previous?.digest === inputDigest) {
-              checkpoint.push({ ...previous, deferred: true })
-              continue
+          let run: { id: string }
+          let checkpoint: Checkpoint
+          if (command.action === 'resume') {
+            const previous = await client.literatureSmartRun.findFirst({
+              where: { collectionId: id },
+              orderBy: { createdAt: 'desc' }
+            })
+            let snapshot: ReturnType<typeof smartRunSnapshotSchema.parse> | undefined
+            try {
+              snapshot = smartRunSnapshotSchema.parse(JSON.parse(previous?.snapshotJson ?? 'null'))
+            } catch {
+              /* Incomplete historical checkpoints are never resumed implicitly. */
             }
-            checkpoint.push({ id: row.id, digest: inputDigest, state: 'pending' })
-          }
-          if (automatic && !checkpoint.some((row) => row.state === 'pending' && !row.deferred)) {
-            if (resumeAutomatic)
-              await client.literatureSmartCollection.update({
-                where: { collectionId: id },
-                data: { automaticPauseReason: null }
+            if (
+              !previous ||
+              !snapshot ||
+              !['cancelled', 'interrupted'].includes(previous.state) ||
+              previous.ruleRevision !== definition.ruleRevision ||
+              previous.policyKey !== policy.key ||
+              snapshot.description !== definition.collection.description ||
+              snapshot.evidenceMode !== definition.evidenceMode ||
+              snapshot.scope.kind !== definition.scopeKind ||
+              (snapshot.scope.kind !== 'library' && snapshot.scope.id !== definition.scopeId) ||
+              snapshot.model !== (await this.classifier.snapshot()).smartCollections?.modelId
+            )
+              throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            checkpoint = await this.checkpoint(client, previous.id)
+            const current = checkpoint.filter((row) => !row.deferred)
+            if (
+              !current.some((row) => row.state === 'pending') ||
+              current.some((row) => digests.get(row.id) !== row.digest)
+            )
+              throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            const completed = await client.literatureSmartRunItem.findMany({
+              where: { runId: previous.id, deferred: false, state: 'done' },
+              select: { resultJson: true, evaluatedAt: true }
+            })
+            if (
+              completed.some((row) => {
+                try {
+                  return (
+                    !row.evaluatedAt ||
+                    !savedResultSchema.safeParse(JSON.parse(row.resultJson ?? 'null')).success
+                  )
+                } catch {
+                  return true
+                }
               })
-            release?.()
-            release = undefined
-            this.active.delete(id)
-            return { kind: 'collection', id }
-          }
-          controller.signal.throwIfAborted()
-          const run = await client.$transaction(
-            async (tx) => {
+            )
+              throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            // Retain the existing run ID, snapshot, usage and committed per-paper results.
+            // The regular worker rechecks input digests again before dispatch and commit.
+            const usage = await client.classificationUsage.findMany({
+              where: { runId: previous.id },
+              distinct: ['scenario'],
+              select: { scenario: true }
+            })
+            automatic =
+              usage.some((entry) => entry.scenario === 'literature-automatic') ||
+              (!usage.length &&
+                snapshot.action === 'refresh' &&
+                Boolean(definition.automaticPauseReason))
+            if (
+              automatic &&
+              (!definition.autoUpdate || definition.automaticPauseReason === 'run-limit')
+            )
+              throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            controller.signal.throwIfAborted()
+            const resumed = await client.$transaction(async (tx) => {
               if (automatic) {
-                // Fail closed across crashes: only a successful terminal write clears this pause.
                 const reserved = await tx.literatureSmartCollection.updateMany({
                   where: {
                     collectionId: id,
@@ -1251,35 +1315,110 @@ export class LiteratureSmartCollections {
                   },
                   data: { automaticPauseReason: 'interrupted' }
                 })
-                if (!reserved.count) throw new AutomaticClassificationPausedError('interrupted')
+                if (!reserved.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
               }
-              return tx.literatureSmartRun.create({
-                data: {
-                  id: randomUUID(),
-                  collectionId: id,
-                  kind: command.action === 'preview' ? 'preview' : 'refresh',
-                  state: 'queued',
-                  ruleRevision: definition.ruleRevision,
-                  policyKey: policy.key,
-                  items: {
-                    create: checkpoint.map(({ id, ...entry }) => ({ itemId: id, ...entry }))
-                  },
-                  snapshotJson: JSON.stringify({
-                    description: definition.collection.description,
-                    scope: {
-                      kind: definition.scopeKind,
-                      ...(definition.scopeId ? { id: definition.scopeId } : {})
-                    },
-                    evidenceMode: definition.evidenceMode,
-                    model: (await this.classifier.snapshot()).smartCollections?.modelId,
-                    action: command.action,
-                    ...(selected ? { selectedCount: selected.size } : {})
-                  })
-                }
+              return tx.literatureSmartRun.updateMany({
+                where: { id: previous.id, state: previous.state },
+                data: { state: 'queued', updatedAt: new Date() }
               })
-            },
-            { maxWait: 30000 }
-          )
+            })
+            if (!resumed.count) throw new Error(SMART_COLLECTION_RESUME_UNAVAILABLE)
+            run = previous
+          } else {
+            const selected = command.itemIds ? new Set(command.itemIds) : undefined
+            const scopeIds = new Set(rows.map((row) => row.id))
+            if (selected && [...selected].some((id) => !scopeIds.has(id)))
+              throw new Error('Paper is outside the collection scope.')
+            const eligible = rows.filter(
+              (row) =>
+                (command.action === 'recompute' || !row.override) &&
+                (!selected || selected.has(row.id)) &&
+                (command.action === 'recompute' ||
+                  (['pending', 'stale', 'error'].includes(row.verdict) &&
+                    !(
+                      row.verdict === 'pending' &&
+                      ['missing-evidence', 'input-too-long'].includes(row.reason ?? '')
+                    )))
+            )
+            const chosen =
+              command.action === 'preview' && eligible.length > 20
+                ? Array.from(
+                    { length: 20 },
+                    (_, n) => eligible[Math.floor((n * eligible.length) / 20)]!
+                  )
+                : eligible
+            // Keep unresolved failures visible even when a different selection is evaluated.
+            const chosenIds = new Set(chosen.map((row) => row.id))
+            checkpoint = []
+            const previousById = new Map(previousCheckpoint.map((row) => [row.id, row]))
+            for (const previous of previousCheckpoint) {
+              if (chosenIds.has(previous.id) || !scopeIds.has(previous.id)) continue
+              if (digests.get(previous.id) === previous.digest)
+                checkpoint.push({ ...previous, deferred: true })
+            }
+            for (const row of chosen) {
+              const inputDigest = digests.get(row.id)!
+              const previous = previousById.get(row.id)
+              if (automatic && !resumeAutomatic && previous?.digest === inputDigest) {
+                checkpoint.push({ ...previous, deferred: true })
+                continue
+              }
+              checkpoint.push({ id: row.id, digest: inputDigest, state: 'pending' })
+            }
+            if (automatic && !checkpoint.some((row) => row.state === 'pending' && !row.deferred)) {
+              if (resumeAutomatic)
+                await client.literatureSmartCollection.update({
+                  where: { collectionId: id },
+                  data: { automaticPauseReason: null }
+                })
+              release?.()
+              release = undefined
+              this.active.delete(id)
+              return { kind: 'collection', id }
+            }
+            controller.signal.throwIfAborted()
+            run = await client.$transaction(
+              async (tx) => {
+                if (automatic) {
+                  // Fail closed across crashes: only a successful terminal write clears this pause.
+                  const reserved = await tx.literatureSmartCollection.updateMany({
+                    where: {
+                      collectionId: id,
+                      autoUpdate: true,
+                      automaticPauseReason: definition.automaticPauseReason
+                    },
+                    data: { automaticPauseReason: 'interrupted' }
+                  })
+                  if (!reserved.count) throw new AutomaticClassificationPausedError('interrupted')
+                }
+                return tx.literatureSmartRun.create({
+                  data: {
+                    id: randomUUID(),
+                    collectionId: id,
+                    kind: command.action === 'preview' ? 'preview' : 'refresh',
+                    state: 'queued',
+                    ruleRevision: definition.ruleRevision,
+                    policyKey: policy.key,
+                    items: {
+                      create: checkpoint.map(({ id, ...entry }) => ({ itemId: id, ...entry }))
+                    },
+                    snapshotJson: JSON.stringify({
+                      description: definition.collection.description,
+                      scope: {
+                        kind: definition.scopeKind,
+                        ...(definition.scopeId ? { id: definition.scopeId } : {})
+                      },
+                      evidenceMode: definition.evidenceMode,
+                      model: (await this.classifier.snapshot()).smartCollections?.modelId,
+                      action: command.action,
+                      ...(selected ? { selectedCount: selected.size } : {})
+                    })
+                  }
+                })
+              },
+              { maxWait: 30000 }
+            )
+          }
           this.queue = this.queue
             .catch(() => undefined)
             .then(() => this.run(run.id, controller, checkpoint, automatic))
@@ -1330,6 +1469,7 @@ export class LiteratureSmartCollections {
       include: { rule: true }
     })
     if (controller.signal.aborted || run.state === 'cancelled') return
+    let progressTimer: ReturnType<typeof setTimeout> | undefined
     let persistenceFailed = false
     let pauseReason: AutomaticClassificationPauseReason | undefined
     try {
@@ -1444,6 +1584,23 @@ export class LiteratureSmartCollections {
       )?.model
       let completed = 0
       let lastProgressAt = -Infinity
+      const publishProgress = (): void => {
+        // Item results are already durable. Do not wait for the aggregate metadata batch.
+        this.reads.clear()
+        const remaining = 250 - (Date.now() - lastProgressAt)
+        const emit = (): void => {
+          progressTimer = undefined
+          lastProgressAt = Date.now()
+          this.changed(run.collectionId)
+        }
+        if (remaining <= 0) {
+          if (progressTimer) clearTimeout(progressTimer)
+          emit()
+        } else if (!progressTimer) {
+          // Deliver the final fast reply even if every other request remains slow.
+          progressTimer = setTimeout(emit, remaining)
+        }
+      }
       const flush = async (): Promise<void> => {
         if (!completed) return
         await client.literatureSmartRun.update({
@@ -1454,14 +1611,7 @@ export class LiteratureSmartCollections {
           }
         })
         completed = 0
-        // Persist every batch, but avoid rescanning the entire collection for every fast reply.
-        // Terminal notification below is unconditional, so the final state is never delayed.
         this.reads.clear()
-        const now = Date.now()
-        if (now - lastProgressAt >= 250) {
-          lastProgressAt = now
-          this.changed(run.collectionId)
-        }
       }
       for await (const { row, answer, evidence, error } of results()) {
         try {
@@ -1550,6 +1700,7 @@ export class LiteratureSmartCollections {
           }
         }
         completed++
+        publishProgress()
         if (completed >= 4) {
           try {
             await flush()
@@ -1595,6 +1746,8 @@ export class LiteratureSmartCollections {
         }
       })
     } finally {
+      // The queue's terminal notification always publishes the final state.
+      if (progressTimer) clearTimeout(progressTimer)
       if (automatic) {
         try {
           await client.literatureSmartCollection.updateMany({

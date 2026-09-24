@@ -3,6 +3,7 @@ import { serializedSmartRuleSchema } from './smart-collection-rule'
 import { classificationFailureCategories } from './classification'
 import { z } from 'zod'
 const id = z.string().trim().min(1).max(512)
+export const SMART_COLLECTION_RESUME_UNAVAILABLE = 'SMART_COLLECTION_RESUME_UNAVAILABLE'
 export const smartEvidenceModeSchema = z.enum(['abstract', 'full-text'])
 export const smartEvidenceSchema = z
   .object({
@@ -50,6 +51,13 @@ export const smartHistorySchema = z
 export const smartCollectionCommandSchemas = [
   z
     .object({
+      kind: z.literal('read-smart-run-progress'),
+      collectionId: id,
+      runId: id
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal('read-smart-history'),
       collectionId: id,
       itemId: id,
@@ -90,6 +98,7 @@ export const smartCollectionCommandSchemas = [
       action: z.enum([
         'read',
         'resume-automatic',
+        'resume',
         'refresh',
         'recompute',
         'preview',
@@ -235,3 +244,38 @@ export const smartCollectionPreviewSchema = z
   })
   .strict()
 export type SmartCollectionPreview = z.infer<typeof smartCollectionPreviewSchema>
+
+const smartRunProgressRowSchema = z
+  .object({
+    id,
+    title: z.string().nullable(),
+    state: z.enum(['pending', 'done', 'error']),
+    verdict: z.enum(['match', 'no-match', 'uncertain']).optional(),
+    evaluatedAt: z.number().optional(),
+    override: z.enum(['include', 'exclude']).optional()
+  })
+  .strict()
+
+// A bounded current snapshot, not a replay log. Counts cover non-deferred run items.
+export const smartRunProgressSchema = z
+  .object({
+    runId: id,
+    state: smartCollectionViewSchema.shape.run.unwrap().shape.state,
+    total: z.number().int().nonnegative(),
+    done: z.number().int().nonnegative(),
+    counts: z
+      .object({
+        match: z.number().int().nonnegative(),
+        review: z.number().int().nonnegative(),
+        noMatch: z.number().int().nonnegative(),
+        pending: z.number().int().nonnegative(),
+        error: z.number().int().nonnegative(),
+        unavailable: z.number().int().nonnegative()
+      })
+      .strict(),
+    candidates: z.array(smartRunProgressRowSchema).max(4),
+    outcomes: z.array(smartRunProgressRowSchema).max(24)
+  })
+  .strict()
+export type SmartRunProgress = z.infer<typeof smartRunProgressSchema>
+export type SmartRunProgressRow = z.infer<typeof smartRunProgressRowSchema>

@@ -2,6 +2,7 @@ import {
   AUTOMATIC_CLASSIFICATION_RUN_LIMIT,
   AUTOMATIC_CLASSIFICATION_DAY_LIMIT
 } from '../../../../shared/classification'
+import { SMART_COLLECTION_RESUME_UNAVAILABLE } from '../../../../shared/literature-smart-collections'
 import type { SmartCollectionState } from './smart-collection-state'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
 import { formatSmartRule, parseSmartRule } from './smart-rule-fields'
@@ -9,7 +10,7 @@ import { SmartRuleSummary } from './SmartRuleSummary'
 import { setSmartReevaluationConfirmation } from './smart-collection-preferences'
 import { classificationFailureText } from './smart-collection-decisions'
 import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useId, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Pencil,
@@ -20,6 +21,8 @@ import {
   MoreHorizontal,
   Eye,
   RotateCcw,
+  Play,
+  Pause,
   Info,
   Sparkles,
   Trash2,
@@ -85,6 +88,9 @@ export function SmartCollectionPanel({
   onDelete,
   onReview,
   onOpenScope,
+  onOpenProcess,
+  onRunPendingChange,
+  processOpen = false,
   searchActions,
   onExport,
   exportDisabled,
@@ -102,11 +108,15 @@ export function SmartCollectionPanel({
   onDelete?: () => void
   onReview?: () => void
   onOpenScope?: (scope: SmartScope) => void
+  onOpenProcess?: () => void
+  onRunPendingChange?: (pending: boolean) => void
+  processOpen?: boolean
   onExport?: (format: 'bibtex' | 'ris') => Promise<boolean>
   exportDisabled?: boolean
   searchActions?: React.ReactNode
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const progressStatusId = useId()
   const settingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const view = useSyncExternalStore(state.subscribe, state.getSnapshot)
   const [revision, setRevision] = useState(0)
@@ -119,6 +129,7 @@ export function SmartCollectionPanel({
       setRevision((value) => value + 1)
   })
   const [error, setError] = useState(false)
+  const [resumeUnavailable, setResumeUnavailable] = useState(false)
   const [refreshFailed, setRefreshFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -185,8 +196,10 @@ export function SmartCollectionPanel({
       | 'abandon'
       | 'reset-overrides'
       | 'resume-automatic'
+      | 'resume'
   ): Promise<void> => {
     if (decisionPending || busy || refreshFailed) return
+    setResumeUnavailable(false)
     state.beginWrite()
     setBusy(true)
     if (action === 'cancel') setStopping(true)
@@ -194,8 +207,12 @@ export function SmartCollectionPanel({
       action === 'refresh' ||
       action === 'recompute' ||
       action === 'preview' ||
-      action === 'resume-automatic'
+      action === 'resume-automatic' ||
+      action === 'resume'
     if (updating) {
+      setConfirmRecompute(false)
+      setConfirmPreview(false)
+      onRunPendingChange?.(true)
       setStopping(false)
       onViewChange?.(view, true)
       setUpdatePending(true)
@@ -219,11 +236,14 @@ export function SmartCollectionPanel({
       setConfirmPreview(false)
       setConfirmReset(false)
       setConfirmAbandon(false)
-    } catch {
+    } catch (failure) {
+      const unavailable = String(failure).includes(SMART_COLLECTION_RESUME_UNAVAILABLE)
+      setResumeUnavailable(unavailable)
       if (action === 'cancel') setStopping(false)
       if (updating) setUpdatePending(false)
-      setError(true)
+      setError(!unavailable)
     } finally {
+      if (updating) onRunPendingChange?.(false)
       // Reconcile events received while the command receipt was in flight.
       state.finishWrite()
       setRevision((value) => value + 1)
@@ -260,50 +280,65 @@ export function SmartCollectionPanel({
   )
   const progress = view?.run && !updatePending ? view.run : undefined
   const updateControl = (
-    <div data-slot="smart-update-control" className="relative flex h-9 w-36 shrink-0 items-center">
+    <div
+      data-slot="smart-update-control"
+      className={`relative flex h-9 shrink-0 items-center ${active && !singleReevaluation ? 'w-52' : 'w-36'}`}
+    >
       {active && !singleReevaluation ? (
-        <div data-slot="smart-run-progress" className="w-full">
-          <div className="flex items-center gap-2 pb-1 text-xs">
-            <LoaderCircle
-              className="size-3.5 shrink-0 animate-spin text-primary motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-            <span role="status" className="min-w-0 flex-1 truncate font-medium text-foreground">
-              {stopping ? t('Stopping analysis…') : t('Updating…')}
-            </span>
-            {!stopping && progress && (
-              <span className="shrink-0 tabular-nums text-muted-foreground">
-                {progress.done}/{progress.total}
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 shrink-0 px-1.5 text-xs"
-              aria-label={t('Stop analysis')}
-              disabled={busy || updatePending || stopping}
-              onClick={() => void run('cancel')}
-            >
-              {t('Stop')}
-            </Button>
-          </div>
-          <div
-            role="progressbar"
-            aria-label={t('Re-evaluate')}
-            aria-valuemin={0}
-            aria-valuemax={Math.max(1, progress?.total ?? 0)}
-            aria-valuenow={progress?.done}
-            className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden rounded-full bg-muted"
+        <div data-slot="smart-run-progress" className="flex w-full items-center gap-1">
+          <button
+            type="button"
+            aria-label={t('Screening process')}
+            aria-describedby={progressStatusId}
+            aria-expanded={processOpen}
+            title={t('Screening process')}
+            disabled={!running || !onOpenProcess}
+            onClick={onOpenProcess}
+            className="relative min-w-0 flex-1 rounded-md px-1.5 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
           >
-            <div
-              className={`h-full origin-left bg-primary transition-transform duration-300 ease-out motion-reduce:transition-none ${progress?.total ? '' : 'w-1/4 motion-safe:animate-pulse'}`}
-              style={
-                progress?.total
-                  ? { transform: `scaleX(${Math.min(1, progress.done / progress.total)})` }
-                  : undefined
-              }
-            />
-          </div>
+            <span id={progressStatusId} role="status" className="flex items-center gap-2 text-xs">
+              <LoaderCircle
+                className="size-3.5 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                {stopping ? t('Stopping analysis…') : t('Updating…')}
+              </span>
+              {!stopping && progress && (
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {progress.done}/{progress.total}
+                </span>
+              )}
+            </span>
+            <span
+              role="progressbar"
+              aria-label={t('Re-evaluate')}
+              aria-valuemin={0}
+              aria-valuemax={Math.max(1, progress?.total ?? 0)}
+              aria-valuenow={progress?.done}
+              className="absolute inset-x-1.5 bottom-0 h-0.5 overflow-hidden rounded-full bg-muted"
+            >
+              <span
+                className={`block h-full origin-left bg-primary transition-transform duration-300 ease-out motion-reduce:transition-none ${progress?.total ? '' : 'w-1/4 motion-safe:animate-pulse'}`}
+                style={
+                  progress?.total
+                    ? { transform: `scaleX(${Math.min(1, progress.done / progress.total)})` }
+                    : undefined
+                }
+              />
+            </span>
+          </button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 shrink-0 gap-1 px-1.5 text-xs"
+            aria-label={t('Pause analysis')}
+            disabled={busy || updatePending || stopping}
+            onClick={() => void run('cancel')}
+          >
+            <Pause className="size-3.5 shrink-0" aria-hidden="true" />
+            {t('Pause')}
+          </Button>
         </div>
       ) : failed ? (
         <div className="flex w-full items-center justify-between gap-2">
@@ -346,10 +381,21 @@ export function SmartCollectionPanel({
         </div>
       ) : stopped ? (
         <div className="flex w-full items-center justify-between gap-2">
-          <span role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            {paused ? t('Automatic updates paused') : t('Stopped')} · {view.run?.done}/
-            {view.run?.total}
-          </span>
+          <button
+            type="button"
+            aria-label={t('Screening process')}
+            aria-describedby={progressStatusId}
+            aria-expanded={processOpen}
+            title={t('Screening process')}
+            disabled={!onOpenProcess}
+            onClick={onOpenProcess}
+            className="min-w-0 flex-1 rounded-md px-1.5 py-2 text-left text-xs text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none"
+          >
+            <span id={progressStatusId} role="status" className="block truncate">
+              {paused ? t('Automatic updates paused') : t('Paused')} · {view.run?.done}/
+              {view.run?.total}
+            </span>
+          </button>
           <div className="flex items-center gap-1">
             {view.run?.state === 'interrupted' && !paused && (
               <Button
@@ -362,15 +408,27 @@ export function SmartCollectionPanel({
                 <Trash2 className="size-4" aria-hidden="true" />
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={paused ? t('Resume automatic updates') : t('Update collection')}
-              disabled={disabled}
-              onClick={() => void run(paused ? 'resume-automatic' : 'refresh')}
-            >
-              <RotateCcw className="size-4" aria-hidden="true" />
-            </Button>
+            {paused ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Resume automatic updates')}
+                disabled={disabled}
+                onClick={() => void run('resume-automatic')}
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+              </Button>
+            ) : view.automaticPauseReason !== 'run-limit' ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Resume analysis')}
+                disabled={disabled}
+                onClick={() => void run('resume')}
+              >
+                <Play className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : (
@@ -523,6 +581,20 @@ export function SmartCollectionPanel({
           </ActionMenuTarget>
         </ActionMenuProvider>
       </div>
+      {resumeUnavailable && (
+        <ErrorNotice
+          inline
+          tone="amber"
+          description={t(
+            'This run cannot be resumed because its settings, papers, or saved progress have changed.'
+          )}
+          primaryButton={{
+            label: t('Re-evaluate all'),
+            onClick: () => setConfirmRecompute(true),
+            disabled: busy || decisionPending || refreshFailed
+          }}
+        />
+      )}
       {view?.autoUpdate && view.automaticPauseReason && !active && (
         <ErrorNotice
           inline
@@ -544,7 +616,10 @@ export function SmartCollectionPanel({
                   )
           }
           primaryButton={{
-            label: t('Resume automatic updates'),
+            label:
+              view.automaticPauseReason === 'run-limit'
+                ? t('Continue in a new run')
+                : t('Resume automatic updates'),
             onClick: () => void run('resume-automatic'),
             disabled:
               busy || decisionPending || refreshFailed || !view.configured || !view.sourceAvailable

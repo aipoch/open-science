@@ -50,7 +50,6 @@ import {
   FileText,
   Flag,
   GitBranch,
-  Image as ImageIcon,
   Loader2,
   LockKeyhole,
   Link2,
@@ -101,6 +100,7 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
 
 import { ComposerEditor } from './composer/ComposerEditor'
+import { FileTypeIcon } from './file-type-icon'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import {
   appendArtifactMention,
@@ -2116,9 +2116,6 @@ const ConversationPanel = ({
                             <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
                               {/* Composer attachments remain removable until the prompt is submitted. */}
                               {attachments.map((attachment) => {
-                                const AttachmentIcon = attachment.mimeType?.startsWith('image/')
-                                  ? ImageIcon
-                                  : FileText
                                 const attachmentName = attachment.originalName || attachment.name
                                 const pastedText = pastedTextByAttachmentId.get(attachment.id)
 
@@ -2134,10 +2131,9 @@ const ConversationPanel = ({
                                     data-state={pastedText ? 'success' : undefined}
                                     className={attachmentChipClassName}
                                   >
-                                    <AttachmentIcon
-                                      className="size-4 shrink-0 text-text-300"
-                                      strokeWidth={2}
-                                      aria-hidden="true"
+                                    <FileTypeIcon
+                                      name={attachmentName}
+                                      mimeType={attachment.mimeType}
                                     />
                                     {pastedText ? (
                                       <button
@@ -2188,9 +2184,6 @@ const ConversationPanel = ({
                                 )
                               })}
                               {attachmentTransfers.map((transfer) => {
-                                const AttachmentIcon = transfer.mimeType?.startsWith('image/')
-                                  ? ImageIcon
-                                  : FileText
                                 const percent =
                                   transfer.totalBytes === 0
                                     ? 100
@@ -2227,10 +2220,9 @@ const ConversationPanel = ({
                                     data-state={pastedText ? transfer.status : undefined}
                                     className={attachmentChipClassName}
                                   >
-                                    <AttachmentIcon
-                                      className="size-4 shrink-0 text-text-300"
-                                      strokeWidth={2}
-                                      aria-hidden="true"
+                                    <FileTypeIcon
+                                      name={transfer.name}
+                                      mimeType={transfer.mimeType}
                                     />
                                     <div className="min-w-0 flex-1">
                                       {pastedText ? (

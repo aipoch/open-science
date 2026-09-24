@@ -15,6 +15,7 @@ import { migrateApplicationDatabase } from '../database/migration-service'
 import { LiteratureSmartCollections } from './smart-collections'
 import { LiteratureCatalog } from './catalog'
 import type { ClassifyLiterature } from '../../shared/classification'
+import { SMART_COLLECTION_RESUME_UNAVAILABLE } from '../../shared/literature-smart-collections'
 
 let root: string
 let db: ReturnType<typeof createProjectDbClient>
@@ -117,6 +118,130 @@ const refresh = async (id: string): Promise<void> => {
   await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'refresh', offset: 0 })
   await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
 }
+
+it('reads bounded run outcomes, preserves historical verdicts and distinguishes missing details', async () => {
+  await db.literatureItem.createMany({
+    data: Array.from({ length: 30 }, (_, i) => ({
+      id: `progress-${String(i).padStart(2, '0')}`,
+      title: `Progress ${i}`,
+      itemType: 'journalArticle',
+      abstract: 'Original study'
+    }))
+  })
+  const collectionId = await create()
+  await refresh(collectionId)
+  const runId = (await owner.view(collectionId)).run!.id
+  await db.literatureSmartRunItem.updateMany({
+    where: { runId },
+    data: { evaluatedAt: new Date(1000) }
+  })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId, itemId: 'progress-29' } },
+    data: { deferred: true }
+  })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId, itemId: 'progress-28' } },
+    data: { state: 'error', resultJson: null, failure: 'network' }
+  })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId, itemId: 'progress-27' } },
+    data: { resultJson: null, evaluatedAt: null }
+  })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId, itemId: 'progress-26' } },
+    data: { resultJson: JSON.stringify({ answer: { verdict: 'uncertain' } }) }
+  })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId, itemId: 'progress-25' } },
+    data: {
+      resultJson: JSON.stringify({ answer: { verdict: 'no-match' } }),
+      evaluatedAt: new Date(500)
+    }
+  })
+  await db.literatureSmartAssessment.updateMany({
+    where: { collectionId },
+    data: { verdict: 'no-match' }
+  })
+  await owner.execute({
+    kind: 'smart-collection',
+    action: 'override',
+    collectionId,
+    itemId: 'paper',
+    decision: 'exclude',
+    offset: 0
+  })
+  const command = { kind: 'read-smart-run-progress' as const, collectionId, runId }
+  const before = classify.mock.calls.length
+  const first = (await catalog.transact(command)).smartRunProgress!
+  expect(first).toMatchObject({
+    total: 30,
+    done: 30,
+    counts: { match: 26, noMatch: 1, review: 1, unavailable: 1, error: 1, pending: 0 }
+  })
+  expect(first.outcomes).toHaveLength(10)
+  expect(first.outcomes.filter((row) => row.verdict === 'match')).toHaveLength(6)
+  expect(first.outcomes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: 'progress-25', verdict: 'no-match' }),
+      expect.objectContaining({ id: 'progress-26', verdict: 'uncertain' }),
+      expect.objectContaining({ id: 'progress-27', state: 'done' }),
+      expect.objectContaining({ id: 'progress-28', state: 'error' })
+    ])
+  )
+  expect(first.outcomes[0]).toMatchObject({ id: 'paper', verdict: 'match', override: 'exclude' })
+  expect((await catalog.transact(command)).smartRunProgress).toEqual(first)
+  expect(classify).toHaveBeenCalledTimes(before)
+  await expect(
+    catalog.transact({ ...command, collectionId: 'different-collection' })
+  ).rejects.toThrow()
+  await expect(catalog.transact({ ...command, runId: 'missing-run' })).rejects.toThrow()
+})
+
+it('exposes only committed outcomes while other candidates are still being evaluated', async () => {
+  await db.literatureItem.createMany({
+    data: ['a', 'b', 'c'].map((id) => ({
+      id,
+      title: id,
+      itemType: 'journalArticle',
+      abstract: 'Original study'
+    }))
+  })
+  const releases: Array<() => void> = []
+  classify.mockImplementation(async () => {
+    await new Promise<void>((resolve) => releases.push(resolve))
+    return {
+      verdict: 'match',
+      model: 'jev-1.13.0',
+      confidence: 1,
+      probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+    }
+  })
+  const collectionId = await create()
+  await owner.execute({ kind: 'smart-collection', collectionId, action: 'refresh', offset: 0 })
+  try {
+    await vi.waitFor(() => expect(releases).toHaveLength(4))
+    const runId = (await owner.view(collectionId)).run!.id
+    const command = { kind: 'read-smart-run-progress' as const, collectionId, runId }
+    const initial = (await catalog.transact(command)).smartRunProgress!
+    expect(initial.candidates).toHaveLength(4)
+    expect(initial.outcomes).toEqual([])
+    releases[2]()
+    await vi.waitFor(async () =>
+      expect(await db.literatureSmartRunItem.count({ where: { runId, state: 'done' } })).toBe(1)
+    )
+    const next = (await catalog.transact(command)).smartRunProgress!
+    expect(next).toMatchObject({
+      state: 'running',
+      total: 4,
+      done: 1,
+      counts: { pending: 3, match: 1 }
+    })
+    expect(next.outcomes).toHaveLength(1)
+    expect(next.candidates.some(({ id }) => id === next.outcomes[0].id)).toBe(false)
+  } finally {
+    releases.forEach((release) => release())
+  }
+})
 it('saves an unconfigured collection without inference and distinguishes pending from no matches', async () => {
   configured = false
   const id = await create()
@@ -273,6 +398,181 @@ it('rejects a late result after cancellation and releases the worker', async () 
   await owner.dispose()
   expect((await owner.view(id)).run?.state).toBe('cancelled')
   expect(await db.literatureSmartAssessment.count()).toBe(0)
+})
+
+const pauseAfterOneResult = async (
+  automatic = false
+): Promise<{ id: string; runId: string; doneId: string }> => {
+  await db.literatureItem.createMany({
+    data: Array.from({ length: 7 }, (_, i) => ({
+      id: `resume-${i}`,
+      itemType: 'journalArticle',
+      title: `Resume ${i}`,
+      abstract: 'Original study'
+    }))
+  })
+  const id = await create()
+  if (automatic)
+    await db.literatureSmartCollection.update({
+      where: { collectionId: id },
+      data: { autoUpdate: true }
+    })
+  let first = true
+  classify.mockImplementation(async (input) => {
+    if (first) {
+      first = false
+      return {
+        verdict: 'match',
+        model: 'jev-1.13.0',
+        confidence: 1,
+        probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+      }
+    }
+    return new Promise((_, reject) =>
+      input.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    )
+  })
+  await owner.execute(
+    {
+      kind: 'smart-collection',
+      collectionId: id,
+      action: automatic ? 'refresh' : 'recompute',
+      offset: 0
+    },
+    automatic
+  )
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.done).toBe(1))
+  await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'cancel', offset: 0 })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('cancelled'))
+  const runId = (await owner.view(id)).run!.id
+  const done = await db.literatureSmartRunItem.findFirstOrThrow({ where: { runId, state: 'done' } })
+  return { id, runId, doneId: done.itemId }
+}
+
+it('resumes the same stopped run once and preserves completed outcomes', async () => {
+  const { id, runId, doneId } = await pauseAfterOneResult()
+  const before = await db.literatureSmartRunItem.findUniqueOrThrow({
+    where: { runId_itemId: { runId, itemId: doneId } }
+  })
+  const calls = classify.mock.calls.length
+  classify.mockResolvedValue({
+    verdict: 'match',
+    model: 'jev-1.13.0',
+    confidence: 1,
+    probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+  })
+  await Promise.all(
+    Array.from({ length: 2 }, () =>
+      owner.execute({ kind: 'smart-collection', collectionId: id, action: 'resume', offset: 0 })
+    )
+  )
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect((await owner.view(id)).run).toMatchObject({ id: runId, done: 8, total: 8 })
+  expect(await db.literatureSmartRun.count({ where: { collectionId: id } })).toBe(1)
+  expect(classify.mock.calls.length - calls).toBe(7)
+  expect(
+    await db.literatureSmartRunItem.findUniqueOrThrow({
+      where: { runId_itemId: { runId, itemId: doneId } }
+    })
+  ).toEqual(before)
+})
+
+it('rejects resuming an automatic run after automatic updates are disabled', async () => {
+  const { id, runId } = await pauseAfterOneResult(true)
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: false }
+  })
+  const calls = classify.mock.calls.length
+  await expect(
+    owner.execute({ kind: 'smart-collection', collectionId: id, action: 'resume', offset: 0 })
+  ).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
+  expect(classify).toHaveBeenCalledTimes(calls)
+  expect((await owner.view(id)).run?.id).toBe(runId)
+})
+
+it('resumes automatic work with the same usage context and preserves its guard', async () => {
+  const { id, runId } = await pauseAfterOneResult(true)
+  const usage = await db.classificationUsage.count({ where: { runId } })
+  const calls = classify.mock.calls.length
+  classify.mockRejectedValue(new AutomaticClassificationPausedError('run-limit'))
+  await owner.execute({ kind: 'smart-collection', collectionId: id, action: 'resume', offset: 0 })
+  await vi.waitFor(async () =>
+    expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
+  )
+  expect((await owner.view(id)).run).toMatchObject({
+    id: runId,
+    state: 'interrupted',
+    done: 1,
+    total: 8
+  })
+  for (const [input] of classify.mock.calls.slice(calls))
+    expect(input.usageContext).toMatchObject({ runId, scenario: 'literature-automatic' })
+  expect(await db.classificationUsage.count({ where: { runId } })).toBeGreaterThan(usage)
+  expect(await db.literatureSmartRun.count({ where: { collectionId: id } })).toBe(1)
+  const limitedRun = await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runId } })
+  const limitedUsage = await db.classificationUsage.count({ where: { runId } })
+  const limitedCalls = classify.mock.calls.length
+  await expect(
+    owner.execute({ kind: 'smart-collection', collectionId: id, action: 'resume', offset: 0 })
+  ).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
+  expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
+  expect(await db.literatureSmartRun.findUniqueOrThrow({ where: { id: runId } })).toEqual(
+    limitedRun
+  )
+  expect(await db.classificationUsage.count({ where: { runId } })).toBe(limitedUsage)
+  expect(classify).toHaveBeenCalledTimes(limitedCalls)
+})
+
+it.each([
+  'paper',
+  'rule',
+  'policy',
+  'snapshot',
+  'details',
+  'incomplete-result',
+  'timestamp'
+] as const)('rejects resume after %s changes without dispatching paid work', async (change) => {
+  const { id, runId, doneId } = await pauseAfterOneResult()
+  if (change === 'paper')
+    await db.literatureItem.update({
+      where: { id: 'paper' },
+      data: { abstract: 'Changed input' }
+    })
+  if (change === 'rule')
+    await db.literatureCollection.update({
+      where: { id },
+      data: {
+        description: formatSmartRule({
+          description: '',
+          inclusion: 'Changed inclusion',
+          exclusion: ''
+        })
+      }
+    })
+  if (change === 'policy')
+    await db.literatureSmartRun.update({ where: { id: runId }, data: { policyKey: 'outdated' } })
+  if (change === 'snapshot')
+    await db.literatureSmartRun.update({ where: { id: runId }, data: { snapshotJson: null } })
+  if (change === 'details')
+    await db.literatureSmartRunItem.update({
+      where: { runId_itemId: { runId, itemId: doneId } },
+      data: { resultJson: null }
+    })
+  if (change === 'incomplete-result' || change === 'timestamp')
+    await db.literatureSmartRunItem.update({
+      where: { runId_itemId: { runId, itemId: doneId } },
+      data:
+        change === 'timestamp'
+          ? { evaluatedAt: null }
+          : { resultJson: JSON.stringify({ answer: { verdict: 'match' } }) }
+    })
+  const calls = classify.mock.calls.length
+  await expect(
+    owner.execute({ kind: 'smart-collection', collectionId: id, action: 'resume', offset: 0 })
+  ).rejects.toThrow(SMART_COLLECTION_RESUME_UNAVAILABLE)
+  expect(classify).toHaveBeenCalledTimes(calls)
+  expect((await owner.view(id)).run).toMatchObject({ id: runId, state: 'cancelled' })
 })
 
 it('marks abandoned work interrupted without restarting paid requests', async () => {
@@ -545,6 +845,15 @@ it('exposes per-page assessment evidence, freshness and reversible decisions', a
   })
   const id = await create()
   await refresh(id)
+  const progress = (
+    await catalog.transact({
+      kind: 'read-smart-run-progress',
+      collectionId: id,
+      runId: (await owner.view(id)).run!.id
+    })
+  ).smartRunProgress!
+  expect(progress.counts).toMatchObject({ review: 1, unavailable: 0 })
+  expect(progress.outcomes[0]).toMatchObject({ id: 'paper', verdict: 'uncertain' })
   const page = await catalog.search({ scope: 'library', collectionId: id, smartFilter: 'review' })
   expect(page.entries[0]).toMatchObject({
     smartDecision: {
@@ -592,6 +901,22 @@ it('explains missing evidence without pretending that a model evaluated it', asy
   expect((await owner.view(id)).counts).toMatchObject({ pending: 1, review: 0 })
   expect(await owner.members(id, undefined, 'pending')).toEqual(['paper'])
   expect(await owner.members(id, undefined, 'review')).toEqual([])
+  const runId = (await owner.view(id)).run!.id
+  const progress = (
+    await catalog.transact({
+      kind: 'read-smart-run-progress',
+      collectionId: id,
+      runId
+    })
+  ).smartRunProgress!
+  expect(progress).toMatchObject({
+    total: 1,
+    done: 1,
+    counts: { pending: 0, review: 0, unavailable: 1 }
+  })
+  expect(progress.outcomes).toHaveLength(1)
+  expect(progress.outcomes[0]).toMatchObject({ id: 'paper', state: 'done' })
+  expect(progress.outcomes[0].verdict).toBeUndefined()
   await refresh(id)
   expect((await owner.view(id)).run?.total).toBe(0)
   expect(classify).not.toHaveBeenCalled()
@@ -1306,6 +1631,52 @@ it('reuses scan digests, shares concurrent reads and writes progress once per fo
   writes.mockRestore()
 })
 
+it('publishes each committed result without waiting for slow peers, including the trailing update', async () => {
+  await db.literatureItem.createMany({
+    data: Array.from({ length: 3 }, (_, i) => ({
+      id: `stream-${i}`,
+      itemType: 'journalArticle',
+      title: `Study ${i}`,
+      normalizedTitle: `study ${i}`,
+      abstract: 'Research'
+    }))
+  })
+  const releases: Array<() => void> = []
+  classify.mockImplementation(async () => {
+    await new Promise<void>((resolve) => releases.push(resolve))
+    return {
+      verdict: 'match',
+      model: 'jev-1.13.0',
+      confidence: 1,
+      probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
+    }
+  })
+  const id = await create()
+  // Keep both commits inside the throttle window; the real trailing timer must still fire.
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+  try {
+    await owner.execute({
+      kind: 'smart-collection',
+      collectionId: id,
+      action: 'refresh',
+      offset: 0
+    })
+    await vi.waitFor(() => expect(releases).toHaveLength(4))
+    changed.mockClear()
+    releases[0]!()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+    expect((await owner.view(id)).run).toMatchObject({ state: 'running', done: 1 })
+    releases[1]!()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2))
+    expect((await owner.view(id)).run).toMatchObject({ state: 'running', done: 2 })
+    expect(classify).toHaveBeenCalledTimes(4)
+  } finally {
+    clock.mockRestore()
+    for (const release of releases) release()
+  }
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+})
+
 it('refills idle inference slots while a slow request is still running', async () => {
   await db.literatureItem.createMany({
     data: Array.from({ length: 5 }, (_, i) => ({
@@ -1768,22 +2139,28 @@ it('throttles fast progress events without delaying terminal state or dropping a
       probabilities: { match: 1, 'no-match': 0, uncertain: 0 }
     }
   })
-  const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+  const notifications: number[] = []
+  changed.mockImplementation(() => notifications.push(performance.now()))
   try {
     const pending = refresh(id)
     try {
-      await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
-      expect((await owner.view(id)).run).toMatchObject({ state: 'running', done: 4 })
+      await vi.waitFor(() => expect(changed).toHaveBeenCalled())
+      await vi.waitFor(async () =>
+        expect((await owner.view(id)).run).toMatchObject({ state: 'running', done: 4 })
+      )
     } finally {
       resume()
     }
     await pending
-    // Five durable batches yield one progress event and the unconditional terminal event.
-    expect(changed).toHaveBeenCalledTimes(2)
+    // Progress is time-throttled, while the final notification is unconditional.
+    expect(notifications.length).toBeGreaterThanOrEqual(2)
+    expect(notifications.length).toBeLessThan(20)
+    for (let i = 1; i < notifications.length - 1; i++)
+      expect(notifications[i]! - notifications[i - 1]!).toBeGreaterThanOrEqual(240)
     expect(await owner.members(id)).toHaveLength(20)
     expect((await owner.view(id)).run).toMatchObject({ state: 'completed', done: 20 })
   } finally {
-    clock.mockRestore()
+    changed.mockReset()
   }
 })
 
@@ -2150,6 +2527,27 @@ it('measures cold and warm 10000-reference reads and large checkpoint updates wi
       data: { state: 'done' }
     })
   const writeMs = performance.now() - writeStart
+  const progressStart = performance.now()
+  const progress = await catalog.transact({
+    kind: 'read-smart-run-progress',
+    collectionId: id,
+    runId: run.id
+  })
+  const progressMs = performance.now() - progressStart
+  expect(progress.smartRunProgress?.candidates).toHaveLength(4)
+  expect(progress.smartRunProgress?.outcomes.length).toBeLessThanOrEqual(24)
+  await owner.view(id, 0, 'all', undefined, true)
+  const warmRunSamples: number[] = []
+  const checkpointRead = vi.spyOn(db.literatureSmartRunItem, 'findMany')
+  for (let sample = 0; sample < 5; sample++) {
+    const start = performance.now()
+    const summary = await owner.view(id, 0, 'all', undefined, true)
+    expect(summary.run).toMatchObject({ total: 10000, done: 100 })
+    warmRunSamples.push(performance.now() - start)
+  }
+  const checkpointReadCount = checkpointRead.mock.calls.length
+  expect(checkpointReadCount).toBe(0)
+  checkpointRead.mockRestore()
   const saved = await db.literatureSmartRunItem.findMany({ where: { runId: run.id } })
   expect(saved.filter((row: { state: string }) => row.state === 'done')).toHaveLength(100)
   expect(classify).not.toHaveBeenCalled()
@@ -2159,6 +2557,9 @@ it('measures cold and warm 10000-reference reads and large checkpoint updates wi
         references: 10000,
         coldMs: Math.round(coldMs),
         warmMs: Math.round(warmMs),
+        progressMs: Math.round(progressMs),
+        warmRunMedianMs: Math.round(warmRunSamples.sort((a, b) => a - b)[2]!),
+        checkpointReadCount,
         runItems: 10000,
         itemUpdates: 100,
         writeMs: Math.round(writeMs)
@@ -2463,6 +2864,7 @@ it.each(['run-limit', 'daily-limit', 'storage-error'] as const)(
     owner.schedule()
     await new Promise((resolve) => setTimeout(resolve, 850))
     expect(classify).toHaveBeenCalledOnce()
+    const pausedRunId = (await owner.view(id)).run!.id
     await owner.execute({
       kind: 'smart-collection',
       collectionId: id,
@@ -2472,6 +2874,7 @@ it.each(['run-limit', 'daily-limit', 'storage-error'] as const)(
     await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
     expect((await owner.view(id)).automaticPauseReason).toBeUndefined()
     expect(classify).toHaveBeenCalledTimes(2)
+    if (reason !== 'run-limit') expect((await owner.view(id)).run?.id).toBe(pausedRunId)
   }
 )
 
