@@ -799,7 +799,7 @@ const PreviewSourcePanel = ({
     hidden={!isActive}
     className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-md bg-bg-000 shadow-card"
   >
-    <SourceWebPreview item={item} onClose={() => onClose(item.id)} />
+    <SourceWebPreview item={item} isActive={isActive} onClose={() => onClose(item.id)} />
   </section>
 )
 

@@ -70,11 +70,13 @@ const SourcePreviewSkeleton = (): React.JSX.Element => {
 const SourceWebPreviewContent = ({
   item,
   sourceUrl,
-  onClose
+  onClose,
+  isActive
 }: {
   item: PreviewSourceItem
   sourceUrl: URL
   onClose?: () => void
+  isActive: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const closeLabel = t('Close preview of {{title}}', { title: item.title })
@@ -271,7 +273,7 @@ const SourceWebPreviewContent = ({
               </Tooltip>
             ) : null}
           </TooltipProvider>
-          {isProgressVisible && loadState.phase !== 'failed' ? (
+          {isActive && isProgressVisible && loadState.phase !== 'failed' ? (
             <div
               data-source-preview-progress=""
               role="progressbar"
@@ -349,10 +351,12 @@ const SourceWebPreviewContent = ({
 
 const SourceWebPreview = ({
   item,
-  onClose
+  onClose,
+  isActive = true
 }: {
   item: PreviewSourceItem
   onClose?: () => void
+  isActive?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const sourceUrl = parseHttpsSourceUrl(item.url)
@@ -371,6 +375,7 @@ const SourceWebPreview = ({
       item={item}
       sourceUrl={sourceUrl}
       onClose={onClose}
+      isActive={isActive}
     />
   )
 }
