@@ -18,7 +18,8 @@ from PIL import Image
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "resources/skills/figure-composer"))
-from kernel import apply_outline_revisions, compose_crops, compose_figure, grid_geom, panel_px, panel_task
+from kernel import (apply_outline_revisions, compose_crops, compose_figure,
+                    composite_review_task, composition_task, grid_geom, panel_px, panel_task)
 
 
 class ComposerTests(unittest.TestCase):
@@ -236,6 +237,38 @@ class ComposerTests(unittest.TestCase):
                     data.seek(0)
                     with Image.open(data) as result:
                         self.assertEqual(result.size, expected)
+
+    def test_composition_task_orders_versions_and_requires_provenance(self):
+        task = composition_task(self.outline, [
+            {"letter": "b", "versionId": "panel-b-version"},
+            {"letter": "a", "versionId": "panel-a-version"},
+        ])
+        versions = task.split("Ordered panel Versions:", 1)[1]
+        self.assertLess(versions.index("panel-a-version"), versions.index("panel-b-version"))
+        for required in ("host.artifactPath(versionId)", "artifactVersionInputs",
+                         "producerRunId", "host.submitOutput({compositeVersionId: version_id})"):
+            self.assertIn(required, task)
+
+    def test_composition_task_rejects_incomplete_or_ambiguous_versions(self):
+        valid = [{"letter": "a", "versionId": "one"},
+                 {"letter": "b", "versionId": "two"}]
+        for bad in (valid[:1], valid + [valid[0]],
+                    valid[:1] + [{"letter": "c", "versionId": "two"}],
+                    valid[:1] + [{"letter": "b", "versionId": ""}]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                composition_task(self.outline, bad)
+
+    def test_delegated_tasks_submit_output_without_review_quota(self):
+        panel = panel_task(self.outline, "b")
+        self.assertIn("host.submitOutput({panelVersionId: version_id, labelsUsed})", panel)
+        review = composite_review_task("composite-version", self.outline)
+        self.assertNotIn("artifact:None", review)
+        self.assertIn("zero findings is valid", review)
+        self.assertIn("host.submitOutput(review)", review)
+        fixed = copy.deepcopy(self.outline)
+        fixed["fixed_panel_set"] = True
+        self.assertIn("user requires exactly these panels",
+                      composite_review_task("composite-version", fixed, "rules-version"))
 
 
 if __name__ == "__main__":
