@@ -309,8 +309,13 @@ const createProductionDelegatedFrameworkRuntime = (
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
             async confirmProcessCleanup() {
-              await ownership.recover({ ...input.session, attemptId: input.attemptId }, true)
-              ownership.assertClear({ ...input.session, attemptId: input.attemptId })
+              const selection = { ...input.session, attemptId: input.attemptId }
+              const hadOwnership = ownership.receipts(selection).length > 0
+              await ownership.recover(selection, true)
+              ownership.assertClear(selection)
+              // Empty receipts alone are not evidence: a runtime can fail before registering
+              // a process. Only successful recovery of recorded ownership supersedes its failure.
+              return hadOwnership ? true : undefined
             },
             async releaseResources() {
               preparedAttempts.delete(input.attemptId)

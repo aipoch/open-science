@@ -1916,6 +1916,52 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it.each([
+    ['single', false],
+    ['single', true],
+    ['batch', false],
+    ['batch', true]
+  ] as const)(
+    'does not let delayed %s output rearm a Main-owned completed Session (existing stream: %s)',
+    async (delivery, existingStream) => {
+      const store = useSessionStore.getState()
+      const running = store.sessions[0]
+      const promptMessageId = running.activeRun!.promptMessageId
+      if (existingStream) {
+        await applyWorkspaceRuntimeEvent(
+          createEvent({
+            id: 'initial-presentation',
+            role: 'assistant',
+            messageId: 'delayed-stream',
+            promptMessageId,
+            text: 'Initial output'
+          })
+        )
+      }
+      store.finishRun(running.id)
+      const terminal = toPersistedSession(useSessionStore.getState().sessions[0])
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: running,
+        session: { ...terminal, runtimeTranscriptOwner: 'main' },
+        mode: 'runtime-transcript-authority'
+      })
+      const delayed = createEvent({
+        id: 'delayed-presentation',
+        role: 'assistant',
+        messageId: 'delayed-stream',
+        promptMessageId,
+        text: 'Already delivered by Main'
+      })
+      if (delivery === 'batch') await applyWorkspaceRuntimeEventBatch([delayed])
+      else await applyWorkspaceRuntimeEvent(delayed)
+      await applyWorkspaceRuntimeEvent(createEvent({ kind: 'stop', promptMessageId }))
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        status: 'idle',
+        activeRun: undefined
+      })
+    }
+  )
+
   it('ignores a terminal tool event that arrives after the run stops', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     syncWorkspaceAgentFirstOutputState(['transport-session-1'])

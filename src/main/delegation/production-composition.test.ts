@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { buildSessionProjection } from '../session-persistence/projection'
 import { installAppLifecycle, type AppLifecycleDeps } from '../app-lifecycle'
 import { clearApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import {
@@ -4059,6 +4060,41 @@ describe('reported production admission Stop regression', () => {
 })
 
 describe('unreaped delegated execution lifecycle', () => {
+  it('delivers completed work and presents an idle Session while cleanup remains protected', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-completed-cleanup-'))
+    const execution = createDeterministicDelegateExecution()
+    const run = execution.run
+    vi.spyOn(execution, 'run').mockImplementation((...args) => {
+      const running = run(...args)
+      return {
+        ...running,
+        completion: running.completion.then((outcome) => ({
+          ...outcome,
+          cleanupError: new DelegateExecutionCleanupError('process cleanup remains unconfirmed')
+        }))
+      }
+    })
+    const harness = await createCompositionHarness(root, 'codex', execution)
+    const receipt = await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Publish final result', name: 'Figure' },
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    expect(buildSessionProjection(harness.durable()).summary.presentedStatus).toBe('running')
+    execution.controls()[0].accept()
+    execution.controls()[0].complete('Published result')
+    await expect(
+      harness.composition.host.collect(harness.caller, [receipt.children[0].frameId])
+    ).resolves.toMatchObject([{ status: 'completed', response: 'Published result' }])
+    expect(buildSessionProjection(harness.durable()).summary.presentedStatus).toBe('idle')
+    await expect(harness.composition.root.deleteSession(harness.session.id)).rejects.toThrow()
+    expect(buildSessionProjection(harness.durable()).summary.presentedStatus).toBe('idle')
+    await expect(
+      harness.composition.host.collect(harness.caller, [receipt.children[0].frameId])
+    ).resolves.toMatchObject([{ status: 'completed', response: 'Published result' }])
+  })
+
   it.each([
     'deleteSession',
     'deleteProject',

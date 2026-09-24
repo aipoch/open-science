@@ -72,15 +72,19 @@ type DelegatePermissionResponse = Readonly<{
   cancelled?: boolean
 }>
 
-type DelegateExecutionOutcome =
-  | Readonly<{
-      status: 'completed'
-      response: string
-      turnUsage?: AcpTurnTokenUsage
-      modelCallUsage?: readonly AcpModelCallUsage[]
-      turnUsageUnavailable?: true
-    }>
-  | Readonly<{ status: 'cancelled' }>
+// Execution results and resource retirement are independent terminal facts.
+// This field stays inside the host; it must not replace an already committed result.
+type DelegateExecutionOutcome = Readonly<{ cleanupError?: Error }> &
+  (
+    | Readonly<{
+        status: 'completed'
+        response: string
+        turnUsage?: AcpTurnTokenUsage
+        modelCallUsage?: readonly AcpModelCallUsage[]
+        turnUsageUnavailable?: true
+      }>
+    | Readonly<{ status: 'cancelled' }>
+  )
 
 type DelegateExecutionInput = Readonly<{
   /** Captured before asynchronous admission; never persisted. */
