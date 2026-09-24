@@ -4324,7 +4324,7 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result).toMatchObject({ ok: true, category: 'ok' })
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/responses')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       model: 'deepseek-v4-pro',
       stream: true,
@@ -4343,9 +4343,9 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result).toMatchObject({ ok: true, category: 'ok' })
-    // deepseek-v4-flash supports the native Responses API, so the probe must hit /v1/responses with
+    // deepseek-v4-flash supports the native Responses API, so the probe must hit /responses with
     // the namespace compatibility contract instead of the Chat Completions bridge.
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/responses')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       model: 'deepseek-v4-flash',
       stream: true,
