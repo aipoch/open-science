@@ -222,6 +222,7 @@ const menuMode = new URLSearchParams(location.search).has('menu')
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
 const background = new URLSearchParams(location.search)
 const backgroundMode = background.has('background')
+const projectHome = background.get('surface') === 'project'
 if (backgroundMode) {
   if (background.get('background') === 'running') {
     const current = usePackageOperationStore.getState().operation!
@@ -316,7 +317,7 @@ void localeReady.then(() =>
         <div className="mx-auto max-w-4xl p-4">
           <header className="flex items-center gap-3 border-b border-border pb-3">
             <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
-              Nanomaterials and tumour immunity
+              {projectHome ? 'New conversation' : 'Nanomaterials and tumour immunity'}
             </h1>
             <PackageExportProgressButton />
           </header>

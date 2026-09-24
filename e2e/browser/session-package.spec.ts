@@ -75,6 +75,16 @@ for (const width of [1280, 320]) {
   })
 }
 
+test('Project home keeps background export accessible in the header', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/session-package.html?background=running&surface=project')
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+  await expect(progressButton).toBeVisible()
+  await progressButton.click()
+  await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+})
+
 test('full and compact presets simplify selection while retaining evidence', async ({
   page
 }, testInfo) => {

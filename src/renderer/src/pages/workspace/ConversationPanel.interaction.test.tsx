@@ -37,6 +37,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
@@ -898,6 +899,48 @@ const dispatchDrag = (type: string, dataTransferTypes: string[], files: File[] =
 }
 
 describe('ConversationPanel header spacing', () => {
+  it('shows background export progress on Project home and Session workspace', () => {
+    act(() =>
+      usePackageOperationStore.setState({
+        operation: {
+          id: 'background-export',
+          kind: 'export',
+          state: 'running',
+          progress: { phase: 'copying' },
+          session: { projectId: 'project-1', sessionId: 'export-session' }
+        },
+        open: false,
+        dismissedId: undefined
+      })
+    )
+    renderPanel()
+    expect(getConversationHeader().textContent).toContain('New conversation')
+    expect(
+      getConversationHeader().querySelector('[aria-label="Copying files… · View progress"]')
+    ).not.toBeNull()
+
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'workspace-session',
+          projectId: 'project-1',
+          title: 'Research Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+    expect(getConversationHeader().textContent).toContain('Research Session')
+    const progress = getConversationHeader().querySelector<HTMLButtonElement>(
+      '[aria-label="Copying files… · View progress"]'
+    )!
+    act(() => progress.click())
+    expect(usePackageOperationStore.getState().open).toBe(true)
+  })
+
   it('opens diagnostics from the header even while a running Session is not hydrated', () => {
     const session: ChatSession = {
       id: 'diagnostic-session',
@@ -1191,6 +1234,7 @@ beforeEach(() => {
   respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   useSettingsStore.setState(createInitialSettingsState())
+  usePackageOperationStore.setState({ operation: null, open: false, dismissedId: undefined })
   useSpecialistStore.setState({ items: [], isLoaded: true })
   mockHasRunningJobs = false
   mockAllJobs = []
