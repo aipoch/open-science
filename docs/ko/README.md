@@ -49,7 +49,7 @@ AIPOCH Open-Science는 과학자와 연구자를 위한 AI 연구 워크벤치�
 
 AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물리학, 환경과학을 비롯한 여러 분야의 계산 및 데이터 집약적 연구를 지원합니다. 문헌 검토와 가설 수립부터 코드 실행, 데이터 분석, 시뮬레이션, 시각화, 추적 가능한 연구 결과 생성까지 전체 연구 과정을 지원합니다.
 
-> 💡 **[AIPOCH Open-Science v0.33.1 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.33.1은 일시 중지와 재개가 가능한 실시간 스마트 Literature 스크리닝, HMMER 서열 검색과 InterProScan 작업 결과라는 두 가지 새로운 리서치 커넥터, 그리고 Genomes 커넥터에 추가된 Clustal Omega 다중 서열 정렬, 그리고 제공업체 카탈로그의 GPT-6와 Claude Opus 5.5를 제공합니다. 이제 PDF 증거를 워크스페이스 대화의 첫 메시지와 함께 볼 수 있고, 세션 진단에는 사용자가 동의할 경우 민감한 패키지 증거를 포함할 수 있습니다. Windows 관리형 Python 런타임이 복원되고, 노트북과 컴퓨트의 저장 경합이 깔끔하게 복구되며, 비전 기능이 변경될 때 에이전트 브리지가 다시 연결됩니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v0.33.2 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 9월 업데이트)_. AIPOCH Open-Science v0.33.2는 코드 서명된 Windows 설치 프로그램을 제공하여 첫 실행 시 SmartScreen 경고가 사라졌습니다. 단백질 주석 커넥터에 STRING PPI 농축 분석이 추가되고, 라이브 소스 브라우저 미리보기가 방문 사이에도 유지되며, 위임은 정리 작업 오류가 있어도 완료된 결과를 보존합니다. Figure Composer 워크플로가 갱신되고, 미리보기 헤더에 파일 유형 아이콘이 표시되며, 다운로드는 공식 다운로드 페이지를 가리킵니다. 자세한 내용은 [최신 릴리스 노트](https://github.com/aipoch/open-science/releases/latest)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
@@ -74,12 +74,12 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 [공식 다운로드 페이지](https://aipoch.com/open-science/download)를 열고 컴퓨터에 맞는 설치 프로그램을 선택하세요.
 
-| 사용 중인 컴퓨터                   | 선택할 파일                           |
-| ---------------------------------- | ------------------------------------- |
-| macOS 12+ — Apple Silicon(M1 이상) | Apple Silicon / ARM64용 macOS DMG     |
-| macOS 12+ — Intel                  | Intel / x64용 macOS DMG               |
-| Windows x64                        | Windows x64 설치 프로그램             |
-| Linux x64                          | Linux x64 AppImage 또는 Debian 패키지 |
+| 사용 중인 컴퓨터                   | 선택할 파일                            |
+| ---------------------------------- | -------------------------------------- |
+| macOS 12+ — Apple Silicon(M1 이상) | Apple Silicon / ARM64용 macOS DMG      |
+| macOS 12+ — Intel                  | Intel / x64용 macOS DMG                |
+| Windows x64                        | Windows x64 설치 프로그램(코드 서명됨) |
+| Linux x64                          | Linux x64 AppImage 또는 Debian 패키지  |
 
 [공식 다운로드 페이지](https://aipoch.com/open-science/download)에서 다운로드하세요. 필요하면 [다운로드 검증](../../SECURITY.md#verifying-your-download)을 참고하세요.
 
