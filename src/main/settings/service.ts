@@ -1,3 +1,4 @@
+import type { ReviewStagedSkill } from '../skills/skill-publication-review'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { ClassificationSettingsOwner } from './classification-settings'
@@ -1059,8 +1060,13 @@ class SettingsService {
     return this.skills.withHostSkillRead(id, read)
   }
 
-  async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
-    return this.skills.publishHostSkill(name, sourcePath, overwrite)
+  async publishHostSkill(
+    name: string,
+    sourcePath: string,
+    overwrite: boolean,
+    reviewStaged?: ReviewStagedSkill
+  ): Promise<string> {
+    return this.skills.publishHostSkill(name, sourcePath, overwrite, reviewStaged)
   }
 
   async buildSkillExport(id: string): Promise<SkillExportArchive> {

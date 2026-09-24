@@ -789,3 +789,57 @@ describe('NotebookPackageOperations', () => {
     expect(result.target).toMatchObject({ label: 'Research Python' })
   })
 })
+
+it('invalidates a package plan when the session switches runtime during review', async () => {
+  const active = session(
+    'approval-session',
+    binding('python', '/python/first', 'managed', 'analysis')
+  )
+  const approve = vi.fn(async () => {
+    active.setRuntimeBinding('python', binding('python', '/python/second', 'managed', 'other'))
+    return true
+  })
+  const { owner, options } = harness(active, {
+    installationApproval: () => approve,
+    installPackages: async (_request, deps) => ({
+      ok: await deps!.approveInstallationPlan!({
+        kind: 'package-installation',
+        installer: 'pip',
+        packages: [
+          {
+            name: 'numpy',
+            version: '2.0',
+            url: 'https://example.org/numpy.whl',
+            sha256: 'a'.repeat(64),
+            requested: true
+          }
+        ]
+      }),
+      needsRestart: false,
+      log: '',
+      method: 'pip'
+    })
+  })
+  vi.mocked(options.environmentStateTracker.inspectPackages).mockResolvedValue({
+    inventory: { source: 'full-scan', validation: 'full-scan' },
+    packages: [
+      {
+        name: 'numpy',
+        requested: 'numpy',
+        status: 'installed',
+        version: '1.0',
+        versionStatus: 'known'
+      }
+    ]
+  })
+  const result = await owner.manage({
+    language: 'python',
+    packages: ['numpy==2.0'],
+    usePip: true,
+    projectId: 'project',
+    sessionId: 'approval-session'
+  })
+  expect(result.ok).toBe(false)
+  expect(result.target).toMatchObject({ runtimeId: '/python/first' })
+  expect(approve).toHaveBeenCalledOnce()
+})

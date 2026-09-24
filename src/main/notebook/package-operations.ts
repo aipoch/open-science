@@ -1,3 +1,4 @@
+import type { ApproveWheelInstall } from './approved-wheel-install'
 import type { NotebookLanguage, NotebookSessionRequest } from '../../shared/notebook'
 import type { PackageMirror } from '../../shared/mirror'
 import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
@@ -48,6 +49,10 @@ type InspectPackagesResult = PackageInspectionResult & {
 type PackageSession = NotebookSessionAggregate
 
 type NotebookPackageOperationsOptions = {
+  installationApproval?: (
+    target: NotebookPackageAdmittedTarget,
+    signal?: AbortSignal
+  ) => ApproveWheelInstall | undefined
   storageRoot: string
   runtimeRoot: string
   locale: string
@@ -137,6 +142,32 @@ class NotebookPackageOperations {
       createEnvironmentCaptureTarget: options.createEnvironmentCaptureTarget
     })
     this.mutation = new NotebookPackageMutationOwner({
+      installationApproval: (target, signal) => {
+        const approve = options.installationApproval?.(target, signal)
+        if (!approve) return undefined
+        return async (plan) => {
+          if (!(await approve(plan))) return false
+          const current = await this.admission.resolveTarget(target.request)
+          if (
+            current.status !== 'resolved' ||
+            !('runtimeId' in current.receipt) ||
+            (current.binding?.status !== undefined && current.binding.status !== 'active') ||
+            JSON.stringify(current.receipt) !== JSON.stringify(target.receipt)
+          )
+            return false
+          const enablement = await options.resolveRuntimeEnablement(target.request.language)
+          if (enablement?.enabled[current.receipt.runtimeId] === false) return false
+          if (
+            !current.binding &&
+            (await options.isDefaultEnvironmentDisabled(
+              target.request.language,
+              options.runtimeRoot
+            ))
+          )
+            return false
+          return true
+        }
+      },
       storageRoot: options.storageRoot,
       runtimeRoot: options.runtimeRoot,
       environmentOperations: options.environmentOperations,

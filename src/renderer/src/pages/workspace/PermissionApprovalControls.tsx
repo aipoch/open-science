@@ -1,3 +1,4 @@
+import { ConfigurationPlanDetail } from './ConfigurationPlanDetail'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
@@ -825,11 +826,16 @@ const PermissionApprovalCard = ({
       )
     : undefined
   const sourcePresentation = describePermissionRequest(request)
+  const concretePlan = hasConfigurationPlan(request)
   const presentation: PermissionPresentation = {
     ...sourcePresentation,
-    actionTitle: t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
-      ...sourcePresentation.actionTitleValues
-    }),
+    actionTitle: concretePlan
+      ? request.title === 'Review installation plan'
+        ? t('Review installation plan')
+        : t('Review configuration changes')
+      : t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
+          ...sourcePresentation.actionTitleValues
+        }),
     categoryLabel: t(sourcePresentation.categoryLabel),
     description: t(sourcePresentation.description)
   }
@@ -837,7 +843,7 @@ const PermissionApprovalCard = ({
   const denyOptionId = getDenyOptionId(request.options)
   // Translate the complete action so languages can choose their own verb and scope order.
   const allowLabel: Record<PermissionScope, string> = {
-    once: t('Allow once'),
+    once: concretePlan ? t('Approve') : t('Allow once'),
     session: t('Allow for this conversation'),
     project: t('Allow for this project'),
     global: t('Allow globally')
@@ -1056,6 +1062,8 @@ const PermissionApprovalCard = ({
             </details>
           ) : null}
         </div>
+      ) : hasConfigurationPlan(request) ? (
+        <ConfigurationPlanDetail request={request} />
       ) : literatureSummary ? (
         <WorkspaceLiteratureToolCard summary={literatureSummary} isApproval />
       ) : isNotebookNetworkApprovalRequest(request) ? (
@@ -1265,3 +1273,21 @@ const PermissionApprovalControls = ({
 }
 
 export { PermissionApprovalControls }
+
+function hasConfigurationPlan(request: AcpPermissionRequest): boolean {
+  if (request.appOwned && request.approvalPlan?.format === 'json-v1') return true
+  if (
+    !request.appOwned ||
+    !request.rawInput ||
+    typeof request.rawInput !== 'object' ||
+    !('configurationPlan' in request.rawInput)
+  )
+    return false
+  const plan = request.rawInput.configurationPlan
+  return Boolean(
+    plan &&
+    typeof plan === 'object' &&
+    'kind' in plan &&
+    ['package-installation', 'agent-configuration', 'skill-publication'].includes(String(plan.kind))
+  )
+}

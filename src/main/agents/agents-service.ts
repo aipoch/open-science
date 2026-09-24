@@ -1,3 +1,4 @@
+import type { ApproveConfigurationPlan } from './configuration-plan-approval'
 // host.agents adapter: the control-plane SDK's server-side read surface.
 //
 // This module is the ONLY place that turns internal Specialist/catalog records into the public
@@ -74,6 +75,7 @@ export type AgentsServiceDeps = {
   // may leave these unset; the dispatcher routes privileged ops through
   // `approvalGateway` and signals approved switches via `switchNotifier`. They are SERVER-supplied
   // — never reachable from sandbox request params (the RPC route strips reserved keys first).
+  approvePlan?: ApproveConfigurationPlan
   approvalGateway?: ApprovalGateway
   switchNotifier?: SwitchNotifier
   approvalLifecycle?: {
@@ -245,7 +247,9 @@ export class AgentsService {
             {
               specialistService: this.deps.specialistService,
               catalog: this.mutationCatalog(),
-              approvalGateway: this.deps.approvalGateway
+              approvalGateway: this.deps.approvalGateway,
+              approvePlan: this.deps.approvePlan,
+              context
             }
           )
         )

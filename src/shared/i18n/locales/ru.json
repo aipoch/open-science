@@ -6739,6 +6739,9 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Результаты ИИ в реальном времени. Ручные решения по-прежнему определяют состав коллекции.",
     "Start an update to see the screening process.": "Запустите обновление, чтобы увидеть процесс отбора.",
     "Pending candidates": "Кандидаты в ожидании",
-    "Pause analysis": "Приостановить анализ"
+    "Pause analysis": "Приостановить анализ",
+    "Review configuration changes": "Проверить изменения конфигурации",
+    "Approval applies only to the target and content shown below.": "Утверждение относится только к указанным ниже объекту и содержимому.",
+    "Review installation plan": "Проверить план установки"
   }
 }

@@ -1,3 +1,4 @@
+import type { ReviewStagedSkill } from './skill-publication-review'
 import type {
   AgentHomeSkillRef,
   AgentHomeSkillSource,
@@ -112,14 +113,16 @@ class UserSkillRepository {
     name: string,
     sourcePath: string,
     overwrite = false,
-    reservedNames: readonly string[] = []
+    reservedNames: readonly string[] = [],
+    reviewStaged?: ReviewStagedSkill
   ): Promise<string> {
     return this.store.publishPersonalDirectory(
       name,
       sourcePath,
       overwrite,
       (staging) => this.agentHomeSkills.validatePublishedSkillPackage(staging),
-      reservedNames
+      reservedNames,
+      reviewStaged
     )
   }
 

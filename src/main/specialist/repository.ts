@@ -421,7 +421,7 @@ export class SpecialistRepository {
   }
 
   // Insert a new specialist (caller supplies a fully-formed record).
-  async insert(specialist: StoredSpecialist): Promise<StoredSpecialists> {
+  async insert(specialist: StoredSpecialist, signal?: AbortSignal): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       // Check uniqueness of id and name.
       if (doc.specialists.some((s) => s.id === specialist.id)) {
@@ -431,14 +431,15 @@ export class SpecialistRepository {
         throw agentsPublicError(`Specialist with name "${specialist.name}" already exists.`)
       }
       return { ...doc, specialists: [...doc.specialists, specialist] }
-    })
+    }, signal)
   }
 
   // Replace an existing specialist by id (revision must match expectedRevision).
   async update(
     id: string,
     patch: Partial<StoredSpecialist>,
-    expectedRevision: number
+    expectedRevision: number,
+    signal?: AbortSignal
   ): Promise<StoredSpecialists> {
     return this.mutate((doc) => {
       const index = doc.specialists.findIndex((s) => s.id === id)
@@ -462,7 +463,7 @@ export class SpecialistRepository {
       const specialists = [...doc.specialists]
       specialists[index] = updated
       return { ...doc, specialists }
-    })
+    }, signal)
   }
 
   // Toggle enabled without revision check (simple toggle).
@@ -533,10 +534,14 @@ export class SpecialistRepository {
   }
 
   // Serializes mutations so concurrent callers cannot clobber each other.
-  private mutate(fn: (doc: StoredSpecialists) => StoredSpecialists): Promise<StoredSpecialists> {
+  private mutate(
+    fn: (doc: StoredSpecialists) => StoredSpecialists,
+    signal?: AbortSignal
+  ): Promise<StoredSpecialists> {
     const run = this.saveQueue.then(async () => {
       const current = await this.readWritableDocument()
       const next = fn(current)
+      signal?.throwIfAborted()
       await this.write(next)
       return next
     })

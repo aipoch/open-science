@@ -1,3 +1,4 @@
+import { prepareProtectedRuntime } from './prepare-protected-runtime'
 import { createLogger } from '../logger'
 import {
   NotebookExecutionStopError,
@@ -1104,6 +1105,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (rLibrary && (await resolveExternalRLibrary(rLibrary)) !== rLibrary) {
       throw new Error('The authorized R package library changed. Select and authorize it again.')
     }
+    if (this.processSandbox && this.platform === 'linux' && request.runtimeRoot)
+      await prepareProtectedRuntime(request.runtimeRoot)
     const sandboxed = this.processSandbox
       ? await this.processSandbox.wrap({
           executable: invocation.executable,
@@ -1144,6 +1147,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
             ]),
             deniedReadRoots: request.protectedDirs ?? [],
             deniedWriteRoots: presentPaths([
+              ...(request.runtimeRoot
+                ? [join(request.runtimeRoot, 'envs'), join(request.runtimeRoot, 'approval-plans')]
+                : []),
+              request.resolvedInterpreter?.condaPrefix ?? '',
+              request.resolvedInterpreter?.rLibrary ?? '',
               request.inputRoot ?? '',
               ...(request.protectedDirs ?? [])
             ])

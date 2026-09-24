@@ -70,7 +70,8 @@
     "src/main/skills/user-skill-repository.atomic.test.ts",
     "src/main/skills/user-skill-repository.test.ts",
     "src/main/skills/zip-extract.test.ts",
-    "src/main/skills/zip-extract.ts"
+    "src/main/skills/zip-extract.ts",
+    "src/main/skills/skill-publication-review.ts"
   ],
   "interfacePaths": [
     "src/main/skills/user-skill-repository.ts",
@@ -96,7 +97,8 @@
     "src/main/skills/skill-files.ts",
     "src/main/skills/skill-mutation-owner.ts",
     "src/main/skills/skill-name.ts",
-    "src/main/skills/specialist-package-adapter.ts"
+    "src/main/skills/specialist-package-adapter.ts",
+    "src/main/skills/skill-publication-review.ts"
   ],
   "consumerModules": ["settings_service_facade"],
   "testFiles": {

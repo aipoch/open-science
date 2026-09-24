@@ -2362,3 +2362,55 @@ describe('installPackages shared pkgs cache lock', () => {
     expect(order).toEqual(['pip-start', 'repair', 'pip-end'])
   })
 })
+
+it('disables all pip config in both concrete-plan spawns while preserving explicit index and CA', async () => {
+  const { writeFile } = await import('node:fs/promises')
+  const { devNull } = await import('node:os')
+  const root = mkdtempSync(join(tmpdir(), 'pip-plan-env-'))
+  const environments: Array<NodeJS.ProcessEnv | undefined> = []
+  const commands: string[][] = []
+  try {
+    const result = await installPackages(
+      { language: 'python', packages: ['example'], usePip: true },
+      {
+        storageRoot: root,
+        interpreter: { command: '/selected/python' },
+        pypiIndex: 'https://approved.example/simple',
+        caBundle: '/approved/ca.pem',
+        approveInstallationPlan: async () => true,
+        spawn: async (_command, args, env) => {
+          commands.push(args)
+          environments.push(env)
+          if (args.includes('--report'))
+            await writeFile(
+              args[args.indexOf('--report') + 1],
+              JSON.stringify({
+                version: '1',
+                install: [
+                  {
+                    metadata: { name: 'example', version: '1' },
+                    requested: true,
+                    download_info: {
+                      url: 'https://approved.example/example-1-py3-none-any.whl',
+                      archive_info: { hashes: { sha256: 'a'.repeat(64) } }
+                    }
+                  }
+                ]
+              })
+            )
+          return { code: 0, stdout: '', stderr: '' }
+        }
+      }
+    )
+    expect(result.ok, result.error).toBe(true)
+    expect(environments).toHaveLength(2)
+    for (const env of environments) {
+      expect(env?.PIP_CONFIG_FILE).toBe(devNull)
+      expect(env?.SSL_CERT_FILE).toBe('/approved/ca.pem')
+    }
+    expect(commands[0]).toContain('https://approved.example/simple')
+    expect(commands[1]).toContain('--no-deps')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

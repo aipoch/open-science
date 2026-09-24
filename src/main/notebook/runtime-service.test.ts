@@ -4288,7 +4288,7 @@ describe('notebook runtime service', () => {
         notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
         inputRoot: getNotebookInputRoot(root, 'default-project', 'session-1'),
         projectId: 'default-project',
-        protectedDirs: [join(root, 'claude')],
+        protectedDirs: [join(root, 'claude'), join(root, 'skills'), join(root, 'specialists.json')],
         environment: expect.any(Object),
         runtimeRoot: getRuntimeRoot(root),
         sessionId: 'session-1',

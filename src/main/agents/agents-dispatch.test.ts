@@ -32,6 +32,7 @@ const noopSpecialistService = (): SpecialistService =>
 describe('AgentsService.dispatch — extensible operation dispatcher', () => {
   it('routes a read op identically to read()', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: {
         list: vi.fn(async () => [
           {
@@ -61,6 +62,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('rejects an unknown op with a sanitized host.agents.<op>: error', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
@@ -69,6 +71,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('rejects a malformed request (no op) with a host.agents.unknown: error', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
@@ -93,6 +96,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
         }) as SpecialistView
     )
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: { list: vi.fn(), getByName } as unknown as SpecialistService,
       catalog: noopCatalog()
     })
@@ -119,6 +123,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
     // With no gateway wired, delete surfaces a sanitized "not configured" error rather than
     // silently no-op'ing.
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
@@ -141,6 +146,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
       revision: 1
     }))
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: {
         ...noopSpecialistService(),
         create: created
@@ -176,6 +182,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('switch fails closed when its approval/binding/persistence seams are not configured', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
@@ -186,6 +193,7 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
 
   it('reads unchanged: existing list/get/list_skills behavior preserved', async () => {
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: noopSpecialistService(),
       catalog: noopCatalog()
     })
@@ -251,6 +259,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     }
     const notifier: SwitchNotifier = { notify }
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService,
       catalog: noopCatalog(),
       approvalGateway: gateway,
@@ -378,6 +387,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     }
     const invalidateCatalog = vi.fn(async () => undefined)
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService,
       catalog: noopCatalog(),
       approvalGateway: gateway,
@@ -430,6 +440,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       decide: vi.fn(async (): Promise<ApprovalResult> => ({ status: 'approved' }))
     }
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService,
       catalog: noopCatalog(),
       approvalGateway: gateway
@@ -464,6 +475,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       attachSkill
     } as unknown as SpecialistService)
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService,
       catalog: {
         ...noopCatalog(),
@@ -592,6 +604,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     }
     const invalidateCatalog = vi.fn(async () => undefined)
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService,
       catalog: skillCatalog(),
       approvalGateway: gateway,
@@ -710,6 +723,7 @@ describe('AgentsService — injected seams are fake-able and routed (composition
     }
     const fakeNotifier: SwitchNotifier = { notify: vi.fn() }
     const service = new AgentsService({
+      approvePlan: async () => true,
       specialistService: noopSpecialistService(),
       catalog: noopCatalog(),
       approvalGateway: fakeGateway,

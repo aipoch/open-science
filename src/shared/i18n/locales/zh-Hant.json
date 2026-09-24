@@ -6278,6 +6278,9 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "即時 AI 判定。合集是否收錄仍以人工決定為準。",
     "Start an update to see the screening process.": "開始更新後即可檢視篩選過程。",
     "Pending candidates": "待篩選論文",
-    "Pause analysis": "暫停分析"
+    "Pause analysis": "暫停分析",
+    "Review configuration changes": "審閱設定變更",
+    "Approval applies only to the target and content shown below.": "核准僅適用於下方顯示的目標和內容。",
+    "Review installation plan": "審閱安裝方案"
   }
 }

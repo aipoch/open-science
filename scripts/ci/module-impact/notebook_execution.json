@@ -183,7 +183,13 @@
     "src/main/notebook/windows-micromamba-runner.test.ts",
     "src/main/notebook/windows-micromamba-runner.ts",
     "src/main/notebook/windows-micromamba-working-cache.ts",
-    "src/main/notebook/windows-runtime-binding.ts"
+    "src/main/notebook/windows-runtime-binding.ts",
+    "src/main/notebook/analysis-write-protection.integration.test.ts",
+    "src/main/notebook/approved-wheel-install.live.test.ts",
+    "src/main/notebook/approved-wheel-install.test.ts",
+    "src/main/notebook/approved-wheel-install.ts",
+    "src/main/notebook/prepare-protected-runtime.ts",
+    "src/main/notebook/protected-runtime-linux.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/configured-shell-runtime.ts",
@@ -265,7 +271,9 @@
     "src/main/notebook/runtime-workflows.ts",
     "src/main/notebook/shell-runtime.ts",
     "src/main/notebook/windows-micromamba-runner.ts",
-    "src/main/notebook/windows-micromamba-working-cache.ts"
+    "src/main/notebook/windows-micromamba-working-cache.ts",
+    "src/main/notebook/approved-wheel-install.ts",
+    "src/main/notebook/prepare-protected-runtime.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -337,7 +345,11 @@
       "src/main/notebook/runtime-workflows.test.ts",
       "src/main/notebook/shell-runtime.test.ts",
       "src/main/notebook/windows-first-r-access.integration.test.ts",
-      "src/main/notebook/windows-micromamba-runner.test.ts"
+      "src/main/notebook/windows-micromamba-runner.test.ts",
+      "src/main/notebook/analysis-write-protection.integration.test.ts",
+      "src/main/notebook/approved-wheel-install.live.test.ts",
+      "src/main/notebook/approved-wheel-install.test.ts",
+      "src/main/notebook/protected-runtime-linux.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -270,7 +270,8 @@
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/wsl-setup-powershell.integration.test.ts",
     "src/main/notebook/wsl2-shell.integration.test.ts",
-    "src/main/notebook/file-evidence-publication.integration.test.ts"
+    "src/main/notebook/file-evidence-publication.integration.test.ts",
+    "src/main/notebook/local-rpc-server.plan-approval.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/analysis-version.ts",
@@ -522,7 +523,8 @@
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
       "src/main/notebook/wsl2-shell.integration.test.ts",
-      "src/main/notebook/file-evidence-publication.integration.test.ts"
+      "src/main/notebook/file-evidence-publication.integration.test.ts",
+      "src/main/notebook/local-rpc-server.plan-approval.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

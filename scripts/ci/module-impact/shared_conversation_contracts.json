@@ -48,7 +48,8 @@
     "src/shared/runtime-session-projection.ts",
     "src/shared/session-conversation-command.test.ts",
     "src/shared/session-conversation-command.ts",
-    "src/shared/runtime-session-admission.ts"
+    "src/shared/runtime-session-admission.ts",
+    "src/shared/approval-plan-preview.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -83,7 +84,8 @@
     "src/shared/runtime-message-identity.ts",
     "src/shared/runtime-session-projection.ts",
     "src/shared/session-conversation-command.ts",
-    "src/shared/runtime-session-admission.ts"
+    "src/shared/runtime-session-admission.ts",
+    "src/shared/approval-plan-preview.ts"
   ],
   "consumerModules": [],
   "testFiles": {

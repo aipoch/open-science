@@ -1000,6 +1000,7 @@ describe('completion gate tracer bullet', () => {
     })
     const coordinator = new CompletionGateCoordinator(runtime)
     const agents = new AgentsService({
+      approvePlan: async () => true,
       specialistService: {
         getByName: vi.fn(async () => specialist),
         resolveRunnableByName: vi.fn(async () => specialist),

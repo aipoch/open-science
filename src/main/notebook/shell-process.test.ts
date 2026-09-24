@@ -651,7 +651,10 @@ describe('notebook shell process behavior', () => {
     expect(result.stderr).toContain('null bytes')
     expect(result.errorCode).toBeUndefined()
     const [sandboxInvocation] = vi.mocked(processSandbox.wrap).mock.calls[0]
-    expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([])
+    expect(sandboxInvocation.filesystem.deniedWriteRoots).toEqual([
+      join(runtimeRoot, 'envs'),
+      join(runtimeRoot, 'approval-plans')
+    ])
     expect(cleanup).toHaveBeenCalledOnce()
     expect(endExecution).toHaveBeenCalledOnce()
     await rm(runtimeRoot, { recursive: true, force: true })

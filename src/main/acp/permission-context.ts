@@ -741,11 +741,14 @@ class AcpPermissionContext {
     sessionId: string
     title: string
     rawInput: unknown
+    configurationPlan?: unknown
+    permissionPrompts?: 'none'
     signal?: AbortSignal
   }): Promise<boolean> {
     return this.broker.requestAppApproval({
       ...input,
       permissionPrompts:
+        input.permissionPrompts ??
         this.options.routing.permissionPromptsForSession?.(input.sessionId) ??
         this.options.routing.capturePrompt(input.sessionId)?.permissionPrompts
     })
@@ -755,6 +758,7 @@ class AcpPermissionContext {
     return this.broker.requestAppPermission({
       ...input,
       permissionPrompts:
+        input.permissionPrompts ??
         this.options.routing.permissionPromptsForSession?.(input.sessionId) ??
         this.options.routing.capturePrompt(input.sessionId)?.permissionPrompts
     })

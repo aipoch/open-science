@@ -40,6 +40,7 @@ type EnvironmentManagementSession = {
 }
 
 type NotebookEnvironmentManagementOptions = {
+  requiresInstallationPlan?: (sessionId: string) => boolean
   runtimeRoot: string
   manager?: NotebookEnvironmentManager
   sessions: () => Iterable<EnvironmentManagementSession>
@@ -74,6 +75,11 @@ class NotebookEnvironmentManagementOwner {
 
     switch (request.action) {
       case 'create': {
+        if (request.sessionId && this.options.requiresInstallationPlan?.(request.sessionId)) {
+          throw new Error(
+            'Auto environment creation is unavailable until its complete installation plan can be approved. Do not create a dedicated environment to bypass package approval.'
+          )
+        }
         if (!(await this.options.isAgentEnvironmentCreationEnabled())) {
           throw new Error(
             'AGENT_ENVIRONMENT_CREATION_DISABLED: creating Runtime Environments by the Agent is ' +

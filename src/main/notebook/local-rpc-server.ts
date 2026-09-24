@@ -397,6 +397,9 @@ type NotebookRpcSessionBinding = {
   delegatedWorkRole?: 'main' | 'delegate'
   delegatedWorkAttemptId?: string
   allowedMethods?: ReadonlySet<string>
+  permissionPrompts?: 'none'
+  parentCapabilitySignal?: AbortSignal
+  controlInvocationLifetime?: AbortController
   capabilityLifetime?: AbortController
   activeControlInvocation?: TrustedControlInvocationIdentity
   executionCwd?: string
@@ -882,6 +885,8 @@ class NotebookLocalRpcServer {
     this.startPromise = undefined
     this.artifactRpcCapabilities.clear()
     for (const binding of this.sessionRpcCapabilities.values()) {
+      binding.capabilityLifetime?.abort()
+      binding.controlInvocationLifetime?.abort()
       if (binding.activeControlInvocation) {
         this.hostViewImage?.discard(binding.activeControlInvocation.toolInvocationId)
       }
@@ -1287,7 +1292,8 @@ class NotebookLocalRpcServer {
       projectId,
       agentFrameId: resolvedAgentFrameId,
       memoryTools,
-      delegatedWorkRole: 'main'
+      delegatedWorkRole: 'main',
+      capabilityLifetime: new AbortController()
     })
     return {
       endpoint: connection.endpoint,
@@ -1355,7 +1361,8 @@ class NotebookLocalRpcServer {
       ]),
       delegatedWorkRole: 'delegate',
       delegatedWorkAttemptId: scope.attemptId,
-      delegatedNotebook
+      delegatedNotebook,
+      capabilityLifetime: new AbortController()
     })
     let revokePromise: Promise<void> | undefined
     const revoke = (): Promise<void> => {
@@ -1472,7 +1479,20 @@ class NotebookLocalRpcServer {
       resolvedSessionId !== sessionId && agentFrameId === `root-frame-${sessionId}`
         ? `root-frame-${resolvedSessionId}`
         : agentFrameId
+    const delegatedOwner = delegatedWorkIdentity.attemptId
+      ? [...this.sessionRpcCapabilities.values()].find(
+          (entry) =>
+            entry.sessionId === resolvedSessionId &&
+            entry.agentFrameId === resolvedAgentFrameId &&
+            entry.delegatedNotebook?.attemptId === delegatedWorkIdentity.attemptId &&
+            !entry.delegatedNotebook?.revoked
+        )
+      : undefined
     const binding: NotebookRpcSessionBinding = {
+      permissionPrompts:
+        delegatedOwner?.delegatedNotebook?.permissionPrompts ??
+        (delegatedWorkIdentity.role === 'delegate' && !delegatedOwner ? 'none' : undefined),
+      parentCapabilitySignal: delegatedOwner?.capabilityLifetime?.signal,
       sessionId: resolvedSessionId,
       projectId,
       agentFrameId: resolvedAgentFrameId,
@@ -1486,6 +1506,7 @@ class NotebookLocalRpcServer {
           ? DELEGATED_CONTROL_RPC_METHODS
           : CONTROL_RPC_METHODS,
       isControl: true,
+      capabilityLifetime: new AbortController(),
       ...(executionCwd ? { executionCwd } : {})
     }
     this.sessionRpcCapabilities.set(token, binding)
@@ -1496,9 +1517,13 @@ class NotebookLocalRpcServer {
       socketPath: connection.socketPath,
       token,
       beginControlInvocation: (context) => {
+        binding.controlInvocationLifetime?.abort()
+        const invocationLifetime = new AbortController()
+        binding.controlInvocationLifetime = invocationLifetime
         binding.activeControlInvocation = context
         ownedControlInvocationIds.add(context.toolInvocationId)
         return () => {
+          invocationLifetime.abort()
           if (binding.activeControlInvocation === context) {
             delete binding.activeControlInvocation
           }
@@ -2129,6 +2154,9 @@ class NotebookLocalRpcServer {
             ...(method === 'agentsCall' || method === 'skillsCall'
               ? {
                   session_id: sessionBinding.sessionId,
+                  permissionPrompts:
+                    sessionBinding.permissionPrompts ??
+                    sessionBinding.delegatedNotebook?.permissionPrompts,
                   caller_role:
                     sessionBinding.delegatedWorkRole === 'delegate' ? 'delegate' : 'main',
                   turn_id: sessionBinding.activeControlInvocation?.turnId,
@@ -2144,7 +2172,9 @@ class NotebookLocalRpcServer {
                   frame_id: sessionBinding.agentFrameId,
                   caller_role: sessionBinding.delegatedWorkRole,
                   attempt_id: sessionBinding.delegatedWorkAttemptId,
-                  permissionPrompts: sessionBinding.delegatedNotebook?.permissionPrompts,
+                  permissionPrompts:
+                    sessionBinding.permissionPrompts ??
+                    sessionBinding.delegatedNotebook?.permissionPrompts,
                   origin_message_id:
                     sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
                     sessionBinding.activeControlInvocation?.originatingUserMessageId,
@@ -2272,11 +2302,22 @@ class NotebookLocalRpcServer {
       writeProducerSignal?.throwIfAborted()
       const dispatchSignals = [
         disconnect.signal,
+        ...(authenticatedBinding?.parentCapabilitySignal
+          ? [authenticatedBinding.parentCapabilitySignal]
+          : []),
+        ...(authenticatedBinding?.controlInvocationLifetime
+          ? [authenticatedBinding.controlInvocationLifetime.signal]
+          : []),
         ...(writeProducerSignal ? [writeProducerSignal] : []),
         ...(authenticatedBinding?.capabilityLifetime
           ? [authenticatedBinding.capabilityLifetime.signal]
           : [])
       ]
+      const dispatchPolicy = {
+        permissionPrompts:
+          authenticatedBinding?.permissionPrompts ??
+          authenticatedBinding?.delegatedNotebook?.permissionPrompts
+      }
       const dispatchSignal =
         dispatchSignals.length === 1 ? dispatchSignals[0] : AbortSignal.any(dispatchSignals)
       const result =
@@ -2295,7 +2336,8 @@ class NotebookLocalRpcServer {
                         recordStopFailure(error)
                         activeRequest.settle()
                       }
-                    : undefined
+                    : undefined,
+                  dispatchPolicy
                 )
               )
             : await this.dispatch(
@@ -2303,7 +2345,9 @@ class NotebookLocalRpcServer {
                 resolvedParams,
                 dispatchSignal,
                 checkMemoryAccess,
-                artifactAdmission?.addBytes
+                artifactAdmission?.addBytes,
+                undefined,
+                dispatchPolicy
               )
 
       writeJson(response, 200, { result })
@@ -2380,7 +2424,8 @@ class NotebookLocalRpcServer {
     signal: AbortSignal,
     checkMemoryAccess?: () => Promise<void>,
     onArtifactMetadataBytes?: (bytes: number) => void,
-    onExecutionSettled?: (error?: unknown) => void
+    onExecutionSettled?: (error?: unknown) => void,
+    trustedPolicy: { permissionPrompts?: 'none' } = {}
   ): Promise<unknown> {
     if (WSL_SETUP_RPC_METHODS.has(method)) {
       if (!this.wslSetup || !this.wslSetupSessions) {
@@ -3101,6 +3146,8 @@ class NotebookLocalRpcServer {
         turnId && controlInvocationGeneration !== undefined && toolInvocationId
           ? {
               sessionId: resolvedSessionId,
+              signal,
+              permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
               callerRole,
               turnId,
               controlInvocationGeneration,
@@ -3120,7 +3167,12 @@ class NotebookLocalRpcServer {
                   ?.filter((input) => input.sourceKind === 'artifact-version')
                   .map((input) => input.sourceFileId) ?? []
             }
-          : { sessionId: resolvedSessionId, callerRole }
+          : {
+              sessionId: resolvedSessionId,
+              callerRole,
+              signal,
+              permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined
+            }
       )
     }
 
@@ -3325,7 +3377,11 @@ class NotebookLocalRpcServer {
       const op = typeof params.op === 'string' ? params.op : ''
       return this.skillsService.dispatch(
         { op, params: stripAgentsReservedParams(params) },
-        { sessionId }
+        {
+          sessionId,
+          signal,
+          permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined
+        }
       )
     }
 
@@ -3349,8 +3405,13 @@ class NotebookLocalRpcServer {
         }
       }
     }
+    if (method === 'managePackages') {
+      const { permissionPrompts: _untrustedPolicy, ...request } = trustedParams
+      void _untrustedPolicy
+      trustedParams = request
+    }
     const handler = parseRpcParams(() =>
-      resolveNotebookLocalRpcHandler(this.service, method, trustedParams)
+      resolveNotebookLocalRpcHandler(this.service, method, trustedParams, trustedPolicy)
     )
 
     const projectId =

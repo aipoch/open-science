@@ -272,7 +272,7 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', bogus_field: 'x' } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
@@ -283,7 +283,7 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 42 } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
@@ -294,7 +294,7 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: Number.NaN } } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
   })
@@ -305,7 +305,7 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', skill_names: 'demo' } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
@@ -316,7 +316,7 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: 1, oops: true } } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
   })
@@ -332,13 +332,13 @@ describe('executeAgentsMutation — payload validation (rejects before reaching 
           op: 'create',
           params: { name: 'Bio', connector_tools: [{ connectorId: 'c', includedMethods: ['x'] }] }
         },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio2', include_tools_pattern: 'c.*' } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
@@ -350,7 +350,7 @@ describe('executeAgentsMutation — create', () => {
     const { catalog } = makeCatalog(skills(), connectors())
     const result = (await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', description: 'd', system_prompt: 'p' } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )) as SpecialistView
     expect(svc.calls[0].method).toBe('create')
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
@@ -363,7 +363,7 @@ describe('executeAgentsMutation — create', () => {
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'Skill One' }), connectors())
     const result = (await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', skill_names: ['sk1'] } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )) as SpecialistView
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.capabilityMode).toBe('selected')
@@ -377,7 +377,7 @@ describe('executeAgentsMutation — create', () => {
     const { catalog } = makeCatalog(skills(), connectors({ id: 'c1', displayName: 'Conn' }))
     await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', connector_names: ['c1'] } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.capabilityMode).toBe('selected')
@@ -406,7 +406,7 @@ describe('executeAgentsMutation — create', () => {
           connector_names: ['c1']
         }
       },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )) as SpecialistView
     // read-back is a real view: it carries id + revision + enabled always true (create default),
     // and capability resolved against the stable IDs, not the echoed public name.
@@ -421,7 +421,10 @@ describe('executeAgentsMutation — create', () => {
     const svc = makeSpecialistService([])
     const { catalog } = makeCatalog([], [])
     await expect(
-      executeAgentsMutation({ op: 'create', params: {} }, { specialistService: svc, catalog })
+      executeAgentsMutation(
+        { op: 'create', params: {} },
+        { specialistService: svc, approvePlan: async () => true, catalog }
+      )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
 
@@ -430,7 +433,7 @@ describe('executeAgentsMutation — create', () => {
     const { catalog } = makeCatalog(skills({ id: 'stable-1', name: 'Skill One' }), connectors())
     await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', skill_names: ['Skill One'] } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.selectedCapabilities?.skillIds).toEqual(['stable-1'])
@@ -444,7 +447,7 @@ describe('executeAgentsMutation — create', () => {
     )
     await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', connector_names: ['my-connector'] } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
     expect(passed.selectedCapabilities?.connectorIds).toEqual(['stable-c'])
@@ -459,7 +462,7 @@ describe('executeAgentsMutation — create', () => {
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', skill_names: ['Dup'] } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/stable id/)
   })
@@ -472,7 +475,7 @@ describe('executeAgentsMutation — create', () => {
     )
     const result = (await executeAgentsMutation(
       { op: 'create', params: { name: 'Bio', skill_names: ['sk1'] } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )) as SpecialistView
     expect(svc.calls[0].method).toBe('create')
     expect(result.capabilityMode).toBe('selected')
@@ -503,7 +506,7 @@ describe('executeAgentsMutation — update', () => {
           }
         }
       },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )) as SpecialistView
     expect(svc.calls[0].method).toBe('update')
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
@@ -532,7 +535,7 @@ describe('executeAgentsMutation — update', () => {
     const { catalog } = makeCatalog(skills(), connectors())
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, unrestricted: true } } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.capabilityMode).toBe('full')
@@ -557,7 +560,7 @@ describe('executeAgentsMutation — update', () => {
         op: 'update',
         params: { name: 'Bio', patch: { revision: 1, skill_names: ['new1', 'new2'] } }
       },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.capabilityMode).toBe('selected')
@@ -577,7 +580,7 @@ describe('executeAgentsMutation — update', () => {
     const { catalog } = makeCatalog(skills(), connectors({ id: 'c1', displayName: 'C' }))
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, connector_names: ['c1'] } } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.selectedCapabilities?.connectorIds).toEqual(['c1'])
@@ -591,7 +594,7 @@ describe('executeAgentsMutation — update', () => {
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'x' } } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
     expect(svc.calls).toHaveLength(0)
@@ -603,7 +606,12 @@ describe('executeAgentsMutation — update', () => {
     const { catalog } = makeCatalog(skills(), connectors())
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'x' } } },
-      { specialistService: svc, catalog, approvalGateway: { decide } }
+      {
+        specialistService: svc,
+        approvePlan: async () => true,
+        catalog,
+        approvalGateway: { decide }
+      }
     )
     expect(decide).not.toHaveBeenCalled()
   })
@@ -613,7 +621,7 @@ describe('executeAgentsMutation — update', () => {
     const { catalog } = makeCatalog(skills(), connectors())
     const result = (await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'nested desc' } } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )) as SpecialistView
     const passed = svc.calls[0].args[0] as UpdateSpecialistInput
     expect(passed.description).toBe('nested desc')
@@ -629,7 +637,12 @@ describe('executeAgentsMutation — update', () => {
         op: 'update',
         params: { name: 'Bio', patch: { revision: 1, display_name: 'New label' } }
       },
-      { specialistService: svc, catalog, approvalGateway: { decide } }
+      {
+        specialistService: svc,
+        approvePlan: async () => true,
+        catalog,
+        approvalGateway: { decide }
+      }
     )) as SpecialistView
     expect(result).toMatchObject({ name: 'Bio', displayName: 'New label' })
     expect(decide).not.toHaveBeenCalled()
@@ -641,7 +654,7 @@ describe('executeAgentsMutation — update', () => {
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio' } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
     expect(svc.calls).toHaveLength(0)
@@ -654,12 +667,12 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'S' }), connectors())
     await executeAgentsMutation(
       { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 1 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[0]).toEqual({ method: 'attachSkill', args: ['sp-1', 'sk1', 1, 'selected'] })
     await executeAgentsMutation(
       { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 2 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[1]).toEqual({ method: 'detachSkill', args: ['sp-1', 'sk1', 2, 'selected'] })
   })
@@ -669,12 +682,12 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     const { catalog } = makeCatalog(skills({ id: 'sk1', name: 'S' }), connectors())
     await executeAgentsMutation(
       { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 1 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[0]).toEqual({ method: 'attachSkill', args: ['sp-1', 'sk1', 1, 'full'] })
     await executeAgentsMutation(
       { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 2 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[1]).toEqual({ method: 'detachSkill', args: ['sp-1', 'sk1', 2, 'full'] })
   })
@@ -692,7 +705,7 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     )
     await executeAgentsMutation(
       { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'Skill One', revision: 1 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[0]).toEqual({
       method: 'detachSkill',
@@ -705,7 +718,7 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     const { catalog } = makeCatalog(skills(), connectors({ id: 'c1', displayName: 'C' }))
     await executeAgentsMutation(
       { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'c1', revision: 1 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[0]).toEqual({
       method: 'attachConnector',
@@ -714,7 +727,7 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     const svc2 = makeSpecialistService([baseProfile({ revision: 1, capabilityMode: 'full' })])
     await executeAgentsMutation(
       { op: 'detach_connector', params: { name: 'Bio', connector_ref: 'c1', revision: 1 } },
-      { specialistService: svc2, catalog }
+      { specialistService: svc2, approvePlan: async () => true, catalog }
     )
     expect(svc2.calls[0]).toEqual({
       method: 'detachConnector',
@@ -728,7 +741,7 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     await expect(
       executeAgentsMutation(
         { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1' } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.attach_skill:/)
   })
@@ -739,7 +752,7 @@ describe('executeAgentsMutation — attach/detach mutate current mode without sw
     await expect(
       executeAgentsMutation(
         { op: 'detach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 1, extra: 1 } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.detach_skill:/)
   })
@@ -755,7 +768,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     await expect(
       executeAgentsMutation(
         { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'dead', revision: 1 } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.attach_connector:/)
     expect(svc.calls).toHaveLength(0)
@@ -770,7 +783,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     await expect(
       executeAgentsMutation(
         { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'unauth', revision: 1 } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.attach_connector:/)
   })
@@ -784,7 +797,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio', connector_names: ['dead'] } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.create:/)
   })
@@ -797,7 +810,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
     )
     await executeAgentsMutation(
       { op: 'attach_connector', params: { name: 'Bio', connector_ref: 'ok', revision: 1 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[0]).toEqual({ method: 'attachConnector', args: ['sp-1', 'ok', 1, 'selected'] })
   })
@@ -816,7 +829,7 @@ describe('executeAgentsMutation — Connector availability gate', () => {
         op: 'detach_connector',
         params: { name: 'Bio', connector_ref: 'stale-connector', revision: 1 }
       },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls[0]).toEqual({
       method: 'detachConnector',
@@ -834,11 +847,11 @@ describe('executeAgentsMutation — no direct repo writes, no duplicated rules',
     )
     await executeAgentsMutation(
       { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'd' } } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     await executeAgentsMutation(
       { op: 'attach_skill', params: { name: 'Bio', skill_ref: 'sk1', revision: 2 } },
-      { specialistService: svc, catalog }
+      { specialistService: svc, approvePlan: async () => true, catalog }
     )
     expect(svc.calls.map((c) => c.method)).toEqual(['update', 'attachSkill'])
   })
@@ -854,7 +867,7 @@ describe('executeAgentsMutation — errors are sanitized', () => {
     await expect(
       executeAgentsMutation(
         { op: 'create', params: { name: 'Bio' } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow('host.agents.create: Internal operation failed.')
   })
@@ -865,8 +878,45 @@ describe('executeAgentsMutation — errors are sanitized', () => {
     await expect(
       executeAgentsMutation(
         { op: 'update', params: { name: 'Bio', patch: { revision: 1, description: 'x' } } },
-        { specialistService: svc, catalog }
+        { specialistService: svc, approvePlan: async () => true, catalog }
       )
     ).rejects.toThrow(/host\.agents\.update:/)
+  })
+})
+
+describe('configuration plan service boundary', () => {
+  it('requires explicit approval after resolving the actual target and complete input', async () => {
+    const svc = makeSpecialistService([baseProfile()])
+    const { catalog } = makeCatalog(skills(), connectors())
+    const approvePlan = vi.fn(async () => false)
+    await expect(
+      executeAgentsMutation(
+        {
+          op: 'update',
+          params: { name: 'Bio', patch: { revision: 1, system_prompt: 'replacement' } }
+        },
+        { specialistService: svc, catalog, approvePlan, context: { sessionId: 's' } }
+      )
+    ).rejects.toThrow('not approved')
+    expect(svc.calls).toEqual([])
+    expect(approvePlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: 'sp-1',
+        before: expect.objectContaining({ revision: 1 }),
+        changes: { id: 'sp-1', revision: 1, systemPrompt: 'replacement' }
+      }),
+      { sessionId: 's' }
+    )
+  })
+  it('does not treat an outer tool grant or missing approver as a concrete configuration decision', async () => {
+    const svc = makeSpecialistService([])
+    const { catalog } = makeCatalog(skills(), connectors())
+    await expect(
+      executeAgentsMutation(
+        { op: 'create', params: { name: 'new-agent' } },
+        { specialistService: svc, catalog }
+      )
+    ).rejects.toThrow('not approved')
+    expect(svc.calls).toEqual([])
   })
 })
