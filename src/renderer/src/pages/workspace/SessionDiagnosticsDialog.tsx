@@ -88,7 +88,12 @@ export const SessionDiagnosticsDialog = ({
         setItems(inspection.items)
         setSelected(
           inspection.items
-            .filter((item) => item.available && (item.kind !== 'log' || item.id === 'log:main.log'))
+            .filter(
+              (item) =>
+                item.available &&
+                (item.kind !== 'log' || item.id === 'log:main.log') &&
+                item.kind !== 'sensitive-file'
+            )
             .map((item) => item.id)
         )
         setError(diagnosticError(inspection.error, t))
@@ -228,15 +233,21 @@ export const SessionDiagnosticsDialog = ({
               {items.map((item) => {
                 const label = item.kind === 'database' ? t('Session database records') : item.name
                 const description =
-                  item.kind === 'log'
-                    ? item.id === 'log:main.log'
+                  item.kind === 'sensitive-evidence'
+                    ? t('Redacted scanner evidence for the failed Session package export.')
+                    : item.kind === 'sensitive-file'
                       ? t(
-                          'Current application log metadata, including activity outside this session.'
+                          'Original file that triggered the Session package check. It may contain credentials or research content; review it before exporting.'
                         )
-                      : t(
-                          'Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.'
-                        )
-                    : undefined
+                      : item.kind === 'log'
+                        ? item.id === 'log:main.log'
+                          ? t(
+                              'Current application log metadata, including activity outside this session.'
+                            )
+                          : t(
+                              'Historical application log metadata, including activity outside this session. Select manually to investigate earlier issues.'
+                            )
+                        : undefined
                 const sourceCode = diagnosticSourceCode(item.reason)
                 const size = formatByteSize(item.sizeBytes)
 
@@ -284,6 +295,13 @@ export const SessionDiagnosticsDialog = ({
                 )
               })}
             </div>
+            {items.some((item) => item.kind === 'sensitive-file') && (
+              <p className="mt-3 text-xs leading-5 text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                {t(
+                  'Sensitive-content files are unchecked by default. Selecting one includes its original bytes in the local diagnostic archive.'
+                )}
+              </p>
+            )}
             {result && (
               <p role="status">
                 {result.status === 'exported'

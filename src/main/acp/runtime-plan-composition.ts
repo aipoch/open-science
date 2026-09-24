@@ -115,10 +115,18 @@ const composeAcpRuntimePlanWorkflow = (
   const planSessions = options.plan?.sessions
   const deliveryOwner = hooks.deliveries
   const pushEvent = (event: AcpRuntimeEventInput): void => session.publication.pushEvent(event)
+  const withReviewIdentity = (
+    sessionId: string,
+    projection: ActivePlanProjection
+  ): ActivePlanProjection => {
+    const reviewRequestId = interactions.reviewRequestIdFor(sessionId, projection.artifactVersionId)
+    return reviewRequestId ? { ...projection, reviewRequestId } : projection
+  }
   const publishProjection = (sessionId: string, projection: ActivePlanProjection): void => {
+    projection = withReviewIdentity(sessionId, projection)
     try {
       pushEvent({
-        id: `session-plan-${projection.artifactVersionId}-${projection.revision}`,
+        id: `session-plan-${projection.artifactVersionId}-${projection.revision}${projection.reviewRequestId ? `-${projection.reviewRequestId}` : ''}`,
         timestamp: Date.now(),
         kind: 'plan',
         level: 'info',
@@ -564,7 +572,9 @@ const composeAcpRuntimePlanWorkflow = (
     sessionId: string
   ): Promise<ActivePlanProjection | null> => {
     if (!service) return Promise.resolve(null)
-    return service.getProjection(projectId, sessionId)
+    return service
+      .getProjection(projectId, sessionId)
+      .then((current) => (current ? withReviewIdentity(sessionId, current) : null))
   }
   const discardUnavailable = async (input: PlanResponseIdentity): Promise<{ revision: number }> => {
     if (!service) {

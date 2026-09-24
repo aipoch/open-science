@@ -16,7 +16,10 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import type { Annotation } from '../../../../shared/annotations'
+import type { LiteratureItemView } from '../../../../shared/literature'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
+import { literatureReadingDocument } from '../literature/literature-reading'
+import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -1873,6 +1876,57 @@ describe('PreviewPanel', () => {
     })
     await openTabContextMenu(1)
     expect(menuCommands()).not.toContain('toggle-pdf-context')
+  })
+
+  it('keeps a Literature PDF renderer mounted when its first-send binding is materialized', async () => {
+    const entry = {
+      id: 'literature-item-1',
+      item: { title: 'Exact sources' },
+      attachments: [
+        {
+          id: 'attachment-1',
+          kind: 'fullText',
+          versions: [
+            {
+              id: 'literature-version-1',
+              versionNumber: 1,
+              filename: 'exact.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: 1024,
+              pageCount: 2
+            }
+          ]
+        }
+      ]
+    } as unknown as LiteratureItemView
+    const reading = literatureReadingDocument(entry)!
+    const durable = createPreviewFileItemFromPdfContext(
+      {
+        version: 1,
+        bindingId: 'binding-1',
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
+        sourceVersionId: 'literature-version-1',
+        name: 'exact.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        checksum: 'a'.repeat(64),
+        linkedAt: 2
+      },
+      'project-1'
+    )
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      ...reading.item,
+      projectId: 'project-1'
+    })
+    await renderPanel()
+    const initialContent = container.querySelector('[data-testid="file-content"]')
+    expect(initialContent).not.toBeNull()
+
+    await act(async () => usePreviewWorkbenchStore.getState().upsertAndActivateItem(durable))
+
+    expect(container.querySelector('[data-testid="file-content"]')).toBe(initialContent)
   })
 
   it('does not reuse a previous project PDF count', async () => {

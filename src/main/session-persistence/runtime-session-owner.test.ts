@@ -1458,6 +1458,92 @@ describe('RuntimeSessionOwner', () => {
     }
   )
 
+  it.each(['end_turn', 'cancelled', 'flush-failure'] as const)(
+    'flushes terminal-turn feedback before admitting its new Plan continuation after %s',
+    async (terminal) => {
+      const original = scope()
+      const { owner, sessions, mutateSession } = harness([session(original)])
+      await owner.begin(original)
+      owner.accept({
+        ...stopEvent(original, 3),
+        text: terminal === 'cancelled' ? 'cancelled' : 'end_turn'
+      })
+      await owner.flush(original.sessionId, original.promptMessageId)
+
+      const durable = sessions.get(original.sessionId)!
+      const feedback = {
+        ...durable.conversationGraph!.messages[0],
+        id: 'feedback-1',
+        content: 'Split the analysis by cohort.',
+        revisionRootMessageId: 'feedback-1',
+        parentMessageId: original.promptMessageId,
+        responseToMessageId: original.promptMessageId,
+        createdAt: 4,
+        updatedAt: 4
+      }
+      durable.messages.push(feedback)
+      durable.conversationGraph!.messages.push(feedback)
+      durable.conversationGraph!.branches[0].headMessageId = feedback.id
+      durable.status = 'waiting-plan-approval'
+      durable.runtimeContext = {
+        version: 1,
+        revision: 2,
+        plan: {
+          artifactId: 'plan-artifact',
+          artifactVersionId: 'plan-version',
+          artifactChecksum: 'a'.repeat(64),
+          approval: 'pending',
+          stepStatuses: {},
+          originatingPromptMessageId: original.promptMessageId,
+          reviewFeedbackMessageId: feedback.id,
+          delivery: {
+            commandId: 'feedback-delivery',
+            kind: 'review-feedback',
+            state: 'delivering',
+            originatingPromptMessageId: feedback.id,
+            createdAt: 4
+          }
+        }
+      }
+      // The response publishes its durable user Message against the original interaction.
+      // Do not run the batch timer: admission must drain that old turn itself.
+      owner.accept({
+        id: 'feedback-event',
+        timestamp: 4,
+        kind: 'message',
+        level: 'info',
+        sessionId: original.sessionId,
+        promptMessageId: original.promptMessageId,
+        messageId: feedback.id,
+        role: 'user',
+        text: feedback.content
+      })
+      const continuation = {
+        ...original,
+        promptMessageId: feedback.id,
+        executionId: 'feedback-turn'
+      }
+      if (terminal === 'flush-failure') {
+        mutateSession.mockRejectedValueOnce(new Error('feedback flush failed'))
+        await expect(
+          owner.begin(continuation, { planDeliveryCommandId: 'feedback-delivery' })
+        ).rejects.toThrow('feedback flush failed')
+        expect(sessions.get(original.sessionId)?.activeRun).toBeUndefined()
+      }
+      await owner.begin(continuation, { planDeliveryCommandId: 'feedback-delivery' })
+      expect(sessions.get(original.sessionId)?.activeRun?.promptMessageId).toBe(feedback.id)
+      expect(
+        sessions.get(original.sessionId)?.messages.filter(({ id }) => id === feedback.id)
+      ).toHaveLength(1)
+      owner.accept({
+        ...messageEvent(continuation, 'revised-answer', 'Revising the Plan.'),
+        timestamp: 11
+      })
+      await owner.flush(original.sessionId, feedback.id)
+      expect(sessions.get(original.sessionId)?.messages.at(-1)?.content).toBe('Revising the Plan.')
+    }
+  )
+
   it.each([
     'shutdown',
     'end_turn',

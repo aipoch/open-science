@@ -461,11 +461,15 @@ export class RuntimeSessionOwner {
     scope: RuntimeSessionTurnScope,
     admission: RuntimeSessionAdmission = {}
   ): Promise<PersistedChatSession> {
-    // A detached answer is emitted after the provider stop and queued by the same turn.
-    // Commit that decision before replacing its execution, rather than racing the batch timer.
+    // Detached responses are published against the stopped interaction. Plan feedback
+    // then starts a different prompt, while approval/question answers reuse the old one.
+    // Drain every terminal turn in this Session before admitting either continuation;
+    // otherwise a queued feedback echo looks like a competing live turn until the timer fires.
     const previousTurn = this.turns.get(turnKey(scope.sessionId, scope.promptMessageId))
-    if (previousTurn?.terminalObserved) {
-      await this.flush(scope.sessionId, scope.promptMessageId)
+    for (const turn of this.turns.values()) {
+      if (turn.scope.sessionId === scope.sessionId && turn.terminalObserved) {
+        await this.flush(scope.sessionId, turn.scope.promptMessageId)
+      }
     }
     let loaded = await this.dependencies.loadSession(scope)
     if (!loaded) throw new Error('Runtime Session turn is not durable.')

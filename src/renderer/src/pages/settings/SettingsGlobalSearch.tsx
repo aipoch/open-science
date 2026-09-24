@@ -313,7 +313,7 @@ const SettingsGlobalSearch = ({
     >
       <SettingsSearchInput
         value={query}
-        shortcutPriority={1}
+        shortcutScope="global"
         onChange={(event) => {
           setQuery(event.target.value)
           setIsOpen(true)

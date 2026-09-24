@@ -28,12 +28,12 @@ test('forks local and imported research and immediately continues through the re
     .filter({ has: page.getByRole('button', { name: `Open actions for ${title}` }) })
   await expect(row.getByRole('img', { name: 'Read-only' })).toHaveCount(0)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^#\d+.*\(2\)$/)
-  const sourceLabel = await page
-    .getByRole('button', { name: /^Continued from chat #\d+$/ })
-    .innerText()
-  const sourceNumber = sourceLabel.match(/#\d+$/)![0]
-  await page.getByRole('button', { name: /^Continued from chat #\d+$/ }).click()
-  await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toHaveCount(0)
+  const continuation = page.getByRole('button', { name: /^Continued from chat #\d+$/ })
+  const sourceLabel = await continuation.textContent()
+  const sourceNumber = sourceLabel?.match(/#\d+/)?.[0] ?? ''
+  expect(sourceNumber).toMatch(/^#\d+$/)
+  await continuation.click()
+  await expect(continuation).toHaveCount(0)
   await expect(page.getByRole('heading', { level: 1 })).toContainText(sourceNumber)
   await row.locator('[data-slot="session-open-button"]').click()
   await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toBeVisible()

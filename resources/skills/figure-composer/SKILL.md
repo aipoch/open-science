@@ -198,14 +198,19 @@ After each result:
 
 1. Accept when the verdict is `accept` or `minor_revision`, there are no
    `BLOCKER`s, and there are at most two `MAJOR`s.
-2. Apply `outline_revisions` explicitly, then call
-   `apply_outline_revisions(outline, revisions)` to compute their panel scope.
+2. Save `previous_outline = copy.deepcopy(outline)` before applying
+   `outline_revisions` explicitly. Then call
+   `apply_outline_revisions(outline, revisions, previous_outline=previous_outline)`.
+   This includes new panels and every panel whose pixel dimensions changed, even
+   when a shared row-height change names only one panel. Pass the same `dpi` and
+   `gutter_mm` as composition if overriding their defaults. Removed panels are
+   excluded; drop their entries from the collected panel Versions.
 3. Call `group_fixes_by_panel(review)` and compute
-   `regen = affected | set(fixb)`.
+   `regen = (affected | set(fixb)) & {p["letter"] for p in outline["panels"]}`.
 4. Regenerate only `regen`. Build each retry task as
    `panel_task(outline, letter) + fixb.get(letter, "")` and add: “Do not
    over-correct: preserve everything the previous version got right.” Include
-   the prior panel Version and its data Version in `inputs`.
+   the prior panel Version when one exists and its data Version in `inputs`.
 5. Keep every clean panel's exact Version identity. Compose a new revision only
    after every regenerated panel passes the same identity checks.
 

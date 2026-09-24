@@ -5037,6 +5037,7 @@ const NOT_TRANSLATABLE = new Set([
   'Enter',
   'Esc',
   'Ctrl',
+  'Alt',
   'Ctrl+',
   'Enter / Tab',
   // A placeholder showing literal CLI arguments. Translating it would suggest the user should type

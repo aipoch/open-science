@@ -201,8 +201,19 @@ Each resolved entry carries the reviewed `target_fig`, `what_to_show`, and exact
 Version; never derive redraws directly from all model-proposed
 `review.missing_panels`.
 
-Initialize `currentFiguresByKey` once from the brief before the first review round,
-then retain and update it across every round. Build the complete changed-figure
+For accepted `kill_list` actions on panels/content inside a retained arc figure,
+record a reviewed `target_fig` in `acceptedKillActions`, retaining the exact
+`what`, `why`, and `demote_to`. Whole-figure removals are represented by omission
+from the reviewed arc and do not enter this composition queue. Verify their
+removal from the rebuilt deck and publish any reviewed supplement/caption
+destination before treating those whole-figure actions as complete.
+Do not infer affected figures from free text or apply rejected recommendations.
+Pass these actions to the composer: remove the content from its original panel,
+and retain demoted material in the reviewed supplement or caption destination
+before publishing. Track those destination changes together with the composition.
+
+Initialize `currentFiguresByKey` and `currentDataVersionIdsByFigure` once before the first review round,
+then retain and update them across every round. Build the complete changed-figure
 queue without slicing it. The stable arc index
 prevents sanitized or truncated figure keys from colliding, while the round
 keeps panel/reviewer delegate names unique across narrative rounds:
@@ -210,7 +221,12 @@ keeps panel/reviewer delegate names unique across narrative rounds:
 ```javascript
 // Initialize once, outside the review/recompose loop.
 const currentFiguresByKey = new Map(brief.figures.map((figure) => [figure.key, figure]))
+const currentDataVersionIdsByFigure = new Map(
+  Object.entries(figureDataVersionIds).map(([key, versions]) => [key, [...versions]])
+)
+```
 
+```javascript
 // Recompute these values after each human-reviewed narrative result. The Map is
 // populated from actual successful write_artifact_file results and keyed by the
 // exact accepted recommendation object.
@@ -225,7 +241,13 @@ const acceptedPublishedMissingAnalyses = acceptedMissingPanelRecommendations.map
     return { ...recommendation, version_id }
   }
 )
+for (const action of acceptedKillActions) {
+  if (!review.arc.some((item) => item.fig === action.target_fig)) {
+    throw new Error(`accepted kill action needs an arc figure: ${action.target_fig}`)
+  }
+}
 const changedFigures = new Set([
+  ...acceptedKillActions.map((action) => action.target_fig),
   ...review.figure_moves.flatMap((move) => [move.from_fig, move.to_fig]),
   ...acceptedPublishedMissingAnalyses.map((analysis) => analysis.target_fig),
   ...review.arc
@@ -244,8 +266,8 @@ const compositionQueue = review.arc.flatMap((item, arcIndex) => {
     (analysis) => analysis.target_fig === item.fig
   )
   const sourceInputs = [
-    ...(figureDataVersionIds[item.fig] ?? []),
-    ...movedIn.flatMap((move) => figureDataVersionIds[move.from_fig] ?? []),
+    ...(currentDataVersionIdsByFigure.get(item.fig) ?? []),
+    ...movedIn.flatMap((move) => currentDataVersionIdsByFigure.get(move.from_fig) ?? []),
     ...missingAnalyses.map((analysis) => analysis.version_id)
   ]
   const width_mm = figureWidthMmByFigure[item.fig]
@@ -264,6 +286,7 @@ const compositionQueue = review.arc.flatMap((item, arcIndex) => {
       claim: item.one_line,
       movedInPanels: movedIn.map((move) => move.what),
       movedOutPanels: movedOut.map((move) => move.what),
+      killActions: acceptedKillActions.filter((action) => action.target_fig === item.fig),
       dataVersionIds: [...new Set(sourceInputs)],
       width_mm,
       delegatePrefix: `paper-r${narrativeRound}-${String(arcIndex + 1).padStart(2, '0')}-${figureKey}`
@@ -272,13 +295,27 @@ const compositionQueue = review.arc.flatMap((item, arcIndex) => {
 })
 ```
 
-For every queued entry, pass its claim, data summaries/Version IDs, `width_mm`, and
-`delegatePrefix` into the root `figure-composer` workflow. Record the actual
+For every queued entry, pass its claim, data summaries/Version IDs, `width_mm`,
+`delegatePrefix`, moved-in/out panels, and accepted `killActions` into the root
+`figure-composer` workflow. Incorporate these content changes into its outline
+and verify them against the final output, including supplement/caption destinations. Record the actual
 final `version_id` returned by the successful `write_artifact_file` call; never
 accept a model-proposed or merely non-empty string as the composite identity.
-Use `currentFiguresByKey` as the figure-to-Version map, and after every successful
-composer run replace that entry with the reviewed claim and the actual returned
-`version_id`. Never recreate this map from the initial brief on a later round. The
+After each successful publication, update both persistent maps using the queue
+entry and the actual returned `version_id`:
+
+```javascript
+currentFiguresByKey.set(entry.figure, {
+  key: entry.figure,
+  claim: entry.claim,
+  composite_vid: publishedComposite.version_id
+})
+currentDataVersionIdsByFigure.set(entry.figure, [...entry.dataVersionIds])
+```
+
+Retain these maps across rounds. Previously transferred data and accepted analysis
+Versions must still ground later redraws, even when the current review proposes no
+further move or analysis. Do not update either map after a failed publication. The
 composer itself sends panel workers in waves of four. Once every queued entry
 has a verified composite Version, build and publish a new deck from the mapped
 Versions in complete arc order, including reused untouched Versions. Retain its
@@ -297,7 +334,10 @@ callers supply identities only and never paths or provenance metadata.
 Review the rebuilt full deck again with the manuscript and captions identities
 still present in
 `inputs: [manuscriptVersionId, captionsVersionId, rebuiltDeckVersionId,
-rulesVersionId]`. Convergence is exactly:
+rulesVersionId]`. Apply and verify all accepted content actions, including kill
+actions and their supplement/caption destinations, before checking convergence.
+A failed or unapplied accepted action leaves the workflow unfinished even if the
+editorial condition below is true. Editorial convergence is exactly:
 
 ```javascript
 review.hook_verdict.would_send_for_review === 'yes' &&

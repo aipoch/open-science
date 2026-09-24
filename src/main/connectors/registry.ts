@@ -14,6 +14,7 @@ import { GENES_TOOLS } from './descriptors/genes'
 import { GENOMES_TOOLS } from './descriptors/genomes'
 import { GDC_TOOLS } from './descriptors/gdc'
 import { HUMAN_GENETICS_TOOLS } from './descriptors/human-genetics'
+import { INTERPROSCAN_TOOLS } from './descriptors/interproscan'
 import { LITERATURE_TOOLS } from './descriptors/literature'
 import { MOLECULE_TOOLS } from './descriptors/molecule'
 import { OMICS_ARCHIVES_TOOLS } from './descriptors/omics-archives'
@@ -43,6 +44,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...GENOMES_TOOLS,
   ...GDC_TOOLS,
   ...HUMAN_GENETICS_TOOLS,
+  ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
   ...MOLECULE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,

@@ -247,9 +247,20 @@ Be calibrated: minimum {min_floor} violations total (decreasing 5→4→3 by rou
 do not manufacture. Return ONLY structured output."""
 
 
-def apply_outline_revisions(outline, revisions):
-    """Return panel letters affected by outline-level revisions."""
+def apply_outline_revisions(outline, revisions, previous_outline=None, dpi=300, gutter_mm=4):
+    """Return surviving panels requiring regeneration after explicit outline edits.
+
+    Pass the pre-edit outline to include new panels and shared geometry changes.
+    The two-argument form retains declaration-only scope for existing callers.
+    """
+    current = {p["letter"] for p in outline["panels"]}
     affected = set()
     for r in revisions:
         affected |= set(r.get("affected_panels", []))
-    return affected
+    if previous_outline is not None:
+        previous = {p["letter"] for p in previous_outline["panels"]}
+        for letter in current:
+            if letter not in previous or panel_px(outline, letter, dpi, gutter_mm) != panel_px(
+                    previous_outline, letter, dpi, gutter_mm):
+                affected.add(letter)
+    return affected & current

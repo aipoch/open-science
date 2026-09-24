@@ -207,6 +207,24 @@ export const windowsCondaPrefixForR = (
   return match?.[1]
 }
 
+// App-managed Windows Python binaries load DLLs from their Conda prefix. Discovery probes must use
+// the same activated PATH as provisioning verification; otherwise a freshly rebuilt environment can
+// answer the provisioning check and still be reported non-runnable during post-repair binding.
+export const windowsCondaPrefixForPython = (
+  interpreterPath: string,
+  runtimeRoot: string,
+  platform: NodeJS.Platform = process.platform
+): string | undefined => {
+  if (platform !== 'win32') return undefined
+  const normalized = win32.normalize(interpreterPath)
+  if (!/\\python\.exe$/i.test(normalized)) return undefined
+  const prefix = win32.dirname(normalized)
+  const envsRoot = win32.normalize(win32.join(runtimeRoot, 'envs'))
+  const candidate = prefix.toLowerCase()
+  const appEnvsRoot = envsRoot.toLowerCase().replace(/[\\/]$/, '')
+  return candidate.startsWith(`${appEnvsRoot}\\`) ? prefix : undefined
+}
+
 // Default real enumeration: PATH + common dirs + pyenv + conda envs + the app's own runtime/envs, plus
 // any manually-added interpreter paths from the Settings catalog (so a picked interpreter that is not
 // on PATH / in a conda root still surfaces as a card). `manualPaths` is a sync getter over a settings
@@ -514,9 +532,13 @@ export const defaultDiscoveryDeps = (
     })
   const probeOptions = (
     interpreterPath: string,
+    language: NotebookLanguage,
     timeout = PROBE_TIMEOUT_MS
   ): { timeout: number; windowsHide: boolean; env?: NodeJS.ProcessEnv } => {
-    const prefix = windowsCondaPrefixForR(interpreterPath, platform)
+    const prefix =
+      language === 'python'
+        ? windowsCondaPrefixForPython(interpreterPath, runtimeRoot, platform)
+        : windowsCondaPrefixForR(interpreterPath, platform)
     return prefix
       ? {
           timeout,
@@ -534,7 +556,7 @@ export const defaultDiscoveryDeps = (
       try {
         if (language === 'python') {
           const { stdout, stderr } = await exec(interpreterPath, ['--version'], {
-            ...probeOptions(interpreterPath),
+            ...probeOptions(interpreterPath, language),
             shell: platform === 'win32'
           })
           const output = `${stdout}\n${stderr}`
@@ -545,7 +567,7 @@ export const defaultDiscoveryDeps = (
         // already use for readiness checks and kernel launches. No shell means paths with spaces or
         // metacharacters are passed safely.
         const rscript = rscriptFor(interpreterPath)
-        const { stdout, stderr } = await exec(rscript, ['--version'], probeOptions(rscript))
+        const { stdout, stderr } = await exec(rscript, ['--version'], probeOptions(rscript, 'r'))
         return parseRVersion(`${stdout}\n${stderr}`)
       } catch {
         return undefined
@@ -556,7 +578,7 @@ export const defaultDiscoveryDeps = (
         exec: async (args) => {
           // No shell (see probeVersion): Rscript is run directly with a static arg vector.
           const rscript = rscriptFor(rInterpreterPath)
-          return exec(rscript, args, probeOptions(rscript, 15_000))
+          return exec(rscript, args, probeOptions(rscript, 'r', 15_000))
         }
       }),
     realpath: safeRealpath,

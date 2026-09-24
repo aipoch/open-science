@@ -494,7 +494,19 @@ describe('provider registry', () => {
       supported: true,
       slots: ['low', 'medium', 'high', 'xhigh', 'max']
     })
+    expect(resolveVendorModelReasoningEffort('openai', 'gpt-6-sol')).toEqual({
+      supported: true,
+      slots: ['none', 'low', 'medium', 'high', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('openai', 'gpt-6-luna')).toEqual({
+      supported: true,
+      slots: ['none', 'low', 'medium', 'high', 'max']
+    })
     expect(resolveVendorModelReasoningEffort('anthropic', 'claude-fable-5-1')).toEqual({
+      supported: true,
+      slots: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('anthropic', 'claude-opus-5-5')).toEqual({
       supported: true,
       slots: ['low', 'medium', 'high', 'xhigh', 'max']
     })
@@ -1109,6 +1121,8 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('openai', 'gpt-5.6-sol')).toBe(true)
       expect(isVendorModelMultimodal('openai', 'gpt-5.5')).toBe(true)
       expect(isVendorModelMultimodal('openai', 'gpt-5.4-mini')).toBe(true)
+      expect(isVendorModelMultimodal('openai', 'gpt-6-sol')).toBe(true)
+      expect(isVendorModelMultimodal('openai', 'gpt-6-luna')).toBe(true)
     })
 
     it('returns true for all Anthropic Claude models', () => {
@@ -1116,6 +1130,7 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('anthropic', 'claude-sonnet-5')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-haiku-4-5-20251001')).toBe(true)
       expect(isVendorModelMultimodal('anthropic', 'claude-opus-4-8[1m]')).toBe(true)
+      expect(isVendorModelMultimodal('anthropic', 'claude-opus-5-5')).toBe(true)
     })
 
     it('returns true for all curated Grok language models', () => {
@@ -1312,9 +1327,12 @@ describe('provider registry', () => {
 
     it('resolves shipped models with vendor-published per-model limits', () => {
       expect(resolveModelContextWindow('anthropic', 'claude-fable-5-1')).toBe(1_000_000)
+      expect(resolveModelContextWindow('anthropic', 'claude-opus-5-5')).toBe(1_000_000)
       expect(resolveModelContextWindow('anthropic', 'claude-opus-4-8')).toBe(1_000_000)
       expect(resolveModelContextWindow('anthropic', 'claude-haiku-4-5-20251001')).toBe(200_000)
       expect(resolveModelContextWindow('openai', 'gpt-6-astra')).toBe(1_050_000)
+      expect(resolveModelContextWindow('openai', 'gpt-6-sol')).toBe(1_050_000)
+      expect(resolveModelContextWindow('openai', 'gpt-6-luna')).toBe(1_050_000)
       expect(resolveModelContextWindow('openai', 'gpt-5.6-sol')).toBe(1_050_000)
       expect(resolveModelContextWindow('openai', 'gpt-5.4-mini')).toBe(400_000)
       expect(resolveModelContextWindow('xai', 'grok-4.5')).toBe(500_000)

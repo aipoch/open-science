@@ -131,6 +131,8 @@ export type ActivePlanProjection = Readonly<{
   originatingPromptMessageId?: string
   materializedAt?: number
   revision: number
+  /** Live review identity; receipt revisions do not create a new user interaction. */
+  reviewRequestId?: string
   approval: SessionPlanApproval
   lifecycle: PlanLifecycle
   document: PlanDocumentV1

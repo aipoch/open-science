@@ -310,7 +310,9 @@ export const createPreviewFileItemFromPdfContext = (
   return createPreviewFileItem({
     id: isArtifact
       ? context.sourceFileId
-      : `${isLiterature ? 'literature' : 'upload'}:${context.sourceFileId}`,
+      : `${isLiterature ? 'literature' : 'upload'}:${
+          isLiterature ? context.sourceVersionId : context.sourceFileId
+        }`,
     projectId,
     sessionId: context.sourceSessionId ?? LITERATURE_PREVIEW_SESSION_ID,
     path: reference.path,

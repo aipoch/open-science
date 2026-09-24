@@ -85,9 +85,11 @@ import {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { isSensitiveDiagnosticKey } from '../../shared/diagnostic-redaction'
 import {
+  buildSensitiveContentEvidence,
   findSensitivePackageText,
   isPrivatePackageValue,
-  PackageSensitiveContentError
+  PackageSensitiveContentError,
+  type PackageSensitiveContentSource
 } from './sensitive-content'
 import { SessionRepository, loadSessionMutationAuthority } from '../session-persistence/repository'
 import { defaultFileDurability } from '../storage/file-durability'
@@ -245,7 +247,12 @@ const exportRelevantSession = (session: PersistedChatSession): PersistedChatSess
 function* inspectShareable(value: unknown, location: string): Generator<number> {
   if (typeof value === 'string') {
     const match = findSensitivePackageText(value)
-    if (match) throw new PackageSensitiveContentError(`${location} @${match.offset}`, match.rule)
+    if (match)
+      throw new PackageSensitiveContentError(
+        `${location} @${match.offset}`,
+        match.rule,
+        buildSensitiveContentEvidence(value, match, `${location} @${match.offset}`)
+      )
     yield value.length + 1
   } else if (Array.isArray(value)) {
     yield 1
@@ -256,7 +263,15 @@ function* inspectShareable(value: unknown, location: string): Generator<number> 
     for (const [index, [key, item]] of Object.entries(value).entries()) {
       const child = `${location}[entry ${index}]`
       if (isSensitiveDiagnosticKey(key) && typeof item === 'string' && isPrivatePackageValue(item))
-        throw new PackageSensitiveContentError(child, 'field')
+        throw new PackageSensitiveContentError(
+          child,
+          'field',
+          buildSensitiveContentEvidence(
+            `${key}: ${item}`,
+            { offset: key.length + 2, length: item.length, rule: 'field', label: key },
+            child
+          )
+        )
       yield key.length
       yield* inspectShareable(item, child)
     }
@@ -287,7 +302,9 @@ const assertShareable = async (
 const assertShareableFile = async (
   path: string,
   signal?: AbortSignal,
-  location = 'file'
+  location = 'file',
+  sourceStorageKey?: string,
+  source?: PackageSensitiveContentSource
 ): Promise<void> => {
   // Classify actual bytes, including extensionless evidence. UTF-16 is text when identified
   // by its BOM. PDF is a container even when all its bytes happen to be valid UTF-8.
@@ -303,7 +320,15 @@ const assertShareableFile = async (
       if (match)
         sensitiveError = new PackageSensitiveContentError(
           `${location} @${offset - tail.length + match.offset}`,
-          match.rule
+          match.rule,
+          buildSensitiveContentEvidence(
+            text,
+            match,
+            `${location} @${offset - tail.length + match.offset}`,
+            sourceStorageKey,
+            offset - tail.length
+          ),
+          source
         )
     }
     offset += decoded.length
@@ -614,7 +639,16 @@ export class SessionPackageService {
               await assertShareableFile(
                 join(source, entry.path),
                 this.signal,
-                entry.storageKey ?? entry.path
+                entry.storageKey ?? entry.path,
+                entry.storageKey,
+                entry.storageKey
+                  ? {
+                      storageKey: entry.storageKey,
+                      root: source,
+                      relativePath: entry.path,
+                      checksum: entry.checksum
+                    }
+                  : undefined
               )
             await copyFileWithinBudget(
               join(source, entry.path),
@@ -870,7 +904,18 @@ export class SessionPackageService {
             throw new Error('The Session changed during export. Try again.')
           assertNoExcludedContentCopies(records, excludedFiles, [copied])
           if (!options.consumeSnapshot)
-            await assertShareableFile(join(directory, objectPath), this.signal, storageKey)
+            await assertShareableFile(
+              join(directory, objectPath),
+              this.signal,
+              storageKey,
+              sourceKey(storageKey),
+              {
+                storageKey: sourceKey(storageKey),
+                root: this.options.storageRoot,
+                relativePath: sourceKey(storageKey),
+                checksum: copied.checksum
+              }
+            )
           inventory.push({
             path: objectPath,
             kind: notebookKeys.includes(storageKey) ? 'notebook' : 'file',

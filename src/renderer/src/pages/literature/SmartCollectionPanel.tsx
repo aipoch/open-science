@@ -30,7 +30,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ErrorNotice } from '@/components/error-notice'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { SmartCollectionView } from '../../../../shared/literature-smart-collections'
+import type {
+  SmartCollectionView,
+  SmartScope
+} from '../../../../shared/literature-smart-collections'
 
 const catalog = {
   bibtex: { labelKey: 'BibTeX', icon: FileText },
@@ -80,6 +83,7 @@ export function SmartCollectionPanel({
   onEdit,
   onDelete,
   onReview,
+  onOpenScope,
   searchActions,
   onExport,
   exportDisabled,
@@ -96,6 +100,7 @@ export function SmartCollectionPanel({
   onEdit?: () => void
   onDelete?: () => void
   onReview?: () => void
+  onOpenScope?: (scope: SmartScope) => void
   onExport?: (format: 'bibtex' | 'ris') => Promise<boolean>
   exportDisabled?: boolean
   searchActions?: React.ReactNode
@@ -362,6 +367,28 @@ export function SmartCollectionPanel({
       )}
     </div>
   )
+  const sourceAvailable = Boolean(
+    view?.sourceAvailable && (view.scope.kind === 'library' || view.sourceName)
+  )
+  const scopeContent = (
+    <>
+      {sourceAvailable && view?.scope.kind !== 'library' && (
+        <span
+          aria-hidden="true"
+          className={`shrink-0 rounded px-1.5 text-[10px] font-semibold leading-4 uppercase ${view?.scope.kind === 'project' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}
+        >
+          {view?.scope.kind === 'project' ? t('Project') : t('Collection')}
+        </span>
+      )}
+      <span className="truncate">
+        {sourceAvailable
+          ? view?.scope.kind === 'library'
+            ? t('All references')
+            : view?.sourceName
+          : t('Unavailable')}
+      </span>
+    </>
+  )
   return (
     <section className="shrink-0" aria-label={t('Smart collection')}>
       {refreshFailed && (
@@ -528,11 +555,24 @@ export function SmartCollectionPanel({
             <SmartRuleSummary rule={description} />
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
-            <span>
-              {t('Scope')}:{' '}
-              {view?.scope.kind === 'library'
-                ? t('All references')
-                : view?.sourceName || t('Unavailable')}
+            <span className="inline-flex min-w-0 items-center gap-1.5">
+              {t('Scope')}:
+              {view && sourceAvailable && onOpenScope ? (
+                <button
+                  type="button"
+                  className="inline-flex min-w-0 items-center gap-1.5 rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={
+                    view.scope.kind === 'library'
+                      ? t('All references')
+                      : `${view.scope.kind === 'project' ? t('Project') : t('Collection')}: ${view.sourceName}`
+                  }
+                  onClick={() => onOpenScope(view.scope)}
+                >
+                  {scopeContent}
+                </button>
+              ) : (
+                <span className="inline-flex min-w-0 items-center gap-1.5">{scopeContent}</span>
+              )}
             </span>
             {view?.model && <span className="min-w-0 break-all">{view.model}</span>}
             <span>
