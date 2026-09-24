@@ -6,8 +6,11 @@ import type {
   DelegatedWorkAttemptRecord,
   PersistedChatMessage
 } from '../../../../shared/session-persistence'
-import { createSessionStore, type ChatSession } from '../../stores/session-store'
-import { materializeStreamingMessageContent } from '../../stores/session-store-persistence-owner'
+import {
+  createSessionStore,
+  materializeStreamingMessageContent,
+  type ChatSession
+} from '../../stores/session-store'
 import {
   applyRuntimePresentationEvent,
   createRuntimePresentationContext

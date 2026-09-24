@@ -866,6 +866,7 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.streaming.test.tsx',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
