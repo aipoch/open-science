@@ -2944,6 +2944,36 @@ it('abandons a failed storage-error run and clears its durable pause', async () 
   expect(classify).toHaveBeenCalledOnce()
 })
 
+it('re-evaluates abandoned checkpoints on the next automatic refresh', async () => {
+  const id = await create()
+  await db.literatureSmartCollection.update({
+    where: { collectionId: id },
+    data: { autoUpdate: true }
+  })
+  classify.mockRejectedValueOnce(new AutomaticClassificationPausedError('run-limit'))
+  owner.schedule()
+  await vi.waitFor(async () => {
+    expect((await owner.view(id)).automaticPauseReason).toBe('run-limit')
+  })
+  const pausedRunId = (await owner.view(id)).run!.id
+
+  await owner.execute({
+    kind: 'smart-collection',
+    collectionId: id,
+    action: 'abandon',
+    runId: pausedRunId,
+    offset: 0
+  })
+  expect(
+    await db.literatureSmartRun.findUniqueOrThrow({ where: { id: pausedRunId } })
+  ).toMatchObject({ state: 'cancelled', abandonedAt: expect.any(Date) })
+
+  owner.schedule()
+  await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2))
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect((await owner.view(id)).run?.id).not.toBe(pausedRunId)
+})
+
 it('does not clear an automatic pause when abandoning a newer manual run', async () => {
   const id = await create()
   await refresh(id)

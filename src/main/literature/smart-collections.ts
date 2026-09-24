@@ -415,8 +415,12 @@ export class LiteratureSmartCollections {
       where: { collectionId: id },
       orderBy: { createdAt: 'desc' }
     })
+    const reusableCheckpoint =
+      lastRun?.abandonedAt === null &&
+      lastRun.ruleRevision === definition.ruleRevision &&
+      lastRun.policyKey === policy.key
     const failures = new Map(
-      lastRun?.ruleRevision === definition.ruleRevision && lastRun.policyKey === policy.key
+      reusableCheckpoint
         ? (await this.checkpoint(client, lastRun.id, true)).map((row) => [row.id, row])
         : []
     )
