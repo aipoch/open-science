@@ -973,9 +973,21 @@ describe('WorkspaceSidebar accessible render', () => {
       const button = container.querySelector<HTMLButtonElement>(
         '[aria-label="Open actions for Mobile session"]'
       )
+      if (!button) throw new Error('Mobile Session actions button did not render')
+      vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({
+        left: 90,
+        right: 108,
+        top: 25
+      } as DOMRect)
       await act(async () => button?.click())
       const menu = document.body.querySelector<HTMLElement>('[data-testid="session-context-menu"]')
+      const anchor = document.body.querySelector<HTMLElement>(
+        '[data-testid="session-context-menu-anchor"]'
+      )
       expect(menu?.classList).toContain('z-[80]')
+      expect(menu?.getAttribute('data-align')).toBe('end')
+      expect(anchor?.style.left).toBe('90px')
+      expect(anchor?.style.top).toBe('25px')
       expect(button?.getAttribute('aria-expanded')).toBe('true')
       clickRadixMenuItem(menu?.querySelector<HTMLElement>('[data-action-id="fork"]'))
       expect(onForkSession).toHaveBeenCalledTimes(1)

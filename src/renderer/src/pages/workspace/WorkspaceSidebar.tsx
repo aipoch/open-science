@@ -340,8 +340,8 @@ const SessionActionDropdown = ({
     const rect = button.getBoundingClientRect()
     openMenu({
       targetId: `${SESSION_ACTION_TARGET_PREFIX}${session.id}`,
-      pointer: { x: rect.right + 6, y: rect.top },
-      align: 'start',
+      pointer: { x: mobileMode ? rect.left : rect.right + 6, y: rect.top },
+      align: mobileMode ? 'end' : 'start',
       labelledBy: button.id,
       focusTarget: button
     })
