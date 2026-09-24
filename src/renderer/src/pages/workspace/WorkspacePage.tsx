@@ -1471,6 +1471,7 @@ const WorkspacePage = ({
               openMobileSidebar
             }) => (
               <ConversationPanel
+                key={JSON.stringify([scopedProjectId, activeSession?.id])}
                 view={{
                   activeSession,
                   composerFocusKey: currentDraftKey,

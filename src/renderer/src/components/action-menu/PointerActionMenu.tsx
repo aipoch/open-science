@@ -14,6 +14,7 @@ export const PointerActionMenu = <ActionId extends string>({
   entries,
   pointer,
   align = 'start',
+  labelledBy,
   testId,
   contentClassName,
   compact,
@@ -26,6 +27,7 @@ export const PointerActionMenu = <ActionId extends string>({
   entries: readonly ResolvedActionMenuEntry<ActionId>[]
   pointer: { x: number; y: number }
   align?: 'start' | 'end'
+  labelledBy?: string
   testId: string
   contentClassName?: string
   compact?: boolean
@@ -55,6 +57,7 @@ export const PointerActionMenu = <ActionId extends string>({
       <DropdownMenuContent
         align={align}
         sideOffset={0}
+        {...(labelledBy ? { 'aria-labelledby': labelledBy } : {})}
         className={cn('min-w-[9.5rem] p-1', contentClassName)}
         data-testid={testId}
         onCloseAutoFocus={(event) => {

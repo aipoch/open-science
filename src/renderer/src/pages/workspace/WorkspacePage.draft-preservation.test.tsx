@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
@@ -76,14 +76,31 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
 vi.mock('./WorkspaceSidebar', () => ({
   WorkspaceSidebar: (props: typeof sidebarProps): React.JSX.Element => {
     sidebarProps = props
-    return <aside />
+    const [localCount, setLocalCount] = useState(0)
+    return (
+      <aside>
+        <button data-testid="sidebar-local-state" onClick={() => setLocalCount(localCount + 1)}>
+          {localCount}
+        </button>
+      </aside>
+    )
   }
 }))
 
 vi.mock('./ConversationPanel', () => ({
   ConversationPanel: (props: typeof conversationProps): React.JSX.Element => {
     conversationProps = props
-    return <section data-testid="conversation" />
+    const [localDetailOpen, setLocalDetailOpen] = useState(false)
+    return (
+      <section data-testid="conversation">
+        <button data-testid="open-local-detail" onClick={() => setLocalDetailOpen(true)}>
+          Open detail
+        </button>
+        {localDetailOpen ? (
+          <div data-testid="local-detail-session">{props.view.activeSession?.id}</div>
+        ) : null}
+      </section>
+    )
   }
 }))
 
@@ -375,6 +392,36 @@ describe('WorkspacePage draft preservation', () => {
 
     await openSession('sess-b')
     expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for B'))
+  })
+
+  it('resets main-panel local detail state without remounting the sidebar or losing drafts', async () => {
+    await renderPage()
+    const sidebarButton = container.querySelector<HTMLButtonElement>(
+      '[data-testid="sidebar-local-state"]'
+    )!
+    const mainPanel = container.querySelector<HTMLElement>('[data-testid="conversation"]')!
+    await act(async () => {
+      sidebarButton.click()
+      container.querySelector<HTMLButtonElement>('[data-testid="open-local-detail"]')!.click()
+      conversationProps.composer.actions.changeDoc(textDoc('draft for A'))
+    })
+    expect(sidebarButton.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="local-detail-session"]')?.textContent).toBe(
+      'sess-a'
+    )
+
+    await openSession('sess-b')
+    expect(container.querySelector('[data-testid="sidebar-local-state"]')).toBe(sidebarButton)
+    expect(sidebarButton.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="conversation"]')).not.toBe(mainPanel)
+    expect(container.querySelector('[data-testid="local-detail-session"]')).toBeNull()
+    expect(conversationProps.view.activeSession?.id).toBe('sess-b')
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+
+    await openSession('sess-a')
+    expect(container.querySelector('[data-testid="sidebar-local-state"]')).toBe(sidebarButton)
+    expect(container.querySelector('[data-testid="local-detail-session"]')).toBeNull()
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for A'))
   })
 
   it('uses the configured profile only for new conversations', async () => {
