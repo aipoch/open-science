@@ -2,24 +2,6 @@ import { useTranslation } from 'react-i18next'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 
-export function hasConfigurationPlan(request: AcpPermissionRequest): boolean {
-  if (request.appOwned && request.approvalPlan?.format === 'json-v1') return true
-  if (
-    !request.appOwned ||
-    !request.rawInput ||
-    typeof request.rawInput !== 'object' ||
-    !('configurationPlan' in request.rawInput)
-  )
-    return false
-  const plan = request.rawInput.configurationPlan
-  return Boolean(
-    plan &&
-    typeof plan === 'object' &&
-    'kind' in plan &&
-    ['package-installation', 'agent-configuration', 'skill-publication'].includes(String(plan.kind))
-  )
-}
-
 type PlanPreview = {
   kind?: string
   target?:

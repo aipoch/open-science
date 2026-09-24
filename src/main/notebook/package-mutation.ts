@@ -90,7 +90,7 @@ class NotebookPackageMutationOwner {
     if (target.request.permissionPrompts === 'none') return async () => false
     return async (plan) => {
       const names = plan.packages.map((pkg) => pkg.name)
-      const inspect = () =>
+      const inspect = (): ReturnType<EnvironmentStateTracker['inspectPackages']> =>
         this.options.environmentStateTracker.inspectPackages(
           target.environmentCaptureTarget,
           names,

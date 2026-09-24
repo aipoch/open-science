@@ -1,11 +1,16 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { installApprovedWheels, parseWheelInstallPlan } from './approved-wheel-install'
 
 const digest = 'a'.repeat(64)
-const wheel = (name: string, requested: boolean) => ({
+type WheelReportEntry = {
+  metadata: { name: string; version: string }
+  requested: boolean
+  download_info: { url: string; archive_info: { hashes: { sha256: string } } }
+}
+const wheel = (name: string, requested: boolean): WheelReportEntry => ({
   metadata: { name, version: '2.0' },
   requested,
   download_info: {
@@ -13,7 +18,7 @@ const wheel = (name: string, requested: boolean) => ({
     archive_info: { hashes: { sha256: digest } }
   }
 })
-const report = () => ({
+const report = (): { version: string; install: WheelReportEntry[] } => ({
   version: '1',
   install: [wheel('example', true), wheel('dependency', false)]
 })
@@ -22,7 +27,11 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
-async function fixture() {
+async function fixture(): Promise<{
+  cacheRoot: string
+  packages: string[]
+  run: Mock<(args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>>
+}> {
   const cacheRoot = await mkdtemp(join(tmpdir(), 'wheel-review-'))
   roots.push(cacheRoot)
   const run = vi.fn(async (args: string[]) => {
@@ -36,9 +45,9 @@ async function fixture() {
 describe('approved wheel installation', () => {
   it('approves all dependencies once and executes only the hash-pinned plan without resolving again', async () => {
     const fixtureOptions = await fixture()
-    const approve = vi.fn(
-      async (_plan: import('./approved-wheel-install').WheelInstallPlan) => true
-    )
+    const approve = vi
+      .fn<import('./approved-wheel-install').ApproveWheelInstall>()
+      .mockResolvedValue(true)
     expect((await installApprovedWheels({ ...fixtureOptions, approve })).ok).toBe(true)
     expect(approve).toHaveBeenCalledOnce()
     expect(approve.mock.calls[0]?.[0]).toMatchObject({

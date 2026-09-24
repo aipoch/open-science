@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { AcpPermissionBroker } from '../acp/permission-broker'
 import { createAutoPlanApproval } from '../agents/configuration-plan-approval'
@@ -12,7 +12,17 @@ afterEach(async () => {
   await server?.close()
 })
 
-async function fixture(permissionPrompts?: 'none') {
+async function fixture(permissionPrompts?: 'none'): Promise<{
+  parent: Awaited<ReturnType<NotebookLocalRpcServer['issueDelegatedNotebookConnection']>>
+  control: Awaited<ReturnType<NotebookLocalRpcServer['issueControlConnection']>>
+  finish: ReturnType<
+    Awaited<ReturnType<NotebookLocalRpcServer['issueControlConnection']>>['beginControlInvocation']
+  >
+  call: (method: string) => ReturnType<typeof fetchLocalRpc>
+  emitted: AcpPermissionRequest[]
+  broker: AcpPermissionBroker
+  commit: Mock
+}> {
   const emitted: AcpPermissionRequest[] = []
   const broker = new AcpPermissionBroker((request) => emitted.push(request))
   const commit = vi.fn()
@@ -28,7 +38,10 @@ async function fixture(permissionPrompts?: 'none') {
         permissionPrompts: context.permissionPrompts
       })
   })
-  const mutate = async (_request: unknown, context: TrustedCallingSession) => {
+  const mutate = async (
+    _request: unknown,
+    context: TrustedCallingSession
+  ): Promise<{ approved: boolean }> => {
     const approved = await approve(
       { kind: 'agent-configuration', target: 'test', changes: {} },
       context
@@ -80,7 +93,7 @@ async function fixture(permissionPrompts?: 'none') {
     toolInvocationId: 'invocation',
     controlInvocationGeneration: 1
   })
-  const call = (method: string) =>
+  const call = (method: string): ReturnType<typeof fetchLocalRpc> =>
     fetchLocalRpc(
       control,
       {

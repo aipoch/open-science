@@ -1,4 +1,4 @@
-import { ConfigurationPlanDetail, hasConfigurationPlan } from './ConfigurationPlanDetail'
+import { ConfigurationPlanDetail } from './ConfigurationPlanDetail'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
@@ -1273,3 +1273,21 @@ const PermissionApprovalControls = ({
 }
 
 export { PermissionApprovalControls }
+
+function hasConfigurationPlan(request: AcpPermissionRequest): boolean {
+  if (request.appOwned && request.approvalPlan?.format === 'json-v1') return true
+  if (
+    !request.appOwned ||
+    !request.rawInput ||
+    typeof request.rawInput !== 'object' ||
+    !('configurationPlan' in request.rawInput)
+  )
+    return false
+  const plan = request.rawInput.configurationPlan
+  return Boolean(
+    plan &&
+    typeof plan === 'object' &&
+    'kind' in plan &&
+    ['package-installation', 'agent-configuration', 'skill-publication'].includes(String(plan.kind))
+  )
+}
