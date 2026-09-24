@@ -158,6 +158,7 @@
       "src/main/connectors/descriptors/genes-proteins.test.ts",
       "src/main/connectors/descriptors/genes-reactome.test.ts",
       "src/main/connectors/descriptors/genes-gprofiler.test.ts",
+      "src/main/connectors/descriptors/genes-enrichr.test.ts",
       "src/main/connectors/descriptors/genes.test.ts",
       "src/main/connectors/descriptors/genes-uniprot-mapping.test.ts",
       "src/main/connectors/descriptors/genomes-ensembl.test.ts",
