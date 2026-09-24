@@ -350,7 +350,7 @@ export const CLINPGX_TOOLS: ToolDescriptor[] = [
       additionalProperties: false
     },
     required: ['fp'],
-    returns: '`ClinPGx variantFrequency` JSON object keyed by population/resource.',
+    returns: '`ClinPGx variantFrequency` JSON array of population/resource frequency records.',
     example:
       'const result = await host.mcp("clinical-genomics", "clinpgx_get_variant_frequency", {"fp": "rs1799853"})',
     url: (args) => queryUrl('/report/variantFrequency', args, ['fp']),
