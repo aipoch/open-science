@@ -271,7 +271,7 @@ const SourceWebPreviewContent = ({
               </Tooltip>
             ) : null}
           </TooltipProvider>
-          {isProgressVisible ? (
+          {isProgressVisible && loadState.phase !== 'failed' ? (
             <div
               data-source-preview-progress=""
               role="progressbar"
