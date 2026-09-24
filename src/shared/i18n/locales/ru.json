@@ -789,7 +789,6 @@
     "Auto": "Авто",
     "Auto-approve edits": "Автоматически разрешать изменения",
     "Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.": "Автоматически разрешать изменение файлов в рабочем пространстве. Для команд, сетевых операций и MCP по-прежнему запрашивать разрешение.",
-    "Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.": "Автоматически разрешать изменение файлов в рабочем пространстве. Для команд, сетевых операций и инструментов MCP по-прежнему запрашивать разрешение.",
     "Auto-discover from MCP server": "Автоматически обнаруживать на сервере MCP",
     "Auto-review": "Автопроверка",
     "Available": "Доступен",
@@ -6738,6 +6737,7 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Результаты ИИ в реальном времени. Ручные решения по-прежнему определяют состав коллекции.",
     "Start an update to see the screening process.": "Запустите обновление, чтобы увидеть процесс отбора.",
     "Pending candidates": "Кандидаты в ожидании",
-    "Pause analysis": "Приостановить анализ"
+    "Pause analysis": "Приостановить анализ",
+    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "Автоматически разрешать изменения в рабочей области и поддерживаемые операции библиотеки. Для остальных инструментов действуют их правила разрешений."
   }
 }

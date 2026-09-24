@@ -956,7 +956,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/settings/codex-bridge-tools.test.ts',
       'src/main/notebook/runtime-service.rpc-retirement.test.ts',
       'src/main/literature/smart-collections.test.ts',
-      'src/main/notebook/runtime-service.macos-isolation.integration.test.ts'
+      'src/main/notebook/runtime-service.macos-isolation.integration.test.ts',
+      'src/main/acp/library-auto-policy.test.ts'
     ])
     expect(module.capabilityOverlays).toEqual([
       'windows_sensitive',

@@ -911,7 +911,8 @@ describe('User Skill repository architecture', () => {
           'src/main/session-package/ro-crate.integration.test.ts',
           'src/main/session-package/ro-crate.test.ts',
           'src/main/settings/codex-bridge-tools.test.ts',
-          'src/main/literature/smart-collections.test.ts'
+          'src/main/literature/smart-collections.test.ts',
+          'src/main/acp/library-auto-policy.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],

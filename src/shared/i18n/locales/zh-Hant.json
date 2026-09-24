@@ -876,7 +876,6 @@
     "Auto": "自動",
     "Auto-approve edits": "自動批准編輯",
     "Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.": "自動批准工作區內的檔案編輯。指令、網路請求和 MCP 仍需詢問。",
-    "Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.": "自動批准工作區內的檔案編輯。指令、網路請求和 MCP 工具仍需詢問。",
     "Auto-discover from MCP server": "從 MCP 伺服器自動發現",
     "Auto-review": "自動審閱",
     "Available": "可安裝",
@@ -6277,6 +6276,7 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "即時 AI 判定。合集是否收錄仍以人工決定為準。",
     "Start an update to see the screening process.": "開始更新後即可檢視篩選過程。",
     "Pending candidates": "待篩選論文",
-    "Pause analysis": "暫停分析"
+    "Pause analysis": "暫停分析",
+    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "自動核准工作區編輯和支援的文獻庫流程。其他工具遵循各自的權限規則。"
   }
 }

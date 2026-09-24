@@ -781,7 +781,6 @@
     "Auto": "Automático",
     "Auto-approve edits": "Aprobar ediciones automáticamente",
     "Auto-approve edits to files in the workspace. Still ask before commands, network, and MCP.": "Aprobar automáticamente las ediciones de archivos en el espacio de trabajo. Se seguirá solicitando aprobación antes de ejecutar comandos, acceder a la red y usar MCP.",
-    "Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.": "Aprobar automáticamente las ediciones de los archivos del espacio de trabajo. Se seguirá solicitando aprobación antes de ejecutar comandos, acceder a la red y usar herramientas MCP.",
     "Auto-discover from MCP server": "Detección automática desde el servidor MCP",
     "Auto-review": "Revisión automática",
     "Available": "Disponible",
@@ -6601,6 +6600,7 @@
     "Live AI outcomes. Manual decisions still determine collection membership.": "Resultados de IA en directo. Las decisiones manuales siguen determinando la pertenencia a la colección.",
     "Start an update to see the screening process.": "Inicie una actualización para ver el proceso de selección.",
     "Pending candidates": "Candidatos pendientes",
-    "Pause analysis": "Pausar análisis"
+    "Pause analysis": "Pausar análisis",
+    "Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.": "Aprobar automáticamente las ediciones del espacio de trabajo y los flujos de la biblioteca compatibles. Las demás herramientas siguen sus reglas de permisos."
   }
 }
