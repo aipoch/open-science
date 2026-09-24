@@ -34,6 +34,7 @@ import {
   readPackagedAppConfigRoot,
   releasedMigrationCountForPhase,
   requestPackagedAppShutdown,
+  runPackagedNotebookEnvironmentSmoke,
   removeWslCommandTempEvidence,
   runProcess,
   terminateDirectoryProcesses,
@@ -488,6 +489,28 @@ describe('Windows installer smoke plan', () => {
     expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:44100/api/shutdown?token=test', {
       method: 'POST'
     })
+    expect(text).toHaveBeenCalledOnce()
+  })
+
+  it('provisions a Notebook environment through the installed app before shutdown', async () => {
+    const text = vi.fn().mockResolvedValue(JSON.stringify({ protocolVersion: 1, ok: true }))
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, text })
+
+    await expect(
+      runPackagedNotebookEnvironmentSmoke('http://127.0.0.1:44100', 'token=test', fetchImpl)
+    ).resolves.toBeUndefined()
+
+    const [url, init, timeout] = fetchImpl.mock.calls[0]
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:44100\/rpc\/notebook-env:provision\?token=test$/)
+    expect(init).toMatchObject({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' }
+    })
+    expect(JSON.parse(init.body)).toMatchObject({
+      protocolVersion: 1,
+      args: expect.arrayContaining(['python'])
+    })
+    expect(timeout).toBeGreaterThan(60_000)
     expect(text).toHaveBeenCalledOnce()
   })
 

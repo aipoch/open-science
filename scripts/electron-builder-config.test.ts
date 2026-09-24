@@ -51,6 +51,17 @@ describe('electron-builder native image processing', () => {
       { from: 'build/deb-cli-launcher', to: 'open-science-cli' }
     ])
   })
+
+  it('keeps Micromamba staging binaries out of the asar and unpacked duplicate tree', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      files?: string[]
+      asarUnpack?: string[]
+    }
+
+    expect(config.files).toContain('!resources/bin{,/**/*}')
+    expect(config.asarUnpack).toContain('resources/**')
+    expect(config.asarUnpack).toContain('!resources/bin{,/**/*}')
+  })
 })
 
 describe('WSL2 Bash Preview resource compatibility', () => {

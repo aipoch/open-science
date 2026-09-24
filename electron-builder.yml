@@ -49,8 +49,13 @@ files:
   - '!node_modules/pdfjs-dist/image_decoders{,/**/*}'
   - '!node_modules/pdfjs-dist/types{,/**/*}'
   - '!node_modules/pdfjs-dist/**/*.map'
+  # Micromamba is copied from this staging tree to the resources root by the platform-specific
+  # extraResources entries below. Keep the staging copies out of app.asar and avoid shipping a
+  # second, unused copy under app.asar.unpacked/resources/bin.
+  - '!resources/bin{,/**/*}'
 asarUnpack:
   - resources/**
+  - '!resources/bin{,/**/*}'
   - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
