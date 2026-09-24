@@ -280,6 +280,9 @@ const createDurableDelegatedWork = (
         // When failure settles both promises, the cleanup outcome owns resource release.
         await Promise.race([handle.completion, handle.accepted])
         const outcome = await handle.completion
+        if (outcome.cleanupError instanceof DelegateExecutionCleanupError) {
+          cleanupFailures.set(sessionIdentityOf(session), outcome.cleanupError)
+        }
         const endedAt = now()
         if (outcome.status === 'completed' && !cancelRequested) {
           const lastTurnMessage = turnLifecycle.lastTurnMessage()

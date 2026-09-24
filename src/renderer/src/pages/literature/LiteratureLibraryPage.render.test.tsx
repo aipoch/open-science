@@ -12,12 +12,14 @@ import {
   literatureCatalogCommandSchema
 } from '../../../../shared/literature'
 import type {
+  LiteratureCatalogReceipt,
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
   LiteratureInboxCandidateView,
   LiteratureItemInput,
   LiteratureItemView
 } from '../../../../shared/literature'
+import type { SmartCollectionView } from '../../../../shared/literature-smart-collections'
 import type { Project } from '../../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
@@ -1005,6 +1007,108 @@ describe('LiteratureLibraryPage', () => {
       expect(screen.queryByText('1 selected')).toBeNull()
     }
   )
+
+  it('ignores an old panel startup receipt after returning to the same collection', async () => {
+    const collections = ['Alpha', 'Beta'].map((id) => ({
+      id,
+      name: id,
+      description: '',
+      revision: 1,
+      itemCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      smart: true
+    }))
+    const view: SmartCollectionView = {
+      configured: true,
+      sourceAvailable: true,
+      sourceName: '',
+      scope: { kind: 'library' },
+      counts: { match: 0, review: 0, 'no-match': 0, pending: 0 },
+      total: 0,
+      matches: 0,
+      pending: 0,
+      overrides: 0,
+      rows: []
+    }
+    const pending: Array<(value: unknown) => void> = []
+    const persisted: { receipt?: LiteratureCatalogReceipt } = {}
+    search.mockImplementation(async ({ scope }) => ({
+      entries: scope === 'collections' ? collections : [],
+      totalCount: 0
+    }))
+    transact.mockImplementation(async (command) => {
+      if (command.action === 'refresh') return new Promise((resolve) => pending.push(resolve))
+      if (command.kind === 'read-smart-run-progress')
+        return {
+          kind: 'collection',
+          id: command.collectionId,
+          smartRunProgress: {
+            runId: command.runId,
+            state: 'running',
+            total: 0,
+            done: 0,
+            counts: { match: 0, review: 0, noMatch: 0, pending: 0, error: 0, unavailable: 0 },
+            candidates: [],
+            outcomes: []
+          }
+        }
+      return (
+        persisted.receipt ?? {
+          kind: 'collection',
+          id: command.collectionId,
+          smart: structuredClone(view)
+        }
+      )
+    })
+    useNavigationStore.setState({ pendingLiteratureCollectionId: 'Alpha' })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Update collection' }, { timeout: 5000 })
+    )
+    await waitFor(() => expect(pending).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /^Beta/ }))
+    await screen.findByRole('button', { name: 'Update collection' }, { timeout: 5000 })
+    fireEvent.click(screen.getByRole('button', { name: /^Alpha/ }))
+    await screen.findByRole('button', { name: 'Update collection' }, { timeout: 5000 })
+    expect(screen.queryByRole('region', { name: 'Screening process' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Update collection' }))
+    await waitFor(() => expect(pending).toHaveLength(2))
+    const receipt = (id: string): LiteratureCatalogReceipt => ({
+      kind: 'collection',
+      id: 'Alpha',
+      smart: {
+        ...view,
+        run: {
+          id,
+          kind: 'refresh',
+          state: 'running',
+          done: 0,
+          total: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          usageIncomplete: false,
+          updatedAt: 1
+        }
+      }
+    })
+    await act(async () => pending[0](receipt('old-run')))
+    expect(
+      within(screen.getByRole('region', { name: 'Screening process' })).getByText('Loading…')
+    ).toBeTruthy()
+    persisted.receipt = receipt('new-run')
+    await act(async () => pending[1](persisted.receipt))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'read-smart-run-progress',
+        collectionId: 'Alpha',
+        runId: 'new-run'
+      })
+    )
+    expect(
+      within(screen.getByRole('region', { name: 'Screening process' })).queryByText('Loading…')
+    ).toBeNull()
+  })
 
   it.each([false, true])(
     'keeps manual decisions row-local with refresh failure: %s',
@@ -4328,6 +4432,25 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByText('Attachment removed. Storage cleanup could not finish.')
     ).not.toBeNull()
     expect(within(detail).queryByRole('button', { name: 'Preview paper.pdf' })).toBeNull()
+  })
+
+  it('keeps an open PDF preview isolated from unrelated library renders', async () => {
+    const itemWithPdf = createLibraryItemWithPdf()
+    search.mockImplementation(async ({ scope }) => ({
+      entries: scope === 'library' ? [itemWithPdf] : []
+    }))
+    const page = render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(itemWithPdf.item.title))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview paper.pdf' }))
+    const preview = screen.getByTestId('literature-pdf-preview')
+    await act(async () => {})
+    filePreviewRenderCount.value = 0
+    page.rerender(<LiteratureLibraryPage />)
+    expect(filePreviewRenderCount.value).toBe(0)
+    expect(screen.getByTestId('literature-pdf-preview')).toBe(preview)
+    fireEvent.click(within(preview).getByRole('button', { name: 'Close PDF', hidden: true }))
+    await waitFor(() => expect(screen.queryByTestId('literature-pdf-preview')).toBeNull())
   })
 
   it('preserves reference detail and scroll position while releasing only the PDF scroll lock', async () => {

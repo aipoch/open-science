@@ -256,8 +256,14 @@ describe('independent source regression', () => {
           }
         )
         expect(result.status).toBe(['true', 'false'].includes(selection) ? 0 : 1)
-        if (selection === 'true') expect(result.stdout).not.toContain('--grep-invert')
-        if (selection === 'false') expect(result.stdout).toContain('--grep-invert\n@capacity')
+        if (selection === 'true') {
+          expect(result.stdout).toContain('--global-timeout=1800000')
+          expect(result.stdout).not.toContain('--grep-invert')
+        }
+        if (selection === 'false') {
+          expect(result.stdout).toContain('--global-timeout=1200000')
+          expect(result.stdout).toContain('--grep-invert\n@capacity')
+        }
       }
     }
   )
@@ -286,9 +292,17 @@ describe('independent source regression', () => {
     (group) => {
       expect(action.runs.using).toBe('composite')
       const command = action.runs.steps.find((step) => step.name === `Run supplemental ${group}`)!
-      expect(command.run).toContain(
-        `npm run test:e2e:${group} -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/${group}_macos`
-      )
+      if (group === 'regressions') {
+        expect(command.run).toContain(
+          'npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos'
+        )
+        expect(command.run).toContain('regression_timeout=1200000')
+        expect(command.run).toContain('true) regression_timeout=1800000')
+      } else {
+        expect(command.run).toContain(
+          'npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/delegation_macos'
+        )
+      }
       for (const job of [pr.jobs.macos_e2e, scheduled.jobs.regression]) {
         expect(job.steps.find((step) => step.with?.group === group)?.uses).toBe(
           './.github/actions/source-regression'

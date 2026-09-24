@@ -300,3 +300,14 @@ it('bounds decision-only reads without accepting mutation fields', () => {
     literatureCatalogCommandSchema.safeParse({ ...request, decision: 'include' }).success
   ).toBe(false)
 })
+
+it('scopes progress reads to a run and rejects mutation or unbounded paging fields', () => {
+  const request = { kind: 'read-smart-run-progress', collectionId: 'collection', runId: 'run' }
+  expect(literatureCatalogCommandSchema.parse(request)).toEqual(request)
+  for (const invalid of [
+    { ...request, runId: '' },
+    { ...request, action: 'refresh' },
+    { ...request, limit: 100000 }
+  ])
+    expect(literatureCatalogCommandSchema.safeParse(invalid).success).toBe(false)
+})

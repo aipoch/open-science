@@ -1,7 +1,8 @@
 import type { ToolContext, ToolDescriptor } from '../types'
 
-// OpenAlex REST API (all disciplines, ~250M works). Dispatch requires an API key and applies it only
-// to this exact origin. Payloads are kept lean via `select=` and multi-page walks use cursor paging.
+// OpenAlex REST API (all disciplines, ~250M works). An API key is optional for basic use and is
+// applied only to this exact origin. Payloads are kept lean via `select=` and multi-page walks use
+// cursor paging.
 const BASE = 'https://api.openalex.org'
 const PER_PAGE = 200
 
@@ -9,9 +10,10 @@ const fetchOpenAlexJson = (ctx: ToolContext, rawUrl: string): Promise<unknown> =
   const url = new URL(rawUrl)
   if (url.origin !== BASE) throw new Error('OpenAlex credential target must use the OpenAlex API')
   const apiKey = ctx.credentials.openAlexApiKey
-  if (!apiKey) throw new Error('OpenAlex API key is required')
-  const separator = rawUrl.includes('?') ? '&' : '?'
-  return ctx.fetchJson(`${rawUrl}${separator}api_key=${encodeURIComponent(apiKey)}`)
+  const urlWithKey = apiKey
+    ? `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}api_key=${encodeURIComponent(apiKey)}`
+    : rawUrl
+  return ctx.fetchJson(urlWithKey)
 }
 
 // Selected fields for the lean work record (see leanWork). include_abstracts adds
@@ -823,8 +825,5 @@ const OPENALEX_LITERATURE_TOOL_DEFINITIONS: ToolDescriptor[] = [
 ]
 
 export const OPENALEX_LITERATURE_TOOLS: ToolDescriptor[] = OPENALEX_LITERATURE_TOOL_DEFINITIONS.map(
-  (descriptor) => ({
-    ...descriptor,
-    requiredCredential: 'openalex'
-  })
+  (descriptor) => ({ ...descriptor })
 )

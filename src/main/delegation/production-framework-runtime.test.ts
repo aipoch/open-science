@@ -394,7 +394,10 @@ describe('production delegated framework runtime bridge', () => {
           await expect(completion).resolves.toMatchObject({ status: 'completed' })
           await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
         } else {
-          await expect(completion).rejects.toThrow('cleanup could not be confirmed')
+          await expect(completion).resolves.toMatchObject({
+            status: 'completed',
+            cleanupError: expect.objectContaining({ name: 'DelegateExecutionCleanupError' })
+          })
           expect((await stat(runtimeHome)).isDirectory()).toBe(true)
           expect(
             await readFile(join(projection.skillsDirectory, 'research', 'SKILL.md'), 'utf8')

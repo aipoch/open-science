@@ -1159,7 +1159,10 @@ describe('ACP delegate execution production adapter', () => {
       await running.accepted
       controls.get('unreaped')!.complete()
 
-      await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+      await expect(running.completion).resolves.toMatchObject({
+        status: 'completed',
+        cleanupError: expect.any(DelegateExecutionCleanupError)
+      })
       expect(cleanup).toContain('revoke:unreaped')
       expect(cleanup).not.toContain('resources:unreaped')
       await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
@@ -1185,7 +1188,10 @@ describe('ACP delegate execution production adapter', () => {
     const running = execution.run(makeInput('owner'), reservation.slotIds[0])
     await running.accepted
     controls.get('owner')!.complete()
-    await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+    await expect(running.completion).resolves.toMatchObject({
+      status: 'completed',
+      cleanupError: expect.any(DelegateExecutionCleanupError)
+    })
     const duplicate = execution.run(makeInput('duplicate'), reservation.slotIds[1])
     await expect(duplicate.completion).rejects.toThrow('runtime home is already active')
     expect(cleanup).not.toContain('resources:owner')
@@ -1200,7 +1206,10 @@ describe('ACP delegate execution production adapter', () => {
     const reservation = await execution.reserve(1)
     const running = execution.run(makeInput('cancel-unreaped'), reservation.slotIds[0])
     await running.accepted
-    const completion = expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+    const completion = expect(running.completion).resolves.toMatchObject({
+      status: 'cancelled',
+      cleanupError: expect.any(DelegateExecutionCleanupError)
+    })
     await running.cancel()
     await completion
     expect(cleanup).not.toContain('resources:cancel-unreaped')
@@ -1282,7 +1291,13 @@ describe('ACP delegate execution production adapter', () => {
         await running.accepted
         controls.get('unsafe')!.complete()
       }
-      await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+      if (failure === 'construction')
+        await expect(running.completion).rejects.toThrow(DelegateExecutionCleanupError)
+      else
+        await expect(running.completion).resolves.toMatchObject({
+          status: 'completed',
+          cleanupError: expect.any(DelegateExecutionCleanupError)
+        })
       expect(cleanup).toContain('revoke:unsafe')
       expect(cleanup.filter((entry) => entry === 'release:unsafe')).toHaveLength(1)
       expect(cleanup).not.toContain('resources:unsafe')
@@ -1408,7 +1423,7 @@ it('preserves provider cancellation without a local cancel request', async () =>
   harness.controls.get('audit-cancel')!.complete({ stopReason: 'cancelled' })
   await expect(run.completion).resolves.toMatchObject({ status: 'cancelled' })
 })
-it.each(['unreaped', 'throws', 'recoverable'] as const)(
+it.each(['unreaped', 'throws', 'recoverable', 'confirmed-after-retry'] as const)(
   'does not reuse resources when shutdown %s',
   async (mode) => {
     let cleanupProven = false
@@ -1437,10 +1452,12 @@ it.each(['unreaped', 'throws', 'recoverable'] as const)(
         capability: { revoke },
         disposeResources,
         releaseResources,
-        ...(mode === 'recoverable'
+        ...(mode === 'recoverable' || mode === 'confirmed-after-retry'
           ? {
               confirmProcessCleanup: async () => {
-                if (!cleanupProven) throw new Error('owned process tree is still unconfirmed')
+                if (!cleanupProven && mode !== 'confirmed-after-retry')
+                  throw new Error('owned process tree is still unconfirmed')
+                return true as const
               }
             }
           : {})
@@ -1459,7 +1476,16 @@ it.each(['unreaped', 'throws', 'recoverable'] as const)(
     const reservation = await execution.reserve(1)
     const run = execution.run(makeInput('audit-reap'), reservation.slotIds[0])
     const outcome = await run.completion.catch((error: unknown) => error)
-    expect.soft(outcome).toBeInstanceOf(Error)
+    if (mode === 'confirmed-after-retry') {
+      expect(outcome).toMatchObject({ status: 'completed' })
+      expect(disposeResources).toHaveBeenCalledOnce()
+      await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+      return
+    }
+    expect.soft(outcome).toMatchObject({
+      status: 'completed',
+      cleanupError: expect.any(DelegateExecutionCleanupError)
+    })
     expect.soft(shutdownForQuit).toHaveBeenCalledOnce()
     expect.soft(revoke).toHaveBeenCalledOnce()
     expect.soft(disposeResources).not.toHaveBeenCalled()

@@ -5053,9 +5053,31 @@ describe('ACP terminal outcomes through durable delegation', () => {
       originMessageId: caller.originMessageId
     })
     const terminalize = vi.spyOn(records, 'terminalize')
+    const finalize = vi.fn(async () => undefined)
+    const artifact = {
+      id: 'published-version',
+      artifactId: 'published-artifact',
+      versionId: 'published-version',
+      versionNumber: 1,
+      checksum: 'abc',
+      createdAt: '2026-09-24T00:00:00.000Z',
+      projectId: caller.session.projectId,
+      sessionId: caller.session.sessionId,
+      runId: 'run-a',
+      name: 'panel.png',
+      path: '/managed/panel.png',
+      fileUrl: 'file:///managed/panel.png',
+      mimeType: 'image/png',
+      size: 8,
+      mtimeMs: 1
+    }
     const work = createDurableDelegatedWork({
       execution,
       records,
+      artifactEvidence: {
+        open: async () => ({ finalize, dispose: async () => undefined }),
+        project: async () => [artifact]
+      },
       resolveExecutionModel: () => ({
         snapshot: TEST_EXECUTION_MODEL,
         backendLease: {
@@ -5089,7 +5111,14 @@ describe('ACP terminal outcomes through durable delegation', () => {
     } else {
       result = await work.delegate(caller, { task: 'Inspect evidence', name: 'Inspect' })
     }
-    const expectedStatus = unreaped ? 'error' : stopped ? 'cancelled' : outcome
+    const expectedStatus =
+      outcome === 'startup-unreaped'
+        ? 'error'
+        : stopped
+          ? 'cancelled'
+          : outcome === 'unreaped'
+            ? 'completed'
+            : outcome
     expect.soft(result).toMatchObject({ kind: 'results', children: [{ status: expectedStatus }] })
     expect.soft(terminalize).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -5101,7 +5130,7 @@ describe('ACP terminal outcomes through durable delegation', () => {
     )
     expect.soft(disposeResources).toHaveBeenCalledTimes(unreaped ? 0 : 1)
     expect.soft(releaseClaim).toHaveBeenCalledOnce()
-    if (unreaped)
+    if (outcome === 'startup-unreaped')
       expect.soft(terminalize).toHaveBeenCalledWith(
         expect.objectContaining({
           error: expect.objectContaining({
@@ -5109,6 +5138,21 @@ describe('ACP terminal outcomes through durable delegation', () => {
           })
         })
       )
-    if (unreaped) await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+    if (expectedStatus === 'completed') {
+      expect(finalize).toHaveBeenCalledOnce()
+      expect(result).toMatchObject({
+        children: [{ response: 'Observed evidence', artifactsCreated: [artifact] }]
+      })
+      const collected = await work.collect(caller, [result.children[0].frameId])
+      expect(collected).toMatchObject([{ status: 'completed', response: 'Observed evidence' }])
+    }
+    if (unreaped) {
+      await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+      await expect(work.stopSession(caller.session)).rejects.toThrow()
+      if (expectedStatus === 'completed')
+        expect(await work.collect(caller, [result.children[0].frameId])).toMatchObject([
+          { status: 'completed', response: 'Observed evidence', artifactsCreated: [artifact] }
+        ])
+    }
   })
 })

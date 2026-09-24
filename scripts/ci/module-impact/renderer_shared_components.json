@@ -467,6 +467,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSubagentMessageRow.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/SessionDiagnosticsDialog.interaction.test.tsx",
+      "src/renderer/src/pages/literature/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/SmartCollectionPanel.test.tsx"
     ]
   },

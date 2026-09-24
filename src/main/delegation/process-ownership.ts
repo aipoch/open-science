@@ -16,6 +16,7 @@ import {
 } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
+import { createLogger } from '../logger'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 import {
   capturePosixProcessTreeIdentity,
@@ -23,7 +24,8 @@ import {
   proveRecordedPosixLeaderGone,
   registerProcessTreeOwnership,
   terminateProcessTree,
-  trackOwnedPosixProcessTree
+  trackOwnedPosixProcessTree,
+  type ProcessTreeKillResult
 } from '../process-tree'
 import { reapWindowsOwnedJob, spawnWindowsOwnedProcess } from '../process-tree-windows'
 import {
@@ -33,6 +35,8 @@ import {
 } from './execution-port'
 import type { SessionKey } from './session-records'
 
+const log = createLogger('delegation:process-ownership')
+
 type ProcessScope = SessionKey & { frameId: string; attemptId: string; frameworkId: string }
 type Selection = { projectId?: string; sessionId?: string; frameId?: string; attemptId?: string }
 type Receipt = ProcessScope & {
@@ -40,6 +44,7 @@ type Receipt = ProcessScope & {
   receiptId: string
   phase: 'starting' | 'owned' | 'cleanup-pending'
   createdAt: number
+  cleanupDiagnostics?: ProcessTreeKillResult['diagnostics']
   ownership?: {
     platform: 'linux' | 'darwin' | 'win32'
     token?: string // Optional: only present for real spawned processes, not recordFailure receipts
@@ -123,7 +128,8 @@ const parse = (value: unknown): Receipt => {
     'frameId',
     'attemptId',
     'frameworkId',
-    'ownership'
+    'ownership',
+    'cleanupDiagnostics'
   ])
   if (
     Object.keys(receipt).some((key) => !fields.has(key)) ||
@@ -136,6 +142,32 @@ const parse = (value: unknown): Receipt => {
   for (const key of ['projectId', 'sessionId', 'frameId', 'attemptId', 'frameworkId'] as const) {
     if (typeof receipt[key] !== 'string') throw new Error('Invalid receipt scope')
     segment(receipt[key])
+  }
+  const diagnostics = receipt.cleanupDiagnostics
+  if (diagnostics !== undefined) {
+    if (
+      !diagnostics ||
+      typeof diagnostics !== 'object' ||
+      Array.isArray(diagnostics) ||
+      Object.keys(diagnostics).some(
+        (key) =>
+          !['failureCategory', 'recovery', 'ownedIdentityCount', 'ambiguousIdentityCount'].includes(
+            key
+          )
+      ) ||
+      ![
+        'leader-identity-unavailable',
+        'process-table-history-incomplete',
+        'ownership-candidate-unresolved',
+        'owned-processes-still-running'
+      ].includes(diagnostics.failureCategory) ||
+      !['retry-owner', 'stronger-ownership-proof-required'].includes(diagnostics.recovery) ||
+      !Number.isSafeInteger(diagnostics.ownedIdentityCount) ||
+      diagnostics.ownedIdentityCount < 0 ||
+      !Number.isSafeInteger(diagnostics.ambiguousIdentityCount) ||
+      diagnostics.ambiguousIdentityCount < 0
+    )
+      throw new Error('Invalid process cleanup diagnostics')
   }
   const ownership = receipt.ownership
   if (ownership !== undefined) {
@@ -444,11 +476,17 @@ export class DelegatedProcessOwnership {
             })
           }
         : {}),
-      settled: ({ reaped }) => {
+      settled: ({ reaped, diagnostics }) => {
         if (reaped) this.remove(receipt)
         else {
           receipt.phase = 'cleanup-pending'
+          receipt.cleanupDiagnostics = diagnostics
           this.write(receipt)
+          log.warn('delegated process cleanup unconfirmed', {
+            ...scope,
+            receiptId: receipt.receiptId,
+            diagnostics
+          })
         }
       }
     })
@@ -583,6 +621,7 @@ export class DelegatedProcessOwnership {
     let restoredAttempts: Set<string> | undefined
     let retained: Promise<DelegateCapacityReservation> | undefined
     const slots = new Map<string, string>()
+    const unpersistedFailures = new Map<string, ProcessScope>()
     const restoreCapacity = async (): Promise<void> => {
       const receipts = this.receipts(session)
       const pending = new Set(receipts.map(({ attemptId }) => attemptId))
@@ -618,7 +657,7 @@ export class DelegatedProcessOwnership {
       },
       run: (input, slotId) => {
         const running = execution.run(input, slotId)
-        const completion = running.completion.catch((error: unknown) => {
+        const retainCleanupFailure = (error: unknown): void => {
           if (error instanceof DelegateExecutionCleanupError) {
             try {
               this.recordFailure({
@@ -627,15 +666,43 @@ export class DelegatedProcessOwnership {
                 attemptId: input.attemptId,
                 frameworkId
               })
+              unpersistedFailures.delete(input.attemptId)
             } catch (cause) {
+              unpersistedFailures.set(input.attemptId, {
+                ...input.session,
+                frameId: input.frameId,
+                attemptId: input.attemptId,
+                frameworkId
+              })
               throw new DelegateExecutionCleanupError(
                 'Delegated process cleanup and ownership persistence failed.',
                 { cause }
               )
             }
           }
-          throw error
-        })
+        }
+        const completion = running.completion.then(
+          (outcome) => {
+            try {
+              retainCleanupFailure(outcome.cleanupError)
+              return outcome
+            } catch (error) {
+              // Persistence is also a retirement concern. Keep its failure visible to the
+              // cleanup owner without replacing the already committed execution result.
+              const cleanupError = error as DelegateExecutionCleanupError
+              log.error('delegated cleanup evidence persistence failed', {
+                ...input.session,
+                attemptId: input.attemptId,
+                error: cleanupError
+              })
+              return { ...outcome, cleanupError }
+            }
+          },
+          (error: unknown) => {
+            retainCleanupFailure(error)
+            throw error
+          }
+        )
         void completion.catch(() => undefined)
         const accepted = running.accepted.catch(async (error: unknown) => {
           try {
@@ -649,6 +716,11 @@ export class DelegatedProcessOwnership {
         return { ...running, accepted, completion }
       },
       recoverCleanup: async () => {
+        // Never let an empty on-disk receipt list erase a failed persistence obligation.
+        for (const [attemptId, failureScope] of unpersistedFailures) {
+          this.recordFailure(failureScope)
+          unpersistedFailures.delete(attemptId)
+        }
         await this.recover(session)
         // Active, healthy sibling Attempts retain their receipts and continue to own their slots.
         if (

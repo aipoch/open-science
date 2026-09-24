@@ -509,7 +509,9 @@ describe('PreviewPanel', () => {
       expect(panelId).not.toBeNull()
       expect(container.querySelector(`#${panelId}`)?.getAttribute('role')).toBe('tabpanel')
     }
-    expect(container.querySelector('[role="tab"][title="file-1.png"] .lucide-file')).not.toBeNull()
+    expect(
+      container.querySelector('[role="tab"][title="file-1.png"] .lucide-file-image')
+    ).not.toBeNull()
 
     const activeContent = container.querySelector('[data-testid="file-content"]')
     expect(activeContent?.textContent).toBe('file:image:artifact:file-1.png:/workspace/file-1.png')

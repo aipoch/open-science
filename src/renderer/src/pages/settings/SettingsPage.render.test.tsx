@@ -1392,9 +1392,20 @@ describe('SettingsPage layout', () => {
     expect(document.body.textContent).toContain(
       'Models for session details, subagents, review, and image understanding.'
     )
-    // The add action lives with the list as a dashed ghost row, not a section-header button.
-    const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Add provider'
+    // The add action is available beside the section heading and remains at the end of the list.
+    const providersSection = document.body.querySelector<HTMLElement>(
+      'section[aria-label="Providers"]'
+    )
+    const addButton = Array.from(
+      providersSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    expect(addButton?.getAttribute('data-variant')).toBe('outline')
+    expect(addButton?.getAttribute('data-size')).toBe('sm')
+    const addRow = Array.from(
+      providersSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find(
+      (button) =>
+        button.textContent?.trim() === 'Add provider' && button.className.includes('border-dashed')
     )
     expect(addRow?.className).toContain('border-dashed')
   })
