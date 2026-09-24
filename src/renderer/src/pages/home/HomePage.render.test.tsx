@@ -388,7 +388,7 @@ afterEach(() => {
 })
 
 describe('HomePage package export progress', () => {
-  it('shows background progress beside the message center and reopens its detail', () => {
+  it('shows background progress before the GitHub action and reopens its detail', () => {
     usePackageOperationStore.setState({
       operation: {
         id: 'export-1',
@@ -410,9 +410,7 @@ describe('HomePage package export progress', () => {
     )
     expect(button).not.toBeNull()
     expect(button?.closest('header')).not.toBeNull()
-    expect(
-      button?.nextElementSibling?.querySelector('[data-notification-bell-trigger]')
-    ).not.toBeNull()
+    expect(button?.nextElementSibling?.classList.contains('sm:inline-flex')).toBe(true)
     act(() => button?.click())
     expect(usePackageOperationStore.getState().open).toBe(true)
   })

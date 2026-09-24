@@ -88,7 +88,7 @@ test('New conversation keeps background export accessible in the workspace heade
 })
 
 for (const width of [1280, 414, 320]) {
-  test(`Project index shows background export beside the message center at ${width}px`, async ({
+  test(`Project index shows background export before GitHub at ${width}px`, async ({
     page
   }, testInfo) => {
     await page.setViewportSize({ width, height: 800 })
@@ -98,7 +98,7 @@ for (const width of [1280, 414, 320]) {
     await expect(progressButton).toBeVisible()
     expect(
       await progressButton.evaluate((element) =>
-        Boolean(element.nextElementSibling?.querySelector('[data-notification-bell-trigger]'))
+        element.nextElementSibling?.textContent?.includes('Star on GitHub')
       )
     ).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

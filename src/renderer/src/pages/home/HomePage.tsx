@@ -698,6 +698,7 @@ const HomePage = ({
                 </button>
               ) : null}
               <NetworkStatusIndicator variant="pill" />
+              <PackageExportProgressButton iconOnly />
               <span className="hidden sm:inline-flex">
                 <GitHubStarBadge variant="home" />
               </span>
@@ -721,7 +722,6 @@ const HomePage = ({
               >
                 <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
               </Button>
-              <PackageExportProgressButton iconOnly />
               <NotificationBell />
               <button
                 type="button"
