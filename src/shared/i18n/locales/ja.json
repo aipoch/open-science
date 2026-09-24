@@ -129,6 +129,17 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "このセッションパッケージには、より新しいバージョンの Open Science が必要です。Open Science を更新してから、もう一度インポートしてください。"
   },
   "renderer": {
+    "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または名前で ClinPGx の薬物・化学物質レコードを解決します。",
+    "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "薬理ゲノム注釈を検索する前に、ClinPGx の accession ID または HGNC シンボルで ClinPGx の遺伝子レコードを解決します。",
+    "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "薬物、遺伝子、バリアントを結び付ける ClinPGx の臨床注釈を検索します。CPIC 形式のエビデンスレベル 1A、1B、2A、2B、3、4 に対応します。",
+    "Retrieve one ClinPGx clinical annotation by its numeric ClinPGx record id, including linked drug, gene, variant, phenotype, and evidence level.": "数値の ClinPGx レコード ID で ClinPGx の臨床注釈を 1 件取得します。関連する薬物、遺伝子、バリアント、表現型、エビデンスレベルを含みます。",
+    "Search ClinPGx variant annotations by gene symbol or variant fingerprint (commonly an rsID).": "遺伝子シンボルまたはバリアントフィンガープリント（通常は rsID）で ClinPGx のバリアント注釈を検索します。",
+    "Search ClinPGx pharmacogenomic dosing guideline annotations from CPIC, DPWG, or PharmGKB/PRO.": "CPIC、DPWG、または PharmGKB/PRO の ClinPGx 薬理ゲノミクス用量ガイドライン注釈を検索します。",
+    "Search ClinPGx regulatory pharmacogenomic drug labels from FDA, EMA, PMDA, or Health Canada.": "FDA、EMA、PMDA、または Health Canada の ClinPGx 薬理ゲノミクス医薬品ラベルを検索します。",
+    "Resolve ClinPGx pharmacogenomic variants by dbSNP rsID or another variant symbol.": "dbSNP rsID または別のバリアントシンボルで ClinPGx の薬理ゲノミクスバリアントを解決します。",
+    "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "rsID などのバリアントフィンガープリントについて、ClinPGx が報告する集団別バリアント頻度を取得します。",
+    "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "共有 connection report を使用して、2 つのオブジェクト（例：薬物と遺伝子）間の ClinPGx ペア関係を検索します。各オブジェクトに 1 つの識別子を指定します。薬物・遺伝子・バリアントの臨床注釈には summary annotation を使用します。",
+    "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "臨床ゲノミクスの知識ベース：ClinGen キュレーション、CIViC 臨床エビデンス、Open Targets Platform、ClinPGx 薬理ゲノミクス。",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "インストール済みの Claude Code CLI に互換性がないか、バージョンを確認できません。Claude Code を 2.1.118 以降に更新し、設定で再検出してください。",
     "Other classification tokens": "その他の分類のトークン",
     "Literature classification tokens": "文献分類のトークン数",

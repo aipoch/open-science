@@ -112,12 +112,12 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'clinical-genomics',
     displayName: 'Clinical Genomics',
-    aliases: ['ClinGen', 'CIViC', 'Open Targets'],
+    aliases: ['ClinGen', 'CIViC', 'Open Targets', 'ClinPGx', 'pharmacogenomics'],
     description:
-      'Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, and the Open Targets Platform.',
+      'Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.',
     useWhen:
-      "Use when you need clinical interpretation of genes and variants — ClinGen gene-disease validity, dosage sensitivity, clinical actionability, and expert-panel (VCEP) variant pathogenicity classifications; CIViC clinical evidence, assertions, molecular profiles, diseases, and therapies for a gene or variant in cancer; or Open Targets target-disease association scores, a disease's known drugs/associated targets, a drug's mechanism of action, and arbitrary Open Targets GraphQL. Sourced from ClinGen, CIViC, and the Open Targets Platform.",
-    sources: ['ClinGen', 'CIViC', 'Open Targets'],
+      "Use when you need clinical interpretation of genes, variants, or pharmacogenomics — ClinGen gene-disease validity, dosage sensitivity, clinical actionability, and expert-panel (VCEP) variant pathogenicity classifications; CIViC clinical evidence, assertions, molecular profiles, diseases, and therapies for a gene or variant in cancer; Open Targets target-disease association scores, a disease's known drugs/associated targets, a drug's mechanism of action, and arbitrary Open Targets GraphQL; or ClinPGx drug-gene-variant clinical annotations, dosing guidelines, regulatory labels, variant frequencies, and evidence levels. Sourced from ClinGen, CIViC, the Open Targets Platform, and ClinPGx.",
+    sources: ['ClinGen', 'CIViC', 'Open Targets', 'ClinPGx'],
     termsUrl: 'https://platform-docs.opentargets.org/licence',
     requiresNcbi: false
   },

@@ -129,6 +129,17 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "이 세션 패키지에는 더 최신 버전의 Open Science가 필요합니다. Open Science를 업데이트한 후 다시 가져오세요."
   },
   "renderer": {
+    "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 이름으로 ClinPGx 약물/화학물질 레코드를 확인합니다.",
+    "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "약물유전체 주석을 조회하기 전에 ClinPGx accession ID 또는 HGNC 기호로 ClinPGx 유전자 레코드를 확인합니다.",
+    "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "약물, 유전자, 변이를 연결하는 ClinPGx 임상 주석을 검색합니다. CPIC 스타일 증거 수준 1A, 1B, 2A, 2B, 3, 4를 지원합니다.",
+    "Retrieve one ClinPGx clinical annotation by its numeric ClinPGx record id, including linked drug, gene, variant, phenotype, and evidence level.": "숫자 ClinPGx 레코드 ID로 ClinPGx 임상 주석 하나를 가져옵니다. 연결된 약물, 유전자, 변이, 표현형 및 증거 수준을 포함합니다.",
+    "Search ClinPGx variant annotations by gene symbol or variant fingerprint (commonly an rsID).": "유전자 기호 또는 변이 지문(일반적으로 rsID)으로 ClinPGx 변이 주석을 검색합니다.",
+    "Search ClinPGx pharmacogenomic dosing guideline annotations from CPIC, DPWG, or PharmGKB/PRO.": "CPIC, DPWG 또는 PharmGKB/PRO의 ClinPGx 약물유전체 용량 지침 주석을 검색합니다.",
+    "Search ClinPGx regulatory pharmacogenomic drug labels from FDA, EMA, PMDA, or Health Canada.": "FDA, EMA, PMDA 또는 Health Canada의 ClinPGx 규제 약물유전체 약물 라벨을 검색합니다.",
+    "Resolve ClinPGx pharmacogenomic variants by dbSNP rsID or another variant symbol.": "dbSNP rsID 또는 다른 변이 기호로 ClinPGx 약물유전체 변이를 확인합니다.",
+    "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "rsID와 같은 변이 지문에 대해 ClinPGx가 보고한 집단별 변이 빈도를 가져옵니다.",
+    "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "공유 connection report를 사용하여 두 객체(예: 약물과 유전자) 사이의 ClinPGx 쌍별 연결을 조회합니다. 각 객체에 하나의 식별자를 제공하세요. 약물-유전자-변이 임상 주석에는 summary annotation을 사용하세요.",
+    "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "임상 유전체학 지식 베이스: ClinGen 큐레이션, CIViC 임상 근거, Open Targets 플랫폼 및 ClinPGx 약물유전체학.",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "설치된 Claude Code CLI가 호환되지 않거나 버전을 확인할 수 없습니다. Claude Code를 2.1.118 이상으로 업데이트한 후 설정에서 다시 검색하세요.",
     "Other classification tokens": "기타 분류 토큰",
     "Literature classification tokens": "문헌 분류 토큰",

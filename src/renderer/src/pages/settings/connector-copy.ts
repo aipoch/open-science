@@ -34,6 +34,11 @@ export function connectorDescription(
   if (connector.id === 'hmmer') {
     return t('HMMER protein-family scans and remote-homology searches via EMBL-EBI.')
   }
+  if (connector.id === 'clinical-genomics') {
+    return t(
+      'Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.'
+    )
+  }
   return connector.id === 'literature'
     ? t('Literature and research data via OpenAlex, arXiv, Crossref and DataCite.')
     : connector.description
@@ -126,6 +131,44 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       )
     case 'variants/get_variant':
       return t('Retrieve a gnomAD variant with optional population frequencies.')
+    case 'clinical-genomics/clinpgx_search_chemicals':
+      return t(
+        'Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.'
+      )
+    case 'clinical-genomics/clinpgx_search_genes':
+      return t(
+        'Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.'
+      )
+    case 'clinical-genomics/clinpgx_search_summary_annotations':
+      return t(
+        'Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.'
+      )
+    case 'clinical-genomics/clinpgx_get_summary_annotation':
+      return t(
+        'Retrieve one ClinPGx clinical annotation by its numeric ClinPGx record id, including linked drug, gene, variant, phenotype, and evidence level.'
+      )
+    case 'clinical-genomics/clinpgx_search_variant_annotations':
+      return t(
+        'Search ClinPGx variant annotations by gene symbol or variant fingerprint (commonly an rsID).'
+      )
+    case 'clinical-genomics/clinpgx_search_guideline_annotations':
+      return t(
+        'Search ClinPGx pharmacogenomic dosing guideline annotations from CPIC, DPWG, or PharmGKB/PRO.'
+      )
+    case 'clinical-genomics/clinpgx_search_drug_labels':
+      return t(
+        'Search ClinPGx regulatory pharmacogenomic drug labels from FDA, EMA, PMDA, or Health Canada.'
+      )
+    case 'clinical-genomics/clinpgx_search_variants':
+      return t('Resolve ClinPGx pharmacogenomic variants by dbSNP rsID or another variant symbol.')
+    case 'clinical-genomics/clinpgx_get_variant_frequency':
+      return t(
+        'Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.'
+      )
+    case 'clinical-genomics/clinpgx_get_drug_gene_variant':
+      return t(
+        'Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.'
+      )
     default:
       return fallback
   }

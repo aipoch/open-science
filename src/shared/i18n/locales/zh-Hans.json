@@ -129,6 +129,17 @@
     "This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.": "此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。"
   },
   "renderer": {
+    "Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或名称解析 ClinPGx 药物/化学物质记录。",
+    "Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.": "在查询药物基因组学注释前，按 ClinPGx accession ID 或 HGNC 符号解析 ClinPGx 基因记录。",
+    "Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.": "搜索关联药物、基因和变异的 ClinPGx 临床注释。支持 CPIC 风格的证据等级 1A、1B、2A、2B、3 和 4。",
+    "Retrieve one ClinPGx clinical annotation by its numeric ClinPGx record id, including linked drug, gene, variant, phenotype, and evidence level.": "按数字 ClinPGx 记录 ID 获取一条 ClinPGx 临床注释，包括关联的药物、基因、变异、表型和证据等级。",
+    "Search ClinPGx variant annotations by gene symbol or variant fingerprint (commonly an rsID).": "按基因符号或变异指纹（通常为 rsID）搜索 ClinPGx 变异注释。",
+    "Search ClinPGx pharmacogenomic dosing guideline annotations from CPIC, DPWG, or PharmGKB/PRO.": "搜索来自 CPIC、DPWG 或 PharmGKB/PRO 的 ClinPGx 药物基因组学剂量指南注释。",
+    "Search ClinPGx regulatory pharmacogenomic drug labels from FDA, EMA, PMDA, or Health Canada.": "搜索来自 FDA、EMA、PMDA 或加拿大卫生部的 ClinPGx 监管药物基因组学药品标签。",
+    "Resolve ClinPGx pharmacogenomic variants by dbSNP rsID or another variant symbol.": "按 dbSNP rsID 或其他变异符号解析 ClinPGx 药物基因组学变异。",
+    "Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.": "获取 ClinPGx 报告的变异指纹（例如 rsID）对应的群体变异频率。",
+    "Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.": "使用共享 connection report 查询两个对象之间的 ClinPGx 成对关系（例如药物和基因）；为每个对象提供一个标识。对于药物—基因—变异临床注释，请使用 summary annotation。",
+    "Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.": "临床基因组学知识库：ClinGen 评审、CIViC 临床证据、Open Targets 平台和 ClinPGx 药物基因组学。",
     "The installed Claude Code CLI is incompatible or its version could not be verified. Update Claude Code to 2.1.118 or later, then re-detect it in Settings.": "已安装的 Claude Code CLI 不兼容或无法验证其版本。请将 Claude Code 更新至 2.1.118 或更高版本，然后在设置中重新检测。",
     "Other classification tokens": "其他分类词元",
     "Literature classification tokens": "文献分类词元",

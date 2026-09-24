@@ -7,6 +7,7 @@ import { CELLGUIDE_TOOLS } from './descriptors/cellguide'
 import { CHEMBL_TOOLS } from './descriptors/chembl'
 import { CHEMISTRY_TOOLS } from './descriptors/chemistry'
 import { CLINICAL_GENOMICS_TOOLS } from './descriptors/clinical-genomics'
+import { CLINPGX_TOOLS } from './descriptors/clinpgx'
 import { CLINICAL_TRIALS_TOOLS } from './descriptors/clinical-trials'
 import { DRUG_REGULATORY_TOOLS } from './descriptors/drug-regulatory'
 import { EXPRESSION_TOOLS } from './descriptors/expression'
@@ -38,6 +39,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...CHEMBL_TOOLS,
   ...CHEMISTRY_TOOLS,
   ...CLINICAL_GENOMICS_TOOLS,
+  ...CLINPGX_TOOLS,
   ...CLINICAL_TRIALS_TOOLS,
   ...DRUG_REGULATORY_TOOLS,
   ...EXPRESSION_TOOLS,

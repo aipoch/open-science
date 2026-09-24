@@ -3,17 +3,21 @@
     "src/main/connectors/descriptors/clinical-genomics.test.ts",
     "src/main/connectors/descriptors/clinical-genomics.ts",
     "src/main/connectors/descriptors/clinical-trials.test.ts",
-    "src/main/connectors/descriptors/clinical-trials.ts"
+    "src/main/connectors/descriptors/clinical-trials.ts",
+    "src/main/connectors/descriptors/clinpgx.ts",
+    "src/main/connectors/descriptors/clinpgx.test.ts"
   ],
   "interfacePaths": [
     "src/main/connectors/descriptors/clinical-genomics.ts",
-    "src/main/connectors/descriptors/clinical-trials.ts"
+    "src/main/connectors/descriptors/clinical-trials.ts",
+    "src/main/connectors/descriptors/clinpgx.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/main/connectors/descriptors/clinical-genomics.test.ts",
-      "src/main/connectors/descriptors/clinical-trials.test.ts"
+      "src/main/connectors/descriptors/clinical-trials.test.ts",
+      "src/main/connectors/descriptors/clinpgx.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

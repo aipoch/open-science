@@ -345,7 +345,47 @@ describe('ConnectorAddForm copy', () => {
         'protein-annotation/get_string_ppi_enrichment',
         'Test whether a protein set has more interactions than expected in STRING, with an optional background set.'
       ],
-      ['variants/get_variant', 'Retrieve a gnomAD variant with optional population frequencies.']
+      ['variants/get_variant', 'Retrieve a gnomAD variant with optional population frequencies.'],
+      [
+        'clinical-genomics/clinpgx_search_chemicals',
+        'Resolve ClinPGx drug/chemical records by ClinPGx accession id or name before querying pharmacogenomic annotations.'
+      ],
+      [
+        'clinical-genomics/clinpgx_search_genes',
+        'Resolve ClinPGx gene records by ClinPGx accession id or HGNC symbol before querying pharmacogenomic annotations.'
+      ],
+      [
+        'clinical-genomics/clinpgx_search_summary_annotations',
+        'Search ClinPGx clinical annotations linking a drug, gene, and variant. Supports CPIC-style evidence levels 1A, 1B, 2A, 2B, 3, and 4.'
+      ],
+      [
+        'clinical-genomics/clinpgx_get_summary_annotation',
+        'Retrieve one ClinPGx clinical annotation by its numeric ClinPGx record id, including linked drug, gene, variant, phenotype, and evidence level.'
+      ],
+      [
+        'clinical-genomics/clinpgx_search_variant_annotations',
+        'Search ClinPGx variant annotations by gene symbol or variant fingerprint (commonly an rsID).'
+      ],
+      [
+        'clinical-genomics/clinpgx_search_guideline_annotations',
+        'Search ClinPGx pharmacogenomic dosing guideline annotations from CPIC, DPWG, or PharmGKB/PRO.'
+      ],
+      [
+        'clinical-genomics/clinpgx_search_drug_labels',
+        'Search ClinPGx regulatory pharmacogenomic drug labels from FDA, EMA, PMDA, or Health Canada.'
+      ],
+      [
+        'clinical-genomics/clinpgx_search_variants',
+        'Resolve ClinPGx pharmacogenomic variants by dbSNP rsID or another variant symbol.'
+      ],
+      [
+        'clinical-genomics/clinpgx_get_variant_frequency',
+        'Retrieve population variant frequencies reported by ClinPGx for a variant fingerprint such as an rsID.'
+      ],
+      [
+        'clinical-genomics/clinpgx_get_drug_gene_variant',
+        'Query a pairwise ClinPGx connection between two objects (for example, a drug and a gene) using the shared connection report; provide one identifier for each object. Use summary annotations for a drug-gene-variant clinical annotation.'
+      ]
     ] as const
 
     for (const [id, expected] of toolCases) {
