@@ -275,10 +275,10 @@ export function SmartCollectionPanel({
     automaticPauseVisible &&
     view?.automaticPauseReason === 'run-limit' &&
     view?.run?.state === 'cancelled' &&
-    (!view.automaticPauseRunId || view.run.id === view.automaticPauseRunId)
+    view.run.id === view.automaticPauseRunId
   const paused =
     automaticPauseVisible &&
-    (!view?.automaticPauseRunId || view.run?.id === view.automaticPauseRunId) &&
+    view?.run?.id === view?.automaticPauseRunId &&
     (view?.run?.state === 'interrupted' || continueAutomaticRun)
   const snapshot = view?.run?.snapshot
   const currentRule = parseSmartRule(description)
@@ -653,7 +653,12 @@ export function SmartCollectionPanel({
                 : t('Resume automatic updates'),
             onClick: () => void run('resume-automatic'),
             disabled:
-              busy || decisionPending || refreshFailed || !view.configured || !view.sourceAvailable
+              busy ||
+              decisionPending ||
+              refreshFailed ||
+              !view.configured ||
+              !view.sourceAvailable ||
+              (!view.automaticPauseRunId && view.automaticPauseReason !== 'run-limit')
           }}
           secondaryButton={{
             label: view.automaticPauseRunId ? t('Abandon run') : t('Start a fresh automatic run'),

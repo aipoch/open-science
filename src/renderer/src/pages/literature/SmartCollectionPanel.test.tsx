@@ -569,7 +569,13 @@ it('offers fresh-run recovery for an ambiguous automatic pause', async () => {
     return { kind: 'collection', id: 'smart', smart: view }
   })
   render(<SmartCollectionPanel collectionId="smart" name="Trials" description="Adult trials" />)
-  fireEvent.click(await screen.findByRole('button', { name: 'Start a fresh automatic run' }))
+  const freshRun = await screen.findByRole('button', { name: 'Start a fresh automatic run' })
+  expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Abandon run' })).toBeTruthy()
+  expect(
+    screen.getByRole('button', { name: 'Resume automatic updates' }).hasAttribute('disabled')
+  ).toBe(true)
+  fireEvent.click(freshRun)
   await screen.findByRole('alertdialog')
   fireEvent.click(screen.getAllByRole('button', { name: 'Start a fresh automatic run' }).at(-1)!)
   await waitFor(() =>
