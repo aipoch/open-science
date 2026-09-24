@@ -1078,7 +1078,7 @@ export class LiteratureSmartCollections {
     if (command.itemIds && !['recompute', 'override'].includes(command.action))
       throw new Error('Selected papers require re-evaluation.')
     const id = command.collectionId
-    await this.definition(client, id)
+    const { definition } = await this.definition(client, id)
     if (command.action === 'resume-automatic') {
       const { definition } = await this.definition(client, id)
       const latest = await client.literatureSmartRun.findFirst({
@@ -1110,15 +1110,19 @@ export class LiteratureSmartCollections {
       if (cancelled.count && this.active.get(id) === controller) this.active.delete(id)
       this.changed(id)
     } else if (command.action === 'abandon') {
+      const abandonableStates =
+        definition.automaticPauseReason === 'storage-error'
+          ? ['interrupted', 'failed']
+          : ['interrupted']
       const run = await client.literatureSmartRun.findFirst({
-        where: { collectionId: id, state: 'interrupted' },
+        where: { collectionId: id, state: { in: abandonableStates } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: { id: true }
       })
       if (run) {
         await client.$transaction(async (tx) => {
           const cancelled = await tx.literatureSmartRun.updateMany({
-            where: { id: run.id, state: 'interrupted' },
+            where: { id: run.id, state: { in: abandonableStates } },
             data: { state: 'cancelled' }
           })
           if (cancelled.count) {
