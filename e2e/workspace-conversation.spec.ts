@@ -983,6 +983,51 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(page.locator('[data-source-preview-hover-url]')).toBeFocused()
   await page.keyboard.press('Enter')
   await expect.poll(() => sourceDocumentRequestCount).toBe(2)
+
+  // Close the searched source while the native find overlay is still open. The overlay must not
+  // restore focus to the destroyed guest when Escape dismisses it.
+  const reopenedSourceFrame = page.locator(
+    '[data-source-preview-frame][data-source-url="https://citation.example/paper"]'
+  )
+  await expect(reopenedSourceFrame).toBeVisible()
+  await expect
+    .poll(() =>
+      page
+        .context()
+        .pages()
+        .some((candidate) => candidate.url() === 'https://citation.example/paper')
+    )
+    .toBe(true)
+  const reopenedNativePage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url() === 'https://citation.example/paper')!
+  await reopenedNativePage.getByRole('heading', { name: 'Fixture source' }).click()
+  await app.pressSourcePreviewShortcut(
+    reopenedNativePage.url(),
+    'F',
+    process.platform === 'darwin' ? ['meta'] : ['control']
+  )
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  const closingFindPage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url().includes('/find-overlay/'))!
+  await closingFindPage.getByRole('textbox').fill('Peer-reviewed evidence')
+  await expect(closingFindPage.locator('#find-overlay-count')).toHaveText('1 / 1')
+  await page
+    .getByRole('tabpanel')
+    .filter({ has: reopenedSourceFrame })
+    .locator('[data-source-preview-header-close]')
+    .click()
+  await expect(reopenedSourceFrame).toHaveCount(0)
+  await expect.poll(() => reopenedNativePage.isClosed()).toBe(true)
+  await closingFindPage.getByRole('textbox').press('Escape')
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await expect(page.getByRole('tab', { name: 'Replication study' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
 })
 
 test('shows the Electron failure reason when a source request fails', async ({ app }, testInfo) => {
