@@ -167,7 +167,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
   }
 })
 
-it('backfills an automatic pause from durable automatic usage evidence', async () => {
+it('backfills an automatic pause while adopting the current schema', async () => {
   const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
   const client = createProjectDbClient(root)
   try {
@@ -232,10 +232,6 @@ it('backfills an automatic pause from durable automatic usage evidence', async (
         usageIncomplete: false
       }
     })
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "LiteratureSmartCollection" DROP COLUMN "automaticPauseRunId"'
-    )
-    await client.$executeRawUnsafe('ALTER TABLE "LiteratureSmartRun" DROP COLUMN "abandonedAt"')
     await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE id = '0045_literature_smart_pause_run'`
     )

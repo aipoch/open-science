@@ -1,5 +1,8 @@
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
-import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
+import {
+  literatureSmartPauseRunBackfillStatement,
+  literatureSmartPauseRunMigration
+} from './migrations/0045-literature-smart-pause-run'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -429,6 +432,12 @@ const COMPUTE_JOB_OPERATION_CHECKSUM = checksumMigrationPayload(
   computeJobOperationMigration.statements,
   computeJobOperationMigration.verifiers,
   computeJobOperationMigration.operations
+)
+const LITERATURE_SMART_PAUSE_RUN_CHECKSUM = checksumMigrationPayload(
+  literatureSmartPauseRunMigration.id,
+  literatureSmartPauseRunMigration.statements,
+  literatureSmartPauseRunMigration.verifiers,
+  literatureSmartPauseRunMigration.operations
 )
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
@@ -865,12 +874,7 @@ const MIGRATION_MANIFEST = [
   },
   {
     ...literatureSmartPauseRunMigration,
-    checksum: checksumMigrationPayload(
-      literatureSmartPauseRunMigration.id,
-      literatureSmartPauseRunMigration.statements,
-      literatureSmartPauseRunMigration.verifiers,
-      literatureSmartPauseRunMigration.operations
-    ),
+    checksum: LITERATURE_SMART_PAUSE_RUN_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1946,6 +1950,13 @@ const applyManifestMigration = async (
           )
         ) {
           await migrationSqlExecutor.execute(transaction, literatureDiscoveryBackfillStatement)
+        }
+        if (
+          contractAlreadySatisfied &&
+          migration.id === literatureSmartPauseRunMigration.id &&
+          migration.checksum === LITERATURE_SMART_PAUSE_RUN_CHECKSUM
+        ) {
+          await migrationSqlExecutor.execute(transaction, literatureSmartPauseRunBackfillStatement)
         }
         if (!contractAlreadySatisfied) {
           if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {

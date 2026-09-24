@@ -1,10 +1,5 @@
 /* Associate a durable automatic pause with the run that created it. */
-const literatureSmartPauseRunMigration = {
-  id: '0045_literature_smart_pause_run',
-  statements: [
-    'ALTER TABLE "LiteratureSmartCollection" ADD COLUMN "automaticPauseRunId" TEXT',
-    'ALTER TABLE "LiteratureSmartRun" ADD COLUMN "abandonedAt" DATETIME',
-    `UPDATE "LiteratureSmartCollection"
+const literatureSmartPauseRunBackfillStatement = `UPDATE "LiteratureSmartCollection"
      SET "automaticPauseRunId" = (
        SELECT candidate.id
        FROM "LiteratureSmartRun" candidate
@@ -60,6 +55,12 @@ const literatureSmartPauseRunMigration = {
      )
      WHERE "automaticPauseRunId" IS NULL
        AND "automaticPauseReason" IS NOT NULL`
+const literatureSmartPauseRunMigration = {
+  id: '0045_literature_smart_pause_run',
+  statements: [
+    'ALTER TABLE "LiteratureSmartCollection" ADD COLUMN "automaticPauseRunId" TEXT',
+    'ALTER TABLE "LiteratureSmartRun" ADD COLUMN "abandonedAt" DATETIME',
+    literatureSmartPauseRunBackfillStatement
   ] as const,
   operations: [] as const,
   verifiers: [
@@ -78,4 +79,4 @@ const literatureSmartPauseRunMigration = {
   ] as const
 }
 
-export { literatureSmartPauseRunMigration }
+export { literatureSmartPauseRunBackfillStatement, literatureSmartPauseRunMigration }
