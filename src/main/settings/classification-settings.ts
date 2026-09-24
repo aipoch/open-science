@@ -234,6 +234,11 @@ export class ClassificationSettingsOwner {
         if (!draft || credentialsFor(draft, latest).keyRef !== validatedCredential)
           throw new Error('Provider configuration changed. Your draft has not been saved.')
         services = [...services.filter((entry) => entry.id !== update.id), draft]
+        if (state.services.length === 0) {
+          const binding = { serviceId: draft.id, modelId: modelIdsFor(draft)[0] }
+          capabilitySelection = binding
+          smartCollections = binding
+        }
       } else if (update.kind === 'remove') {
         services = services.filter((entry) => entry.id !== update.id)
       } else {

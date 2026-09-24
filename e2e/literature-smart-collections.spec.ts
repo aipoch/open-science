@@ -53,10 +53,55 @@ test('creates a smart collection without a model and preserves the setup path', 
   await page.getByRole('button', { name: 'Smart collections', exact: true }).click()
   await expect(
     page.getByText(
-      'Shared by all smart collections. Choose a model independently of automatic capability selection; no model is selected by default.'
+      'Shared by all smart collections. You can choose a different model from automatic capability selection.'
     )
   ).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('smart-collection-model-help.png') })
+})
+
+test('selects the first classification model for both features after saving a provider', async ({
+  app
+}, testInfo) => {
+  const { createServer } = await import('node:http')
+  const service = createServer((_request, response) => {
+    response.setHeader('Content-Type', 'application/json')
+    response.end(
+      JSON.stringify({
+        model: 'fixture',
+        answers: { test: { type: 'noul', noul: 1 } },
+        usage: { input_tokens: 3, output_tokens: 1 }
+      })
+    )
+  })
+  await new Promise<void>((resolve) => service.listen(0, '127.0.0.1', resolve))
+  try {
+    const port = (service.address() as { port: number }).port
+    const page = await app.completeOnboarding()
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await page.getByRole('button', { name: 'Model settings' }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings.getByRole('tab', { name: 'Classification models' }).click()
+    await settings.getByText('Add service').click()
+    await settings.getByRole('combobox', { name: 'Provider' }).press('Enter')
+    await page.getByRole('option', { name: 'Custom HTTP service' }).click()
+    await settings.getByLabel('Service name').fill('Test classifier')
+    await settings.getByLabel('Endpoint URL').fill(`http://127.0.0.1:${port}`)
+    await settings.getByLabel('Model', { exact: true }).fill('fixture')
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(settings.getByRole('heading', { name: 'Test classifier' })).toBeVisible()
+    await expect(
+      settings.getByRole('combobox', { name: 'Automatic capability selection' })
+    ).toHaveText('Test classifier / fixture')
+    await expect(settings.getByRole('combobox', { name: 'Smart collections' })).toHaveText(
+      'Test classifier / fixture'
+    )
+    await page.screenshot({ path: testInfo.outputPath('classification-model-auto-selected.png') })
+  } finally {
+    service.closeAllConnections()
+    await new Promise<void>((resolve, reject) =>
+      service.close((error) => (error ? reject(error) : resolve()))
+    )
+  }
 })
 
 test('opens the Library table named by a smart collection scope', async ({ app }, testInfo) => {
