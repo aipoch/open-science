@@ -1158,19 +1158,7 @@ export class LiteratureSmartCollections {
           : ['cancelled', 'interrupted']
       if (!command.runId) {
         if (definition.automaticPauseReason && !definition.automaticPauseRunId) {
-          const cleared = await client.literatureSmartCollection.updateMany({
-            where: {
-              collectionId: id,
-              autoUpdate: true,
-              automaticPauseRunId: null,
-              automaticPauseReason: definition.automaticPauseReason
-            },
-            data: { automaticPauseReason: null, automaticPauseRunId: null }
-          })
-          if (cleared.count) {
-            this.changed(id)
-            this.schedule()
-          }
+          return this.execute({ ...command, action: 'refresh' }, true, true)
         }
         return { kind: 'collection', id }
       }

@@ -3025,7 +3025,7 @@ it('does not clear an automatic pause when abandoning a newer manual run', async
   ).toMatchObject({ state: 'interrupted' })
 })
 
-it('clears an ambiguous automatic pause before starting a fresh run', async () => {
+it('re-evaluates pending references when starting a fresh run from an ambiguous pause', async () => {
   const id = await create()
   await refresh(id)
   await owner.execute({
@@ -3044,12 +3044,18 @@ it('clears an ambiguous automatic pause before starting a fresh run', async () =
     data: { state: 'interrupted' }
   })
   await db.literatureSmartRun.update({ where: { id: runs[0].id }, data: { state: 'cancelled' } })
+  await db.literatureSmartRunItem.update({
+    where: { runId_itemId: { runId: runs[1].id, itemId: 'paper' } },
+    data: { state: 'pending', resultJson: null, evaluatedAt: null, deferred: false }
+  })
   await db.literatureSmartCollection.update({
     where: { collectionId: id },
     data: { autoUpdate: true, automaticPauseReason: 'interrupted', automaticPauseRunId: null }
   })
 
   expect((await owner.view(id)).automaticPauseRunId).toBeUndefined()
+  expect((await owner.view(id)).rows[0].verdict).toBe('pending')
+  classify.mockClear()
   await owner.execute({
     kind: 'smart-collection',
     collectionId: id,
@@ -3057,7 +3063,17 @@ it('clears an ambiguous automatic pause before starting a fresh run', async () =
     offset: 0
   })
 
-  expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined })
+  await vi.waitFor(async () => expect((await owner.view(id)).run?.state).toBe('completed'))
+  expect(classify).toHaveBeenCalledOnce()
+  expect(await owner.view(id)).toMatchObject({ automaticPauseReason: undefined, matches: 1 })
+  expect((await owner.view(id)).run?.id).not.toBe(runs[1].id)
+  expect(
+    await db.literatureSmartRun.findMany({
+      where: { id: { in: runs.map((run) => run.id) } },
+      orderBy: { createdAt: 'asc' },
+      select: { abandonedAt: true }
+    })
+  ).toEqual([{ abandonedAt: null }, { abandonedAt: null }])
 })
 
 it('drains paid requests and retains a durable pause when both result and failure writes fail', async () => {
