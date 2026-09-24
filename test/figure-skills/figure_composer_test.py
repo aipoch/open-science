@@ -261,8 +261,8 @@ class ComposerTests(unittest.TestCase):
     def test_delegated_tasks_submit_output_without_review_quota(self):
         panel = panel_task(self.outline, "b")
         self.assertIn("host.submitOutput({panelVersionId: version_id, labelsUsed})", panel)
-        review = composite_review_task("composite-version", self.outline)
-        self.assertNotIn("artifact:None", review)
+        review = composite_review_task("composite-version", self.outline, "rules-version")
+        self.assertIn("artifact:rules-version", review)
         self.assertIn("zero findings is valid", review)
         self.assertIn("host.submitOutput(review)", review)
         fixed = copy.deepcopy(self.outline)
